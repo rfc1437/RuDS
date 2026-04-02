@@ -33,7 +33,7 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 
 ## important behaviour
 
-- HEREDOCs don't work most of the time. Don't use them. Use editor tools to create proper scripots
+- HEREDOCs don't work most of the time. Don't use them. Use editor tools to create proper scripts
 - use red/green TDD for new implementations
 - there are no "pre-existing" problems - you own every problem, you fix every problem
 - don't leave unused code in the codebase, remove it instead

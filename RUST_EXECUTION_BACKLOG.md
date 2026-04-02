@@ -180,7 +180,7 @@ Rules:
 ### `bds-core/render`
 
 - markdown render pipeline via `pulldown-cmark`
-- Liquid render pipeline via `liquid` crate (scoped to the feature subset documented in the Liquid inventory: `if`/`elsif`/`else`, `for`, `assign`, `render`, whitespace stripping, plus filters: `default`, `escape`, `url_encode`, `append`, `size`)
+- Liquid render pipeline via `liquid` crate (scoped to the feature subset documented in the Liquid inventory: `if`/`elsif`/`else`, `for`, `assign`, `render`, whitespace stripping, plus filters: `default`, `escape`, `url_encode`, `append`; `.size` is property access on arrays, not a pipe filter)
 - custom Liquid filter: `i18n` (translation lookup by key and language)
 - custom Liquid filter: `markdown` (markdown-to-HTML with macro expansion, URL rewriting, media path canonicalization)
 - built-in macro renderers: `gallery`, `youtube`, `vimeo`, `photo_archive`, `tag_cloud` (native Rust, not Lua)

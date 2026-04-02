@@ -1,0 +1,11 @@
+[package]
+name = "bds-editor"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+iced = { workspace = true }
+cosmic-text = { workspace = true }
+ropey = { workspace = true }
+syntect = { workspace = true }

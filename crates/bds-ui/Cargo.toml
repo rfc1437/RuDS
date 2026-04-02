@@ -1,0 +1,19 @@
+[package]
+name = "bds-ui"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+bds-core = { workspace = true }
+bds-editor = { workspace = true }
+iced = { workspace = true }
+muda = { workspace = true }
+rfd = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"

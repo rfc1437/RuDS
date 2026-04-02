@@ -1,0 +1,10 @@
+[package]
+name = "bds-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+bds-core = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
