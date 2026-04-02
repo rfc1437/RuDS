@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Post Lifecycle
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/PostEngine.ts, postFileUtils.ts, schema.ts
 
 use "./project.allium" as project

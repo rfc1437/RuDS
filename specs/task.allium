@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Background Task Manager
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/TaskManager.ts
 
 entity Task {

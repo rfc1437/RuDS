@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Git Integration
+-- Scope: extension (Bucket A — Git + Validation)
 -- Distilled from: src/main/engine/GitEngine.ts
 
 use "./post.allium" as post

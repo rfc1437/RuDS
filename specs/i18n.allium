@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Internationalization
+-- Scope: core (Wave 0 onward — split localization is mandatory)
 -- Distilled from: src/main/shared/i18n.ts, i18n/locales/*.json
 
 value SupportedLanguage {

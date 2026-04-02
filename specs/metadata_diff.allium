@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Metadata Diff and Rebuild
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/MetadataDiffEngine.ts
 
 use "./post.allium" as post

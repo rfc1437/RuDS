@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Navigation Menu
+-- Scope: core (read for rendering), extension Bucket F (menu editor UI)
 -- Distilled from: src/main/engine/MenuEngine.ts
 
 value MenuItem {

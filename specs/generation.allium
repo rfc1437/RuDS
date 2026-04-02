@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Static Site Generation
+-- Scope: core (Wave 4)
 -- Distilled from: src/main/engine/BlogGenerationEngine.ts,
 --   PageRenderer.ts, GenerationWorkerPool, RoutePageGenerationService
 

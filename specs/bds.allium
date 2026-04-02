@@ -54,6 +54,12 @@ use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuil
 --
 -- 2. Liquid subset: see template.allium for the exact subset.
 --    Only 5 tags, 4 standard filters, 2 custom filters, 5 operators.
+--    .size is property access on arrays, NOT a pipe filter.
 --
 -- 3. Macro calling convention: [[macroslug param1=value1 ...]]
 --    Double-bracket syntax, not Liquid tags. Identical to current app.
+--
+-- 4. AI provider model: Rust rewrite uses two configurable OpenAI-compatible
+--    endpoints (online + airplane mode) instead of the TypeScript app's
+--    4 named providers (OpenCode Zen, Mistral, Ollama, LM Studio).
+--    See ai.allium for details.

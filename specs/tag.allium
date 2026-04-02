@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Tag System
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/TagEngine.ts, schema.ts
 
 use "./project.allium" as project

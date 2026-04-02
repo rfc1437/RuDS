@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Project Management
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/ProjectEngine.ts, schema.ts
 
 entity Project {

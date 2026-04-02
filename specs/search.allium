@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Full-Text Search
+-- Scope: core (Wave 1 — FTS5 in-app search with Snowball stemmers)
 -- Distilled from: src/main/engine/PostEngine.ts (FTS methods),
 --   MediaEngine.ts (FTS methods), stemmer.ts
 

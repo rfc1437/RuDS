@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Project Metadata, Categories, Publishing Preferences
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/MetaEngine.ts, schema.ts
 
 use "./project.allium" as project

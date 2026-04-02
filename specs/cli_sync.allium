@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS CLI / App Notification Sync
+-- Scope: extension (Bucket G — MCP + Automation)
 -- Distilled from: src/main/engine/CliNotifier.ts, NotificationWatcher.ts
 
 entity DbNotification {

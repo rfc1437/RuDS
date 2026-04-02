@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS MCP Server (Model Context Protocol)
+-- Scope: extension (Bucket G — MCP + Automation)
 -- Distilled from: src/main/engine/MCPServer.ts, ProposalStore, MCPAgentConfigEngine.ts
 
 use "./post.allium" as post

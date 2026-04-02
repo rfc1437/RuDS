@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Translation System
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/PostEngine.ts (translation methods),
 --   postTranslationFileUtils.ts, MediaEngine.ts
 

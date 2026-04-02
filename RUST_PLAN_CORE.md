@@ -31,10 +31,11 @@ Core is not a toy MVP. Core must already be a production-capable replacement for
 - media translation records
 - post-link tracking records
 - template file formats and lookup rules
-- menu document read format for rendering
+- menu document format (OPML at `meta/menu.opml`) — both read and write
 - generated routes, feeds, sitemaps, and local preview behavior
+- metadata JSON file layout: `meta/project.json`, `meta/categories.json`, `meta/category-meta.json`, `meta/publishing.json`
 - metadata diff and rebuild-from-filesystem behavior
-- full-text search behavior (SQLite FTS5 virtual tables for posts and media)
+- full-text search behavior (SQLite FTS5 virtual tables for posts and media, with Snowball stemmers for 24 languages via custom tokenizer)
 - slug generation behavior (verify `deunicode` output matches current `transliteration` output for the project's content corpus)
 
 ### May change intentionally
@@ -63,7 +64,7 @@ User-authored Python scripts are not compatible and are treated as legacy artifa
 - **tokio as the async runtime**: preview server (axum), SSH publishing, file watching, and rfd async dialogs all require an async executor. tokio is the standard choice and is used workspace-wide. Synchronous engine code in bds-core does not use tokio directly — it remains callable from both async (bds-ui) and sync (bds-cli) contexts.
 - **Plain-text markdown editor first**: no WYSIWYG in core. Live preview is required. This is an intentional regression from the current app's Milkdown WYSIWYG editor. A rich editor can be added as an extension bucket after core ships — and the bds-editor widget provides a natural foundation for it.
 - **Lua for user-authored scripting**: `mlua` with Lua 5.4. Only user-authored macros, transforms, and utility scripts run through Lua. Built-in macros are native Rust — see the macro architecture section below.
-- **One-shot AI operations are core scope**: translation, image description / alt text generation, and title suggestion use a simple OpenAI-compatible HTTP client (`reqwest` + `serde_json`). The endpoint is user-configurable (OpenAI, Anthropic-via-proxy, local Ollama, etc.). These are fire-and-forget request/response calls — no streaming, no tool use, no chat history. The AI chat UI, streaming responses, and tool execution remain in Extension Bucket C.
+- **One-shot AI operations are core scope**: six operations use a simple OpenAI-compatible HTTP client (`reqwest` + `serde_json`): (1) translate post, (2) translate media metadata, (3) image description / alt text, (4) post analysis (title + excerpt + slug suggestion), (5) taxonomy analysis (tag + category suggestions), (6) language detection. Two configurable endpoints: one for online use, one for airplane/offline mode (local model). These are fire-and-forget request/response calls — no streaming, no tool use, no chat history. The AI chat UI, streaming responses, and tool execution remain in Extension Bucket C.
 
 ## Iced Architecture Patterns
 
@@ -159,7 +160,7 @@ bds-rust/
 - Lua runtime for user-authored macros, transforms, and utility scripts
 - generated Lua scripting API docs
 - FTS5 virtual tables for in-app post and media search
-- one-shot AI operations: translation, image description / alt text generation, title suggestion (configurable OpenAI-compatible endpoint via `reqwest`)
+- one-shot AI operations: translate post, translate media, image alt text, post analysis, taxonomy analysis, language detection (two configurable OpenAI-compatible endpoints: online + airplane mode, via `reqwest`)
 
 ### Deferred to extensions
 
@@ -244,9 +245,10 @@ This matrix is a release artifact, not a temporary note.
 The current default templates use a small subset of the Liquid specification. Before implementing the Liquid render pipeline, inventory the exact features used. The current templates (12 files: 3 main templates, 5 macro templates, 4 partials in `src/main/engine/templates/`) use only:
 
 - **Tags:** `if`/`elsif`/`else`, `for`, `assign`, `render` (partials), whitespace stripping (`{%- -%}`)
-- **Filters (built-in):** `default`, `escape`, `url_encode`, `append`, `size`
+- **Filters (built-in):** `default`, `escape`, `url_encode`, `append`
 - **Filters (custom, must be re-implemented in Rust):** `i18n` (translation lookup by key and language), `markdown` (markdown-to-HTML with macro expansion, URL rewriting, and media path canonicalization)
-- **Not used:** `unless`, `case/when`, `capture`, `layout`, `include`, `comment`, `raw`, `date`, `truncate`, `split`, `join`, `where`, `group_by`, `map`, `sort`, `reverse`, `cycle`, `tablerow`, `increment`/`decrement`, and most other standard filters
+- **Operators and access:** `==`, `>`, `or`, `and`, bare truthiness, `blank` (nil/empty). Property access via dot notation (`object.property`), `.size` on arrays (this is property access, **not** a pipe filter), bracket notation for map lookups (`map[key]`).
+- **Not used:** `unless`, `case/when`, `capture`, `layout`, `include`, `comment`, `raw`, `date`, `truncate`, `split`, `join`, `where`, `group_by`, `map`, `sort`, `reverse`, `cycle`, `tablerow`, `increment`/`decrement`, `size` (as a pipe filter), and most other standard filters
 
 This means the Rust Liquid implementation only needs roughly 35% of the full specification. Use `liquid-rust` or a minimal custom engine scoped to just the features above. User templates may use additional features, but parity with the current default templates is the release gate.
 
@@ -267,6 +269,14 @@ Macro invocation syntax in content: `[[macro_name param1="value1" param2="value2
 ### Slug generation compatibility
 
 The current app uses the `transliteration` npm package for Unicode-to-ASCII conversion in slugs. The plan specifies `deunicode` for Rust. These libraries may produce different output for edge cases (CJK characters, Cyrillic, accented Latin, etc.). Add a slug compatibility test suite to M0 fixtures that runs both libraries against the project's actual content corpus and documents any divergences.
+
+### Two search systems
+
+The app has two independent search systems — do not conflate them:
+
+1. **FTS5 (in-app search)**: SQLite FTS5 virtual tables (`posts_fts`, `media_fts`) power the desktop app's search UI. These require custom Snowball tokenizers registered via `rusqlite`'s `fts5_tokenizer` API (using the `rust-stemmers` crate) for 24-language stemmed search. Both indexing and query-time stemming must match the content language. This is Wave 1 scope.
+
+2. **Pagefind (generated site search)**: a client-side search index bundled with the generated static site. Pagefind indexes the generated HTML files and produces JavaScript/WASM artifacts that power search on the published website. This is Wave 4 scope, added to the generation pipeline via the `pagefind` crate's Rust library API.
 
 ### Client-side search index (Pagefind)
 
@@ -297,6 +307,7 @@ All crate choices for core scope, organized by subsystem. This prevents ad-hoc t
 | `thiserror` | Typed error definitions in library crates | bds-core, bds-editor |
 | `anyhow` | Ergonomic error handling in application crates | bds-ui, bds-cli |
 | `tokio` | Async runtime | Preview server, publish, file watching, async dialogs |
+| `rust-stemmers` | Snowball stemming for FTS5 | Custom FTS5 tokenizer for 24-language stemmed search |
 
 ### UI Framework (Wave 0 onward)
 
@@ -345,7 +356,7 @@ All crate choices for core scope, organized by subsystem. This prevents ad-hoc t
 
 | Crate | Purpose | Notes |
 |---|---|---|
-| `ssh2` | SSH/SCP file upload | For publish-via-SSH targets |
+| `ssh2` | SSH/SCP file upload | For publish-via-SSH targets. Authentication via SSH agent (`SSH_AUTH_SOCK`) only — no password auth, no interactive prompts. |
 | (shell out) | rsync invocation | rsync ships with macOS/Linux; invoke as child process |
 
 ### Client-Side Search (Wave 4)
@@ -358,7 +369,7 @@ All crate choices for core scope, organized by subsystem. This prevents ad-hoc t
 
 | Crate | Purpose | Notes |
 |---|---|---|
-| `reqwest` | HTTP client for AI endpoints | OpenAI-compatible Chat Completions API. Used for translation, alt text, title suggestion. |
+| `reqwest` | HTTP client for AI endpoints | OpenAI-compatible Chat Completions API. Two endpoints: online + airplane mode (local). Used for translation, alt text, taxonomy, post analysis, language detection. |
 
 ### Scripting (Wave 6)
 
@@ -384,7 +395,7 @@ The hard sequence is:
 4. editor widget MVP (ropey + syntect + cosmic-text proof of concept)
 5. editors for posts, media, templates, scripts, and settings
 6. preview and generation parity
-7. one-shot AI operations (translation, alt text, title suggestion)
+7. one-shot AI operations (translate post, translate media, image alt text, post analysis, taxonomy analysis, language detection)
 8. publish and integrity tooling
 9. Lua built-ins plus generated script API docs
 
@@ -425,7 +436,7 @@ Anything outside that path is noise until the previous step is stable.
 - preview is trustworthy
 - generation matches golden output
 - route, feed, and sitemap parity is acceptable
-- one-shot AI operations work (translation, image alt text, title suggestion) with a configurable OpenAI-compatible endpoint
+- one-shot AI operations work (all 6 operations) with two configurable OpenAI-compatible endpoints (online + airplane mode)
 
 ### Milestone M5: Operate And Ship
 
@@ -529,7 +540,7 @@ Not all of these are needed in Wave 0 — this is the full foundation set. Wave-
 - `PostMediaEngine`
 - `TagEngine`
 - `MetaEngine`
-- `TaskManager`
+- `TaskManager` — max 3 concurrent tasks, FIFO queue, 250ms progress throttle, cancellation support
 - `MetadataDiffEngine`
 - `RebuildEngine` or equivalent rebuild services
 
@@ -688,7 +699,7 @@ By Wave 3, bds-editor must support the full feature set documented in the editor
 - `rayon` for parallel page rendering during generation
 - `axum` for the preview HTTP server (runs on tokio)
 - `pagefind` for client-side search index generation (Rust library API, not CLI binary)
-- `reqwest` for one-shot AI operations (translation, alt text, title suggestion) against an OpenAI-compatible endpoint
+- `reqwest` for one-shot AI operations (all 6 operations: translate post/media, image alt text, post analysis, taxonomy analysis, language detection) against two configurable OpenAI-compatible endpoints (online + airplane mode)
 
 ### Rendering pipeline
 
@@ -706,7 +717,7 @@ By Wave 3, bds-editor must support the full feature set documented in the editor
 
 ### Preview rules
 
-- preview binds only to localhost
+- preview server binds to `127.0.0.1:4123` (localhost only, fixed port)
 - preview and generated HTML use local assets only
 - preview must support drafts and language-prefixed routes
 - rendered language is controlled by project settings, not by UI locale
@@ -715,24 +726,30 @@ By Wave 3, bds-editor must support the full feature set documented in the editor
 
 Wave 4 introduces the one-shot AI client in `bds-core`. This is a minimal `reqwest`-based HTTP client that sends single request/response calls to an OpenAI-compatible Chat Completions endpoint. No streaming, no tool use, no chat history.
 
-**Operations:**
+**Operations (all 6 are core scope):**
 
-- **Translation**: translate a post or media metadata field to a target language. Used from the translation editor and media editor.
-- **Image description / alt text**: generate an alt text description for a media item. Used from the media editor.
-- **Title suggestion**: suggest a title from post content. Used from the post editor.
+- **Translate post**: translate title, excerpt, and content to a target language. Used from the translation editor.
+- **Translate media metadata**: translate title, alt, and caption to a target language. Used from the media editor.
+- **Image description / alt text**: generate alt text and caption for a media item. Used from the media editor.
+- **Post analysis**: suggest title, excerpt, and slug from post content. Used from the post editor.
+- **Taxonomy analysis**: suggest tags and categories for a post. Used from the post editor.
+- **Language detection**: detect the language of a text fragment. Used internally by other operations.
 
 **Configuration:**
 
-- endpoint URL (default: none — AI features are opt-in)
-- API key (stored securely, not in project files)
-- model name (configurable per operation or globally)
+- **Online endpoint**: URL, API key, model name — for cloud AI providers (OpenAI, Anthropic-via-proxy, etc.)
+- **Airplane mode endpoint**: URL, model name — for local models (Ollama, LM Studio, etc.) — no API key needed
+- When airplane mode is active, only the airplane mode endpoint is used. Cloud endpoint calls are blocked.
+- Default: no endpoints configured — AI features are opt-in.
+- API keys stored securely via OS keychain (macOS Keychain, Windows DPAPI, Linux libsecret), never in project files.
 
 **Constraints:**
 
 - AI operations are entirely optional. The app is fully functional without any AI endpoint configured.
 - When no endpoint is configured, AI-related UI elements are disabled or hidden.
+- When airplane mode is active, the online endpoint is disabled. If no airplane mode endpoint is configured, AI is unavailable with a user-visible toast.
 - Error responses produce user-visible feedback (toast or inline error), never silent failures.
-- Request/response payloads use the OpenAI Chat Completions wire format. This works with OpenAI, Anthropic-via-proxy, local Ollama, or any compatible endpoint.
+- Request/response payloads use the OpenAI Chat Completions wire format.
 
 ### Tests
 
@@ -765,7 +782,9 @@ Wave 4 introduces the one-shot AI client in `bds-core`. This is a minimal `reqwe
 
 - upload generated site via SCP or rsync
 - upload media and thumbnails correctly
-- exclude metadata-only files from deploy targets where appropriate
+- SSH authentication via SSH agent (`SSH_AUTH_SOCK`) only — no password auth, no interactive prompts
+- three upload targets (html, thumbnails, media) run as parallel tasks
+- exclude `.meta` sidecar files from media uploads
 - surface publish progress and failures in the UI
 - detect and surface external file changes that affect open editors or preview accuracy
 

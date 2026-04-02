@@ -11,7 +11,7 @@ Extensions begin only after the core plan is already usable end to end.
 1. No extension may break the core compatibility contract.
 2. Extensions must reuse core models, engines, and persistence rules rather than invent parallel formats.
 3. UI features must still be tied to underlying functionality; no placeholder shells.
-4. AI features remain gated by offline mode and must prefer local models or provide explicit user feedback when unavailable. One-shot AI operations (translation, alt text, title suggestion) are part of core but respect the same offline gating.
+4. AI features remain gated by offline mode and must prefer local models or provide explicit user feedback when unavailable. One-shot AI operations (6 operations: translate post/media, image alt text, post analysis, taxonomy analysis, language detection) are part of core with two configurable OpenAI-compatible endpoints (online + airplane mode), and respect the same offline gating.
 5. Extensions use the same Iced + muda + rfd platform stack as core. No additional UI frameworks.
 
 ## Extension Buckets

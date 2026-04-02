@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Local Preview Server
+-- Scope: core (Wave 4)
 -- Distilled from: src/main/engine/PreviewServer.ts, PageRenderer.ts
 
 use "./template.allium" as template

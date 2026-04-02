@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Media Lifecycle
+-- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/MediaEngine.ts, schema.ts
 
 use "./project.allium" as project

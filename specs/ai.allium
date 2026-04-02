@@ -1,24 +1,22 @@
 -- allium: 1
 -- bDS AI Integration
+-- Scope: core (one-shot operations), extension Bucket C (chat + streaming)
 -- Distilled from: src/main/engine/ChatEngine.ts, ai/providers.ts,
 --   ai/chat.ts, ai/tasks.ts, SecureKeyStore.ts
+-- Note: Rust rewrite simplifies providers to two configurable
+--   OpenAI-compatible endpoints (online + airplane mode),
+--   replacing the TypeScript app's 4 named providers.
 
 use "./post.allium" as post
 use "./media.allium" as media
 
-value AiProvider {
-    kind: opencode_zen | mistral | ollama | lm_studio
-    -- OpenCode Zen: routes claude* to Anthropic Messages API,
-    --   everything else to OpenAI Chat Completions
-    -- Mistral: native Mistral API
-    -- Ollama: localhost:11434, local models
-    -- LM Studio: localhost:1234, local models
-}
-
-value AiModel {
-    provider: AiProvider
-    name: String
-    modalities: Set<String>         -- text, vision, etc.
+entity AiEndpoint {
+    kind: online | airplane
+    url: String
+    api_key: String?                    -- encrypted via SecureKeyStore; null for local models
+    model: String
+    -- online: cloud provider (OpenAI, Anthropic-via-proxy, etc.)
+    -- airplane: local model (Ollama, LM Studio, etc.)
 }
 
 entity SecureKeyStore {
@@ -30,7 +28,7 @@ entity SecureKeyStore {
 
 entity ChatConversation {
     title: String
-    model: String                   -- default: claude-sonnet-4-5
+    model: String
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -47,6 +45,9 @@ entity ChatMessage {
 }
 
 -- One-shot AI tasks (core scope, no streaming)
+-- All use OpenAI Chat Completions wire format.
+-- When airplane_mode: use airplane endpoint. When online: use online endpoint.
+-- When no endpoint configured for current mode: disable AI, show toast.
 
 rule AnalyzeTaxonomy {
     when: AnalyzeTaxonomyRequested(post)
@@ -92,11 +93,11 @@ rule TranslateMedia {
     ensures: MediaTranslationResult(title, alt, caption)
 }
 
--- Chat (extension scope, with streaming and tool use)
+-- Chat (extension Bucket C scope, with streaming and tool use)
 
 rule StartChat {
     when: StartChatRequested(model)
-    ensures: ChatConversation.created(model: model ?? "claude-sonnet-4-5")
+    ensures: ChatConversation.created(model: model)
 }
 
 rule SendChatMessage {
@@ -112,15 +113,26 @@ rule SendChatMessage {
 -- Model catalog
 
 rule RefreshModelCatalog {
-    when: RefreshModelCatalogRequested(provider)
+    when: RefreshModelCatalogRequested(endpoint)
+    -- Queries the endpoint's model list API
     -- 5-minute cache TTL
-    ensures: ModelCatalogUpdated(provider)
+    ensures: ModelCatalogUpdated(endpoint)
 }
 
 invariant AirplaneModeGating {
     -- All AI activities must be gated by airplane (offline) mode
-    -- When offline: either use local model (Ollama/LM Studio) or
-    --   inform the user via toast notification
+    -- When airplane_mode = true: only the airplane endpoint is used
+    -- When airplane_mode = false: the online endpoint is used
+    -- If the active endpoint is not configured: AI is unavailable,
+    --   show toast notification to user
+}
+
+invariant TwoEndpointModel {
+    -- Two configurable OpenAI-compatible endpoints:
+    --   online: for cloud providers (requires API key)
+    --   airplane: for local models (no API key required)
+    -- Both use the OpenAI Chat Completions wire format.
+    -- This replaces the TypeScript app's 4 named provider model.
 }
 
 invariant SecureKeyStorage {

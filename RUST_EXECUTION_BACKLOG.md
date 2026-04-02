@@ -194,10 +194,15 @@ Rules:
 ### `bds-core/ai`
 
 - one-shot AI client: `reqwest` + `serde_json` against OpenAI-compatible Chat Completions endpoint
-- AI-assisted translation operation (translate field content to target language)
+- two-endpoint configuration: online endpoint (URL, API key, model) + airplane mode endpoint (URL, model)
+- AI translate post operation (title, excerpt, content to target language)
+- AI translate media metadata operation (title, alt, caption to target language)
 - AI image description / alt text generation operation
-- AI title suggestion operation
-- AI endpoint configuration model (endpoint URL, API key, model name)
+- AI post analysis operation (title, excerpt, slug suggestion)
+- AI taxonomy analysis operation (tag, category suggestions)
+- AI language detection operation
+- API key storage via OS keychain (macOS Keychain, Windows DPAPI, Linux libsecret)
+- airplane mode gating: block online endpoint, use airplane endpoint or show toast
 - error handling: surface failures as user-visible feedback, never silent
 
 ### `bds-core/engine`
@@ -213,16 +218,17 @@ Rules:
 - preview controls
 - generation progress display
 - render errors and diagnostics
-- AI operation triggers in post editor (title suggestion), translation editor (translate), and media editor (alt text generation)
-- AI endpoint configuration in settings view
+- AI operation triggers in post editor (analysis, taxonomy), translation editor (translate), and media editor (alt text, translate)
+- AI endpoint configuration in settings view (online + airplane mode endpoints)
 
 ### Validation
 
 - golden generated-site comparisons
 - preview route coverage
 - template compatibility suite
-- one-shot AI client tests (mocked endpoint: translation, alt text, title suggestion)
+- one-shot AI client tests (mocked endpoint: all 6 operations)
 - AI endpoint configuration persistence tests
+- AI airplane mode gating tests
 
 ## Milestone M5: Operate And Ship
 

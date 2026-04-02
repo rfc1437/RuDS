@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Semantic Similarity / Embeddings
+-- Scope: extension (Bucket D — Embeddings + Duplicate Detection)
 -- Distilled from: src/main/engine/EmbeddingEngine.ts
 
 use "./post.allium" as post

@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS SSH Publishing
+-- Scope: core (Wave 5)
 -- Distilled from: src/main/engine/PublishEngine.ts
 
 use "./metadata.allium" as meta

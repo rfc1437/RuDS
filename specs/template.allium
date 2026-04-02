@@ -1,5 +1,6 @@
 -- allium: 1
 -- bDS Liquid Template System
+-- Scope: core (Wave 1 data, Wave 4 rendering)
 -- Distilled from: src/main/engine/TemplateEngine.ts, PageRenderer.ts, schema.ts,
 --   bundled starter templates in src/main/engine/templates/
 
