@@ -1,0 +1,252 @@
+# bDS Rust Rewrite — Extension Plan
+
+## Goal
+
+Deliver the rest of current-app parity and the advanced tooling that is valuable, but not required to ship a production-capable Rust replacement for everyday authoring and publishing.
+
+Extensions begin only after the core plan is already usable end to end.
+
+## Extension Principles
+
+1. No extension may break the core compatibility contract.
+2. Extensions must reuse core models, engines, and persistence rules rather than invent parallel formats.
+3. UI features must still be tied to underlying functionality; no placeholder shells.
+4. AI features remain gated by offline mode and must prefer local models or provide explicit user feedback when unavailable. One-shot AI operations (translation, alt text, title suggestion) are part of core but respect the same offline gating.
+5. Extensions use the same Iced + muda + rfd platform stack as core. No additional UI frameworks.
+
+## Extension Buckets
+
+### Bucket A: Git And Validation Tooling
+
+#### Scope
+
+- `GitEngine` via `git2` crate (shell out for LFS operations — no LFS library binding)
+- Git sidebar
+- diff view
+- commit, fetch, pull, push
+- richer site validation views
+- richer metadata diff UI
+
+#### Why extension
+
+Helpful for operators, but not required to create, preview, generate, and publish content.
+
+#### Done when
+
+- users can inspect repo state and diffs from within the app
+- Git actions work reliably enough to replace the current Git tooling
+
+### Bucket B: Import And Migration Tooling
+
+#### Scope
+
+- WXR parser
+- import analysis
+- import execution
+- saved import definitions
+
+#### Why extension
+
+Important onboarding feature, but not required to operate existing bDS projects.
+
+#### Done when
+
+- WordPress import flows are usable and recoverable
+- import results match the current app's expectations closely enough for fixture-based tests
+
+### Bucket C: AI Chat And Tool Use
+
+#### Scope
+
+- chat UI (sidebar panel with conversation history)
+- streaming responses via `reqwest` (SSE / chunked transfer)
+- tool use against local engines (post lookup, media search, template info, etc.)
+- multi-turn conversation management
+- model and credential settings UI (extends the core AI endpoint configuration)
+
+One-shot AI operations (translation, image alt text, title suggestion) are already in core scope. This bucket adds the interactive, conversational AI layer on top.
+
+The AI client extends the core `reqwest` + `serde_json` client with streaming support and tool-call parsing. Works with any OpenAI-compatible endpoint: OpenAI, Anthropic-via-proxy, local Ollama, etc.
+
+#### Hard constraints
+
+- offline mode gates all automatic AI work
+- cloud providers are disabled when offline mode is enabled
+- local providers remain usable when allowed
+- unavailable operations produce explicit user-visible feedback
+
+#### Done when
+
+- AI chat is useful for content-related queries and actions without weakening the app's offline guarantees
+- Streaming and tool use work reliably with at least one OpenAI-compatible provider
+
+### Bucket D: Search, Embeddings, And Duplicate Detection
+
+#### Scope
+
+- ONNX embeddings via `ort` (ONNX Runtime Rust bindings)
+- HNSW vector index via `usearch`
+- semantic search UI
+- duplicate detection UI
+
+#### Why extension
+
+Improves discovery and cleanup, but not required for core publishing flows.
+
+#### Done when
+
+- near-duplicate detection and semantic search are trustworthy on real projects
+
+### Bucket E: Translation QA And Documentation UX
+
+#### Scope
+
+- translation validation engine and report view
+- in-app documentation browser
+- richer scripting docs browser and examples
+
+#### Why extension
+
+Operationally valuable, but the core release can ship with generated markdown docs and without dedicated browsing surfaces.
+
+#### Done when
+
+- translation integrity issues are discoverable before publish
+- docs are comfortably browsable in-app
+
+### Bucket F: Menu Editing And Deep Links
+
+#### Scope
+
+- menu editor UI for OPML/menu documents
+- deep-link protocol handling beyond core app-open behaviors
+
+#### Why extension
+
+Core must read menu documents for rendering compatibility, but editing them can follow once the main authoring path is stable.
+
+#### Done when
+
+- users can inspect and edit menus from the Rust app
+- deep links cover parity flows from the current app
+
+### Bucket G: MCP And Automation Surfaces
+
+#### Scope
+
+- headless CLI maturation
+- MCP server
+- remote automation contracts
+- `NotificationWatcher` / `db_notifications` mechanism for CLI-to-app synchronization
+
+#### Why extension
+
+Useful ecosystem surface, not required to replace the desktop app itself.
+
+#### Done when
+
+- automation consumers can drive the Rust app safely and consistently
+- CLI changes are detected and surfaced to the running desktop app
+
+### Bucket H: Blogmark And Transform Pipeline
+
+#### Scope
+
+- `BlogmarkTransformService`
+- external content capture (bookmarklet) workflow
+- transform script execution chain
+- integration with Lua transform scripts
+
+#### Why extension
+
+Secondary content-capture workflow. Not required for core authoring with existing projects.
+
+#### Done when
+
+- external content can be captured and transformed into posts via the Blogmark pipeline
+- transform scripts execute reliably
+
+### Bucket I: Rich Markdown Editor
+
+#### Scope
+
+- WYSIWYG or hybrid markdown editing (similar to current Milkdown editor)
+- macro syntax preview in editor
+- image insert dialog from linked media
+
+#### Why extension
+
+Core ships with the bds-editor syntax-highlighting plain-text editor and live preview. The current app defaults to a Milkdown WYSIWYG editor, so this is a user-facing regression that should be addressed after core stabilizes.
+
+#### Architecture advantage
+
+The bds-editor crate (ropey + syntect + cosmic-text) built during core provides the foundation for the rich editor. Incremental additions:
+
+- inline rendering of bold/italic/headers via cosmic-text mixed font styles
+- inline image preview via Iced image rendering within the custom widget
+- macro block preview (render macro output inline in the editor)
+- clickable links
+
+This is an evolution of the existing editor widget, not a separate technology decision.
+
+#### Done when
+
+- users can edit content with a rich editor comparable to the current app's Milkdown experience
+
+### Bucket J: A2UI Server-Driven Surfaces
+
+#### Scope
+
+- A2UI component renderer (layout, input, display, chart, etc.)
+- A2UI surface manager for bidirectional data flow
+- integration with AI assistant outputs
+
+#### Why extension
+
+Tightly coupled to the AI feature set (Bucket C). Not required until AI features are active.
+
+#### Done when
+
+- AI-generated dynamic UI surfaces render correctly in the app
+
+## Suggested Extension Ordering
+
+```text
+Bucket A Git + Validation
+  ↓
+Bucket B Import
+  ↓
+Bucket C AI
+  ↓
+Bucket D Embeddings + Duplicates
+  ↓
+Bucket E Translation QA + Docs UX
+  ↓
+Bucket F Menu Editing + Deep Links
+  ↓
+Bucket G MCP + Automation
+  ↓
+Bucket H Blogmark + Transforms
+  ↓
+Bucket I Rich Editor (builds on bds-editor from core)
+  ↓
+Bucket J A2UI Surfaces (after Bucket C)
+```
+
+The ordering is pragmatic, not mandatory. Git and validation are the closest to operational parity, so they should land first after core.
+
+## Extension Verification
+
+Every extension still inherits the core verification baseline plus extension-specific tests:
+
+- Git fixtures for repo state and diff rendering
+- WXR fixtures for import
+- mocked SSE and provider fixtures for AI
+- embedding fixtures for semantic search and duplicate detection
+- translation fixture projects with intentional integrity failures
+- OPML fixtures for menu editing
+
+## Out Of Scope For Now
+
+- cross-platform packaging polish beyond what the core and extension work naturally require
+- feature work that introduces new persistence formats before full parity is reached

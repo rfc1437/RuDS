@@ -1,0 +1,62 @@
+-- allium: 1
+-- bDS SSH Publishing
+-- Distilled from: src/main/engine/PublishEngine.ts
+
+use "./metadata.allium" as meta
+
+entity PublishJob {
+    ssh_host: String
+    ssh_user: String
+    ssh_remote_path: String
+    ssh_mode: scp | rsync
+    status: pending | running | completed | failed
+
+    transitions status {
+        pending -> running
+        running -> completed
+        running -> failed
+    }
+}
+
+value UploadTarget {
+    kind: html | thumbnails | media
+    local_dir: String
+    remote_dir: String
+}
+
+rule UploadSite {
+    when: UploadSiteRequested(project, credentials)
+    -- Three upload targets run as parallel tasks
+    ensures: UploadTargetStarted(html, "html/", credentials.ssh_remote_path, credentials)
+    ensures: UploadTargetStarted(thumbnails, "thumbnails/", credentials.ssh_remote_path + "/thumbnails", credentials)
+    ensures: UploadTargetStarted(media, "media/", credentials.ssh_remote_path + "/media", credentials)
+}
+
+rule UploadViaScp {
+    when: UploadTargetCompleted(target, credentials)
+    requires: credentials.ssh_mode = scp
+    -- mtime-based upload detection: skip unchanged files
+    -- Uses SSH agent (SSH_AUTH_SOCK) for authentication
+    ensures: ScpUploadCompleted(target)
+}
+
+rule UploadViaRsync {
+    when: UploadTargetCompleted(target, credentials)
+    requires: credentials.ssh_mode = rsync
+    -- rsync --update --compress --verbose
+    -- Media uploads exclude .meta sidecar files
+    ensures: RsyncUploadCompleted(target)
+
+    @guidance
+        -- rsync exclude filters for .meta files on media target
+}
+
+invariant MediaSidecarsExcludedFromUpload {
+    -- .meta sidecar files are never uploaded to the remote server
+    -- They are project metadata, not public content
+}
+
+invariant SshAgentAuth {
+    -- Publishing uses SSH_AUTH_SOCK for key-based authentication
+    -- No password prompts, no interactive auth
+}

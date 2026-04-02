@@ -1,0 +1,125 @@
+-- allium: 1
+-- bDS Git Integration
+-- Distilled from: src/main/engine/GitEngine.ts
+
+use "./post.allium" as post
+use "./script.allium" as script
+use "./template.allium" as template
+
+value GitProvider {
+    kind: github | gitlab | gitea_forgejo
+    -- Detected from remote URL patterns
+}
+
+value GitSyncStatus {
+    -- Per-commit: local_only | remote_only | both
+    kind: local_only | remote_only | both
+}
+
+entity GitRepository {
+    is_initialized: Boolean
+    remote_url: String?
+    provider: GitProvider?
+    current_branch: String?
+    has_lfs: Boolean
+}
+
+rule InitializeRepo {
+    when: InitializeRepoRequested(project)
+    ensures: GitRepository.created(is_initialized: true, has_lfs: true)
+    ensures: GitignoreCreated(project)
+        -- .gitignore manages: thumbnails, generated html, node_modules, etc.
+    ensures: LfsTrackingConfigured(project)
+        -- Git LFS auto-tracks image patterns (*.jpg, *.png, *.gif, etc.)
+}
+
+rule GetStatus {
+    when: GitStatusRequested(project)
+    -- Returns file-level status: added, modified, deleted, renamed, untracked
+    ensures: GitStatusReport(files)
+}
+
+rule GetDiff {
+    when: GitDiffRequested(project)
+    ensures: GitDiffReport(staged_diff, unstaged_diff)
+}
+
+rule GetHistory {
+    when: GitHistoryRequested(project, branch)
+    -- Returns commit history with sync status per commit
+    ensures: GitHistoryReport(commits)
+    @guidance
+        -- Each commit annotated with: local_only, remote_only, or both
+        -- This drives the "push needed" / "pull needed" indicators
+}
+
+rule Fetch {
+    when: GitFetchRequested(project)
+    ensures: RemoteRefsUpdated(project)
+}
+
+rule Pull {
+    when: GitPullRequested(project)
+    ensures: LocalBranchUpdated(project)
+    ensures: ReconcileFromGit(project)
+        -- After pull, detect changed files and reconcile DB
+}
+
+rule Push {
+    when: GitPushRequested(project)
+    ensures: RemoteBranchUpdated(project)
+}
+
+rule CommitAll {
+    when: GitCommitAllRequested(project, message)
+    ensures: AllChangesStaged(project)
+    ensures: CommitCreated(project, message)
+}
+
+-- Git reconciliation: sync DB from filesystem changes
+
+rule ReconcileFromGit {
+    when: GitReconcileRequested(project, old_commit, new_commit)
+    -- Detect changed files between commits for posts, scripts, templates
+    let post_changes = changed_post_files(old_commit, new_commit)
+    let script_changes = changed_script_files(old_commit, new_commit)
+    let template_changes = changed_template_files(old_commit, new_commit)
+
+    for added in post_changes.added:
+        ensures: post/Post.created(parse_post_file(added))
+    for modified in post_changes.modified:
+        ensures: PostUpdatedFromFile(modified)
+    for deleted in post_changes.deleted:
+        ensures: PostDeletedByPath(deleted)
+    for renamed in post_changes.renamed:
+        ensures: PostFileRenamed(renamed.old, renamed.new)
+
+    -- Same pattern for scripts and templates
+    for added in script_changes.added:
+        ensures: script/Script.created(parse_script_file(added))
+    for added in template_changes.added:
+        ensures: template/Template.created(parse_template_file(added))
+
+    ensures: EntityChangedEventsEmitted(project)
+}
+
+invariant NonInteractiveGit {
+    -- All git operations run non-interactively:
+    --   GIT_TERMINAL_PROMPT=0
+    --   GCM_INTERACTIVE=never
+    --   ssh -oBatchMode=yes
+    -- No password prompts ever surface to the user
+}
+
+invariant StructuredAuthErrors {
+    -- Auth failures produce structured guidance:
+    --   per platform (macOS/Windows/Linux)
+    --   per provider (GitHub/GitLab/Gitea)
+    -- Instead of raw git error messages
+}
+
+rule PruneLfsCache {
+    when: PruneLfsCacheRequested(project, retain_recent)
+    -- Prunes LFS cache with configurable recent commit retention
+    ensures: LfsCachePruned(project)
+}

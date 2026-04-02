@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Build artifacts
+*.d
+*.o
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Cargo.lock for binaries (keep it committed for applications)
+# Uncomment if this is a library:
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.*

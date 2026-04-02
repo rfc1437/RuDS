@@ -1,0 +1,129 @@
+-- allium: 1
+-- bDS AI Integration
+-- Distilled from: src/main/engine/ChatEngine.ts, ai/providers.ts,
+--   ai/chat.ts, ai/tasks.ts, SecureKeyStore.ts
+
+use "./post.allium" as post
+use "./media.allium" as media
+
+value AiProvider {
+    kind: opencode_zen | mistral | ollama | lm_studio
+    -- OpenCode Zen: routes claude* to Anthropic Messages API,
+    --   everything else to OpenAI Chat Completions
+    -- Mistral: native Mistral API
+    -- Ollama: localhost:11434, local models
+    -- LM Studio: localhost:1234, local models
+}
+
+value AiModel {
+    provider: AiProvider
+    name: String
+    modalities: Set<String>         -- text, vision, etc.
+}
+
+entity SecureKeyStore {
+    -- Encrypts API keys using OS keychain
+    --   macOS: Keychain, Windows: DPAPI, Linux: libsecret
+    -- Stored as base64 in settings table with __encrypted_ prefix
+    -- No plain-text fallback
+}
+
+entity ChatConversation {
+    title: String
+    model: String                   -- default: claude-sonnet-4-5
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    messages: ChatMessage with conversation = this
+}
+
+entity ChatMessage {
+    conversation: ChatConversation
+    role: system | user | assistant | tool
+    content: String
+    token_usage_input: Integer?
+    token_usage_output: Integer?
+    created_at: Timestamp
+}
+
+-- One-shot AI tasks (core scope, no streaming)
+
+rule AnalyzeTaxonomy {
+    when: AnalyzeTaxonomyRequested(post)
+    requires: not airplane_mode
+        -- All AI activities gated by offline mode
+    -- Suggests tags and categories for a post
+    ensures: TaxonomySuggestion(tags, categories)
+}
+
+rule AnalyzeImage {
+    when: AnalyzeImageRequested(media)
+    requires: not airplane_mode
+    requires: is_image(media.mime_type)
+        -- Checks mime type is an image type
+    -- Vision model generates alt text and caption
+    ensures: ImageAnalysisResult(alt, caption)
+}
+
+rule AnalyzePost {
+    when: AnalyzePostRequested(post)
+    requires: not airplane_mode
+    -- Generates title, excerpt, slug suggestions
+    ensures: PostAnalysisResult(title, excerpt, slug)
+}
+
+rule DetectLanguage {
+    when: DetectLanguageRequested(text)
+    requires: not airplane_mode
+    ensures: LanguageDetectionResult(language_code)
+}
+
+rule TranslatePost {
+    when: TranslatePostRequested(post, target_language)
+    requires: not airplane_mode
+    -- Translates title, excerpt, content to target language
+    ensures: TranslationResult(title, excerpt, content)
+}
+
+rule TranslateMedia {
+    when: TranslateMediaRequested(media, target_language)
+    requires: not airplane_mode
+    -- Translates title, alt, caption to target language
+    ensures: MediaTranslationResult(title, alt, caption)
+}
+
+-- Chat (extension scope, with streaming and tool use)
+
+rule StartChat {
+    when: StartChatRequested(model)
+    ensures: ChatConversation.created(model: model ?? "claude-sonnet-4-5")
+}
+
+rule SendChatMessage {
+    when: SendChatMessageRequested(conversation, content)
+    requires: not airplane_mode
+    ensures: ChatMessage.created(conversation: conversation, role: user, content: content)
+    ensures: AiStreamingResponse(conversation)
+        -- AI SDK v6 streamText() with tool-call loop (max 10 rounds)
+        -- Blog data tools for post/media querying during chat
+        -- Token usage tracking (input, output, cache read/write)
+}
+
+-- Model catalog
+
+rule RefreshModelCatalog {
+    when: RefreshModelCatalogRequested(provider)
+    -- 5-minute cache TTL
+    ensures: ModelCatalogUpdated(provider)
+}
+
+invariant AirplaneModeGating {
+    -- All AI activities must be gated by airplane (offline) mode
+    -- When offline: either use local model (Ollama/LM Studio) or
+    --   inform the user via toast notification
+}
+
+invariant SecureKeyStorage {
+    -- API keys are never stored in plain text
+    -- Always encrypted via OS keychain before DB storage
+}

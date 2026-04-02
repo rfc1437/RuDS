@@ -1,0 +1,72 @@
+-- allium: 1
+-- bDS Metadata Diff and Rebuild
+-- Distilled from: src/main/engine/MetadataDiffEngine.ts
+
+use "./post.allium" as post
+use "./media.allium" as media
+use "./script.allium" as script
+use "./template.allium" as template
+
+value DiffField {
+    name: String
+    db_value: String
+    file_value: String
+}
+
+value DiffReport {
+    entity_type: String             -- post, media, script, template
+    entity_id: String
+    differences: List<DiffField>
+}
+
+value OrphanReport {
+    file_path: String
+    -- File exists on disk but has no DB record
+}
+
+rule RunMetadataDiff {
+    when: MetadataDiffRequested(project)
+    -- Runs as background task via TaskManager
+    -- Compares DB records against filesystem files for:
+    --   posts, translations, media, scripts, templates
+    -- Detected fields: tags, categories, title, excerpt, author,
+    --   language, status, templateSlug, dates
+    for post in project.posts:
+        let file_data = parse_post_file(post.file_path)
+        let diffs = compare_fields(post, file_data)
+        if diffs.count > 0:
+            ensures: DiffReport.created(entity_type: "post", entity_id: post.id, differences: diffs)
+
+    -- Detect orphan files (on disk but not in DB)
+    for file in scan_directory(project.effective_data_dir + "/posts", "*.md"):
+        let matching = Posts where file_path = file
+        if matching.count = 0:
+            ensures: OrphanReport.created(file_path: file)
+
+    -- Same pattern for media sidecar files, scripts, templates
+}
+
+rule RebuildFromFilesystem {
+    when: RebuildFromFilesystemRequested(project, entity_type)
+    -- The inverse of metadata diff: filesystem is treated as truth
+    -- Reads all files and upserts into DB
+    ensures:
+        if entity_type = "post":
+            post/RebuildPostsFromFiles(project)
+        if entity_type = "media":
+            media/RebuildMediaFromFiles(project)
+        if entity_type = "script":
+            script/RebuildScriptsFromFiles(project)
+        if entity_type = "template":
+            template/RebuildTemplatesFromFiles(project)
+}
+
+invariant ThreeWaySync {
+    -- Metadata must stay in sync across three representations:
+    --   1. Database records
+    --   2. Filesystem files (frontmatter/sidecars)
+    --   3. Generated site output
+    -- MetadataDiff detects divergence between (1) and (2)
+    -- Rebuild resolves divergence by treating (2) as truth
+    -- Site generation consumes (1) to produce (3)
+}

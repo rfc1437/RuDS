@@ -1,0 +1,59 @@
+-- allium: 1
+-- bDS CLI / App Notification Sync
+-- Distilled from: src/main/engine/CliNotifier.ts, NotificationWatcher.ts
+
+entity DbNotification {
+    entity_type: String             -- post, media, script, template
+    entity_id: String
+    action: created | updated | deleted
+    from_cli: Boolean
+    seen_at: Timestamp?
+    created_at: Timestamp
+
+    -- Derived
+    is_processed: seen_at != null
+}
+
+rule CliWriteNotification {
+    when: CliMutationPerformed(entity_type, entity_id, action)
+    -- CLI inserts notification row; app watches for it
+    ensures: DbNotification.created(
+        entity_type: entity_type,
+        entity_id: entity_id,
+        action: action,
+        from_cli: true,
+        seen_at: null
+    )
+}
+
+rule AppWatchNotifications {
+    when: DbFileChangeDetected()
+    -- Watches SQLite DB file + WAL via filesystem watcher
+    -- Debounced at 100ms
+    let unseen = DbNotifications where seen_at = null and from_cli = true
+    for n in unseen:
+        ensures: n.seen_at = now
+        ensures: EngineCacheInvalidated(n.entity_type)
+        ensures: EntityChangedEvent(n.entity_type, n.entity_id, n.action)
+            -- IPC event to renderer for UI refresh
+}
+
+rule PruneProcessedNotifications {
+    when: n: DbNotification.created_at + 1.hour <= now
+    requires: n.is_processed
+    -- Processed rows: prune after 1 hour
+    ensures: not exists n
+}
+
+rule PruneUnprocessedNotifications {
+    when: n: DbNotification.created_at + 24.hours <= now
+    requires: not n.is_processed
+    -- Unprocessed rows: prune after 24 hours
+    ensures: not exists n
+}
+
+invariant AppNoopNotifier {
+    -- The Electron app uses a no-op notifier for its own writes
+    -- It already knows about its own mutations
+    -- Only CLI writes produce notification rows
+}

@@ -1,0 +1,94 @@
+-- allium: 1
+-- bDS Tag System
+-- Distilled from: src/main/engine/TagEngine.ts, schema.ts
+
+use "./project.allium" as project
+use "./post.allium" as post
+
+entity Tag {
+    project: project/Project
+    name: String
+    color: String?              -- hex color code
+    post_template_slug: String?
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    -- Derived
+    posts: post/Post with this.name in tags
+    post_count: posts.count
+}
+
+invariant UniqueTagNamePerProject {
+    -- Case-insensitive uniqueness
+    for a in Tags:
+        for b in Tags:
+            (a != b and a.project = b.project)
+                implies lowercase(a.name) != lowercase(b.name)
+}
+
+invariant TagsPersistToFilesystem {
+    -- meta/tags.json is the portable format (no internal IDs)
+    -- Must stay in sync with DB tag table
+    parse_json(read_file("meta/tags.json")) = serialize_portable(Tags)
+}
+
+rule CreateTag {
+    when: CreateTagRequested(project, name, color)
+    let existing_tags = Tags where project = project
+    requires: not existing_tags.any(t => lowercase(t.name) = lowercase(name))
+        -- Case-insensitive duplicate check
+    ensures: Tag.created(
+        project: project,
+        name: name,
+        color: color
+    )
+    ensures: TagsFileWritten(project)
+}
+
+rule UpdateTag {
+    when: UpdateTagRequested(tag, changes)
+    ensures: TagFieldsUpdated(tag, changes)
+    ensures: tag.updated_at = now
+    ensures: TagsFileWritten(tag.project)
+}
+
+rule DeleteTag {
+    when: DeleteTagRequested(tag)
+    -- Runs as background task, removes tag from all posts
+    for p in tag.posts:
+        ensures: p.tags = p.tags - {tag.name}
+    ensures: not exists tag
+    ensures: TagsFileWritten(tag.project)
+}
+
+rule RenameTag {
+    when: RenameTagRequested(tag, new_name)
+    -- Runs as background task
+    let old_name = tag.name
+    for p in tag.posts:
+        ensures: p.tags = (p.tags - {old_name}) + {new_name}
+    ensures: tag.name = new_name
+    ensures: TagsFileWritten(tag.project)
+}
+
+rule MergeTags {
+    when: MergeTagsRequested(sources, target)
+    -- Runs as background task
+    -- Merges multiple source tags into a single target
+    requires: sources.count >= 1
+    for source in sources:
+        for p in source.posts:
+            ensures: p.tags = (p.tags - {source.name}) + {target.name}
+        ensures: not exists source
+    ensures: TagsFileWritten(target.project)
+}
+
+rule SyncTagsFromPosts {
+    when: SyncTagsFromPostsRequested(project)
+    -- Discovers tags used in posts that are not in the tags table
+    for post in project.posts:
+        for tag_name in post.tags:
+            if not exists Tag{project: project, name: tag_name}:
+                ensures: Tag.created(project: project, name: tag_name)
+    ensures: TagsFileWritten(project)
+}

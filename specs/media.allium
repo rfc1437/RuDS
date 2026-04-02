@@ -1,0 +1,148 @@
+-- allium: 1
+-- bDS Media Lifecycle
+-- Distilled from: src/main/engine/MediaEngine.ts, schema.ts
+
+use "./project.allium" as project
+
+value ThumbnailSet {
+    small: String       -- 150px width (binary path)
+    medium: String      -- 400px width (binary path)
+    large: String       -- 800px width (binary path)
+    ai: String          -- 448x448 JPEG for vision models (binary path)
+}
+
+value SidecarFile {
+    -- {media_file}.meta (YAML-like key-value format)
+    -- Fields: title, alt, caption, author, tags, language, linkedPostIds
+    -- Translations: {media_file}.{lang}.meta
+    path: String
+}
+
+entity Media {
+    project: project/Project
+    filename: String
+    original_name: String
+    mime_type: String
+    size: Integer
+    width: Integer?
+    height: Integer?
+    title: String?
+    alt: String?
+    caption: String?
+    author: String?
+    language: String?
+    file_path: String
+    sidecar_path: String
+    checksum: String?
+    tags: Set<String>
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    -- Relationships
+    translations: MediaTranslation with media = this
+    linked_posts: PostMediaLink with media_id = this.id
+
+    -- Derived
+    available_languages: translations -> language
+    thumbnails: ThumbnailSet
+}
+
+entity MediaTranslation {
+    media: Media
+    language: String
+    title: String?
+    alt: String?
+    caption: String?
+}
+
+invariant UniqueMediaTranslation {
+    for a in MediaTranslations:
+        for b in MediaTranslations:
+            (a != b and a.media = b.media) implies a.language != b.language
+}
+
+invariant DateBasedMediaLayout {
+    for m in Media:
+        m.file_path = format("media/{yyyy}/{mm}/{uuid}.{ext}",
+            yyyy: m.created_at.year,
+            mm: m.created_at.month_padded,
+            uuid: stem(m.filename),
+            ext: extension(m.filename))
+}
+
+rule ImportMedia {
+    when: ImportMediaRequested(project, source_file)
+    let uuid_name = generate_uuid() + extension(source_file)
+    let dest = format("media/{yyyy}/{mm}/{uuid_name}",
+        yyyy: now.year, mm: now.month_padded)
+    ensures: Media.created(
+        project: project,
+        filename: uuid_name,
+        original_name: source_file.name,
+        mime_type: detect_mime(source_file),
+        size: source_file.size,
+        width: detect_width(source_file),
+        height: detect_height(source_file),
+        file_path: dest,
+        tags: {}
+    )
+    ensures: FileCopied(source_file, dest)
+    ensures: SidecarWritten(media)
+    ensures: ThumbnailsGenerated(media)
+    ensures: SearchIndexUpdated(media)
+}
+
+rule UpdateMedia {
+    when: UpdateMediaRequested(media, changes)
+    ensures: MediaFieldsUpdated(media, changes)
+    ensures: media.updated_at = now
+    ensures: SidecarWritten(media)
+        -- Metadata changes flush to .meta sidecar
+    ensures: SearchIndexUpdated(media)
+}
+
+rule DeleteMedia {
+    when: DeleteMediaRequested(media)
+    ensures: not exists media
+    ensures: MediaFileDeleted(media)
+    ensures: SidecarDeleted(media)
+    ensures: ThumbnailsDeleted(media)
+    ensures:
+        for t in media.translations:
+            not exists t
+    ensures: SearchIndexUpdated(media)
+}
+
+rule UpsertMediaTranslation {
+    when: UpsertMediaTranslationRequested(media, language, title, alt, caption)
+    ensures: MediaTranslation.created(
+        media: media,
+        language: language,
+        title: title,
+        alt: alt,
+        caption: caption
+    )
+    ensures: TranslationSidecarWritten(media, language)
+        -- Writes {file}.{lang}.meta
+}
+
+rule RebuildMediaFromFiles {
+    when: RebuildMediaFromFilesRequested(project)
+    -- Scans media directory for .meta sidecars, reimports to DB
+    for sidecar in scan_directory(project.effective_data_dir + "/media", "*.meta"):
+        let parsed = parse_sidecar(sidecar)
+        ensures: Media.created(parsed)
+            -- or updated if already exists
+    @guidance
+        -- This is the filesystem-to-DB reconciliation path
+        -- Used after git pull or manual file changes
+}
+
+invariant SidecarRoundtrip {
+    -- Sidecar files faithfully represent DB metadata
+    for m in Media:
+        parse_sidecar(m.sidecar_path).title = m.title
+        parse_sidecar(m.sidecar_path).alt = m.alt
+        parse_sidecar(m.sidecar_path).caption = m.caption
+        parse_sidecar(m.sidecar_path).tags = m.tags
+}

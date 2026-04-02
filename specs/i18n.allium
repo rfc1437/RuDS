@@ -1,0 +1,52 @@
+-- allium: 1
+-- bDS Internationalization
+-- Distilled from: src/main/shared/i18n.ts, i18n/locales/*.json
+
+value SupportedLanguage {
+    code: String
+    -- en, de, fr, it, es
+    flag: String
+    -- en=GB, de=DE, fr=FR, it=IT, es=ES
+}
+
+config {
+    supported_languages: Set<SupportedLanguage> = {
+        SupportedLanguage(code: "en", flag: "GB"),
+        SupportedLanguage(code: "de", flag: "DE"),
+        SupportedLanguage(code: "fr", flag: "FR"),
+        SupportedLanguage(code: "it", flag: "IT"),
+        SupportedLanguage(code: "es", flag: "ES")
+    }
+    default_language: String = "en"
+}
+
+invariant SplitLocalization {
+    -- Two independent locale scopes:
+    --   1. UI locale: follows OS system locale
+    --   2. Content/render locale: follows project settings (mainLanguage)
+    -- These are resolved independently and may differ
+}
+
+invariant LanguageNormalization {
+    -- Input language codes are normalized:
+    --   Take base language code (split on '-'): "en-US" -> "en"
+    --   Fall back to "en" if unrecognized
+}
+
+invariant MenuTranslations {
+    -- Menu item labels are separately translatable
+    -- translateMenu() uses render locale, not UI locale
+}
+
+invariant RenderTranslations {
+    -- Template rendering i18n strings (date formats, archive labels,
+    --   "older posts", "newer posts", etc.) come from locale JSON files
+    -- translateRender() and getRenderTranslations() provide these
+}
+
+-- Stemmer language support for search (broader than UI languages)
+invariant SnowballStemmerCoverage {
+    -- 24 languages supported for FTS5 search stemming
+    -- ISO 639-1 mapped to Snowball stemmer names
+    -- All 5 UI languages are a subset of stemmer languages
+}

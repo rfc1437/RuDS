@@ -1,0 +1,146 @@
+-- allium: 1
+-- bDS Static Site Generation
+-- Distilled from: src/main/engine/BlogGenerationEngine.ts,
+--   PageRenderer.ts, GenerationWorkerPool, RoutePageGenerationService
+
+use "./post.allium" as post
+use "./template.allium" as template
+use "./metadata.allium" as meta
+use "./menu.allium" as menu
+use "./translation.allium" as translation
+
+value GenerationSection {
+    kind: core | single | category | tag | date
+}
+
+value GeneratedFile {
+    relative_path: String
+    content_hash: String
+}
+
+entity SiteGeneration {
+    project_id: String
+    base_url: String
+    language: String                    -- main language
+    blog_languages: Set<String>
+    max_posts_per_page: Integer
+    pico_theme: String?
+    sections: Set<GenerationSection>
+
+    -- Output tracking
+    generated_files: GeneratedFile with project_id = this.project_id
+}
+
+invariant IncrementalByContentHash {
+    -- Files are only written when content_hash changes
+    -- generatedFileHashes table tracks (projectId, relativePath, contentHash)
+    -- A file with unchanged hash is skipped on regeneration
+}
+
+invariant MultiLanguageRoutes {
+    -- Main language: flat routes (/{yyyy}/{mm}/{dd}/{slug})
+    -- Additional languages: prefixed (/{lang}/{yyyy}/{mm}/{dd}/{slug})
+    -- Each language subtree gets its own feeds and archives
+}
+
+-- Core section: root pages, sitemap, RSS, Atom, calendar.json
+
+rule GenerateCoreSectionPages {
+    when: GenerateSiteRequested(generation)
+    requires: core in generation.sections
+    ensures: FileGenerated("index.html")
+    ensures: FileGenerated("sitemap.xml")
+        -- Multi-language sitemap with hreflang alternates
+    ensures: FileGenerated("feed.xml")
+        -- RSS 2.0 feed
+    ensures: FileGenerated("atom.xml")
+        -- Atom feed
+    ensures: FileGenerated("calendar.json")
+        -- Post dates for calendar widget
+    for lang in generation.blog_languages - {generation.language}:
+        ensures: FileGenerated(format("{lang}/index.html", lang: lang))
+        ensures: FileGenerated(format("{lang}/feed.xml", lang: lang))
+        ensures: FileGenerated(format("{lang}/atom.xml", lang: lang))
+}
+
+-- Single section: one HTML page per published post
+
+rule GenerateSinglePostPages {
+    when: GenerateSiteRequested(generation)
+    requires: single in generation.sections
+    for p in Posts where status = published:
+        let url = post_canonical_url(p)
+        ensures: FileGenerated(format("{url}/index.html", url: url))
+        for lang in generation.blog_languages - {generation.language}:
+            if p.translations.any(t => t.language.code = lang):
+                ensures: FileGenerated(format("{lang}/{url}/index.html",
+                    lang: lang, url: url))
+}
+
+-- Category section: paginated archive per category
+
+rule GenerateCategoryPages {
+    when: GenerateSiteRequested(generation)
+    requires: category in generation.sections
+    for cat in generation.categories:
+        let page_count = ceil(posts_in_category(cat).count / generation.max_posts_per_page)
+        ensures: FileGenerated(format("category/{cat}/index.html", cat: cat))
+        for page in page_range(2, page_count):
+            ensures: FileGenerated(format("category/{cat}/page/{page}/index.html",
+                cat: cat, page: page))
+}
+
+-- Tag section: paginated archive per tag
+
+rule GenerateTagPages {
+    when: GenerateSiteRequested(generation)
+    requires: tag in generation.sections
+    for t in Tags where post_count > 0:
+        ensures: FileGenerated(format("tag/{slug}/index.html", slug: slugify(t.name)))
+}
+
+-- Date section: year and month archives
+
+rule GenerateDateArchivePages {
+    when: GenerateSiteRequested(generation)
+    requires: date in generation.sections
+    for year in distinct_years(Posts):
+        ensures: FileGenerated(format("{year}/index.html", year: year))
+        for month in distinct_months(Posts, year):
+            ensures: FileGenerated(format("{year}/{month}/index.html",
+                year: year, month: month))
+}
+
+-- Template rendering context
+
+rule RenderPage {
+    when: PageRenderRequested(template, context)
+    -- LiquidJS rendering with full context:
+    --   posts, pagination, menus, tags, categories,
+    --   project metadata, i18n translations, theme settings
+    -- Macro expansion: [[slug param1=value1 ...]] in post content
+    -- HTML rewriting for canonical post/media paths
+    ensures: RenderedHtml(template, context, output)
+}
+
+-- Validation
+
+rule ValidateSite {
+    when: ValidateSiteRequested(project)
+    -- Compares sitemap URLs to HTML files on disk
+    -- Detects: missing pages, extra (stale) pages, sitemap/file mismatches
+    ensures: ValidationReport(missing_pages, extra_pages, stale_pages)
+}
+
+rule ApplyValidation {
+    when: ApplyValidationRequested(project, report)
+    -- Targeted re-rendering for affected sections only
+    for section in report.affected_sections:
+        ensures: GenerateSiteRequested(project, sections: {section})
+}
+
+-- Day-block grouping for archives
+invariant ArchiveDayBlocks {
+    -- Archive/list pages group posts by day
+    -- Each day block has a date header and the posts for that day
+}

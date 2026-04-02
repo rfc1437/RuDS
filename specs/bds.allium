@@ -1,0 +1,59 @@
+-- allium: 1
+-- bDS (Blogging Desktop Server) — Axiom Specification
+-- Distilled from TypeScript implementation at ../bDS/
+-- This is the behavioural baseline for the Rust rewrite (RuDS)
+
+-- An offline-first desktop application for blog authoring with
+-- static site generation, SSH publishing, AI integration, and
+-- external tool integration via MCP.
+
+-- Core domain
+use "./project.allium" as project           -- Multi-project management
+use "./post.allium" as post                 -- Post lifecycle, frontmatter, file layout
+use "./media.allium" as media               -- Media import, thumbnails, sidecars
+use "./translation.allium" as translation   -- Post and media translations
+use "./tag.allium" as tag                   -- Tags with mass operations
+use "./template.allium" as template         -- Liquid template management
+use "./script.allium" as script             -- Scripting (macros, utilities, transforms)
+use "./menu.allium" as menu                 -- OPML navigation menu
+use "./metadata.allium" as metadata         -- Project config, categories, publishing prefs
+
+-- Infrastructure
+use "./search.allium" as search             -- FTS5 full-text search with Snowball stemming
+use "./generation.allium" as generation     -- Static site generation (sections, routes, hashing)
+use "./preview.allium" as preview           -- Local HTTP preview server
+use "./publishing.allium" as publishing     -- SSH upload (SCP / rsync)
+use "./task.allium" as task                 -- Background task manager
+use "./i18n.allium" as i18n                 -- Split localization (UI vs content)
+
+-- Integration
+use "./git.allium" as git                   -- Git operations, LFS, reconciliation
+use "./mcp.allium" as mcp                   -- MCP server (tools, resources, proposals)
+use "./ai.allium" as ai                     -- AI one-shot tasks and chat
+use "./embedding.allium" as embedding       -- Semantic similarity (HNSW vectors)
+use "./cli_sync.allium" as cli_sync         -- CLI-to-app notification sync
+use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuild
+
+-- Compatibility contract (from RUST_PLAN.md)
+--
+-- MUST stay identical:
+--   SQLite schema semantics, post markdown frontmatter,
+--   translation file naming, media sidecars, thumbnail conventions,
+--   template file formats, menu OPML, generated routes/feeds/sitemaps,
+--   FTS5 search behaviour, slug generation, metadata diff, rebuild-from-filesystem
+--
+-- MAY change intentionally:
+--   Implementation language (TS -> Rust), editor (WYSIWYG -> plain text + preview),
+--   scripting runtime (Python -> Lua), process model (Electron -> native),
+--   UI framework (React -> Iced)
+
+-- Resolved questions:
+--
+-- 1. Slug generation scope: only German and English letters are used.
+--    Verify deunicode handles ä/ö/ü/ß/ÄÖÜ correctly against transliteration npm.
+--
+-- 2. Liquid subset: see template.allium for the exact subset.
+--    Only 5 tags, 4 standard filters, 2 custom filters, 5 operators.
+--
+-- 3. Macro calling convention: [[macroslug param1=value1 ...]]
+--    Double-bracket syntax, not Liquid tags. Identical to current app.

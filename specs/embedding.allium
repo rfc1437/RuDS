@@ -1,0 +1,92 @@
+-- allium: 1
+-- bDS Semantic Similarity / Embeddings
+-- Distilled from: src/main/engine/EmbeddingEngine.ts
+
+use "./post.allium" as post
+use "./tag.allium" as tag
+
+value EmbeddingVector {
+    dimensions: Integer             -- 384 (multilingual-e5-small)
+    values: List<Decimal>
+}
+
+entity EmbeddingKey {
+    label: Integer                  -- HNSW label for USearch
+    post: post/Post
+    content_hash: String            -- Skip re-embedding unchanged posts
+    vector: EmbeddingVector
+}
+
+entity DismissedDuplicatePair {
+    post_a: post/Post
+    post_b: post/Post
+}
+
+config {
+    model: String = "multilingual-e5-small"
+    embedding_dimensions: Integer = 384
+    debounce_persist: Duration = 5.seconds
+}
+
+rule ReindexAll {
+    when: ReindexAllRequested(project)
+    -- Re-embeds all posts, rebuilds HNSW index
+    for p in project.posts:
+        ensures: EmbeddingKeyUpdated(p)
+    ensures: HnswIndexRebuilt(project)
+}
+
+rule IndexUnindexed {
+    when: IndexUnindexedRequested(project)
+    -- Only embeds posts without existing embeddings or with changed content_hash
+    for p in project.posts:
+        let existing = EmbeddingKey{post: p}
+        if not exists existing or existing.content_hash != p.checksum:
+            ensures: EmbeddingKeyUpdated(p)
+}
+
+rule FindSimilar {
+    when: FindSimilarRequested(post, limit)
+    -- HNSW vector search via USearch
+    -- Returns ranked list of similar posts with similarity scores
+    ensures: SimilarPostsResult(post, ranked_matches)
+}
+
+rule SuggestTags {
+    when: SuggestTagsRequested(post)
+    -- Uses semantic similarity to find related posts,
+    -- then aggregates their tags as suggestions
+    ensures: TagSuggestionResult(post, suggested_tags)
+}
+
+rule FindDuplicates {
+    when: FindDuplicatesRequested(project)
+    -- Finds near-duplicate post pairs above similarity threshold
+    -- Includes exact-match detection
+    -- Excludes dismissed pairs
+    let all_pairs = compute_all_similarities(project)
+    let above_threshold = filter_above_threshold(all_pairs)
+    let pairs = exclude_dismissed(above_threshold, DismissedDuplicatePairs)
+    ensures: DuplicateReport(pairs)
+}
+
+rule DismissDuplicatePair {
+    when: DismissDuplicatePairRequested(post_a, post_b)
+    ensures: DismissedDuplicatePair.created(post_a: post_a, post_b: post_b)
+}
+
+invariant ContentHashSkipsUnchanged {
+    -- If a post's content_hash matches the stored embedding's content_hash,
+    -- the post is not re-embedded. This makes bulk re-indexing efficient.
+}
+
+invariant DebouncedPersistence {
+    -- USearch index persistence is debounced at 5 seconds
+    -- Prevents excessive disk I/O during bulk operations
+}
+
+invariant VectorCacheInDb {
+    -- Vector cache persisted as BLOB in embedding_keys table
+    -- Float32Array, 384 dimensions per vector
+    -- Enables instant reload without re-embedding
+}

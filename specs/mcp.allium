@@ -1,0 +1,256 @@
+-- allium: 1
+-- bDS MCP Server (Model Context Protocol)
+-- Distilled from: src/main/engine/MCPServer.ts, ProposalStore, MCPAgentConfigEngine.ts
+
+use "./post.allium" as post
+use "./media.allium" as media
+use "./script.allium" as script
+use "./template.allium" as template
+
+entity McpServer {
+    transport: http | stdio
+    host: String                        -- 127.0.0.1 for HTTP
+    port: Integer                       -- 4124 for HTTP
+    is_running: Boolean
+}
+
+entity Proposal {
+    kind: draft_post | propose_script | propose_template | propose_media_metadata | propose_post_metadata
+    status: pending | accepted | discarded | expired
+    entity_id: String
+    data: String
+    created_at: Timestamp
+    expires_at: Timestamp
+
+    -- Derived
+    is_expired: expires_at <= now
+
+    transitions status {
+        pending -> accepted
+        pending -> discarded
+        pending -> expired
+    }
+}
+
+config {
+    http_port: Integer = 4124
+    proposal_ttl_app: Duration = 30.minutes
+    proposal_ttl_cli: Duration = 8.hours
+}
+
+invariant LocalhostOnlyHttp {
+    -- HTTP transport binds to 127.0.0.1 only
+    -- Origin validation: localhost only
+    -- CORS headers present
+}
+
+invariant StatelessHttpHandling {
+    -- Each HTTP request creates a fresh McpServer instance
+    -- No session state between requests
+}
+
+-- Read-only resources (bds:// scheme)
+
+surface PostsResource {
+    facing viewer: McpClient
+    context posts: Posts
+    exposes:
+        for p in posts:
+            p.id
+            p.title
+            p.slug
+            p.status
+            p.tags
+            p.categories
+            p.created_at
+            p.backlinks
+            p.outlinks
+    @guidance
+        -- Paginated: 50 per page, base64url cursor
+        -- bds://posts, bds://posts?cursor={cursor}
+}
+
+surface MediaResource {
+    facing viewer: McpClient
+    context media_items: Media
+    exposes:
+        for m in media_items:
+            m.id
+            m.filename
+            m.title
+            m.alt
+            m.caption
+            m.tags
+    @guidance
+        -- bds://media, bds://media?cursor={cursor}
+}
+
+surface TagsResource {
+    facing viewer: McpClient
+    context tags: Tags
+    exposes:
+        for t in tags:
+            t.name
+            t.color
+            t.post_count
+    @guidance
+        -- bds://tags
+}
+
+surface CategoriesResource {
+    facing viewer: McpClient
+    context categories: Categories
+    exposes:
+        for c in categories:
+            c.name
+            c.post_count
+    @guidance
+        -- bds://categories
+}
+
+-- Read-only tools
+
+rule CheckTerm {
+    when: McpToolInvoked("check_term", term)
+    -- Disambiguates a term as category, tag, or both
+    -- Returns post counts for each
+    let is_category = is_category_term(term)
+    let is_tag = is_tag_term(term)
+    ensures: TermCheckResult(
+        is_category: is_category,
+        category_post_count: if is_category: category_post_count(term) else: 0,
+        is_tag: is_tag,
+        tag_post_count: if is_tag: tag_post_count(term) else: 0
+    )
+}
+
+rule SearchPosts {
+    when: McpToolInvoked("search_posts", params)
+    -- Full-text + filtered search with pagination envelope
+    -- Params: query, category, tags[], language, missingTranslationLanguage,
+    --   year, month, status, offset, limit
+    -- Returns: { total, offset, limit, hasMore, posts[] }
+    -- Each post includes backlinks[] and linksTo[]
+    ensures: SearchEnvelope(results)
+}
+
+rule CountPosts {
+    when: McpToolInvoked("count_posts", params)
+    -- Grouped counts by: year, month, tag, category, status
+    -- Params: groupBy[], optional filters
+    ensures: GroupedCounts(results)
+}
+
+rule ReadPostBySlug {
+    when: McpToolInvoked("read_post_by_slug", slug, language)
+    -- Full post content by slug
+    -- Optional language parameter for translation view
+    ensures: FullPostContent(post)
+}
+
+-- Write tools (proposal-based)
+
+rule DraftPost {
+    when: McpToolInvoked("draft_post", params)
+    -- Creates a draft post in DB
+    -- Returns proposalId for accept/discard lifecycle
+    ensures:
+        let new_post = post/Post.created(
+            title: params.title,
+            content: params.content,
+            status: draft
+        )
+        Proposal.created(kind: draft_post, entity_id: new_post.id, status: pending)
+}
+
+rule ProposeScript {
+    when: McpToolInvoked("propose_script", params)
+    requires: ValidateScript(params.content) = valid
+    ensures:
+        let new_script = script/Script.created(
+            title: params.title,
+            kind: params.kind,
+            content: params.content,
+            status: draft
+        )
+        Proposal.created(kind: propose_script, entity_id: new_script.id, status: pending)
+}
+
+rule ProposeTemplate {
+    when: McpToolInvoked("propose_template", params)
+    requires: ValidateLiquid(params.content) = valid
+    ensures:
+        let new_template = template/Template.created(
+            title: params.title,
+            kind: params.kind,
+            content: params.content,
+            status: draft
+        )
+        Proposal.created(kind: propose_template, entity_id: new_template.id, status: pending)
+}
+
+rule ProposeMediaMetadata {
+    when: McpToolInvoked("propose_media_metadata", params)
+    ensures: Proposal.created(kind: propose_media_metadata, entity_id: params.media_id, data: params, status: pending)
+}
+
+rule ProposePostMetadata {
+    when: McpToolInvoked("propose_post_metadata", params)
+    ensures: Proposal.created(kind: propose_post_metadata, entity_id: params.post_id, data: params, status: pending)
+}
+
+-- Proposal lifecycle
+
+rule AcceptProposal {
+    when: AcceptProposalRequested(proposal)
+    requires: not proposal.is_expired
+    ensures:
+        if proposal.kind = draft_post:
+            post/PublishPostRequested(proposal.entity_id)
+        if proposal.kind = propose_script:
+            script/PublishScriptRequested(proposal.entity_id)
+        if proposal.kind = propose_template:
+            template/PublishTemplateRequested(proposal.entity_id)
+        if proposal.kind = propose_media_metadata:
+            media/UpdateMediaRequested(proposal.entity_id, proposal.data)
+        if proposal.kind = propose_post_metadata:
+            post/UpdatePostRequested(proposal.entity_id, proposal.data)
+        not exists proposal
+}
+
+rule DiscardProposal {
+    when: DiscardProposalRequested(proposal)
+    ensures:
+        if proposal.kind = draft_post:
+            post/DeletePostRequested(proposal.entity_id)
+        if proposal.kind = propose_script:
+            script/DeleteScriptRequested(proposal.entity_id)
+        if proposal.kind = propose_template:
+            template/DeleteTemplateRequested(proposal.entity_id)
+        not exists proposal
+}
+
+rule ExpireProposal {
+    when: proposal: Proposal.is_expired becomes true
+    -- On expiry: clean up draft DB rows
+    ensures: DiscardProposalRequested(proposal)
+}
+
+-- Agent configuration
+
+value McpAgentKind {
+    -- Supported: claude_code, claude_desktop, github_copilot,
+    --   gemini_cli, opencode, mistral_vibe, openai_codex
+    kind: String
+}
+
+rule InstallAgentConfig {
+    when: InstallAgentConfigRequested(agent_kind)
+    -- Writes stdio MCP server config into the agent's config file
+    ensures: AgentConfigInstalled(agent_kind)
+}
+
+rule UninstallAgentConfig {
+    when: UninstallAgentConfigRequested(agent_kind)
+    ensures: AgentConfigRemoved(agent_kind)
+}

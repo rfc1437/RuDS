@@ -1,0 +1,112 @@
+-- allium: 1
+-- bDS Scripting System
+-- Distilled from: src/main/engine/ScriptEngine.ts, schema.ts
+-- Note: TypeScript app uses Python/Pyodide. Rust rewrite uses Lua.
+-- Behavioural contract is identical; only runtime changes.
+
+entity Script {
+    slug: String
+    title: String
+    kind: macro | utility | transform
+    entrypoint: String          -- default: "render" for macros
+    enabled: Boolean
+    status: draft | published
+    content: String?
+    version: Integer
+    file_path: String
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    -- Derived
+    content_location: if status = published: file_path else: content
+
+    transitions status {
+        draft -> published
+        published -> draft
+    }
+}
+
+invariant UniqueScriptSlug {
+    for a in Scripts:
+        for b in Scripts:
+            a != b implies a.slug != b.slug
+}
+
+invariant ScriptFileLayout {
+    for s in Scripts where file_path != "":
+        s.file_path = format("scripts/{slug}.lua", slug: s.slug)
+}
+-- TypeScript app uses .py with triple-quote docstring frontmatter
+-- Rust app uses .lua with standard --- frontmatter
+
+rule CreateScript {
+    when: CreateScriptRequested(title, kind, content, entrypoint)
+    let slug = slugify(title)
+    ensures: Script.created(
+        slug: slug,
+        title: title,
+        kind: kind,
+        content: content,
+        entrypoint: entrypoint ?? "render",
+        status: draft,
+        enabled: true,
+        version: 1,
+        file_path: ""
+    )
+}
+
+rule PublishScript {
+    when: PublishScriptRequested(script)
+    requires: ValidateScript(script.content) = valid
+        -- AST parsing must succeed
+    ensures: script.status = published
+    ensures: ScriptFileWritten(script)
+    ensures: script.content = null
+}
+
+rule DeleteScript {
+    when: DeleteScriptRequested(script)
+    ensures: not exists script
+    ensures: ScriptFileDeleted(script)
+}
+
+-- Script execution contracts by kind
+
+rule ExecuteMacro {
+    when: MacroExpansionRequested(script, template_context)
+    requires: script.kind = macro
+    requires: script.enabled = true
+    -- Macro scripts are invoked during template rendering
+    -- via [[slug param1=value1 param2=value2]] syntax in post content
+    -- They receive named parameters and the template context, return HTML
+    ensures: MacroOutputProduced(script, html_output)
+}
+
+rule ExecuteUtility {
+    when: RunUtilityRequested(script)
+    requires: script.kind = utility
+    requires: script.enabled = true
+    -- Runs on-demand from the UI, produces stdout output
+    ensures: UtilityOutputProduced(script, stdout)
+}
+
+rule ExecuteTransform {
+    when: BlogmarkReceived(data)
+    -- Transform scripts run sequentially on blogmark deep link data
+    -- Input: title, content, tags, categories, source url
+    -- Each transform can modify the data before post creation
+    let transforms = Scripts where kind = transform and enabled = true
+    for t in ordered_by(transforms, s => s.slug):
+        ensures: TransformApplied(t, data)
+
+    @guidance
+        -- bds://new-post deep links from browser bookmarks
+        -- Max 5 toast notifications per script, 20 total
+}
+
+rule RebuildScriptsFromFiles {
+    when: RebuildScriptsFromFilesRequested(project)
+    for file in scan_directory(project.effective_data_dir + "/scripts", "*.lua"):
+        let parsed = parse_script_file(file)
+        ensures: Script.created(parsed)
+}

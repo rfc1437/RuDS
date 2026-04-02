@@ -1,0 +1,73 @@
+-- allium: 1
+-- bDS Project Management
+-- Distilled from: src/main/engine/ProjectEngine.ts, schema.ts
+
+entity Project {
+    name: String
+    slug: String
+    description: String?
+    data_path: String?
+    is_active: Boolean
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    -- Relationships
+    posts: Post with project = this
+    media: Media with project = this
+    tags: Tag with project = this
+
+    -- Derived
+    internal_base_dir: String
+        -- {user_data}/projects/{id}/
+        -- Contains: meta/, thumbnails/, tags.json
+    effective_data_dir: data_path ?? internal_base_dir
+        -- Custom data path overrides default
+}
+
+invariant SingleActiveProject {
+    -- Exactly one project is active at any time
+    let active = Projects where is_active
+    active.count = 1
+}
+
+invariant UniqueProjectSlug {
+    for a in Projects:
+        for b in Projects:
+            a != b implies a.slug != b.slug
+}
+
+rule CreateProject {
+    when: CreateProjectRequested(name, data_path)
+    let slug = slugify(name)
+    ensures: Project.created(
+        name: name,
+        slug: slug,
+        data_path: data_path,
+        is_active: false
+    )
+    ensures: StarterTemplatesCopied(project)
+        -- Bundled starter templates are copied into the new project
+}
+
+rule SetActiveProject {
+    when: SetActiveProjectRequested(project)
+    let previous = Projects where is_active = true
+    ensures:
+        for p in previous:
+            p.is_active = false
+    ensures: project.is_active = true
+}
+
+rule DeleteProject {
+    when: DeleteProjectRequested(project)
+    requires: project != default_project
+        -- The default project cannot be deleted
+    ensures: not exists project
+    @guidance
+        -- deleteProjectWithData removes DB rows + internal directory
+        -- but preserves external data at custom data_path
+}
+
+config {
+    default_project_name: String = "My Blog"
+}

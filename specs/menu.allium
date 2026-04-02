@@ -1,0 +1,39 @@
+-- allium: 1
+-- bDS Navigation Menu
+-- Distilled from: src/main/engine/MenuEngine.ts
+
+value MenuItem {
+    kind: page | submenu | category_archive | home
+    label: String
+    slug: String?
+    children: List<MenuItem>?       -- only for submenu kind
+}
+
+entity Menu {
+    items: List<MenuItem>
+
+    -- Derived
+    home_items: items where kind = home
+    home_entry: home_items.first
+}
+
+invariant HomeAlwaysPresent {
+    -- The menu always has a Home entry, extracted and prepended
+    for menu in Menus:
+        menu.items.first.kind = home
+}
+
+invariant MenuPersistedAsOpml {
+    -- meta/menu.opml is the canonical storage format
+    -- Uses OPML with outline elements for each item
+    parse_opml(read_file("meta/menu.opml")) = menu.items
+}
+
+rule UpdateMenu {
+    when: UpdateMenuRequested(menu, items)
+    -- Normalizes Home entry: extracts from items, prepends
+    let without_home = items where kind != home
+    let home = MenuItem{kind: home, label: "Home"}
+    ensures: menu.items = build_menu_items(home, without_home)
+    ensures: MenuFileWritten(menu)
+}

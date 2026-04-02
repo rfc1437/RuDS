@@ -1,0 +1,86 @@
+-- allium: 1
+-- bDS Local Preview Server
+-- Distilled from: src/main/engine/PreviewServer.ts, PageRenderer.ts
+
+use "./template.allium" as template
+use "./generation.allium" as generation
+
+entity PreviewServer {
+    host: String                -- 127.0.0.1
+    port: Integer               -- 4123
+    is_running: Boolean
+}
+
+config {
+    preview_host: String = "127.0.0.1"
+    preview_port: Integer = 4123
+}
+
+rule StartPreview {
+    when: StartPreviewRequested(project)
+    ensures: PreviewServer.created(
+        host: config.preview_host,
+        port: config.preview_port,
+        is_running: true
+    )
+}
+
+rule StopPreview {
+    when: StopPreviewRequested(server)
+    -- Graceful shutdown with inflight request tracking
+    ensures: server.is_running = false
+}
+
+-- Route resolution
+
+rule ServePostPreview {
+    when: PreviewRequest(path)
+    requires: is_post_path(path)
+        -- path matches "/{yyyy}/{mm}/{dd}/{slug}"
+    -- Renders post via Liquid template with full PageRenderer context
+    ensures: PreviewResponse(rendered_html)
+}
+
+rule ServeDraftPreview {
+    when: PreviewDraftRequest(path, post_id)
+    -- Renders draft content (from DB, not filesystem)
+    ensures: PreviewResponse(rendered_html)
+}
+
+rule ServeArchivePreview {
+    when: PreviewRequest(path)
+    requires: is_archive_path(path)
+        -- Category, tag, date archives with pagination
+    ensures: PreviewResponse(rendered_html)
+}
+
+rule ServeMediaFile {
+    when: PreviewRequest(path)
+    requires: is_media_path(path)
+        -- Path-traversal protection: validates path stays within media directory
+    ensures: PreviewResponse(media_file)
+}
+
+rule ServeAssets {
+    when: PreviewRequest(path)
+    requires: is_asset_path(path)
+    ensures: PreviewResponse(asset_file)
+}
+
+rule ServeLanguagePrefixedRoute {
+    when: PreviewRequest(path)
+    requires: is_language_prefixed(path)
+        -- Detects language prefix from supported languages
+        -- Renders with translation overlay for that language
+    ensures: PreviewResponse(translated_html)
+}
+
+invariant ThemeSwitching {
+    -- Preview supports live theme/mode switching via query params
+    -- ?theme=amber&mode=dark etc.
+    -- Uses Pico CSS with configurable themes
+}
+
+invariant LocalhostOnly {
+    -- Preview server binds to 127.0.0.1 only, never 0.0.0.0
+}

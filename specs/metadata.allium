@@ -1,0 +1,102 @@
+-- allium: 1
+-- bDS Project Metadata, Categories, Publishing Preferences
+-- Distilled from: src/main/engine/MetaEngine.ts, schema.ts
+
+use "./project.allium" as project
+
+value CategoryRenderSettings {
+    render_in_lists: Boolean
+    show_title: Boolean
+    post_template_slug: String?
+    list_template_slug: String?
+}
+
+entity ProjectMetadata {
+    project: project/Project
+    name: String
+    description: String?
+    public_url: String?
+    main_language: String?              -- ISO 639-1
+    default_author: String?
+    max_posts_per_page: Integer         -- 1..500, default 50
+    blogmark_category: String?
+    pico_theme: String?                 -- 12+ named Pico CSS themes
+    semantic_similarity_enabled: Boolean
+    blog_languages: Set<String>         -- subset of supported languages
+    categories: Set<String>             -- category names
+    category_settings: Set<CategoryRenderSettings>
+}
+
+entity PublishingPreferences {
+    ssh_host: String?
+    ssh_user: String?
+    ssh_remote_path: String?
+    ssh_mode: scp | rsync
+}
+
+invariant DefaultCategories {
+    -- New projects start with: article, picture, aside, page
+    -- These are defaults, not invariants — user can remove them
+}
+
+invariant MetadataPersistedAsFiles {
+    -- Four separate JSON files in meta/:
+    --   meta/project.json       — name, description, publicUrl, mainLanguage, etc.
+    --   meta/categories.json    — sorted category list
+    --   meta/category-meta.json — per-category render settings
+    --   meta/publishing.json    — SSH connection details (non-secret)
+    -- All writes are atomic (temp file + rename)
+}
+
+config {
+    default_max_posts_per_page: Integer = 50
+    min_posts_per_page: Integer = 1
+    max_posts_per_page: Integer = 500
+    default_categories: Set<String> = {"article", "picture", "aside", "page"}
+    supported_pico_themes: Set<String> = {
+        "default", "amber", "blue", "cyan", "fuchsia", "green",
+        "grey", "indigo", "jade", "lime", "orange", "pink",
+        "pumpkin", "purple", "red", "sand", "slate", "violet",
+        "yellow", "zinc"
+    }
+}
+
+rule UpdateProjectMetadata {
+    when: UpdateProjectMetadataRequested(project, changes)
+    ensures: MetadataFieldsUpdated(project, changes)
+    ensures: ProjectJsonWritten(project)
+}
+
+rule AddCategory {
+    when: AddCategoryRequested(project, name)
+    requires: not (name in project.metadata.categories)
+    ensures: project.metadata.categories = project.metadata.categories + {name}
+    ensures: CategoriesJsonWritten(project)
+}
+
+rule RemoveCategory {
+    when: RemoveCategoryRequested(project, name)
+    ensures: project.metadata.categories = project.metadata.categories - {name}
+    ensures: CategorySettingsRemoved(project, name)
+    ensures: CategoriesJsonWritten(project)
+    ensures: CategoryMetaJsonWritten(project)
+}
+
+rule UpdateCategorySettings {
+    when: UpdateCategorySettingsRequested(project, category, settings)
+    ensures: CategorySettingsUpdated(project, category, settings)
+    ensures: CategoryMetaJsonWritten(project)
+}
+
+rule SetPublishingPreferences {
+    when: SetPublishingPreferencesRequested(project, prefs)
+    ensures: project.publishing_preferences = prefs
+    ensures: PublishingJsonWritten(project)
+}
+
+rule StartupSync {
+    when: AppStarted(project)
+    -- Loads metadata from filesystem, merges with DB,
+    -- creates defaults for new projects
+    ensures: ProjectMetadata.synced_from_filesystem(project)
+}

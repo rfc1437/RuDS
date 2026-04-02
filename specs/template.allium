@@ -1,0 +1,167 @@
+-- allium: 1
+-- bDS Liquid Template System
+-- Distilled from: src/main/engine/TemplateEngine.ts, PageRenderer.ts, schema.ts,
+--   bundled starter templates in src/main/engine/templates/
+
+entity Template {
+    slug: String
+    title: String
+    kind: post | list | not_found | partial
+    enabled: Boolean
+    status: draft | published
+    content: String?
+    version: Integer
+    file_path: String
+    created_at: Timestamp
+    updated_at: Timestamp
+
+    -- Derived
+    content_location: if status = published: file_path else: content
+    referencing_posts: Posts where template_slug = this.slug
+    referencing_tags: Tags where post_template_slug = this.slug
+
+    transitions status {
+        draft -> published
+        published -> draft
+    }
+}
+
+invariant UniqueTemplateSlug {
+    for a in Templates:
+        for b in Templates:
+            a != b implies a.slug != b.slug
+}
+
+invariant TemplateFrontmatter {
+    -- .liquid files use standard --- YAML frontmatter
+    -- Fields: id, slug, title, kind, enabled, version, createdAt, updatedAt
+    for t in Templates where status = published:
+        parse_frontmatter(read_file(t.file_path)).slug = t.slug
+}
+
+invariant TemplateFileLayout {
+    for t in Templates where file_path != "":
+        t.file_path = format("templates/{slug}.liquid", slug: t.slug)
+}
+
+rule CreateTemplate {
+    when: CreateTemplateRequested(title, kind, content)
+    let slug = slugify(title)
+    ensures: Template.created(
+        slug: slug,
+        title: title,
+        kind: kind,
+        content: content,
+        status: draft,
+        enabled: true,
+        version: 1,
+        file_path: ""
+    )
+}
+
+rule UpdateTemplate {
+    when: UpdateTemplateRequested(template, changes)
+    ensures: TemplateFieldsUpdated(template, changes)
+    ensures: template.updated_at = now
+    ensures: template.version = template.version + 1
+}
+
+rule PublishTemplate {
+    when: PublishTemplateRequested(template)
+    requires: ValidateLiquid(template.content) = valid
+        -- LiquidJS parser must accept the template
+    ensures: template.status = published
+    ensures: TemplateFileWritten(template)
+        -- Writes frontmatter + liquid to templates/{slug}.liquid
+    ensures: template.content = null
+}
+
+rule DeleteTemplate {
+    when: DeleteTemplateRequested(template)
+    requires: template.referencing_posts.count = 0
+    requires: template.referencing_tags.count = 0
+        -- Cannot delete a template still referenced by posts or tags
+    ensures: not exists template
+    ensures: TemplateFileDeleted(template)
+}
+
+rule CascadeSlugUpdate {
+    when: template: Template.slug transitions_to new_slug
+    -- When a template slug changes, update all references
+    for p in template.referencing_posts:
+        ensures: p.template_slug = new_slug
+    for t in template.referencing_tags:
+        ensures: t.post_template_slug = new_slug
+}
+
+rule RebuildTemplatesFromFiles {
+    when: RebuildTemplatesFromFilesRequested(project)
+    for file in scan_directory(project.effective_data_dir + "/templates", "*.liquid"):
+        let parsed = parse_template_file(file)
+        ensures: Template.created(parsed)
+            -- or updated if slug already exists
+}
+
+-- Exact Liquid subset required (distilled from bundled starter templates)
+-- No features beyond this list are used.
+
+invariant LiquidTagSubset {
+    -- Only these 5 tags are used:
+    --   {% if %} / {% elsif %} / {% else %} / {% endif %}
+    --   {% for %} / {% endfor %}
+    --   {% assign %}
+    --   {% render 'partial', named_param: value %}  (with named parameters)
+    --   Whitespace-stripped variants: {%- -%}
+    --
+    -- NOT used: include, capture, case/when, unless, raw, comment,
+    --   cycle, tablerow, increment, decrement, liquid, echo
+}
+
+invariant LiquidFilterSubset {
+    -- Standard filters (4):
+    --   | escape
+    --   | url_encode
+    --   | default: fallback_value
+    --   | append: suffix_string
+    --
+    -- Custom filters (2):
+    --   | i18n: language          — translates a key string for given language
+    --   | markdown: post_id, post_data_json_by_id, canonical_post_path_by_slug,
+    --              canonical_media_path_by_source_path, language, language_prefix
+    --     — renders Markdown to HTML with link rewriting (6 arguments)
+    --
+    -- NOT used: date, strip_html, truncate, split, join, size (as filter),
+    --   upcase, downcase, replace, remove, sort, map, where, first, last,
+    --   reverse, concat, uniq, compact, strip, newline_to_br, json, prepend,
+    --   and all math filters
+}
+
+invariant LiquidOperatorSubset {
+    -- Comparison: ==, >
+    -- Logical: or, and
+    -- Truthy/falsy: bare variable in {% if variable %}
+    -- Special values: blank (nil/empty comparison)
+    -- Property access: dot notation (object.property), .size on arrays,
+    --   bracket notation for map lookups (map[key])
+}
+
+invariant LiquidRenderContext {
+    -- Template rendering context provides these top-level variables:
+    --   language, language_prefix, html_theme_attribute,
+    --   page_title, pico_stylesheet_href,
+    --   blog_languages (array of {is_current, code, flag, href_prefix}),
+    --   alternate_links (array of {hreflang, href}),
+    --   menu_items (tree of {href, title, has_children, children}),
+    --   calendar_initial_year, calendar_initial_month,
+    --   post (single post context: {title, content, id, slug, show_title}),
+    --   post_categories, post_tags, tag_color_by_name (map),
+    --   backlinks (array of {path, display_slug}),
+    --   day_blocks (array of {show_date_marker, date_label, posts, show_separator}),
+    --   archive_context ({kind, name, month, year, day}),
+    --   show_archive_range_heading, min_date, max_date,
+    --   canonical_post_path_by_slug (map), canonical_media_path_by_source_path (map),
+    --   post_data_json_by_id (map),
+    --   is_list_page, is_first_page, is_last_page,
+    --   has_prev_page, has_next_page, prev_page_href, next_page_href,
+    --   not_found_message, not_found_back_label
+}

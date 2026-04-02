@@ -1,0 +1,86 @@
+-- allium: 1
+-- bDS Background Task Manager
+-- Distilled from: src/main/engine/TaskManager.ts
+
+entity Task {
+    title: String
+    status: pending | running | completed | failed | cancelled
+    progress: Decimal?              -- 0.0..1.0
+    message: String?
+    created_at: Timestamp
+
+    transitions status {
+        pending -> running
+        running -> completed
+        running -> failed
+        running -> cancelled
+    }
+}
+
+config {
+    max_concurrent: Integer = 3
+    progress_throttle: Duration = 250.milliseconds
+}
+
+invariant MaxConcurrency {
+    -- At most max_concurrent tasks run simultaneously
+    let running_tasks = Tasks where status = running
+    running_tasks.count <= config.max_concurrent
+}
+
+invariant FifoQueue {
+    -- When max concurrent reached, new tasks queue in FIFO order
+    -- Queued tasks transition to running as slots open
+}
+
+rule SubmitTask {
+    when: SubmitTaskRequested(title, work)
+    let running_tasks = Tasks where status = running
+    ensures: Task.created(title: title, status: pending)
+    ensures:
+        if running_tasks.count < config.max_concurrent:
+            TaskStarted(task, work)
+}
+
+rule CompleteTask {
+    when: TaskWorkCompleted(task)
+    ensures: task.status = completed
+    ensures: task.progress = 1.0
+    ensures: NextQueuedTaskStarted()
+}
+
+rule FailTask {
+    when: TaskWorkFailed(task, error_message)
+    ensures: task.status = failed
+    ensures: task.message = error_message
+    ensures: NextQueuedTaskStarted()
+}
+
+rule CancelTask {
+    when: CancelTaskRequested(task)
+    requires: task.status = running or task.status = pending
+    -- AbortController-based cancellation
+    ensures: task.status = cancelled
+    ensures: NextQueuedTaskStarted()
+}
+
+rule ReportProgress {
+    when: ProgressReported(task, value, message)
+    -- Progress events throttled to 250ms
+    ensures: task.progress = value
+    ensures: task.message = message
+}
+
+invariant ProgressThrottled {
+    -- Progress update events are throttled to prevent UI flooding
+    -- At most one progress event per 250ms per task
+}
+
+-- External tasks: lifecycle controlled by caller (e.g., renderer-side scripts)
+rule RegisterExternalTask {
+    when: RegisterExternalTaskRequested(title)
+    ensures: Task.created(title: title, status: running)
+    @guidance
+        -- External tasks are not managed by the queue
+        -- The caller is responsible for updating status
+}
