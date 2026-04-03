@@ -29,8 +29,8 @@ pub struct Media {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
     /// JSON-serialized string array in DB.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
