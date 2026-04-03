@@ -1,0 +1,318 @@
+-- allium: 1
+-- bDS Frontmatter Specifications
+-- Scope: core (Wave 1 — exact file format compatibility)
+-- Distilled from: ../bDS/src/main/engine/postFileUtils.ts,
+--   TemplateEngine.ts, ScriptEngine.ts, MediaEngine.ts
+--
+-- This document specifies the exact YAML frontmatter format for all
+-- file types. The Rust implementation must read and write these
+-- formats byte-for-byte compatible with the TypeScript implementation.
+
+-- ============================================================================
+-- POST FILE FORMAT
+-- ============================================================================
+
+value PostFrontmatter {
+    -- File path: posts/{YYYY}/{MM}/{slug}.md
+    -- For translations: posts/{YYYY}/{MM}/{slug}.{language}.md
+    id: String              -- UUID v4
+    title: String
+    slug: String
+    excerpt: String?        -- Optional, only written if present
+    status: draft | published | archived
+    author: String?         -- Only written if present
+    language: String?       -- Only written if present (ISO 639-1)
+    do_not_translate: Boolean -- Only written when true
+    template_slug: String?  -- Only written if present
+    created_at: Timestamp   -- Unix timestamp in milliseconds
+    updated_at: Timestamp   -- Unix timestamp in milliseconds
+    published_at: Timestamp? -- Only written if published
+    tags: List<String>      -- Always written, even if empty
+    categories: List<String> -- Always written, even if empty
+}
+
+invariant PostFileLayout {
+    -- Posts are stored in date-based directory structure
+    -- YYYY and MM derived from created_at (zero-padded)
+    for p in Posts where file_path != "":
+        p.file_path = format("posts/{yyyy}/{mm}/{slug}.md",
+            yyyy: p.created_at.year,
+            mm: p.created_at.month_padded,
+            slug: p.slug)
+}
+
+invariant PostTranslationFileLayout {
+    -- Translations use the same directory structure with language suffix
+    for t in PostTranslations where file_path != "":
+        t.file_path = format("posts/{yyyy}/{mm}/{slug}.{lang}.md",
+            yyyy: t.canonical_post.created_at.year,
+            mm: t.canonical_post.created_at.month_padded,
+            slug: t.canonical_post.slug,
+            lang: t.language)
+}
+
+rule WritePostFile {
+    when: PublishPostRequested(post)
+    ensures: FileWritten(
+        path: post.file_path,
+        content: format_post_file(post)
+    )
+    ensures: post.content = null
+        -- Content moved from DB to filesystem
+}
+
+-- ============================================================================
+-- MEDIA SIDECAR FORMAT
+-- ============================================================================
+
+value MediaSidecar {
+    -- File path: media/{id}.md
+    -- Binary file at: media/{filename}
+    id: String              -- UUID v4
+    filename: String        -- Generated filename (e.g., photo_1234567890.jpg)
+    original_name: String   -- Original uploaded filename
+    mime_type: String
+    size: Integer           -- Bytes
+    width: Integer?
+    height: Integer?
+    title: String?          -- Only written if present
+    alt: String?            -- Only written if present
+    caption: String?        -- Only written if present
+    author: String?         -- Only written if present
+    language: String?       -- Only written if present
+    tags: List<String>      -- Always written, even if empty
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+invariant MediaSidecarLayout {
+    for m in Media:
+        m.sidecar_path = format("media/{id}.md", id: m.id)
+}
+
+-- ============================================================================
+-- TEMPLATE FILE FORMAT
+-- ============================================================================
+
+value TemplateFrontmatter {
+    -- File path: templates/{slug}.liquid
+    id: String              -- UUID v4
+    slug: String
+    title: String
+    kind: post | list | not-found | partial
+    enabled: Boolean
+    version: Integer
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+rule WriteTemplateFile {
+    when: PublishTemplateRequested(template)
+    requires: ValidateLiquid(template.content) = valid
+    ensures: FileWritten(
+        path: format("templates/{slug}.liquid", slug: template.slug),
+        content: format_template_file(template)
+    )
+    ensures: template.content = null
+}
+
+-- ============================================================================
+-- SCRIPT FILE FORMAT
+-- ============================================================================
+
+value ScriptFrontmatter {
+    -- File path: scripts/{slug}.lua (Rust) / {slug}.py (TypeScript legacy)
+    -- Note: TypeScript uses Python with triple-quote docstring delimiters
+    -- Rust uses Lua with standard YAML frontmatter
+    id: String              -- UUID v4
+    slug: String
+    title: String
+    kind: macro | utility | transform
+    entrypoint: String      -- Default: "render"
+    enabled: Boolean
+    version: Integer
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+rule WriteScriptFile {
+    when: PublishScriptRequested(script)
+    requires: ValidateScript(script.content) = valid
+    ensures: FileWritten(
+        path: format("scripts/{slug}.lua", slug: script.slug),
+        content: format_script_file(script)
+    )
+    ensures: script.content = null
+}
+
+-- ============================================================================
+-- TAGS FILE FORMAT
+-- ============================================================================
+
+value TagsFile {
+    -- File path: meta/tags.json
+    -- Portable JSON format (no internal IDs)
+    tags: List<TagEntry>
+}
+
+value TagEntry {
+    name: String
+    color: String?
+    post_template_slug: String?
+}
+
+invariant TagsFileFormat {
+    -- Tags are stored as a sorted JSON array
+    -- Sorted alphabetically by name (case-insensitive)
+    parse_json(read_file("meta/tags.json")) = {
+        tags: sort_by(Tags, t => lowercase(t.name))
+    }
+}
+
+-- ============================================================================
+-- PROJECT METADATA FILES
+-- ============================================================================
+
+value ProjectJson {
+    -- File path: meta/project.json
+    name: String
+    description: String?
+    public_url: String?
+    main_language: String?
+    default_author: String?
+    max_posts_per_page: Integer
+    blogmark_category: String?
+    pico_theme: String?
+    semantic_similarity_enabled: Boolean
+    blog_languages: List<String>
+}
+
+value CategoriesJson {
+    -- File path: meta/categories.json
+    -- Sorted list of category names
+    categories: List<String>
+}
+
+value CategoryMetaJson {
+    -- File path: meta/category-meta.json
+    -- Per-category render settings
+    categories: Map<String, CategorySettings>
+}
+
+value CategorySettings {
+    render_in_lists: Boolean
+    show_title: Boolean
+    post_template_slug: String?
+    list_template_slug: String?
+}
+
+value PublishingJson {
+    -- File path: meta/publishing.json
+    ssh_host: String?
+    ssh_user: String?
+    ssh_remote_path: String?
+    ssh_mode: scp | rsync
+}
+
+invariant MetadataFileLayout {
+    -- All metadata files in meta/ directory
+    -- Each file is written atomically (temp file + rename)
+    meta/project.json = serialize(ProjectJson)
+    meta/categories.json = serialize(CategoriesJson)
+    meta/category-meta.json = serialize(CategoryMetaJson)
+    meta/publishing.json = serialize(PublishingJson)
+    meta/menu.opml = serialize(Menu)
+    meta/tags.json = serialize(TagsFile)
+}
+
+-- ============================================================================
+-- MENU FILE FORMAT
+-- ============================================================================
+
+value MenuOpml {
+    -- File path: meta/menu.opml
+    -- OPML 2.0 format with outline elements
+    header: OpmlHeader
+    body: List<MenuItem>
+}
+
+value OpmlHeader {
+    title: String
+    date_created: Timestamp
+    date_modified: Timestamp
+}
+
+value MenuItem {
+    kind: page | submenu | category_archive | home
+    label: String
+    slug: String?
+    children: List<MenuItem>?
+}
+
+invariant MenuOpmlFormat {
+    -- Menu is stored as OPML with Home always first
+    -- Note: List literal syntax not supported in Allium
+    -- Actual structure: header + body with MenuItem elements
+}
+
+-- ============================================================================
+-- FILE FORMAT CONVENTIONS
+-- ============================================================================
+
+invariant TimestampFormat {
+    -- All timestamps are Unix milliseconds (number in JavaScript)
+    -- Stored as ISO 8601 strings in YAML frontmatter
+    -- Example: 2024-03-15T14:30:00.000Z
+}
+
+invariant YamlFormatting {
+    -- YAML frontmatter uses 2-space indentation
+    -- Arrays use YAML list syntax: - item1\n- item2
+    -- Strings with special characters are quoted
+    -- Boolean values are lowercase: true/false
+}
+
+invariant AtomicWrites {
+    -- All file writes are atomic
+    -- Write to temp file first, then rename
+    -- Prevents corruption from interrupted writes
+}
+
+-- ============================================================================
+-- FRONTmatter FIELD RULES
+-- ============================================================================
+
+invariant RequiredPostFields {
+    -- These fields are ALWAYS written for posts
+    for p in Posts:
+        required_fields(p) = {
+            id, title, slug, status, created_at, updated_at,
+            tags, categories
+        }
+}
+
+invariant ConditionalPostFields {
+    -- These fields are ONLY written if truthy
+    for p in Posts:
+        conditional_fields(p) = {
+            excerpt, author, language, template_slug, published_at
+        }
+    -- do_not_translate is only written when true
+}
+
+invariant RequiredMediaFields {
+    -- These fields are ALWAYS written for media
+    for m in Media:
+        required_fields(m) = {
+            id, filename, original_name, mime_type, size,
+            created_at, updated_at, tags
+        }
+}
+
+invariant ConditionalMediaFields {
+    -- These fields are ONLY written if truthy
+    for m in Media:
+        conditional_fields(m) = {
+            title, alt, caption, author, language, width, height
+        }
+}

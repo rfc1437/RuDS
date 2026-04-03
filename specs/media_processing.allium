@@ -1,0 +1,294 @@
+-- allium: 1
+-- bDS Media Processing Specification
+-- Scope: core (Wave 1 — media import and processing)
+-- Distilled from: ../bDS/src/main/engine/MediaEngine.ts,
+--   mediaProcessing.ts, thumbnail generation logic
+--
+-- This document specifies the exact media processing behavior:
+-- thumbnail generation, format conversion, EXIF handling, and file organization.
+
+use "./media.allium" as media
+use "./search.allium" as search
+
+-- ============================================================================
+-- MEDIA FILE ORGANIZATION
+-- ============================================================================
+
+value MediaFileLayout {
+    -- Binary assets stored in: media/{filename}
+    -- Sidecar metadata in: media/{id}.md
+    -- Thumbnails in: thumbnails/{id}.webp
+    -- Thumbnail source filename: thumbnails/{id}_source.{ext}
+    binary_path: String       -- media/{filename}
+    sidecar_path: String      -- media/{id}.md
+    thumbnail_path: String    -- thumbnails/{id}.webp
+    thumbnail_source_path: String -- thumbnails/{id}_source.{ext}
+}
+
+invariant MediaFileNaming {
+    -- Original filename is preserved in original_name field
+    -- Stored filename is generated: {timestamp}_{random}.{ext}
+    -- Example: 1710512345678_abc123.jpg
+    for m in Media:
+        m.filename = format("{timestamp}_{random}.{ext}",
+            timestamp: m.created_at.milliseconds,
+            random: generate_random_string(6),
+            ext: file_extension(m.original_name))
+}
+
+-- ============================================================================
+-- THUMBNAIL GENERATION
+-- ============================================================================
+
+config {
+    -- Thumbnail configuration
+    thumbnail_width: Integer = 400
+    thumbnail_height: Integer = 300
+    thumbnail_fit: String = "cover"  -- "cover", "contain", "fill"
+    thumbnail_quality: Integer = 80   -- WEBP quality 1-100
+    thumbnail_format: String = "webp" -- Output format
+}
+
+rule GenerateThumbnail {
+    when: MediaImported(media)
+    requires: is_image(media.mime_type)
+    -- Generate thumbnail from source image
+    ensures: ThumbnailGenerated(
+        source: media.file_path,
+        destination: media.thumbnail_path,
+        width: config.thumbnail_width,
+        height: config.thumbnail_height,
+        fit: config.thumbnail_fit,
+        quality: config.thumbnail_quality,
+        format: config.thumbnail_format
+    )
+    ensures: ThumbnailSourceSaved(
+        source: media.file_path,
+        destination: media.thumbnail_source_path
+    )
+}
+
+-- Thumbnail generation algorithm
+value ThumbnailGeneration {
+    -- 1. Load source image with EXIF orientation
+    -- 2. Auto-rotate based on EXIF orientation tag
+    -- 3. Resize using "cover" fit (crop to fill target dimensions)
+    -- 4. Encode as WEBP with specified quality
+    -- 5. Write to thumbnails/{id}.webp
+    
+    -- Preserve original for source thumbnail
+    -- This allows regenerating thumbnails at different sizes later
+}
+
+invariant ThumbnailExifHandling {
+    -- EXIF orientation must be respected during thumbnail generation
+    -- Photos taken with phone cameras often have incorrect orientation
+    -- without proper EXIF handling
+}
+
+-- ============================================================================
+-- IMAGE PROCESSING RULES
+-- ============================================================================
+
+value ImageProcessing {
+    -- Supported input formats:
+    input_formats: Set<String> = {
+        "image/jpeg", "image/png", "image/gif",
+        "image/webp", "image/tiff", "image/bmp",
+        "image/heic", "image/heif"
+    }
+    
+    -- Output formats:
+    output_formats: Set<String> = {
+        "image/webp",  -- Primary output
+        "image/jpeg",  -- Fallback for non-WEBP browsers (not used in Rust version)
+        "image/png"    -- For images with transparency
+    }
+    
+    -- Processing rules:
+    -- 1. All images are converted to WEBP for thumbnails
+    -- 2. Original format is preserved for full-size assets
+    -- 3. EXIF data is stripped from thumbnails (privacy)
+    -- 4. EXIF orientation is applied during processing
+}
+
+rule ProcessImageMetadata {
+    when: MediaImported(media)
+    -- Extract image metadata
+    ensures: media.width = extract_width(source_file)
+    ensures: media.height = extract_height(source_file)
+    ensures: media.mime_type = detect_mime_type(source_file)
+    ensures: media.size = file_size(source_file)
+}
+
+-- ============================================================================
+-- MEDIA TRANSLATION FILES
+-- ============================================================================
+
+value MediaTranslationFile {
+    -- File path: media/{id}/{language}.md
+    -- Format: YAML frontmatter with localized metadata
+    translation_for: String   -- Canonical media ID
+    language: String          -- ISO 639-1 code
+    title: String?
+    alt: String?
+    caption: String?
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+invariant MediaTranslationFileLayout {
+    for t in MediaTranslations:
+        -- Stored in subdirectory per media item
+        t.file_path = format("media/{id}/{lang}.md",
+            id: t.translation_for,
+            lang: t.language)
+}
+
+-- ============================================================================
+-- MEDIA IMPORT RULES
+-- ============================================================================
+
+rule ImportMedia {
+    when: ImportMediaRequested(source_path, project)
+    -- 1. Validate file type (must be image)
+    -- 2. Generate unique filename
+    -- 3. Copy to media/{filename}
+    -- 4. Generate thumbnail
+    -- 5. Create sidecar file with metadata
+    -- 6. Index for search (FTS5)
+    -- 7. Generate embedding (if enabled)
+    ensures: media/Media.created(
+        filename: generate_filename(),
+        original_name: basename(source_path),
+        mime_type: detect_mime_type(source_path),
+        size: file_size(source_path),
+        width: extract_width(source_path),
+        height: extract_height(source_path),
+        file_path: format("media/{filename}", filename: generated_filename),
+        sidecar_path: format("media/{id}.md", id: media_id),
+        checksum: sha256(source_path)
+    )
+    ensures: ThumbnailGenerated(media_id)
+    ensures: SearchIndexUpdated(media_id)
+}
+
+-- ============================================================================
+-- MEDIA TAGGING
+-- ============================================================================
+
+invariant MediaTagsFormat {
+    -- Media tags are stored as JSON array in sidecar file
+    -- Tags are optional and only written if present
+    -- Same format as post tags
+}
+
+rule TagMedia {
+    when: TagMediaRequested(media, tags)
+    ensures: media.tags = tags
+    ensures: SidecarFileUpdated(media)
+    ensures: SearchIndexUpdated(media)
+}
+
+-- ============================================================================
+-- MEDIA DELETION
+-- ============================================================================
+
+rule DeleteMedia {
+    when: DeleteMediaRequested(media)
+    -- 1. Remove from database
+    -- 2. Delete binary file
+    -- 3. Delete sidecar file
+    -- 4. Delete thumbnail files
+    -- 5. Remove from search index
+    -- 6. Remove from all post links
+    ensures: FileDeleted(media.file_path)
+    ensures: FileDeleted(media.sidecar_path)
+    ensures: FileDeleted(media.thumbnail_path)
+    ensures: FileDeleted(media.thumbnail_source_path)
+    ensures: SearchIndexRemoved(media)
+    ensures:
+        for p in media.linked_posts:
+            p.linked_media = p.linked_media - {media}
+}
+
+-- ============================================================================
+-- MEDIA VALIDATION
+-- ============================================================================
+
+rule ValidateMedia {
+    when: ValidateMediaRequested(project)
+    -- Check for:
+    -- 1. Missing binary files
+    -- 2. Missing sidecar files
+    -- 3. Missing thumbnails
+    -- 4. Corrupted image files
+    -- 5. Orphan media (not linked to any post)
+    for m in project.media:
+        if not file_exists(m.file_path):
+            ensures: ValidationIssueReported(m, "missing_binary")
+        if not file_exists(m.sidecar_path):
+            ensures: ValidationIssueReported(m, "missing_sidecar")
+        if not file_exists(m.thumbnail_path):
+            ensures: ValidationIssueReported(m, "missing_thumbnail")
+        if not is_valid_image(m.file_path):
+            ensures: ValidationIssueReported(m, "corrupted")
+        if not exists (p in Posts where m in p.linked_media):
+            ensures: ValidationIssueReported(m, "orphan")
+}
+
+-- ============================================================================
+-- MEDIA EXPORT/EXPORT RULES
+-- ============================================================================
+
+invariant MediaSidecarFormat {
+    -- Sidecar files use YAML frontmatter
+    -- Same structure as Media entity fields
+    -- Only truthy fields are written (except required fields)
+}
+
+-- ============================================================================
+-- IMAGE OPTIMIZATION
+-- ============================================================================
+
+config {
+    -- Image optimization settings
+    max_original_size: Integer = 20971520  -- 20 MB in bytes
+    max_width: Integer = 4096
+    max_height: Integer = 4096
+    strip_exif: Boolean = true  -- Strip EXIF from thumbnails
+    preserve_color_profile: Boolean = false  -- Don't preserve ICC profiles
+}
+
+rule OptimizeMedia {
+    when: ImportMediaRequested(source_path, project)
+    requires: file_size(source_path) <= config.max_original_size
+    -- Original files are stored as-is (no compression)
+    -- Only thumbnails are optimized
+    @guidance
+        -- Media entity is created by ImportMedia rule
+        -- This rule documents the size constraint
+}
+
+-- ============================================================================
+-- MEDIA SEARCH INDEXING
+-- ============================================================================
+
+rule IndexMediaForSearch {
+    when: SearchIndexUpdated(media: media/Media)
+    -- Index fields: title, alt, caption, original_name, tags
+    -- Plus all translation titles, alts, and captions
+    -- Note: media.translations not available in this context
+    let all_text = concat(
+        media.title,
+        media.alt,
+        media.caption,
+        media.original_name,
+        join(media.tags, " ")
+    )
+    let stemmed = stem(all_text, detect_language(all_text))
+    ensures: search/MediaSearchIndex.created(
+        media: media,
+        stemmed_content: stemmed
+    )
+}

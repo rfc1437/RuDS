@@ -1,0 +1,263 @@
+-- allium: 1
+-- bDS Liquid Template Context Specification
+-- Scope: core (Wave 4 — rendering parity)
+-- Distilled from: ../bDS/src/main/engine/GenerationRouteRendererFactory.ts,
+--   PageRenderer.ts, BlogGenerationEngine.ts
+--
+-- This document specifies the exact data structure passed to Liquid templates
+-- during rendering. It is the contract between the generation engine and
+-- template authors.
+
+-- ============================================================================
+-- GLOBAL TEMPLATE VARIABLES
+-- ============================================================================
+
+value RenderContext {
+    -- Top-level variables available in all templates
+    language: String                -- Current language code
+    language_prefix: String?        -- "/de" or "" depending on language
+    html_theme_attribute: String    -- Theme class for <html> element
+    page_title: String              -- Page title for <title> tag
+    pico_stylesheet_href: String    -- Path to Pico CSS theme
+    blog_languages: List<BlogLanguage>
+    alternate_links: List<AlternateLink>
+    menu_items: List<MenuItem>
+    calendar_initial_year: Integer
+    calendar_initial_month: Integer
+    post: PostContext?              -- Present on single post pages
+    post_categories: List<Category>
+    post_tags: List<Tag>
+    tag_color_by_name: Map<String, String>
+    backlinks: List<Backlink>
+    day_blocks: List<DayBlock>
+    archive_context: ArchiveContext?
+    show_archive_range_heading: Boolean
+    min_date: Timestamp?
+    max_date: Timestamp?
+    is_list_page: Boolean
+    is_first_page: Boolean
+    is_last_page: Boolean
+    has_prev_page: Boolean
+    has_next_page: Boolean
+    prev_page_href: String?
+    next_page_href: String?
+    not_found_message: String?
+    not_found_back_label: String?
+    
+    -- Lookup maps for macro expansion
+    canonical_post_path_by_slug: Map<String, String>
+    canonical_media_path_by_source_path: Map<String, String>
+    post_data_json_by_id: Map<String, PostDataJson>
+}
+
+value BlogLanguage {
+    is_current: Boolean
+    code: String
+    flag: String
+    href: String
+    href_prefix: String
+}
+
+value AlternateLink {
+    href: String
+    hreflang: String
+}
+
+value MenuItem {
+    href: String
+    title: String
+    has_children: Boolean
+    children: List<MenuItem>?
+}
+
+-- ============================================================================
+-- POST CONTEXT (Single Post Pages)
+-- ============================================================================
+
+value PostContext {
+    id: String
+    title: String
+    content: String         -- Rendered HTML (after markdown + macros)
+    slug: String
+    excerpt: String?
+    author: String?
+    language: String?
+    show_title: Boolean     -- Always true for post pages
+    published_at: Timestamp
+    created_at: Timestamp
+    updated_at: Timestamp
+    tags: List<String>
+    categories: List<String>
+    template_slug: String?
+    do_not_translate: Boolean
+    linked_media: List<MediaContext>
+    outgoing_links: List<LinkContext>
+    incoming_links: List<LinkContext>
+}
+
+value PostDataJson {
+    -- Serialized post data for Liquid template access
+    id: String
+    title: String
+    slug: String
+    excerpt: String?
+    author: String?
+    language: String?
+    published_at: Timestamp
+    created_at: Timestamp
+    updated_at: Timestamp
+    tags: List<String>
+    categories: List<String>
+}
+
+value MediaContext {
+    id: String
+    filename: String
+    original_name: String
+    mime_type: String
+    title: String?
+    alt: String?
+    caption: String?
+    author: String?
+    width: Integer?
+    height: Integer?
+    file_path: String
+}
+
+value LinkContext {
+    href: String
+    title: String
+    display_slug: String
+}
+
+-- ============================================================================
+-- ARCHIVE CONTEXT (List Pages)
+-- ============================================================================
+
+value ArchiveContext {
+    kind: category | tag | date
+    name: String?
+    month: Integer?
+    year: Integer?
+    day: Integer?
+}
+
+value DayBlock {
+    show_date_marker: Boolean
+    date_label: String
+    posts: List<PostContext>
+    show_separator: Boolean
+}
+
+value Category {
+    name: String
+    slug: String
+    post_count: Integer
+}
+
+value Tag {
+    name: String
+    slug: String
+    color: String?
+    post_count: Integer
+}
+
+value Backlink {
+    path: String
+    display_slug: String
+    title: String
+}
+
+-- ============================================================================
+-- PAGINATION CONTEXT
+-- ============================================================================
+
+value PaginationContext {
+    is_list_page: Boolean
+    is_first_page: Boolean
+    is_last_page: Boolean
+    has_prev_page: Boolean
+    has_next_page: Boolean
+    prev_page_href: String?
+    next_page_href: String?
+    current_page: Integer
+    total_pages: Integer
+    total_items: Integer
+    items_per_page: Integer
+}
+
+-- ============================================================================
+-- LIQUID FILTER SPECIFICATION
+-- Note: Allium does not have a 'filter' keyword. Filters are documented here
+-- for reference but are implemented in the Liquid engine, not in Allium specs.
+-- ============================================================================
+
+-- Built-in filters (from liquid-rust crate):
+--   default: {{ value | default: "fallback" }}
+--   escape: {{ text | escape }}
+--   url_encode: {{ text | url_encode }}
+--   append: {{ text | append: suffix }}
+--
+-- Custom filters (must be implemented in Rust Liquid engine):
+--   i18n: {{ "key" | i18n: language }} - translation lookup
+--   markdown: {{ content | markdown: ... }} - markdown rendering with macro expansion
+
+-- ============================================================================
+-- BUILT-IN MACROS
+-- Note: Allium does not have a 'macro' keyword. Macros are documented here
+-- for reference but are implemented as Rust functions in bds-core/render.
+-- ============================================================================
+
+-- Built-in macros (implemented as native Rust functions):
+--   gallery: [[gallery images=post.linked_media columns=3]]
+--   youtube: [[youtube id=dQw4w9WgXcQ]]
+--   vimeo: [[vimeo id=123456789]]
+--   photo_archive: [[photo_archive media=project.media]]
+--   tag_cloud: [[tag_cloud tags=Tags]]
+
+-- ============================================================================
+-- TEMPLATE LOOKUP RULES
+-- ============================================================================
+
+invariant TemplateLookupPriority {
+    -- Templates are resolved in this order:
+    -- 1. Post-specific template (post.template_slug)
+    -- 2. Tag-specific template (tag.post_template_slug)
+    -- 3. Category-specific template (category.post_template_slug)
+    -- 4. Default "post" template
+    --
+    -- List pages use "list" template
+    -- 404 pages use "not-found" template
+    -- Partials are referenced via {% render 'partial' %}
+}
+
+invariant PartialResolution {
+    -- Partials are looked up in templates/ directory
+    -- Usage: {% render 'partials/header', context_var: value %}
+    -- Partial files: templates/partials/{name}.liquid
+}
+
+-- ============================================================================
+-- RENDERING RULES
+-- ============================================================================
+
+rule RenderPostPage {
+    when: RenderPostPageRequested(post, language)
+    let template = resolve_template(post)
+    let context = BuildPostContext(post, language)
+    ensures: RenderedHtml = liquid_render(template.content, context)
+}
+
+rule RenderListPage {
+    when: RenderListPageRequested(posts, pagination, archive_context)
+    let template = first (t in Templates where t.kind = "list" and t.enabled)
+    let context = BuildListContext(posts, pagination, archive_context)
+    ensures: RenderedHtml = liquid_render(template.content, context)
+}
+
+rule RenderNotFoundPage {
+    when: RenderNotFoundPageRequested()
+    let template = first (t in Templates where t.kind = "not-found" and t.enabled)
+    let context = BuildNotFoundContext
+    ensures: RenderedHtml = liquid_render(template.content, context)
+}

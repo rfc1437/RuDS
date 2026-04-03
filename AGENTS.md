@@ -41,4 +41,5 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - do not reference external JavaScript or CSS on CDNs, always bring it into the project
 - do not embedd CSS/JavaScript into HTML, always reference .css and .js files in the project assets
 - always make sure you follow proper i18n best practices. no untranslated string constants.
+- when creating rust source code, always follow what the allium spec is saying for that part
 
