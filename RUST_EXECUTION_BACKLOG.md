@@ -151,6 +151,7 @@ Rules:
 
 ### `bds-ui/views`
 
+- sidebar post filtering: text search box, status filter, tag/category filter dropdown — wired to existing `search_posts_filtered()` engine. The 500 post limit applies after filtering.
 - dashboard
 - post editor (bds-editor with markdown + YAML frontmatter highlighting)
 - translation editor (bds-editor)

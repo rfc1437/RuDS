@@ -847,9 +847,11 @@ impl BdsApp {
                 &project.id,
             )
             .unwrap_or(0) as usize;
-            self.sidebar_posts = bds_core::db::queries::post::list_posts_by_project(
+            self.sidebar_posts = bds_core::db::queries::post::list_posts_by_project_limited(
                 db.conn(),
                 &project.id,
+                500,
+                0,
             )
             .unwrap_or_default();
         }

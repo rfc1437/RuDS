@@ -80,6 +80,19 @@ pub fn list_posts_by_project(conn: &Connection, project_id: &str) -> rusqlite::R
     rows.collect()
 }
 
+pub fn list_posts_by_project_limited(
+    conn: &Connection,
+    project_id: &str,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<Vec<Post>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {POST_COLUMNS} FROM posts WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+    ))?;
+    let rows = stmt.query_map(params![project_id, limit, offset], post_from_row)?;
+    rows.collect()
+}
+
 pub fn update_post(conn: &Connection, post: &Post) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE posts SET
