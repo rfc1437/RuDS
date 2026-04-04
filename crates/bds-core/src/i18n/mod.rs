@@ -27,6 +27,17 @@ impl UiLocale {
     pub fn all() -> &'static [UiLocale] {
         &[Self::En, Self::De, Self::Fr, Self::It, Self::Es]
     }
+
+    /// Unicode regional-indicator flag emoji for this locale.
+    pub fn flag_emoji(self) -> &'static str {
+        match self {
+            Self::En => "\u{1F1EC}\u{1F1E7}", // 🇬🇧
+            Self::De => "\u{1F1E9}\u{1F1EA}", // 🇩🇪
+            Self::Fr => "\u{1F1EB}\u{1F1F7}", // 🇫🇷
+            Self::It => "\u{1F1EE}\u{1F1F9}", // 🇮🇹
+            Self::Es => "\u{1F1EA}\u{1F1F8}", // 🇪🇸
+        }
+    }
 }
 
 impl std::fmt::Display for UiLocale {

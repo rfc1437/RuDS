@@ -56,6 +56,7 @@ pub fn view(
     post_count: usize,
     media_count: usize,
     offline_mode: bool,
+    locale_dropdown_open: bool,
     // i18n
     locale: UiLocale,
 ) -> Element<'static, Message> {
@@ -97,6 +98,7 @@ pub fn view(
         media_count,
         locale,
         offline_mode,
+        locale_dropdown_open,
         task_snapshots,
     );
 

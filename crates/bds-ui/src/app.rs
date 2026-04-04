@@ -64,6 +64,7 @@ pub enum Message {
     // Settings
     SetOfflineMode(bool),
     SetUiLocale(UiLocale),
+    ToggleLocaleDropdown,
 
     // Blog actions (dispatched to engine)
     RebuildDatabase,
@@ -113,6 +114,7 @@ pub struct BdsApp {
 
     // Flags
     offline_mode: bool,
+    locale_dropdown_open: bool,
 
     // macOS lifecycle receiver
     #[cfg(target_os = "macos")]
@@ -213,6 +215,7 @@ impl BdsApp {
                 menu_registry: registry,
                 ui_locale: locale,
                 offline_mode: false,
+                locale_dropdown_open: false,
                 #[cfg(target_os = "macos")]
                 _lifecycle_rx,
             },
@@ -422,7 +425,12 @@ impl BdsApp {
             }
             Message::SetUiLocale(locale) => {
                 self.ui_locale = locale;
+                self.locale_dropdown_open = false;
                 menu::update_menu_labels(&self.menu_registry, locale);
+                Task::none()
+            }
+            Message::ToggleLocaleDropdown => {
+                self.locale_dropdown_open = !self.locale_dropdown_open;
                 Task::none()
             }
 
@@ -474,6 +482,7 @@ impl BdsApp {
             0, // post_count — populated in later milestones
             0, // media_count — populated in later milestones
             self.offline_mode,
+            self.locale_dropdown_open,
             self.ui_locale,
         )
     }

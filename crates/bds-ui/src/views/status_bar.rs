@@ -1,44 +1,12 @@
-use iced::widget::{button, container, pick_list, row, text, Space};
+use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
-use crate::i18n::{t, tw};
+use crate::i18n::tw;
 use crate::state::navigation::TaskSnapshot;
-
-// ---------------------------------------------------------------------------
-// Locale option wrapper for pick_list (needs ToString + PartialEq + Clone)
-// ---------------------------------------------------------------------------
-
-/// Wraps a UiLocale with a display label for the pick_list dropdown.
-#[derive(Debug, Clone, PartialEq)]
-struct LocaleOption {
-    locale: UiLocale,
-    label: String,
-}
-
-impl ToString for LocaleOption {
-    fn to_string(&self) -> String {
-        self.label.clone()
-    }
-}
-
-impl LocaleOption {
-    fn new(locale: UiLocale, display_locale: UiLocale) -> Self {
-        let key = match locale {
-            UiLocale::En => "language.en",
-            UiLocale::De => "language.de",
-            UiLocale::Fr => "language.fr",
-            UiLocale::It => "language.it",
-            UiLocale::Es => "language.es",
-        };
-        Self {
-            locale,
-            label: t(display_locale, key),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -88,22 +56,52 @@ fn airplane_active(_theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Pick list style matching status bar.
-fn locale_pick_list_style(_theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+/// Dropdown trigger button style.
+fn dropdown_trigger(_theme: &Theme, status: button::Status) -> button::Style {
     let bg = match status {
-        pick_list::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.27),
+        button::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.27),
         _ => Color::TRANSPARENT,
     };
-    pick_list::Style {
-        text_color: Color::from_rgb(0.70, 0.70, 0.75),
-        placeholder_color: Color::from_rgb(0.50, 0.50, 0.55),
-        handle_color: Color::from_rgb(0.50, 0.50, 0.55),
-        background: Background::Color(bg),
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::WHITE,
         border: Border {
-            color: Color::from_rgb(0.25, 0.25, 0.30),
-            width: 1.0,
+            color: Color::TRANSPARENT,
+            width: 0.0,
             radius: 3.0.into(),
         },
+        ..button::Style::default()
+    }
+}
+
+/// Dropdown item style.
+fn dropdown_item(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(0.25, 0.25, 0.30),
+        _ => Color::from_rgb(0.18, 0.18, 0.22),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 2.0.into(),
+        },
+        ..button::Style::default()
+    }
+}
+
+/// Dropdown container background.
+fn dropdown_bg(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.18, 0.18, 0.22))),
+        border: Border {
+            color: Color::from_rgb(0.30, 0.30, 0.35),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
     }
 }
 
@@ -117,6 +115,7 @@ pub fn view(
     media_count: usize,
     locale: UiLocale,
     offline_mode: bool,
+    locale_dropdown_open: bool,
     task_snapshots: &[TaskSnapshot],
 ) -> Element<'static, Message> {
     let label_color = Color::from_rgb(0.60, 0.60, 0.65);
@@ -148,41 +147,35 @@ pub fn view(
     let posts_label = tw(locale, "statusBar.posts", &[("count", &post_count.to_string())]);
     let media_label = tw(locale, "statusBar.media", &[("count", &media_count.to_string())]);
 
-    // Airplane mode toggle — just the ✈ icon, like bDS
-    let airplane_btn = button(text("\u{2708}").size(13))
+    // Airplane mode toggle — ✈ icon
+    let airplane_btn = button(
+        text("\u{2708}").size(13).shaping(Shaping::Advanced),
+    )
         .on_press(Message::SetOfflineMode(!offline_mode))
         .padding([2, 4])
         .style(if offline_mode { airplane_active } else { airplane_inactive });
 
-    // Language selector — "UI" label + pick_list dropdown, like bDS
-    let options: Vec<LocaleOption> = UiLocale::all()
-        .iter()
-        .map(|l| LocaleOption::new(*l, locale))
-        .collect();
-    let selected = Some(LocaleOption::new(locale, locale));
+    // Language selector — current flag as trigger
+    let trigger_flag = text(locale.flag_emoji())
+        .size(14)
+        .shaping(Shaping::Advanced);
 
-    let locale_picker = pick_list(
-        options,
-        selected,
-        |opt: LocaleOption| Message::SetUiLocale(opt.locale),
-    )
-    .text_size(11)
-    .padding([2, 4])
-    .width(Length::Shrink)
-    .style(locale_pick_list_style);
+    let locale_trigger = button(trigger_flag)
+        .on_press(Message::ToggleLocaleDropdown)
+        .padding([1, 4])
+        .style(dropdown_trigger);
 
     let right = row![
         text(posts_label).size(11).color(label_color),
         text(media_label).size(11).color(label_color),
         airplane_btn,
-        text(t(locale, "statusBar.ui")).size(11).color(label_color),
-        locale_picker,
+        locale_trigger,
         text("bDS").size(11).color(Color::from_rgb(0.45, 0.45, 0.50)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
-    container(
+    let status_row = container(
         row![
             left,
             Space::with_width(Length::Fill),
@@ -193,6 +186,43 @@ pub fn view(
     )
     .width(Length::Fill)
     .height(Length::Fixed(24.0))
-    .style(bar_style)
-    .into()
+    .style(bar_style);
+
+    // If dropdown is open, stack it above the status bar
+    if locale_dropdown_open {
+        let items: Vec<Element<'static, Message>> = UiLocale::all()
+            .iter()
+            .map(|&l| {
+                let flag_text = text(l.flag_emoji())
+                    .size(16)
+                    .shaping(Shaping::Advanced);
+
+                button(flag_text)
+                    .on_press(Message::SetUiLocale(l))
+                    .padding([4, 8])
+                    .width(Length::Fill)
+                    .style(dropdown_item)
+                    .into()
+            })
+            .collect();
+
+        let dropdown_menu = container(
+            iced::widget::Column::with_children(items).spacing(2).padding(4),
+        )
+        .style(dropdown_bg);
+
+        // Align dropdown to the right, above the status bar
+        let dropdown_row = row![
+            Space::with_width(Length::Fill),
+            dropdown_menu,
+            // offset from right edge to roughly align with the flag trigger
+            Space::with_width(Length::Fixed(40.0)),
+        ];
+
+        column![dropdown_row, status_row]
+            .width(Length::Fill)
+            .into()
+    } else {
+        status_row.into()
+    }
 }
