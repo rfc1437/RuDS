@@ -34,7 +34,7 @@ dirs = "5"
 open = "5"
 
 # UI framework
-iced = { version = "0.13", features = ["wgpu", "advanced", "image", "tokio"] }
+iced = { version = "0.13", features = ["wgpu", "advanced", "image", "svg", "tokio"] }
 
 # Editor widget
 cosmic-text = "0.12"

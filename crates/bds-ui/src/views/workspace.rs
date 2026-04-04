@@ -1,5 +1,5 @@
-use iced::widget::{column, row};
-use iced::{Element, Length};
+use iced::widget::{column, container, row, Space};
+use iced::{Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
@@ -7,6 +7,36 @@ use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
 use crate::state::tabs::Tab;
 use crate::views::{activity_bar, panel, sidebar, status_bar, tab_bar, welcome};
+
+/// Main content area background.
+fn content_bg(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.11, 0.11, 0.14))),
+        ..container::Style::default()
+    }
+}
+
+/// Horizontal separator line between regions.
+fn separator_v() -> iced::widget::Container<'static, Message> {
+    container(Space::new(0, 0))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fill)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb(0.25, 0.25, 0.30))),
+            ..container::Style::default()
+        })
+}
+
+/// Horizontal line separator (full width).
+fn separator_h() -> iced::widget::Container<'static, Message> {
+    container(Space::new(0, 0))
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb(0.25, 0.25, 0.30))),
+            ..container::Style::default()
+        })
+}
 
 /// Compose the full workspace layout.
 pub fn view(
@@ -32,38 +62,31 @@ pub fn view(
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, locale);
 
-    // Sidebar (conditionally visible)
-    let sidebar_el: Option<Element<'static, Message>> = if sidebar_visible {
-        Some(sidebar::view(sidebar_view, locale))
-    } else {
-        None
-    };
-
     // Tab bar
     let tabs_el = tab_bar::view(tabs, active_tab);
 
     // Content area
     let content_area = welcome::view(locale);
 
-    // Panel (conditionally visible)
-    let panel_el: Option<Element<'static, Message>> = if panel_visible {
-        Some(panel::view(panel_tab, task_snapshots, output_entries, locale))
-    } else {
-        None
-    };
-
     // Right column: tab bar + content + panel
     let mut right_col = column![tabs_el, content_area];
-    if let Some(p) = panel_el {
-        right_col = right_col.push(p);
+    if panel_visible {
+        right_col = right_col.push(separator_h());
+        right_col = right_col.push(panel::view(panel_tab, task_snapshots, output_entries, locale));
     }
-    let right = right_col.width(Length::Fill).height(Length::Fill);
+    let right = container(right_col.width(Length::Fill).height(Length::Fill))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(content_bg);
 
-    // Main row: activity bar + sidebar? + right column
+    // Main row: activity bar | separator | sidebar? | separator | right column
     let mut main_row = row![activity];
-    if let Some(sb) = sidebar_el {
-        main_row = main_row.push(sb);
+
+    if sidebar_visible {
+        main_row = main_row.push(sidebar::view(sidebar_view, locale));
+        main_row = main_row.push(separator_v());
     }
+
     main_row = main_row.push(right);
     let main_row = main_row.height(Length::Fill);
 
@@ -77,7 +100,7 @@ pub fn view(
         task_snapshots,
     );
 
-    column![main_row, status]
+    column![main_row, separator_h(), status]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

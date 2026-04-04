@@ -1,5 +1,5 @@
 use iced::widget::{column, container, text};
-use iced::{Element, Length};
+use iced::{Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
@@ -12,8 +12,12 @@ pub fn view(locale: UiLocale) -> Element<'static, Message> {
 
     container(
         column![
-            text(title).size(28),
-            text(subtitle).size(14),
+            text(title)
+                .size(28)
+                .color(Color::from_rgb(0.85, 0.85, 0.90)),
+            text(subtitle)
+                .size(14)
+                .color(Color::from_rgb(0.55, 0.55, 0.60)),
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center),
@@ -22,5 +26,9 @@ pub fn view(locale: UiLocale) -> Element<'static, Message> {
     .height(Length::Fill)
     .center_x(Length::Fill)
     .center_y(Length::Fill)
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.11, 0.11, 0.14))),
+        ..container::Style::default()
+    })
     .into()
 }

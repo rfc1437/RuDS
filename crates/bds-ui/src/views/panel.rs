@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, scrollable, text, Space};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
@@ -7,41 +7,83 @@ use crate::app::Message;
 use crate::i18n::t;
 use crate::state::navigation::{OutputEntry, PanelTab, TaskSnapshot};
 
+/// Panel background style.
+fn panel_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.13, 0.13, 0.16))),
+        ..container::Style::default()
+    }
+}
+
+/// Panel tab button — active.
+fn tab_active(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(Background::Color(Color::from_rgb(0.20, 0.20, 0.25))),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::from_rgb(0.30, 0.55, 0.90),
+            width: 0.0,
+            radius: 3.0.into(),
+        },
+        ..button::Style::default()
+    }
+}
+
+/// Panel tab button — inactive.
+fn tab_inactive(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(0.18, 0.18, 0.22),
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::from_rgb(0.60, 0.60, 0.65),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 3.0.into(),
+        },
+        ..button::Style::default()
+    }
+}
+
+/// Close button style.
+fn close_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let color = match status {
+        button::Status::Hovered => Color::WHITE,
+        _ => Color::from_rgb(0.50, 0.50, 0.55),
+    };
+    button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: color,
+        border: Border::default(),
+        ..button::Style::default()
+    }
+}
+
 pub fn view(
     panel_tab: PanelTab,
     task_snapshots: &[TaskSnapshot],
     output_entries: &[OutputEntry],
     locale: UiLocale,
 ) -> Element<'static, Message> {
+    let muted = Color::from_rgb(0.50, 0.50, 0.55);
+
     // Tab header
-    let tasks_btn = {
-        let mut btn = button(text(t(locale, "common.tasks")).size(12))
-            .on_press(Message::SetPanelTab(PanelTab::Tasks))
-            .padding([4, 8]);
-        if panel_tab == PanelTab::Tasks {
-            btn = btn.style(button::primary);
-        } else {
-            btn = btn.style(button::secondary);
-        }
-        btn
-    };
+    let tasks_btn = button(text(t(locale, "common.tasks")).size(12))
+        .on_press(Message::SetPanelTab(PanelTab::Tasks))
+        .padding([4, 8])
+        .style(if panel_tab == PanelTab::Tasks { tab_active } else { tab_inactive });
 
-    let output_btn = {
-        let mut btn = button(text(t(locale, "panel.output")).size(12))
-            .on_press(Message::SetPanelTab(PanelTab::Output))
-            .padding([4, 8]);
-        if panel_tab == PanelTab::Output {
-            btn = btn.style(button::primary);
-        } else {
-            btn = btn.style(button::secondary);
-        }
-        btn
-    };
+    let output_btn = button(text(t(locale, "panel.output")).size(12))
+        .on_press(Message::SetPanelTab(PanelTab::Output))
+        .padding([4, 8])
+        .style(if panel_tab == PanelTab::Output { tab_active } else { tab_inactive });
 
-    let close_btn = button(text("×").size(12))
+    let close_btn = button(text("\u{2715}").size(12))
         .on_press(Message::TogglePanel)
         .padding([4, 6])
-        .style(button::text);
+        .style(close_btn_style);
 
     let tab_header = row![
         tasks_btn,
@@ -50,13 +92,14 @@ pub fn view(
         close_btn,
     ]
     .spacing(4)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    .padding([4, 8]);
 
     // Tab content
     let content: Element<'static, Message> = match panel_tab {
         PanelTab::Tasks => {
             if task_snapshots.is_empty() {
-                container(text(t(locale, "tasks.noActive")).size(12))
+                container(text(t(locale, "tasks.noActive")).size(12).color(muted))
                     .padding(8)
                     .into()
             } else {
@@ -64,14 +107,14 @@ pub fn view(
                     .iter()
                     .map(|snap| {
                         let status_text = format!(
-                            "{} — {}{}",
+                            "{} \u{2014} {}{}",
                             snap.label,
                             snap.status,
                             snap.progress
                                 .map(|p| format!(" ({:.0}%)", p * 100.0))
                                 .unwrap_or_default(),
                         );
-                        text(status_text).size(11).into()
+                        text(status_text).size(11).color(Color::from_rgb(0.70, 0.70, 0.75)).into()
                     })
                     .collect();
                 scrollable(
@@ -84,13 +127,18 @@ pub fn view(
         }
         PanelTab::Output => {
             if output_entries.is_empty() {
-                container(text(t(locale, "panel.noOutput")).size(12))
+                container(text(t(locale, "panel.noOutput")).size(12).color(muted))
                     .padding(8)
                     .into()
             } else {
                 let items: Vec<Element<'static, Message>> = output_entries
                     .iter()
-                    .map(|entry| text(entry.text.clone()).size(11).into())
+                    .map(|entry| {
+                        text(entry.text.clone())
+                            .size(11)
+                            .color(Color::from_rgb(0.70, 0.70, 0.75))
+                            .into()
+                    })
                     .collect();
                 scrollable(
                     iced::widget::Column::with_children(items)
@@ -103,9 +151,10 @@ pub fn view(
     };
 
     container(
-        column![tab_header, content].spacing(4),
+        column![tab_header, content].spacing(0),
     )
     .width(Length::Fill)
     .height(Length::Fixed(200.0))
+    .style(panel_style)
     .into()
 }
