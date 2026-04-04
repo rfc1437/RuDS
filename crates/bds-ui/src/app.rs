@@ -4,7 +4,7 @@ use std::sync::Arc;
 use iced::{Element, Subscription, Task};
 
 use bds_core::db::Database;
-use bds_core::engine::task::{TaskManager, TaskStatus};
+use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
 use bds_core::model::Project;
@@ -70,8 +70,11 @@ pub enum Message {
     // Blog actions (dispatched to engine)
     RebuildDatabase,
     ReindexText,
+    RegenerateCalendar,
+    ValidateTranslations,
+    GenerateSite,
     RunMetadataDiff,
-    BlogTaskFinished { label: String, result: Result<(), String> },
+    EngineTaskDone { task_id: TaskId, label: String, result: Result<String, String> },
 
     Noop,
     InitMenuBar,
@@ -84,6 +87,7 @@ pub enum Message {
 pub struct BdsApp {
     // Database
     db: Option<Database>,
+    db_path: PathBuf,
 
     // Project
     active_project: Option<Project>,
@@ -207,6 +211,7 @@ impl BdsApp {
         (
             Self {
                 db,
+                db_path,
                 active_project: active_project.clone(),
                 projects,
                 data_dir,
@@ -450,94 +455,88 @@ impl BdsApp {
                 Task::none()
             }
 
-            // ── Blog engine actions ──
+            // ── Blog engine actions (async via TaskManager) ──
             Message::RebuildDatabase => {
-                let ready = self.db.is_some()
-                    && self.active_project.is_some()
-                    && self.data_dir.is_some();
-                if ready {
-                    self.add_output(&t(self.ui_locale, "engine.rebuildStarted"));
-                    let db = self.db.as_ref().unwrap();
-                    let project_id = self.active_project.as_ref().unwrap().id.clone();
-                    let data_dir = self.data_dir.as_ref().unwrap().clone();
-                    match engine::rebuild::rebuild_from_filesystem(db.conn(), &data_dir, &project_id) {
-                        Ok(report) => {
-                            let posts = report.posts_created + report.posts_updated;
-                            let media = report.media_created + report.media_updated;
-                            let templates = report.templates_created + report.templates_updated;
-                            let scripts = report.scripts_created + report.scripts_updated;
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.rebuildComplete",
-                                &[
-                                    ("posts", &posts.to_string()),
-                                    ("media", &media.to_string()),
-                                    ("templates", &templates.to_string()),
-                                    ("scripts", &scripts.to_string()),
-                                ],
-                            ));
-                        }
-                        Err(e) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.rebuildFailed",
-                                &[("error", &e.to_string())],
-                            ));
-                        }
-                    }
-                }
-                Task::none()
+                self.spawn_engine_task(
+                    "engine.rebuildStarted",
+                    |db_path, project_id, data_dir| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::rebuild::rebuild_from_filesystem(db.conn(), &data_dir, &project_id)
+                            .map_err(|e| e.to_string())?;
+                        let posts = report.posts_created + report.posts_updated;
+                        let media = report.media_created + report.media_updated;
+                        let templates = report.templates_created + report.templates_updated;
+                        let scripts = report.scripts_created + report.scripts_updated;
+                        Ok(format!("posts={posts}, media={media}, templates={templates}, scripts={scripts}"))
+                    },
+                )
             }
             Message::ReindexText => {
-                let ready = self.db.is_some()
-                    && self.active_project.is_some()
-                    && self.data_dir.is_some();
-                if ready {
-                    self.add_output(&t(self.ui_locale, "engine.reindexStarted"));
-                    let db = self.db.as_ref().unwrap();
-                    let project_id = self.active_project.as_ref().unwrap().id.clone();
-                    let data_dir = self.data_dir.as_ref().unwrap().clone();
-                    let main_lang = engine::meta::read_project_json(&data_dir)
-                        .ok()
-                        .and_then(|m| m.main_language)
-                        .unwrap_or_else(|| "en".to_string());
-                    match engine::search::reindex_all(db.conn(), &project_id, &main_lang) {
-                        Ok(report) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.reindexComplete",
-                                &[
-                                    ("posts", &report.posts_indexed.to_string()),
-                                    ("media", &report.media_indexed.to_string()),
-                                ],
-                            ));
-                        }
-                        Err(e) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.reindexFailed",
-                                &[("error", &e.to_string())],
-                            ));
-                        }
-                    }
-                }
-                Task::none()
+                self.spawn_engine_task(
+                    "engine.reindexStarted",
+                    |db_path, project_id, data_dir| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let main_lang = engine::meta::read_project_json(&data_dir)
+                            .ok()
+                            .and_then(|m| m.main_language)
+                            .unwrap_or_else(|| "en".to_string());
+                        let report = engine::search::reindex_all(db.conn(), &project_id, &main_lang)
+                            .map_err(|e| e.to_string())?;
+                        Ok(format!("posts={}, media={}", report.posts_indexed, report.media_indexed))
+                    },
+                )
+            }
+            Message::RegenerateCalendar => {
+                self.spawn_engine_task(
+                    "engine.calendarStarted",
+                    |db_path, project_id, data_dir| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
+                            .map_err(|e| e.to_string())?;
+                        Ok("done".to_string())
+                    },
+                )
+            }
+            Message::ValidateTranslations => {
+                self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
+                self.spawn_engine_task(
+                    "engine.validateTranslationsStarted",
+                    |db_path, project_id, data_dir| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::validate_translations::validate_translations(
+                            db.conn(), &data_dir, &project_id,
+                        ).map_err(|e| e.to_string())?;
+                        Ok(format!("db_issues={}, fs_issues={}", report.db_issues.len(), report.fs_issues.len()))
+                    },
+                )
+            }
+            Message::GenerateSite => {
+                self.spawn_engine_task(
+                    "engine.generateSiteStarted",
+                    |db_path, project_id, data_dir| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
+                            .map_err(|e| e.to_string())?;
+                        Ok("done".to_string())
+                    },
+                )
             }
             Message::RunMetadataDiff => {
                 self.open_singleton_tab(TabType::MetadataDiff, "Metadata Diff");
                 Task::none()
             }
-            Message::BlogTaskFinished { label, result } => {
-                match result {
-                    Ok(()) => {
-                        let msg = tw(self.ui_locale, "app.taskCompleted", &[("message", &label)]);
-                        self.add_output(&msg);
+            Message::EngineTaskDone { task_id, label, result } => {
+                match &result {
+                    Ok(detail) => {
+                        self.task_manager.complete(task_id);
+                        self.add_output(&format!("{label}: {detail}"));
                     }
                     Err(err) => {
-                        let msg = tw(self.ui_locale, "app.taskFailed", &[("message", &err)]);
-                        self.add_output(&msg);
+                        self.task_manager.fail(task_id, err.clone());
+                        self.add_output(&format!("{label} failed: {err}"));
                     }
                 }
+                self.refresh_task_snapshots();
                 Task::none()
             }
 
@@ -663,68 +662,8 @@ impl BdsApp {
             MenuAction::RebuildDatabase => Task::done(Message::RebuildDatabase),
             MenuAction::ReindexText => Task::done(Message::ReindexText),
             MenuAction::MetadataDiff => Task::done(Message::RunMetadataDiff),
-            MenuAction::RegenerateCalendar => {
-                let ready = self.db.is_some()
-                    && self.active_project.is_some()
-                    && self.data_dir.is_some();
-                if ready {
-                    self.add_output(&t(self.ui_locale, "engine.calendarStarted"));
-                    let db = self.db.as_ref().unwrap();
-                    let project_id = self.active_project.as_ref().unwrap().id.clone();
-                    let data_dir = self.data_dir.as_ref().unwrap().clone();
-                    match engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id) {
-                        Ok(()) => {
-                            self.add_output(&t(self.ui_locale, "engine.calendarComplete"));
-                        }
-                        Err(e) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.calendarFailed",
-                                &[("error", &e.to_string())],
-                            ));
-                        }
-                    }
-                } else {
-                    self.add_output(&t(self.ui_locale, "engine.calendarNoProject"));
-                }
-                Task::none()
-            }
-            MenuAction::ValidateTranslations => {
-                self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
-                let ready = self.db.is_some()
-                    && self.active_project.is_some()
-                    && self.data_dir.is_some();
-                if ready {
-                    self.add_output(&t(self.ui_locale, "engine.validateTranslationsStarted"));
-                    let db = self.db.as_ref().unwrap();
-                    let project_id = self.active_project.as_ref().unwrap().id.clone();
-                    let data_dir = self.data_dir.as_ref().unwrap().clone();
-                    match engine::validate_translations::validate_translations(
-                        db.conn(),
-                        &data_dir,
-                        &project_id,
-                    ) {
-                        Ok(report) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.validateTranslationsComplete",
-                                &[
-                                    ("dbIssues", &report.db_issues.len().to_string()),
-                                    ("fsIssues", &report.fs_issues.len().to_string()),
-                                ],
-                            ));
-                        }
-                        Err(e) => {
-                            self.add_output(&tw(
-                                self.ui_locale,
-                                "engine.validateTranslationsFailed",
-                                &[("error", &e.to_string())],
-                            ));
-                        }
-                    }
-                }
-                Task::none()
-            }
+            MenuAction::RegenerateCalendar => Task::done(Message::RegenerateCalendar),
+            MenuAction::ValidateTranslations => Task::done(Message::ValidateTranslations),
             MenuAction::FillMissingTranslations => {
                 if self.offline_mode {
                     self.add_output(&t(self.ui_locale, "engine.fillMissingTranslationsOffline"));
@@ -734,20 +673,7 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            MenuAction::GenerateSitemap => {
-                if self.active_project.is_some() {
-                    self.add_output(&t(self.ui_locale, "engine.generateSiteStarted"));
-                    // Regenerate calendar as subset until full template rendering (M3+)
-                    if let Some(db) = &self.db {
-                        let project_id = self.active_project.as_ref().unwrap().id.clone();
-                        let data_dir = self.data_dir.as_ref().unwrap().clone();
-                        let _ = engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id);
-                    }
-                } else {
-                    self.add_output(&t(self.ui_locale, "engine.generateSiteNoProject"));
-                }
-                Task::none()
-            }
+            MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
             MenuAction::ValidateSite => {
                 self.open_singleton_tab(TabType::SiteValidation, "Site Validation");
                 Task::none()
@@ -836,5 +762,48 @@ impl BdsApp {
             timestamp: chrono::Utc::now().timestamp(),
             text: text.to_string(),
         });
+    }
+
+    /// Spawn a blocking engine operation on a background thread via TaskManager.
+    ///
+    /// Returns `Task::none()` if no active project/db/data_dir.
+    /// Otherwise registers the task, logs the start message, and returns an
+    /// async `Task` that opens a fresh DB connection on a worker thread.
+    fn spawn_engine_task<F>(
+        &mut self,
+        label_key: &str,
+        work: F,
+    ) -> Task<Message>
+    where
+        F: FnOnce(PathBuf, String, PathBuf) -> Result<String, String> + Send + 'static,
+    {
+        let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+            return Task::none();
+        };
+
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let data_dir = data_dir.clone();
+
+        let label = t(self.ui_locale, label_key);
+        self.add_output(&label);
+
+        let task_id = self.task_manager.submit(&label);
+        self.refresh_task_snapshots();
+
+        let label_for_msg = label.clone();
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || work(db_path, project_id, data_dir))
+                    .await
+                    .unwrap_or_else(|e| Err(format!("task panicked: {e}")))
+            },
+            move |result| Message::EngineTaskDone {
+                task_id,
+                label: label_for_msg.clone(),
+                result,
+            },
+        )
     }
 }

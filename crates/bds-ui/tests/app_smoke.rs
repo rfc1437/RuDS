@@ -78,10 +78,14 @@ fn new_message_variants_constructable() {
     // Blog actions
     let _rebuild = Message::RebuildDatabase;
     let _reindex = Message::ReindexText;
+    let _regen_cal = Message::RegenerateCalendar;
+    let _validate = Message::ValidateTranslations;
+    let _generate = Message::GenerateSite;
     let _diff = Message::RunMetadataDiff;
-    let _finished = Message::BlogTaskFinished {
+    let _finished = Message::EngineTaskDone {
+        task_id: 1,
         label: "test".into(),
-        result: Ok(()),
+        result: Ok("ok".into()),
     };
 }
 
