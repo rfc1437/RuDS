@@ -3,7 +3,7 @@ use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::{Post, Project};
+use bds_core::model::{Media, Post, Project};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
@@ -55,6 +55,7 @@ pub fn view(
     output_entries: &[OutputEntry],
     // Sidebar data
     sidebar_posts: &[Post],
+    sidebar_media: &[Media],
     // Status bar
     active_project_name: Option<&str>,
     projects: &[Project],
@@ -91,7 +92,7 @@ pub fn view(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, locale));
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, locale));
         main_row = main_row.push(separator_v());
     }
 

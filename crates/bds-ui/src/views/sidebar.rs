@@ -3,7 +3,7 @@ use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::Post;
+use bds_core::model::{Media, Post};
 
 use crate::app::Message;
 use crate::i18n::t;
@@ -56,6 +56,7 @@ fn placeholder_key(view: SidebarView) -> &'static str {
 pub fn view(
     sidebar_view: SidebarView,
     posts: &[Post],
+    media: &[Media],
     locale: UiLocale,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
@@ -89,6 +90,38 @@ pub fn view(
                                 id: p.id.clone(),
                                 tab_type: TabType::Post,
                                 title: p.title.clone(),
+                                is_transient: true,
+                            }))
+                            .padding([3, 6])
+                            .width(Length::Fill)
+                            .style(item_style)
+                            .into()
+                    })
+                    .collect();
+                iced::widget::Column::with_children(items)
+                    .spacing(1)
+                    .into()
+            }
+        }
+        SidebarView::Media => {
+            if media.is_empty() {
+                text(t(locale, placeholder_key(sidebar_view)))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted)
+                    .into()
+            } else {
+                let items: Vec<Element<'static, Message>> = media
+                    .iter()
+                    .map(|m| {
+                        let display_name = m.title.as_deref()
+                            .unwrap_or(&m.original_name);
+                        let label = format!("\u{1F5BC} {display_name}");
+                        button(text(label).size(12).shaping(Shaping::Advanced))
+                            .on_press(Message::OpenTab(Tab {
+                                id: m.id.clone(),
+                                tab_type: TabType::Media,
+                                title: display_name.to_string(),
                                 is_transient: true,
                             }))
                             .padding([3, 6])

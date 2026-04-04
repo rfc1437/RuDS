@@ -7,7 +7,7 @@ use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::{Post, Project};
+use bds_core::model::{Media, Post, Project};
 
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -100,6 +100,7 @@ pub struct BdsApp {
 
     // Sidebar data
     sidebar_posts: Vec<Post>,
+    sidebar_media: Vec<Media>,
 
     // Navigation
     sidebar_view: SidebarView,
@@ -225,6 +226,7 @@ impl BdsApp {
                 post_count: 0,
                 media_count: 0,
                 sidebar_posts: Vec::new(),
+                sidebar_media: Vec::new(),
                 sidebar_view: SidebarView::Posts,
                 sidebar_visible: true,
                 tabs: Vec::new(),
@@ -583,6 +585,7 @@ impl BdsApp {
             &self.task_snapshots,
             &self.output_entries,
             &self.sidebar_posts,
+            &self.sidebar_media,
             active_name,
             &self.projects,
             self.active_project.as_ref().map(|p| p.id.as_str()),
@@ -848,6 +851,13 @@ impl BdsApp {
             )
             .unwrap_or(0) as usize;
             self.sidebar_posts = bds_core::db::queries::post::list_posts_by_project_limited(
+                db.conn(),
+                &project.id,
+                500,
+                0,
+            )
+            .unwrap_or_default();
+            self.sidebar_media = bds_core::db::queries::media::list_media_by_project_limited(
                 db.conn(),
                 &project.id,
                 500,

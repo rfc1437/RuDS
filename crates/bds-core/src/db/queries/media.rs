@@ -59,6 +59,19 @@ pub fn list_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::R
     rows.collect()
 }
 
+pub fn list_media_by_project_limited(
+    conn: &Connection,
+    project_id: &str,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<Vec<Media>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {MEDIA_COLUMNS} FROM media WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+    ))?;
+    let rows = stmt.query_map(params![project_id, limit, offset], media_from_row)?;
+    rows.collect()
+}
+
 pub fn count_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT COUNT(*) FROM media WHERE project_id = ?1",
