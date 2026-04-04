@@ -31,9 +31,9 @@ pub enum ThumbnailFit {
 
 /// Standard thumbnail sizes matching TypeScript implementation.
 pub const THUMBNAIL_SIZES: &[ThumbnailSize] = &[
-    ThumbnailSize { name: "small", width: 150, height: 150, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "medium", width: 400, height: 400, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "large", width: 800, height: 800, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "small", width: 150, height: 150, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
+    ThumbnailSize { name: "medium", width: 400, height: 400, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
+    ThumbnailSize { name: "large", width: 800, height: 800, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
     ThumbnailSize { name: "ai", width: 448, height: 448, format: ThumbnailFormat::Jpeg, fit: ThumbnailFit::Contain },
 ];
 
@@ -109,6 +109,17 @@ pub fn generate_all_thumbnails(
     let mut paths = Vec::new();
     let prefix = &media_id[..2.min(media_id.len())];
 
+    // Save thumbnail source for regeneration
+    let source_ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let source_dest = thumbnails_dir
+        .join(prefix)
+        .join(format!("{media_id}_source.{source_ext}"));
+    if let Some(parent) = source_dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+    fs::copy(source, &source_dest).map_err(|e| format!("save thumbnail source: {e}"))?;
+    paths.push(source_dest.to_string_lossy().to_string());
+
     for size in THUMBNAIL_SIZES {
         let ext = match size.format {
             ThumbnailFormat::Webp => "webp",
@@ -132,11 +143,97 @@ fn load_and_orient(path: &Path) -> Result<DynamicImage, String> {
         .with_guessed_format()
         .map_err(|e| format!("guess format: {e}"))?;
 
-    let img = reader.decode().map_err(|e| format!("decode image: {e}"))?;
+    let mut img = reader.decode().map_err(|e| format!("decode image: {e}"))?;
 
-    // EXIF orientation is handled by the image crate for JPEG automatically
-    // when reading. For other formats, no EXIF orientation exists.
+    // Try to read EXIF orientation from JPEG files
+    if let Ok(data) = fs::read(path) {
+        if let Some(orientation) = read_exif_orientation(&data) {
+            img = apply_orientation(img, orientation);
+        }
+    }
+
     Ok(img)
+}
+
+/// Read EXIF orientation tag from raw file bytes.
+/// Returns orientation value 1-8, or None if not found.
+fn read_exif_orientation(data: &[u8]) -> Option<u16> {
+    if data.len() < 12 {
+        return None;
+    }
+    // Must be JPEG: FF D8
+    if data[0] != 0xFF || data[1] != 0xD8 {
+        return None;
+    }
+    let mut pos = 2;
+    while pos + 4 < data.len() {
+        if data[pos] != 0xFF {
+            break;
+        }
+        let marker = data[pos + 1];
+        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if marker == 0xE1 && pos + 10 < data.len() {
+            // Check for "Exif\0\0"
+            if &data[pos + 4..pos + 10] == b"Exif\0\0" {
+                let tiff_start = pos + 10;
+                return parse_tiff_orientation(data, tiff_start);
+            }
+        }
+        pos += 2 + len;
+    }
+    None
+}
+
+fn parse_tiff_orientation(data: &[u8], tiff_start: usize) -> Option<u16> {
+    if tiff_start + 8 > data.len() {
+        return None;
+    }
+    let is_le = data[tiff_start] == b'I' && data[tiff_start + 1] == b'I';
+    let read_u16 = |offset: usize| -> Option<u16> {
+        if offset + 2 > data.len() { return None; }
+        if is_le {
+            Some(u16::from_le_bytes([data[offset], data[offset + 1]]))
+        } else {
+            Some(u16::from_be_bytes([data[offset], data[offset + 1]]))
+        }
+    };
+    let read_u32 = |offset: usize| -> Option<u32> {
+        if offset + 4 > data.len() { return None; }
+        if is_le {
+            Some(u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]))
+        } else {
+            Some(u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]))
+        }
+    };
+
+    let ifd_offset = read_u32(tiff_start + 4)? as usize;
+    let ifd_pos = tiff_start + ifd_offset;
+    let entry_count = read_u16(ifd_pos)? as usize;
+
+    for i in 0..entry_count {
+        let entry_pos = ifd_pos + 2 + i * 12;
+        if entry_pos + 12 > data.len() { break; }
+        let tag = read_u16(entry_pos)?;
+        if tag == 0x0112 {
+            // Orientation tag
+            return read_u16(entry_pos + 8);
+        }
+    }
+    None
+}
+
+fn apply_orientation(img: DynamicImage, orientation: u16) -> DynamicImage {
+    match orientation {
+        1 => img,                                          // Normal
+        2 => img.fliph(),                                  // Mirrored horizontal
+        3 => img.rotate180(),                              // Rotated 180
+        4 => img.flipv(),                                  // Mirrored vertical
+        5 => img.rotate90().fliph(),                       // Mirrored horizontal + 270 CW
+        6 => img.rotate90(),                               // Rotated 90 CW
+        7 => img.rotate270().fliph(),                      // Mirrored horizontal + 90 CW
+        8 => img.rotate270(),                              // Rotated 270 CW
+        _ => img,
+    }
 }
 
 /// Extract image dimensions from a file.
@@ -188,13 +285,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let source = create_test_png(dir.path());
         let dest = dir.path().join("thumb.webp");
-        let size = &THUMBNAIL_SIZES[0]; // small: 150x150
+        let size = &THUMBNAIL_SIZES[0]; // small: 150x150 Cover
         generate_thumbnail(&source, &dest, size, 80).unwrap();
         assert!(dest.exists());
         let (w, h) = image_dimensions(&dest).unwrap();
-        // 100x80 is already smaller than 150x150, so no resize (Inside fit)
-        assert_eq!(w, 100);
-        assert_eq!(h, 80);
+        // 100x80 resized to fill 150x150 (Cover fit)
+        assert_eq!(w, 150);
+        assert_eq!(h, 150);
     }
 
     #[test]
@@ -216,7 +313,7 @@ mod tests {
         let source = create_test_png(dir.path());
         let thumb_dir = dir.path().join("thumbnails");
         let paths = generate_all_thumbnails(&source, &thumb_dir, "ab123456-test-uuid").unwrap();
-        assert_eq!(paths.len(), 4);
+        assert_eq!(paths.len(), 5); // 1 source + 4 thumbnails
         for p in &paths {
             assert!(Path::new(p).exists(), "thumbnail missing: {p}");
         }

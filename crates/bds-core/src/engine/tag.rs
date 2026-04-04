@@ -86,11 +86,10 @@ pub fn delete_tag(
     let tag = tag_q::get_tag_by_id(conn, tag_id)
         .map_err(|_| EngineError::NotFound(format!("tag {tag_id}")))?;
 
-    // Remove tag name from all posts
-    remove_tag_name_from_posts(conn, project_id, &tag.name)?;
-
+    let modified = remove_tag_name_from_posts(conn, project_id, &tag.name)?;
     tag_q::delete_tag(conn, tag_id)?;
     rewrite_tags_json(conn, data_dir, project_id)?;
+    flush_post_frontmatter(conn, data_dir, &modified)?;
     Ok(())
 }
 
@@ -109,6 +108,7 @@ pub fn rename_tag(
     // Update all posts: replace old name with new name in tag arrays
     let posts = post_q::list_posts_by_project(conn, project_id)?;
     let now = now_unix_ms();
+    let mut modified = Vec::new();
     for mut post in posts {
         if post.tags.iter().any(|t| t.eq_ignore_ascii_case(&old_name)) {
             post.tags = post
@@ -124,6 +124,7 @@ pub fn rename_tag(
                 .collect();
             post.updated_at = now;
             post_q::update_post(conn, &post)?;
+            modified.push(post.id.clone());
         }
     }
 
@@ -131,6 +132,7 @@ pub fn rename_tag(
     tag.updated_at = now;
     tag_q::update_tag(conn, &tag)?;
     rewrite_tags_json(conn, data_dir, project_id)?;
+    flush_post_frontmatter(conn, data_dir, &modified)?;
     Ok(())
 }
 
@@ -146,6 +148,7 @@ pub fn merge_tags(
     let target_tag = tag_q::get_tag_by_id(conn, target_id)
         .map_err(|_| EngineError::NotFound(format!("target tag {target_id}")))?;
 
+    let mut all_modified = Vec::new();
     for &source_id in source_ids {
         let source_tag = tag_q::get_tag_by_id(conn, source_id)
             .map_err(|_| EngineError::NotFound(format!("source tag {source_id}")))?;
@@ -171,6 +174,9 @@ pub fn merge_tags(
                 }
                 post.updated_at = now;
                 post_q::update_post(conn, &post)?;
+                if !all_modified.contains(&post.id) {
+                    all_modified.push(post.id.clone());
+                }
             }
         }
 
@@ -178,6 +184,7 @@ pub fn merge_tags(
     }
 
     rewrite_tags_json(conn, data_dir, project_id)?;
+    flush_post_frontmatter(conn, data_dir, &all_modified)?;
     Ok(())
 }
 
@@ -240,22 +247,52 @@ pub fn rewrite_tags_json(
 
 // ── helpers ─────────────────────────────────────────────────────────
 
+/// Rewrite frontmatter files for posts whose tags were modified.
+/// Only rewrites published posts (that have file_path set).
+fn flush_post_frontmatter(
+    conn: &Connection,
+    data_dir: &Path,
+    post_ids: &[String],
+) -> EngineResult<()> {
+    use crate::util::frontmatter::write_post_file;
+    use crate::util::atomic_write_str;
+
+    for post_id in post_ids {
+        let post = post_q::get_post_by_id(conn, post_id)?;
+        if !post.file_path.is_empty() {
+            let abs_path = data_dir.join(&post.file_path);
+            if abs_path.exists() {
+                // Read existing body from file
+                let content = std::fs::read_to_string(&abs_path)?;
+                let (_fm, body) = crate::util::frontmatter::read_post_file(&content)
+                    .map_err(|e| EngineError::Parse(e))?;
+                // Rewrite with updated frontmatter
+                let file_content = write_post_file(&post, &body);
+                atomic_write_str(&abs_path, &file_content)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn remove_tag_name_from_posts(
     conn: &Connection,
     project_id: &str,
     tag_name: &str,
-) -> EngineResult<()> {
+) -> EngineResult<Vec<String>> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
     let now = now_unix_ms();
+    let mut modified = Vec::new();
     for mut post in posts {
         if post.tags.iter().any(|t| t.eq_ignore_ascii_case(tag_name)) {
             post.tags
                 .retain(|t| !t.eq_ignore_ascii_case(tag_name));
             post.updated_at = now;
             post_q::update_post(conn, &post)?;
+            modified.push(post.id.clone());
         }
     }
-    Ok(())
+    Ok(modified)
 }
 
 #[cfg(test)]
@@ -462,5 +499,27 @@ mod tests {
         let entries = meta::read_tags_json(dir.path()).unwrap();
         assert_eq!(entries[0].name, "alpha");
         assert_eq!(entries[1].name, "zebra");
+    }
+
+    #[test]
+    fn rename_tag_flushes_post_frontmatter() {
+        let (db, dir) = setup();
+        // Create and publish a post with a tag
+        use crate::db::fts::ensure_fts_tables;
+        ensure_fts_tables(db.conn()).unwrap();
+        let post = crate::engine::post::create_post(
+            db.conn(), dir.path(), "p1", "Tagged Post", Some("body content"),
+            vec!["rust".into()], vec![], None, None, None,
+        ).unwrap();
+        crate::engine::post::publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let tag = create_tag(db.conn(), dir.path(), "p1", "rust", None).unwrap();
+        rename_tag(db.conn(), dir.path(), "p1", &tag.id, "golang").unwrap();
+
+        // Read the file from disk and verify tag was updated
+        let from_db = crate::db::queries::post::get_post_by_id(db.conn(), &post.id).unwrap();
+        let file_content = std::fs::read_to_string(dir.path().join(&from_db.file_path)).unwrap();
+        assert!(file_content.contains("golang"), "frontmatter should contain renamed tag");
+        assert!(!file_content.contains("rust"), "frontmatter should not contain old tag name");
     }
 }

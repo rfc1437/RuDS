@@ -7,6 +7,11 @@ pub fn insert_post_translation(
     conn: &Connection,
     t: &PostTranslation,
 ) -> rusqlite::Result<()> {
+    if !t.status.is_valid_for_translation() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "translation status must be draft or published".to_string(),
+        ));
+    }
     conn.execute(
         "INSERT INTO post_translations (
             id, project_id, translation_for, language, title, excerpt, content,
@@ -73,6 +78,11 @@ pub fn update_post_translation(
     conn: &Connection,
     t: &PostTranslation,
 ) -> rusqlite::Result<()> {
+    if !t.status.is_valid_for_translation() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "translation status must be draft or published".to_string(),
+        ));
+    }
     conn.execute(
         "UPDATE post_translations SET
             title = ?1, excerpt = ?2, content = ?3, status = ?4,
@@ -216,6 +226,25 @@ mod tests {
         let db = setup();
         insert_post_translation(db.conn(), &make_translation("t1", "de")).unwrap();
         let result = insert_post_translation(db.conn(), &make_translation("t2", "de"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn archived_status_rejected_on_insert() {
+        let db = setup();
+        let mut t = make_translation("t1", "de");
+        t.status = PostStatus::Archived;
+        let result = insert_post_translation(db.conn(), &t);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn archived_status_rejected_on_update() {
+        let db = setup();
+        let mut t = make_translation("t1", "de");
+        insert_post_translation(db.conn(), &t).unwrap();
+        t.status = PostStatus::Archived;
+        let result = update_post_translation(db.conn(), &t);
         assert!(result.is_err());
     }
 }

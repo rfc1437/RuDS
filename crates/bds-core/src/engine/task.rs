@@ -30,6 +30,9 @@ struct TaskEntry {
     label: String,
     status: TaskStatus,
     cancel_flag: Arc<AtomicBool>,
+    progress: Option<f32>,
+    message: Option<String>,
+    created_at: Instant,
 }
 
 /// Manages concurrent tasks with a max concurrency limit and FIFO queue.
@@ -60,9 +63,20 @@ impl TaskManager {
             label: label.to_owned(),
             status: TaskStatus::Queued,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            progress: None,
+            message: None,
+            created_at: Instant::now(),
         };
 
-        self.tasks.lock().unwrap().push(entry);
+        let mut tasks = self.tasks.lock().unwrap();
+        tasks.push(entry);
+        // Auto-start if under capacity
+        let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
+        if running < self.max_concurrent {
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id && t.status == TaskStatus::Queued) {
+                t.status = TaskStatus::Running;
+            }
+        }
         id
     }
 
@@ -87,25 +101,35 @@ impl TaskManager {
     pub fn complete(&self, task_id: TaskId) {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            entry.status = TaskStatus::Completed;
+            if matches!(entry.status, TaskStatus::Running) {
+                entry.status = TaskStatus::Completed;
+                entry.progress = Some(1.0);
+            }
         }
+        Self::promote_next(&mut tasks, self.max_concurrent);
     }
 
     /// Mark a task as failed with an error message.
     pub fn fail(&self, task_id: TaskId, error: String) {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            entry.status = TaskStatus::Failed(error);
+            if matches!(entry.status, TaskStatus::Running) {
+                entry.status = TaskStatus::Failed(error);
+            }
         }
+        Self::promote_next(&mut tasks, self.max_concurrent);
     }
 
     /// Cancel a task by setting its cancel flag and status.
     pub fn cancel(&self, task_id: TaskId) {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            entry.cancel_flag.store(true, Ordering::Release);
-            entry.status = TaskStatus::Cancelled;
+            if matches!(entry.status, TaskStatus::Running | TaskStatus::Queued) {
+                entry.cancel_flag.store(true, Ordering::Release);
+                entry.status = TaskStatus::Cancelled;
+            }
         }
+        Self::promote_next(&mut tasks, self.max_concurrent);
     }
 
     /// Check whether a task has been cancelled.
@@ -152,6 +176,39 @@ impl TaskManager {
     pub fn next_queued(&self) -> Option<TaskId> {
         let tasks = self.tasks.lock().unwrap();
         tasks.iter().find(|t| t.status == TaskStatus::Queued).map(|t| t.id)
+    }
+
+    /// Update progress for a running task.
+    pub fn report_progress(&self, task_id: TaskId, progress: Option<f32>, message: Option<String>) {
+        let mut tasks = self.tasks.lock().unwrap();
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
+            if entry.status == TaskStatus::Running {
+                entry.progress = progress;
+                entry.message = message;
+            }
+        }
+    }
+
+    /// Return the current progress of a task.
+    pub fn progress(&self, task_id: TaskId) -> Option<f32> {
+        let tasks = self.tasks.lock().unwrap();
+        tasks.iter().find(|t| t.id == task_id).and_then(|t| t.progress)
+    }
+
+    /// Return the current message of a task.
+    pub fn message(&self, task_id: TaskId) -> Option<String> {
+        let tasks = self.tasks.lock().unwrap();
+        tasks.iter().find(|t| t.id == task_id).and_then(|t| t.message.clone())
+    }
+
+    /// Promote the next queued task to running if capacity allows.
+    fn promote_next(tasks: &mut Vec<TaskEntry>, max_concurrent: usize) {
+        let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
+        if running < max_concurrent {
+            if let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Queued) {
+                t.status = TaskStatus::Running;
+            }
+        }
     }
 }
 
@@ -201,9 +258,7 @@ mod tests {
     fn submit_and_start() {
         let mgr = TaskManager::default();
         let id = mgr.submit("build site");
-        assert_eq!(mgr.status(id), Some(TaskStatus::Queued));
-
-        assert!(mgr.try_start(id));
+        // Auto-started since capacity allows
         assert_eq!(mgr.status(id), Some(TaskStatus::Running));
     }
 
@@ -212,26 +267,23 @@ mod tests {
         let mgr = TaskManager::new(3);
         let ids: Vec<TaskId> = (0..4).map(|i| mgr.submit(&format!("task {i}"))).collect();
 
-        assert!(mgr.try_start(ids[0]));
-        assert!(mgr.try_start(ids[1]));
-        assert!(mgr.try_start(ids[2]));
-        assert!(!mgr.try_start(ids[3]));
-
+        // First 3 auto-started, 4th stays queued
         assert_eq!(mgr.running_count(), 3);
         assert_eq!(mgr.status(ids[3]), Some(TaskStatus::Queued));
     }
 
     #[test]
     fn fifo_order() {
-        let mgr = TaskManager::default();
-        let a = mgr.submit("first");
-        let b = mgr.submit("second");
-        let c = mgr.submit("third");
+        let mgr = TaskManager::new(1); // limit to 1 to test FIFO
+        let a = mgr.submit("first");  // auto-starts
+        let b = mgr.submit("second"); // queued
+        let c = mgr.submit("third");  // queued
 
-        assert_eq!(mgr.next_queued(), Some(a));
-        mgr.try_start(a);
+        assert_eq!(mgr.status(a), Some(TaskStatus::Running));
         assert_eq!(mgr.next_queued(), Some(b));
-        mgr.try_start(b);
+
+        mgr.complete(a);  // should auto-promote b
+        assert_eq!(mgr.status(b), Some(TaskStatus::Running));
         assert_eq!(mgr.next_queued(), Some(c));
     }
 
@@ -239,8 +291,7 @@ mod tests {
     fn cancel_sets_flag() {
         let mgr = TaskManager::default();
         let id = mgr.submit("upload");
-        mgr.try_start(id);
-
+        // Task is auto-started (Running)
         assert!(!mgr.is_cancelled(id));
         mgr.cancel(id);
         assert!(mgr.is_cancelled(id));
@@ -253,39 +304,68 @@ mod tests {
         let ok = mgr.submit("good task");
         let bad = mgr.submit("bad task");
 
-        mgr.try_start(ok);
-        mgr.try_start(bad);
-
+        // Both auto-started (capacity=3)
         mgr.complete(ok);
         mgr.fail(bad, "disk full".into());
 
         assert_eq!(mgr.status(ok), Some(TaskStatus::Completed));
         assert_eq!(mgr.status(bad), Some(TaskStatus::Failed("disk full".into())));
+        // Progress should be 1.0 on completed
+        assert_eq!(mgr.progress(ok), Some(1.0));
     }
 
     #[test]
     fn drain_removes_finished() {
-        let mgr = TaskManager::default();
-        let a = mgr.submit("done");
-        let b = mgr.submit("broken");
-        let c = mgr.submit("stopped");
-        let d = mgr.submit("waiting");
-        let e = mgr.submit("busy");
+        let mgr = TaskManager::new(3);
+        let a = mgr.submit("done");    // auto-starts
+        let b = mgr.submit("broken");  // auto-starts
+        let e = mgr.submit("busy");    // auto-starts
+        let _c = mgr.submit("stopped"); // queued (at capacity)
+        let _d = mgr.submit("waiting"); // queued
 
-        mgr.try_start(a);
-        mgr.try_start(b);
-        mgr.try_start(e);
         mgr.complete(a);
         mgr.fail(b, "oops".into());
-        mgr.cancel(c);
+        // c should have been auto-promoted when a completed, and again when b failed
+        // After a completes: c promoted to running
+        // After b fails: d promoted to running
 
         mgr.drain_completed();
 
         assert_eq!(mgr.status(a), None);
         assert_eq!(mgr.status(b), None);
-        assert_eq!(mgr.status(c), None);
-        assert_eq!(mgr.status(d), Some(TaskStatus::Queued));
+        // c and d were promoted, e is still running
         assert_eq!(mgr.status(e), Some(TaskStatus::Running));
+    }
+
+    #[test]
+    fn completing_task_starts_next_queued() {
+        let mgr = TaskManager::new(1);
+        let a = mgr.submit("first");  // auto-starts
+        let b = mgr.submit("second"); // queued
+
+        assert_eq!(mgr.status(a), Some(TaskStatus::Running));
+        assert_eq!(mgr.status(b), Some(TaskStatus::Queued));
+
+        mgr.complete(a);
+        assert_eq!(mgr.status(b), Some(TaskStatus::Running));
+    }
+
+    #[test]
+    fn cancel_precondition_ignores_completed() {
+        let mgr = TaskManager::default();
+        let id = mgr.submit("task");
+        mgr.complete(id);
+        mgr.cancel(id); // should be no-op
+        assert_eq!(mgr.status(id), Some(TaskStatus::Completed));
+    }
+
+    #[test]
+    fn report_progress_updates_task() {
+        let mgr = TaskManager::default();
+        let id = mgr.submit("upload");
+        mgr.report_progress(id, Some(0.5), Some("halfway".into()));
+        assert_eq!(mgr.progress(id), Some(0.5));
+        assert_eq!(mgr.message(id), Some("halfway".into()));
     }
 
     #[test]

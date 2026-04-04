@@ -39,7 +39,7 @@ pub fn create_project(
     // Determine data directory
     let data_dir = match data_path {
         Some(p) => std::path::PathBuf::from(p),
-        None => std::path::PathBuf::from(&slug),
+        None => std::path::PathBuf::from("projects").join(&id),
     };
 
     // Create directory structure
@@ -72,8 +72,27 @@ pub fn list_projects(conn: &Connection) -> EngineResult<Vec<Project>> {
 }
 
 /// Delete a project row (cascading handled by queries).
-pub fn delete_project(conn: &Connection, project_id: &str) -> EngineResult<()> {
+/// Rejects deletion of the currently active project.
+/// Optionally cleans up the project data directory.
+pub fn delete_project(conn: &Connection, project_id: &str, data_dir: Option<&Path>) -> EngineResult<()> {
+    // Check if this is the active project (don't delete active)
+    if let Ok(active) = q::get_active_project(conn) {
+        if active.id == project_id {
+            return Err(EngineError::Validation(
+                "cannot delete the active project".to_string(),
+            ));
+        }
+    }
+
     q::delete_project(conn, project_id)?;
+
+    // Clean up filesystem if path provided
+    if let Some(dir) = data_dir {
+        if dir.exists() {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
     Ok(())
 }
 
@@ -229,7 +248,18 @@ mod tests {
         let (db, dir) = setup();
         let p_path = dir.path().join("p");
         let p = create_project(db.conn(), "P", Some(p_path.to_str().unwrap())).unwrap();
-        delete_project(db.conn(), &p.id).unwrap();
+        delete_project(db.conn(), &p.id, Some(&p_path)).unwrap();
         assert!(list_projects(db.conn()).unwrap().is_empty());
+        assert!(!p_path.exists(), "project directory should be cleaned up");
+    }
+
+    #[test]
+    fn delete_active_project_rejected() {
+        let (db, dir) = setup();
+        let p_path = dir.path().join("p");
+        let p = create_project(db.conn(), "P", Some(p_path.to_str().unwrap())).unwrap();
+        set_active_project(db.conn(), &p.id).unwrap();
+        let result = delete_project(db.conn(), &p.id, None);
+        assert!(result.is_err());
     }
 }

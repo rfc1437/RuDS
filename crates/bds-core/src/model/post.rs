@@ -8,6 +8,13 @@ pub enum PostStatus {
     Archived,
 }
 
+impl PostStatus {
+    /// Returns true if this status is valid for a translation (draft or published only).
+    pub fn is_valid_for_translation(&self) -> bool {
+        matches!(self, PostStatus::Draft | PostStatus::Published)
+    }
+}
+
 /// A blog post. Matches the `posts` table schema.
 ///
 /// NOTE: `content` is null for published posts — body lives in the filesystem

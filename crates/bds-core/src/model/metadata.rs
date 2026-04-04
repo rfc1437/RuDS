@@ -34,6 +34,19 @@ pub struct ProjectMetadata {
     pub blog_languages: Vec<String>,
 }
 
+impl ProjectMetadata {
+    /// Validate metadata fields per spec constraints.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_posts_per_page < 1 || self.max_posts_per_page > 500 {
+            return Err(format!(
+                "maxPostsPerPage must be 1..500, got {}",
+                self.max_posts_per_page
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CategorySettings {
@@ -142,5 +155,29 @@ mod tests {
         assert_eq!(tag.name, "go");
         assert!(tag.color.is_none());
         assert!(tag.post_template_slug.is_none());
+    }
+
+    #[test]
+    fn max_posts_per_page_validation() {
+        let mut meta = ProjectMetadata {
+            name: "Test".into(),
+            description: None, public_url: None, main_language: None,
+            default_author: None, max_posts_per_page: 50, blogmark_category: None,
+            pico_theme: None, python_runtime_mode: None,
+            semantic_similarity_enabled: false, blog_languages: vec![],
+        };
+        assert!(meta.validate().is_ok());
+
+        meta.max_posts_per_page = 0;
+        assert!(meta.validate().is_err());
+
+        meta.max_posts_per_page = 501;
+        assert!(meta.validate().is_err());
+
+        meta.max_posts_per_page = 1;
+        assert!(meta.validate().is_ok());
+
+        meta.max_posts_per_page = 500;
+        assert!(meta.validate().is_ok());
     }
 }

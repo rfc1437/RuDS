@@ -411,7 +411,7 @@ pub fn rebuild_media_from_filesystem(
 /// Index a media item in FTS, gathering translation texts.
 fn fts_index_media(conn: &Connection, media: &Media) -> EngineResult<()> {
     let translations = qmt::list_media_translations_by_media(conn, &media.id).unwrap_or_default();
-    let translation_texts: Vec<String> = translations
+    let translation_data: Vec<(String, String)> = translations
         .iter()
         .map(|t| {
             let mut parts = Vec::new();
@@ -424,7 +424,7 @@ fn fts_index_media(conn: &Connection, media: &Media) -> EngineResult<()> {
             if let Some(ref caption) = t.caption {
                 parts.push(caption.clone());
             }
-            parts.join(" ")
+            (parts.join(" "), t.language.clone())
         })
         .collect();
 
@@ -437,7 +437,7 @@ fn fts_index_media(conn: &Connection, media: &Media) -> EngineResult<()> {
         media.caption.as_deref(),
         &media.original_name,
         &media.tags,
-        &translation_texts,
+        &translation_data,
         lang,
     )?;
     Ok(())

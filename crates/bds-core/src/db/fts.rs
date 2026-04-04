@@ -62,7 +62,7 @@ pub fn index_post(
     content: Option<&str>,
     tags: &[String],
     categories: &[String],
-    translation_texts: &[String],
+    translations: &[(String, String)], // (text, language) pairs
     language: &str,
 ) -> rusqlite::Result<()> {
     // Remove existing entry
@@ -83,10 +83,10 @@ pub fn index_post(
     let combined = parts.join(" ");
     let mut full_text = stem_text(&combined, language);
 
-    // Add translation texts (stemmed with their own implied language or same)
-    for t in translation_texts {
+    // Add translation texts stemmed with their own language
+    for (text, trans_lang) in translations {
         full_text.push(' ');
-        full_text.push_str(&stem_text(t, language));
+        full_text.push_str(&stem_text(text, trans_lang));
     }
 
     conn.execute(
@@ -105,7 +105,7 @@ pub fn index_media(
     caption: Option<&str>,
     original_name: &str,
     tags: &[String],
-    translation_texts: &[String],
+    translations: &[(String, String)], // (text, language) pairs
     language: &str,
 ) -> rusqlite::Result<()> {
     remove_media_from_index(conn, media_id)?;
@@ -127,9 +127,9 @@ pub fn index_media(
     let combined = parts.join(" ");
     let mut full_text = stem_text(&combined, language);
 
-    for t in translation_texts {
+    for (text, trans_lang) in translations {
         full_text.push(' ');
-        full_text.push_str(&stem_text(t, language));
+        full_text.push_str(&stem_text(text, trans_lang));
     }
 
     conn.execute(
@@ -164,6 +164,75 @@ pub fn search_posts(conn: &Connection, query: &str, language: &str) -> rusqlite:
         "SELECT post_id FROM posts_fts WHERE posts_fts MATCH ?1 ORDER BY rank"
     )?;
     let rows = stmt.query_map(rusqlite::params![stemmed], |row| {
+        row.get::<_, String>(0)
+    })?;
+    rows.collect()
+}
+
+/// Filters for post search.
+#[derive(Default)]
+pub struct PostSearchFilters<'a> {
+    pub status: Option<&'a str>,
+    pub tags: Option<&'a [String]>,
+    pub categories: Option<&'a [String]>,
+    pub year: Option<i32>,
+    pub month: Option<u32>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// Search posts with filters. Returns matching post IDs.
+pub fn search_posts_filtered(
+    conn: &Connection,
+    query: &str,
+    language: &str,
+    filters: &PostSearchFilters,
+) -> rusqlite::Result<Vec<String>> {
+    // Get FTS matches first
+    let fts_ids = search_posts(conn, query, language)?;
+    if fts_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Apply filters by querying posts table
+    let placeholders: Vec<String> = fts_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+    let mut sql = format!(
+        "SELECT id FROM posts WHERE id IN ({}) ",
+        placeholders.join(",")
+    );
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = fts_ids.iter().map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>).collect();
+    let mut param_idx = fts_ids.len() + 1;
+
+    if let Some(status) = filters.status {
+        sql.push_str(&format!("AND status = ?{param_idx} "));
+        params.push(Box::new(status.to_string()));
+        param_idx += 1;
+    }
+
+    if let Some(year) = filters.year {
+        // Filter by year from created_at (unix ms)
+        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+        let end = chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+        sql.push_str(&format!("AND created_at >= ?{param_idx} AND created_at < ?{} ", param_idx + 1));
+        params.push(Box::new(start));
+        params.push(Box::new(end));
+        param_idx += 2;
+    }
+
+    let _ = param_idx; // suppress unused warning
+
+    sql.push_str("ORDER BY created_at DESC ");
+
+    if let Some(limit) = filters.limit {
+        sql.push_str(&format!("LIMIT {limit} "));
+        if let Some(offset) = filters.offset {
+            sql.push_str(&format!("OFFSET {offset} "));
+        }
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
         row.get::<_, String>(0)
     })?;
     rows.collect()
@@ -238,7 +307,7 @@ mod tests {
             Some("Beautiful spider web"),
             &["fotografie".into(), "natur".into()],
             &["picture".into()],
-            &["Esmeralda English".into()],
+            &[("Esmeralda English".into(), "en".into())],
             "en",
         ).unwrap();
 
@@ -293,5 +362,21 @@ mod tests {
 
         assert!(search_posts(db.conn(), "alpha", "en").unwrap().is_empty());
         assert_eq!(search_posts(db.conn(), "beta", "en").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn translations_stemmed_with_own_language() {
+        let db = setup();
+        // German post with English translation
+        index_post(
+            db.conn(), "p1", "Programmierung", None, Some("Deutsche Entwicklung"),
+            &[], &[],
+            &[("English development programming".into(), "en".into())],
+            "de",
+        ).unwrap();
+
+        // Search with English stemming should find via English translation
+        let results = search_posts(db.conn(), "develop", "en").unwrap();
+        assert_eq!(results, vec!["p1"]);
     }
 }

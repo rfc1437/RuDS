@@ -10,7 +10,7 @@ use crate::db::queries::post as qp;
 use crate::db::queries::post_link as ql;
 use crate::db::queries::post_translation as qt;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, PostStatus, PostTranslation};
+use crate::model::{Post, PostLink, PostStatus, PostTranslation};
 use crate::util::frontmatter::{
     read_post_file, read_translation_file, write_post_file, write_translation_file,
 };
@@ -114,6 +114,17 @@ pub fn update_post(
         ));
     }
 
+    // Slug uniqueness check
+    if let Some(new_slug) = slug {
+        if new_slug != post.slug {
+            if qp::get_post_by_project_and_slug(conn, &post.project_id, new_slug).is_ok() {
+                return Err(EngineError::Conflict(format!(
+                    "slug '{new_slug}' already exists in this project"
+                )));
+            }
+        }
+    }
+
     if let Some(t) = title {
         post.title = t.to_string();
     }
@@ -145,6 +156,11 @@ pub fn update_post(
         post.do_not_translate = dnt;
     }
 
+    // Auto-transition published post back to draft on content/metadata change
+    if post.status == PostStatus::Published {
+        post.status = PostStatus::Draft;
+    }
+
     post.updated_at = now_unix_ms();
     qp::update_post(conn, &post)?;
 
@@ -173,6 +189,9 @@ pub fn publish_post(
     }
 
     // Compute file_path from created_at + slug
+    // Use a savepoint for atomicity
+    // Note: savepoint auto-rolls-back if not released (on error propagation)
+    conn.execute_batch("SAVEPOINT publish_post")?;
     let rel_path = post_file_path(post.created_at, &post.slug);
     let abs_path = data_dir.join(&rel_path);
 
@@ -245,8 +264,31 @@ pub fn publish_post(
         publish_translation(conn, data_dir, &mut t, &post)?;
     }
 
+    // Parse inter-post links and update link graph
+    ql::delete_links_by_source(conn, post_id)?;
+    let link_body = if let Some(ref pc) = post.published_content {
+        pc.as_str()
+    } else {
+        ""
+    };
+    let parsed_links = parse_post_links(link_body);
+    for (target_slug, link_text) in &parsed_links {
+        if let Ok(target) = qp::get_post_by_project_and_slug(conn, &post.project_id, target_slug) {
+            let link = PostLink {
+                id: Uuid::new_v4().to_string(),
+                source_post_id: post_id.to_string(),
+                target_post_id: target.id.clone(),
+                link_text: Some(link_text.clone()),
+                created_at: now,
+            };
+            let _ = ql::insert_post_link(conn, &link);
+        }
+    }
+
     // Re-index FTS
     fts_index_post(conn, &post)?;
+
+    conn.execute_batch("RELEASE publish_post")?;
 
     Ok(post)
 }
@@ -308,6 +350,12 @@ pub fn delete_post(
     Ok(())
 }
 
+/// Compute the canonical URL for a post: /{YYYY}/{MM}/{DD}/{slug}
+pub fn canonical_url(created_at_ms: i64, slug: &str) -> String {
+    let (y, m, d) = crate::util::timestamp::year_month_day_from_unix_ms(created_at_ms);
+    format!("/{y}/{m}/{d}/{slug}")
+}
+
 /// Upsert a translation for a post.
 pub fn upsert_translation(
     conn: &Connection,
@@ -319,6 +367,11 @@ pub fn upsert_translation(
     content: Option<&str>,
 ) -> EngineResult<PostTranslation> {
     let post = qp::get_post_by_id(conn, post_id)?;
+    if post.do_not_translate {
+        return Err(EngineError::Validation(
+            "cannot create translation for a do-not-translate post".to_string(),
+        ));
+    }
     let now = now_unix_ms();
 
     // Check if translation already exists
@@ -476,6 +529,46 @@ pub fn rebuild_posts_from_filesystem(
 
 // --- Internal helpers ---
 
+/// Parse inter-post links from markdown content.
+/// Looks for markdown links that reference canonical post URLs: [text](/YYYY/MM/DD/slug)
+fn parse_post_links(content: &str) -> Vec<(String, String)> {
+    let mut links = Vec::new();
+    // Match markdown links: [text](/YYYY/MM/DD/slug) or [text](/YYYY/MM/DD/slug/)
+    // Simple manual parsing since we don't have regex crate
+    // Look for patterns like [...](...) where the URL matches /YYYY/MM/DD/slug
+    for line in content.lines() {
+        let mut pos = 0;
+        while pos < line.len() {
+            if let Some(bracket_start) = line[pos..].find('[') {
+                let abs_start = pos + bracket_start;
+                if let Some(bracket_end) = line[abs_start..].find("](") {
+                    let text_end = abs_start + bracket_end;
+                    let link_text = &line[abs_start + 1..text_end];
+                    let url_start = text_end + 2;
+                    if let Some(paren_end) = line[url_start..].find(')') {
+                        let url = &line[url_start..url_start + paren_end];
+                        // Check if URL matches /YYYY/MM/DD/slug pattern
+                        let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
+                        if parts.len() == 5 && parts[0].is_empty()
+                            && parts[1].len() == 4 && parts[1].chars().all(|c| c.is_ascii_digit())
+                            && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
+                            && parts[3].len() == 2 && parts[3].chars().all(|c| c.is_ascii_digit())
+                        {
+                            links.push((parts[4].to_string(), link_text.to_string()));
+                        }
+                        pos = url_start + paren_end + 1;
+                        continue;
+                    }
+                }
+                pos = abs_start + 1;
+            } else {
+                break;
+            }
+        }
+    }
+    links
+}
+
 /// Publish a single translation: write file, clear content, set status.
 fn publish_translation(
     conn: &Connection,
@@ -525,7 +618,7 @@ fn publish_translation(
 /// Index a post in FTS, gathering translation texts.
 fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
     let translations = qt::list_post_translations_by_post(conn, &post.id).unwrap_or_default();
-    let translation_texts: Vec<String> = translations
+    let translation_data: Vec<(String, String)> = translations
         .iter()
         .map(|t| {
             let mut parts = vec![t.title.clone()];
@@ -535,7 +628,7 @@ fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
             if let Some(ref cnt) = t.content {
                 parts.push(cnt.clone());
             }
-            parts.join(" ")
+            (parts.join(" "), t.language.clone())
         })
         .collect();
 
@@ -548,7 +641,7 @@ fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
         post.content.as_deref(),
         &post.tags,
         &post.categories,
-        &translation_texts,
+        &translation_data,
         lang,
     )?;
     Ok(())
@@ -1231,5 +1324,142 @@ mod tests {
         // not "hello.md". Only "hello.md.md" would produce stem "hello.md".
         assert!(!is_translation_filename("hello.123"));
         assert!(!is_translation_filename("hello.D"));
+    }
+
+    #[test]
+    fn do_not_translate_guard_rejects_translation() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(), dir.path(), "p1", "No Translate", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        // Set do_not_translate
+        update_post(
+            db.conn(), dir.path(), &post.id,
+            None, None, None, None, None, None, None, None, None, Some(true),
+        ).unwrap();
+
+        let result = upsert_translation(
+            db.conn(), dir.path(), &post.id, "de", "German", None, Some("Inhalt"),
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::Validation(_) => {}
+            other => panic!("expected Validation, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn update_post_slug_uniqueness_enforced() {
+        let (db, dir) = setup();
+        create_post(
+            db.conn(), dir.path(), "p1", "First", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        let second = create_post(
+            db.conn(), dir.path(), "p1", "Second", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+
+        let result = update_post(
+            db.conn(), dir.path(), &second.id,
+            None, Some("first"), None, None, None, None, None, None, None, None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_published_post_transitions_to_draft() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(), dir.path(), "p1", "Published", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        // Archive then update to test auto-draft
+        archive_post(db.conn(), &post.id).unwrap();
+        // Re-publish
+        let _ = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        // Now update the published post
+        let updated = update_post(
+            db.conn(), dir.path(), &post.id,
+            Some("New Title"), None, None, Some("new body"), None, None, None, None, None, None,
+        ).unwrap();
+        assert_eq!(updated.status, PostStatus::Draft);
+    }
+
+    #[test]
+    fn canonical_url_format() {
+        // 2005-11-13T12:00:00.000Z = 1131883200000
+        let url = canonical_url(1131883200000, "esmeralda");
+        assert_eq!(url, "/2005/11/13/esmeralda");
+    }
+
+    #[test]
+    fn publish_post_already_published_rejected() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(), dir.path(), "p1", "Double Pub", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let result = publish_post(db.conn(), dir.path(), &post.id);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::Conflict(_) => {}
+            other => panic!("expected Conflict, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn publish_post_updates_link_graph() {
+        let (db, dir) = setup();
+        // Create target post first
+        let target = create_post(
+            db.conn(), dir.path(), "p1", "Target Post", Some("target body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        publish_post(db.conn(), dir.path(), &target.id).unwrap();
+
+        // Create source post with a link to target
+        let target_url = canonical_url(target.created_at, &target.slug);
+        let body = format!("Check out [this post]({target_url}) for more.");
+        let source = create_post(
+            db.conn(), dir.path(), "p1", "Source Post", Some(&body),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        publish_post(db.conn(), dir.path(), &source.id).unwrap();
+
+        // Verify link was created
+        let links = ql::list_links_by_source(db.conn(), &source.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_post_id, target.id);
+    }
+
+    #[test]
+    fn archive_from_published_status() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(), dir.path(), "p1", "To Archive", Some("body"),
+            vec![], vec![], None, None, None,
+        ).unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        archive_post(db.conn(), &post.id).unwrap();
+
+        let from_db = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(from_db.status, PostStatus::Archived);
+    }
+
+    #[test]
+    fn parse_post_links_extracts_canonical_urls() {
+        let content = "See [my post](/2024/01/15/hello-world) and [another](/2024/02/01/test-post/) for more.";
+        let links = parse_post_links(content);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].0, "hello-world");
+        assert_eq!(links[0].1, "my post");
+        assert_eq!(links[1].0, "test-post");
     }
 }
