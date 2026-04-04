@@ -50,11 +50,24 @@ pub struct TranslationValidationReport {
     pub checked_fs_files: usize,
 }
 
+/// Per-item progress callback: (current_item, total_items, item_description).
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+
 /// Validate all translations in a project against consistency rules.
 pub fn validate_translations(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
+) -> EngineResult<TranslationValidationReport> {
+    validate_translations_with_progress(conn, data_dir, project_id, None)
+}
+
+/// Like `validate_translations` but with optional per-item progress.
+pub fn validate_translations_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
 ) -> EngineResult<TranslationValidationReport> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
 
@@ -64,8 +77,12 @@ pub fn validate_translations(
     // Phase 1: database validation
     let mut db_issues = Vec::new();
     let mut checked_db_rows = 0usize;
+    let post_count = posts.len();
 
-    for post in &posts {
+    for (i, post) in posts.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            cb(i + 1, post_count, &post.title);
+        }
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
 
         for t in &translations {
@@ -113,19 +130,26 @@ pub fn validate_translations(
 
     let posts_dir = data_dir.join("posts");
     if posts_dir.exists() {
-        for entry in walkdir::WalkDir::new(&posts_dir)
+        // Collect translation files first so we know the total
+        let translation_files: Vec<_> = walkdir::WalkDir::new(&posts_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
-        {
-            let path = entry.path();
-            let Some(ext) = path.extension() else { continue };
-            if ext != "md" { continue; }
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            .filter(|e| {
+                let stem = e.path().file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                is_translation_stem(stem)
+            })
+            .collect();
 
-            // Check if this is a translation file (has language code before .md)
+        let fs_total = translation_files.len();
+
+        for (i, entry) in translation_files.iter().enumerate() {
+            let path = entry.path();
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if !is_translation_stem(stem) {
-                continue;
+
+            if let Some(ref cb) = on_item {
+                cb(i + 1, fs_total, stem);
             }
 
             checked_fs_files += 1;

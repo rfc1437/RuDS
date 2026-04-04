@@ -498,9 +498,15 @@ impl BdsApp {
                             .ok()
                             .and_then(|m| m.main_language)
                             .unwrap_or_else(|| "en".to_string());
-                        tm.report_progress(tid, Some(0.10), Some("Reindexing...".into()));
-                        let report = engine::search::reindex_all(db.conn(), &project_id, &main_lang)
-                            .map_err(|e| e.to_string())?;
+                        let tm2 = Arc::clone(&tm);
+                        let on_item: engine::search::ItemProgressFn = Box::new(move |current, total, name| {
+                            let pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+                            let msg = format!("Indexing: {current}/{total} \u{2014} {name}");
+                            tm2.report_progress(tid, Some(pct), Some(msg));
+                        });
+                        let report = engine::search::reindex_all_with_progress(
+                            db.conn(), &project_id, &main_lang, Some(on_item),
+                        ).map_err(|e| e.to_string())?;
                         Ok(format!("posts={}, media={}", report.posts_indexed, report.media_indexed))
                     },
                 )
@@ -510,9 +516,10 @@ impl BdsApp {
                     "engine.calendarStarted",
                     |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.10), Some("Generating calendar JSON...".into()));
+                        tm.report_progress(tid, Some(0.20), Some("Loading posts...".into()));
                         engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
                             .map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.90), Some("Writing calendar JSON...".into()));
                         Ok("done".to_string())
                     },
                 )
@@ -523,9 +530,14 @@ impl BdsApp {
                     "engine.validateTranslationsStarted",
                     |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.10), Some("Checking translations...".into()));
-                        let report = engine::validate_translations::validate_translations(
-                            db.conn(), &data_dir, &project_id,
+                        let tm2 = Arc::clone(&tm);
+                        let on_item: engine::validate_translations::ItemProgressFn = Box::new(move |current, total, name| {
+                            let pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+                            let msg = format!("Checking: {current}/{total} \u{2014} {name}");
+                            tm2.report_progress(tid, Some(pct), Some(msg));
+                        });
+                        let report = engine::validate_translations::validate_translations_with_progress(
+                            db.conn(), &data_dir, &project_id, Some(on_item),
                         ).map_err(|e| e.to_string())?;
                         Ok(format!("db_issues={}, fs_issues={}", report.db_issues.len(), report.fs_issues.len()))
                     },
@@ -536,9 +548,10 @@ impl BdsApp {
                     "engine.generateSiteStarted",
                     |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.10), Some("Generating calendar...".into()));
+                        tm.report_progress(tid, Some(0.20), Some("Generating calendar...".into()));
                         engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
                             .map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.90), Some("Calendar written".into()));
                         Ok("done".to_string())
                     },
                 )

@@ -12,11 +12,24 @@ pub struct ReindexReport {
     pub media_indexed: usize,
 }
 
+/// Per-item progress callback: (current_item, total_items, item_description).
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+
 /// Drop and rebuild the entire FTS index for all posts and media in a project.
 pub fn reindex_all(
     conn: &Connection,
     project_id: &str,
     main_language: &str,
+) -> EngineResult<ReindexReport> {
+    reindex_all_with_progress(conn, project_id, main_language, None)
+}
+
+/// Like `reindex_all` but with optional per-item progress.
+pub fn reindex_all_with_progress(
+    conn: &Connection,
+    project_id: &str,
+    main_language: &str,
+    on_item: Option<ItemProgressFn>,
 ) -> EngineResult<ReindexReport> {
     // Wipe existing FTS content
     conn.execute("DELETE FROM posts_fts", [])?;
@@ -25,8 +38,16 @@ pub fn reindex_all(
     // Reindex all posts
     let posts = post_q::list_posts_by_project(conn, project_id)?;
 
+    // Reindex all media
+    let media_items = media_q::list_media_by_project(conn, project_id)?;
+
+    let total = posts.len() + media_items.len();
+
     let mut posts_indexed = 0;
-    for post in &posts {
+    for (i, post) in posts.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            cb(i + 1, total, &post.title);
+        }
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
 
         let trans_pairs: Vec<(String, String)> = translations
@@ -58,11 +79,12 @@ pub fn reindex_all(
         posts_indexed += 1;
     }
 
-    // Reindex all media
-    let media_items = media_q::list_media_by_project(conn, project_id)?;
-
+    let offset = posts.len();
     let mut media_indexed = 0;
-    for m in &media_items {
+    for (i, m) in media_items.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            cb(offset + i + 1, total, &m.original_name);
+        }
         let translations = media_translation::list_media_translations_by_media(conn, &m.id)?;
 
         let trans_pairs: Vec<(String, String)> = translations
