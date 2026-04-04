@@ -1,4 +1,5 @@
 use iced::widget::{button, container, row, text, Space};
+use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use crate::app::Message;
@@ -88,8 +89,8 @@ pub fn view(
             let close_id = tab.id.clone();
 
             let label = row![
-                text(title_text).size(12),
-                button(text("\u{2715}").size(10))
+                text(title_text).size(12).shaping(Shaping::Advanced),
+                button(text("\u{2715}").size(10).shaping(Shaping::Advanced))
                     .on_press(Message::CloseTab(close_id))
                     .padding(2)
                     .style(close_style),

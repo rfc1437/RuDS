@@ -1,4 +1,5 @@
 use iced::widget::{button, container, row, svg, text, Column, Space};
+use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -103,6 +104,7 @@ pub fn view(
     let header = container(
         text(t(locale, "projectSelector.projectsHeader"))
             .size(11)
+            .shaping(Shaping::Advanced)
             .color(Color::from_rgb(0.55, 0.55, 0.60)),
     )
     .padding([4, 8])
@@ -118,14 +120,14 @@ pub fn view(
 
         let label = if is_active {
             row![
-                text("\u{2713}").size(12).color(Color::from_rgb(0.40, 0.80, 0.40)),
-                text(name).size(12).color(Color::WHITE),
+                text("\u{2713}").size(12).shaping(Shaping::Advanced).color(Color::from_rgb(0.40, 0.80, 0.40)),
+                text(name).size(12).shaping(Shaping::Advanced).color(Color::WHITE),
             ]
             .spacing(6)
         } else {
             row![
                 Space::with_width(Length::Fixed(14.0)),
-                text(name).size(12).color(Color::from_rgb(0.80, 0.80, 0.85)),
+                text(name).size(12).shaping(Shaping::Advanced).color(Color::from_rgb(0.80, 0.80, 0.85)),
             ]
             .spacing(6)
         };
@@ -157,8 +159,8 @@ pub fn view(
     items.push(
         button(
             row![
-                text("+").size(14).color(Color::from_rgb(0.55, 0.75, 0.95)),
-                text(t(locale, "projectSelector.newProject")).size(12),
+                text("+").size(14).shaping(Shaping::Advanced).color(Color::from_rgb(0.55, 0.75, 0.95)),
+                text(t(locale, "projectSelector.newProject")).size(12).shaping(Shaping::Advanced),
             ]
             .spacing(6),
         )
@@ -208,10 +210,12 @@ pub fn trigger_button(project_name: &str) -> Element<'static, Message> {
 
     let name = text(project_name.to_string())
         .size(12)
+        .shaping(Shaping::Advanced)
         .color(Color::from_rgb(0.80, 0.80, 0.85));
 
     let chevron = text("\u{25BE}")
         .size(10)
+        .shaping(Shaping::Advanced)
         .color(Color::from_rgb(0.55, 0.55, 0.60));
 
     button(

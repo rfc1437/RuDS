@@ -1,4 +1,5 @@
 use iced::widget::{button, column, container, scrollable, text, Space};
+use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -62,6 +63,7 @@ pub fn view(
 
     let header = text(header_text)
         .size(13)
+        .shaping(Shaping::Advanced)
         .color(Color::from_rgb(0.85, 0.85, 0.90));
 
     let body: Element<'static, Message> = match sidebar_view {
@@ -69,6 +71,7 @@ pub fn view(
             if posts.is_empty() {
                 text(t(locale, placeholder_key(sidebar_view)))
                     .size(12)
+                    .shaping(Shaping::Advanced)
                     .color(muted)
                     .into()
             } else {
@@ -81,7 +84,7 @@ pub fn view(
                             bds_core::model::PostStatus::Archived => "\u{25A1} ",    // □
                         };
                         let label = format!("{status_indicator}{}", p.title);
-                        button(text(label).size(12))
+                        button(text(label).size(12).shaping(Shaping::Advanced))
                             .on_press(Message::OpenTab(Tab {
                                 id: p.id.clone(),
                                 tab_type: TabType::Post,
@@ -102,6 +105,7 @@ pub fn view(
         _ => {
             text(t(locale, placeholder_key(sidebar_view)))
                 .size(12)
+                .shaping(Shaping::Advanced)
                 .color(muted)
                 .into()
         }

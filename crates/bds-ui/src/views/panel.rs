@@ -1,4 +1,5 @@
 use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -70,17 +71,17 @@ pub fn view(
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
 
     // Tab header
-    let tasks_btn = button(text(t(locale, "common.tasks")).size(12))
+    let tasks_btn = button(text(t(locale, "common.tasks")).size(12).shaping(Shaping::Advanced))
         .on_press(Message::SetPanelTab(PanelTab::Tasks))
         .padding([4, 8])
         .style(if panel_tab == PanelTab::Tasks { tab_active } else { tab_inactive });
 
-    let output_btn = button(text(t(locale, "panel.output")).size(12))
+    let output_btn = button(text(t(locale, "panel.output")).size(12).shaping(Shaping::Advanced))
         .on_press(Message::SetPanelTab(PanelTab::Output))
         .padding([4, 8])
         .style(if panel_tab == PanelTab::Output { tab_active } else { tab_inactive });
 
-    let close_btn = button(text("\u{2715}").size(12))
+    let close_btn = button(text("\u{2715}").size(12).shaping(Shaping::Advanced))
         .on_press(Message::TogglePanel)
         .padding([4, 6])
         .style(close_btn_style);
@@ -99,7 +100,7 @@ pub fn view(
     let content: Element<'static, Message> = match panel_tab {
         PanelTab::Tasks => {
             if task_snapshots.is_empty() {
-                container(text(t(locale, "tasks.noActive")).size(12).color(muted))
+                container(text(t(locale, "tasks.noActive")).size(12).shaping(Shaping::Advanced).color(muted))
                     .padding(8)
                     .into()
             } else {
@@ -120,7 +121,7 @@ pub fn view(
                             progress_str,
                             phase_str,
                         );
-                        text(status_text).size(11).color(Color::from_rgb(0.70, 0.70, 0.75)).into()
+                        text(status_text).size(11).shaping(Shaping::Advanced).color(Color::from_rgb(0.70, 0.70, 0.75)).into()
                     })
                     .collect();
                 scrollable(
@@ -133,7 +134,7 @@ pub fn view(
         }
         PanelTab::Output => {
             if output_entries.is_empty() {
-                container(text(t(locale, "panel.noOutput")).size(12).color(muted))
+                container(text(t(locale, "panel.noOutput")).size(12).shaping(Shaping::Advanced).color(muted))
                     .padding(8)
                     .into()
             } else {
@@ -142,6 +143,7 @@ pub fn view(
                     .map(|entry| {
                         text(entry.text.clone())
                             .size(11)
+                            .shaping(Shaping::Advanced)
                             .color(Color::from_rgb(0.70, 0.70, 0.75))
                             .into()
                     })

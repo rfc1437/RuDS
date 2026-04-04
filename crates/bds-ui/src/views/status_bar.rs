@@ -146,7 +146,7 @@ pub fn view(
         } else {
             format!("{phase_str}{progress_str}{extra}")
         };
-        text(display).size(11).color(label_color).into()
+        text(display).size(11).shaping(Shaping::Advanced).color(label_color).into()
     } else {
         Space::with_width(0).into()
     };
@@ -180,11 +180,11 @@ pub fn view(
         .style(dropdown_trigger);
 
     let right = row![
-        text(posts_label).size(11).color(label_color),
-        text(media_label).size(11).color(label_color),
+        text(posts_label).size(11).shaping(Shaping::Advanced).color(label_color),
+        text(media_label).size(11).shaping(Shaping::Advanced).color(label_color),
         airplane_btn,
         locale_trigger,
-        text("bDS").size(11).color(Color::from_rgb(0.45, 0.45, 0.50)),
+        text("bDS").size(11).shaping(Shaping::Advanced).color(Color::from_rgb(0.45, 0.45, 0.50)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
