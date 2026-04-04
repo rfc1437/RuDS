@@ -1,0 +1,81 @@
+use std::fmt;
+
+/// Errors produced by engine operations.
+#[derive(Debug)]
+pub enum EngineError {
+    Db(rusqlite::Error),
+    Io(std::io::Error),
+    Parse(String),
+    NotFound(String),
+    Conflict(String),
+    Validation(String),
+}
+
+impl fmt::Display for EngineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Db(e) => write!(f, "database error: {e}"),
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::NotFound(msg) => write!(f, "not found: {msg}"),
+            Self::Conflict(msg) => write!(f, "conflict: {msg}"),
+            Self::Validation(msg) => write!(f, "validation error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for EngineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Db(e) => Some(e),
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<rusqlite::Error> for EngineError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
+impl From<std::io::Error> for EngineError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<serde_json::Error> for EngineError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Parse(e.to_string())
+    }
+}
+
+impl From<serde_yaml::Error> for EngineError {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::Parse(e.to_string())
+    }
+}
+
+pub type EngineResult<T> = Result<T, EngineError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_variants() {
+        assert!(EngineError::Parse("bad yaml".into()).to_string().contains("parse error"));
+        assert!(EngineError::NotFound("post 123".into()).to_string().contains("not found"));
+        assert!(EngineError::Conflict("slug taken".into()).to_string().contains("conflict"));
+        assert!(EngineError::Validation("title empty".into()).to_string().contains("validation"));
+    }
+
+    #[test]
+    fn from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let engine_err = EngineError::from(io_err);
+        assert!(matches!(engine_err, EngineError::Io(_)));
+    }
+}

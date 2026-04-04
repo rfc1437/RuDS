@@ -1,0 +1,146 @@
+use serde::{Deserialize, Serialize};
+
+fn default_max_posts() -> i32 {
+    50
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMetadata {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_author: Option<String>,
+    #[serde(default = "default_max_posts")]
+    pub max_posts_per_page: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blogmark_category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pico_theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub python_runtime_mode: Option<String>,
+    #[serde(default)]
+    pub semantic_similarity_enabled: bool,
+    #[serde(default)]
+    pub blog_languages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategorySettings {
+    #[serde(default = "default_true")]
+    pub render_in_lists: bool,
+    #[serde(default = "default_true")]
+    pub show_title: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_template_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_template_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagEntry {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "postTemplateSlug")]
+    pub post_template_slug: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_metadata_roundtrip() {
+        let meta = ProjectMetadata {
+            name: "Test Blog".into(),
+            description: None,
+            public_url: Some("https://example.com".into()),
+            main_language: Some("en".into()),
+            default_author: None,
+            max_posts_per_page: 50,
+            blogmark_category: None,
+            pico_theme: None,
+            python_runtime_mode: None,
+            semantic_similarity_enabled: false,
+            blog_languages: vec!["en".into(), "de".into()],
+        };
+        let json = serde_json::to_string_pretty(&meta).unwrap();
+        let parsed: ProjectMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "Test Blog");
+        assert_eq!(parsed.max_posts_per_page, 50);
+        assert_eq!(parsed.blog_languages, vec!["en", "de"]);
+        // Verify camelCase
+        assert!(json.contains("publicUrl"));
+        assert!(json.contains("maxPostsPerPage"));
+        assert!(json.contains("blogLanguages"));
+    }
+
+    #[test]
+    fn project_metadata_defaults() {
+        let json = r#"{"name": "Minimal"}"#;
+        let meta: ProjectMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.max_posts_per_page, 50);
+        assert!(!meta.semantic_similarity_enabled);
+        assert!(meta.blog_languages.is_empty());
+    }
+
+    #[test]
+    fn category_settings_defaults() {
+        let json = "{}";
+        let settings: CategorySettings = serde_json::from_str(json).unwrap();
+        assert!(settings.render_in_lists);
+        assert!(settings.show_title);
+        assert!(settings.title.is_none());
+    }
+
+    #[test]
+    fn category_settings_camel_case() {
+        let settings = CategorySettings {
+            render_in_lists: false,
+            show_title: true,
+            title: Some("Articles".into()),
+            post_template_slug: Some("article-tpl".into()),
+            list_template_slug: None,
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("renderInLists"));
+        assert!(json.contains("showTitle"));
+        assert!(json.contains("postTemplateSlug"));
+    }
+
+    #[test]
+    fn tag_entry_roundtrip() {
+        let tag = TagEntry {
+            name: "rust".into(),
+            color: Some("#ff0000".into()),
+            post_template_slug: Some("code-tpl".into()),
+        };
+        let json = serde_json::to_string(&tag).unwrap();
+        assert!(json.contains("postTemplateSlug"));
+        let parsed: TagEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "rust");
+        assert_eq!(parsed.color.as_deref(), Some("#ff0000"));
+    }
+
+    #[test]
+    fn tag_entry_minimal() {
+        let json = r#"{"name": "go"}"#;
+        let tag: TagEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.name, "go");
+        assert!(tag.color.is_none());
+        assert!(tag.post_template_slug.is_none());
+    }
+}

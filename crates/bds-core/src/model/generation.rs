@@ -50,6 +50,7 @@ pub enum SshMode {
 
 /// Publishing preferences stored in meta/publishing.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PublishingPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_host: Option<String>,

@@ -5,6 +5,7 @@ mod project;
 mod template;
 mod script;
 mod generation;
+pub mod metadata;
 
 pub use post::{Post, PostLink, PostMedia, PostStatus, PostTranslation};
 pub use media::{Media, MediaTranslation};
@@ -16,3 +17,4 @@ pub use generation::{
     DbNotification, GeneratedFileHash, NotificationAction, NotificationEntity,
     PublishingPreferences, SshMode,
 };
+pub use metadata::{CategorySettings, ProjectMetadata, TagEntry};

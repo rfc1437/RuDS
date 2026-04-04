@@ -1,0 +1,318 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+use crate::engine::EngineResult;
+use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
+use crate::model::PublishingPreferences;
+use crate::util::atomic_write_str;
+
+// ── project.json ────────────────────────────────────────────────────
+
+/// Read and parse meta/project.json.
+pub fn read_project_json(data_dir: &Path) -> EngineResult<ProjectMetadata> {
+    let path = data_dir.join("meta").join("project.json");
+    let content = fs::read_to_string(&path)?;
+    let meta: ProjectMetadata = serde_json::from_str(&content)?;
+    Ok(meta)
+}
+
+/// Serialize with pretty JSON, atomic write to meta/project.json.
+pub fn write_project_json(data_dir: &Path, meta: &ProjectMetadata) -> EngineResult<()> {
+    let path = data_dir.join("meta").join("project.json");
+    let json = serde_json::to_string_pretty(meta)?;
+    atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+// ── categories.json ─────────────────────────────────────────────────
+
+/// Read meta/categories.json as a sorted array of strings.
+pub fn read_categories_json(data_dir: &Path) -> EngineResult<Vec<String>> {
+    let path = data_dir.join("meta").join("categories.json");
+    let content = fs::read_to_string(&path)?;
+    let cats: Vec<String> = serde_json::from_str(&content)?;
+    Ok(cats)
+}
+
+/// Sort categories, then atomic write to meta/categories.json.
+pub fn write_categories_json(data_dir: &Path, categories: &[String]) -> EngineResult<()> {
+    let mut sorted = categories.to_vec();
+    sorted.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    let path = data_dir.join("meta").join("categories.json");
+    let json = serde_json::to_string_pretty(&sorted)?;
+    atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+// ── category-meta.json ──────────────────────────────────────────────
+
+/// Read meta/category-meta.json.
+pub fn read_category_meta_json(
+    data_dir: &Path,
+) -> EngineResult<HashMap<String, CategorySettings>> {
+    let path = data_dir.join("meta").join("category-meta.json");
+    let content = fs::read_to_string(&path)?;
+    let meta: HashMap<String, CategorySettings> = serde_json::from_str(&content)?;
+    Ok(meta)
+}
+
+/// Atomic write to meta/category-meta.json.
+pub fn write_category_meta_json(
+    data_dir: &Path,
+    meta: &HashMap<String, CategorySettings>,
+) -> EngineResult<()> {
+    let path = data_dir.join("meta").join("category-meta.json");
+    let json = serde_json::to_string_pretty(meta)?;
+    atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+// ── publishing.json ─────────────────────────────────────────────────
+
+/// Read meta/publishing.json.
+pub fn read_publishing_json(data_dir: &Path) -> EngineResult<PublishingPreferences> {
+    let path = data_dir.join("meta").join("publishing.json");
+    let content = fs::read_to_string(&path)?;
+    let prefs: PublishingPreferences = serde_json::from_str(&content)?;
+    Ok(prefs)
+}
+
+/// Atomic write to meta/publishing.json.
+pub fn write_publishing_json(
+    data_dir: &Path,
+    prefs: &PublishingPreferences,
+) -> EngineResult<()> {
+    let path = data_dir.join("meta").join("publishing.json");
+    let json = serde_json::to_string_pretty(prefs)?;
+    atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+// ── tags.json ───────────────────────────────────────────────────────
+
+/// Read meta/tags.json.
+pub fn read_tags_json(data_dir: &Path) -> EngineResult<Vec<TagEntry>> {
+    let path = data_dir.join("meta").join("tags.json");
+    let content = fs::read_to_string(&path)?;
+    let tags: Vec<TagEntry> = serde_json::from_str(&content)?;
+    Ok(tags)
+}
+
+/// Sort by name case-insensitive, then atomic write to meta/tags.json.
+pub fn write_tags_json(data_dir: &Path, tags: &[TagEntry]) -> EngineResult<()> {
+    let mut sorted = tags.to_vec();
+    sorted.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    let path = data_dir.join("meta").join("tags.json");
+    let json = serde_json::to_string_pretty(&sorted)?;
+    atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+// ── category helpers ────────────────────────────────────────────────
+
+/// Add a category to categories.json and initialize it in category-meta.json.
+pub fn add_category(data_dir: &Path, category: &str) -> EngineResult<()> {
+    let mut cats = read_categories_json(data_dir)?;
+    if !cats.iter().any(|c| c.eq_ignore_ascii_case(category)) {
+        cats.push(category.to_string());
+        write_categories_json(data_dir, &cats)?;
+    }
+
+    let mut meta = read_category_meta_json(data_dir)?;
+    if !meta.contains_key(category) {
+        meta.insert(
+            category.to_string(),
+            CategorySettings {
+                render_in_lists: true,
+                show_title: true,
+                title: None,
+                post_template_slug: None,
+                list_template_slug: None,
+            },
+        );
+        write_category_meta_json(data_dir, &meta)?;
+    }
+
+    Ok(())
+}
+
+/// Remove a category from both categories.json and category-meta.json.
+pub fn remove_category(data_dir: &Path, category: &str) -> EngineResult<()> {
+    let mut cats = read_categories_json(data_dir)?;
+    cats.retain(|c| !c.eq_ignore_ascii_case(category));
+    write_categories_json(data_dir, &cats)?;
+
+    let mut meta = read_category_meta_json(data_dir)?;
+    meta.remove(category);
+    write_category_meta_json(data_dir, &meta)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::SshMode;
+    use tempfile::TempDir;
+
+    fn setup() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        dir
+    }
+
+    // ── project.json ────────────────────────────────────────────────
+
+    #[test]
+    fn project_json_roundtrip() {
+        let dir = setup();
+        let meta = ProjectMetadata {
+            name: "Test".into(),
+            description: Some("A blog".into()),
+            public_url: None,
+            main_language: Some("en".into()),
+            default_author: None,
+            max_posts_per_page: 25,
+            blogmark_category: None,
+            pico_theme: None,
+            python_runtime_mode: None,
+            semantic_similarity_enabled: false,
+            blog_languages: vec!["en".into()],
+        };
+        write_project_json(dir.path(), &meta).unwrap();
+        let read = read_project_json(dir.path()).unwrap();
+        assert_eq!(read.name, "Test");
+        assert_eq!(read.max_posts_per_page, 25);
+        assert_eq!(read.description.as_deref(), Some("A blog"));
+    }
+
+    // ── categories.json ─────────────────────────────────────────────
+
+    #[test]
+    fn categories_json_sorted() {
+        let dir = setup();
+        let cats = vec!["picture".into(), "article".into(), "aside".into()];
+        write_categories_json(dir.path(), &cats).unwrap();
+        let read = read_categories_json(dir.path()).unwrap();
+        assert_eq!(read, vec!["article", "aside", "picture"]);
+    }
+
+    // ── category-meta.json ──────────────────────────────────────────
+
+    #[test]
+    fn category_meta_json_roundtrip() {
+        let dir = setup();
+        let mut meta = HashMap::new();
+        meta.insert(
+            "article".to_string(),
+            CategorySettings {
+                render_in_lists: true,
+                show_title: true,
+                title: None,
+                post_template_slug: None,
+                list_template_slug: None,
+            },
+        );
+        write_category_meta_json(dir.path(), &meta).unwrap();
+        let read = read_category_meta_json(dir.path()).unwrap();
+        assert!(read.contains_key("article"));
+        assert!(read["article"].render_in_lists);
+    }
+
+    // ── publishing.json ─────────────────────────────────────────────
+
+    #[test]
+    fn publishing_json_roundtrip() {
+        let dir = setup();
+        let prefs = PublishingPreferences {
+            ssh_host: Some("example.com".into()),
+            ssh_user: Some("deploy".into()),
+            ssh_remote_path: Some("/var/www".into()),
+            ssh_mode: SshMode::Rsync,
+        };
+        write_publishing_json(dir.path(), &prefs).unwrap();
+        let read = read_publishing_json(dir.path()).unwrap();
+        assert_eq!(read.ssh_host.as_deref(), Some("example.com"));
+        assert_eq!(read.ssh_mode, SshMode::Rsync);
+    }
+
+    // ── tags.json ───────────────────────────────────────────────────
+
+    #[test]
+    fn tags_json_sorted_case_insensitive() {
+        let dir = setup();
+        let tags = vec![
+            TagEntry {
+                name: "Zebra".into(),
+                color: None,
+                post_template_slug: None,
+            },
+            TagEntry {
+                name: "alpha".into(),
+                color: Some("#00ff00".into()),
+                post_template_slug: None,
+            },
+        ];
+        write_tags_json(dir.path(), &tags).unwrap();
+        let read = read_tags_json(dir.path()).unwrap();
+        assert_eq!(read[0].name, "alpha");
+        assert_eq!(read[1].name, "Zebra");
+    }
+
+    // ── add / remove category ───────────────────────────────────────
+
+    #[test]
+    fn add_category_creates_entries() {
+        let dir = setup();
+        // Seed files
+        write_categories_json(dir.path(), &vec!["article".into()]).unwrap();
+        write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
+
+        add_category(dir.path(), "page").unwrap();
+
+        let cats = read_categories_json(dir.path()).unwrap();
+        assert!(cats.contains(&"page".to_string()));
+
+        let meta = read_category_meta_json(dir.path()).unwrap();
+        assert!(meta.contains_key("page"));
+    }
+
+    #[test]
+    fn add_category_idempotent() {
+        let dir = setup();
+        write_categories_json(dir.path(), &vec!["article".into()]).unwrap();
+        write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
+
+        add_category(dir.path(), "article").unwrap();
+        let cats = read_categories_json(dir.path()).unwrap();
+        assert_eq!(cats.iter().filter(|c| *c == "article").count(), 1);
+    }
+
+    #[test]
+    fn remove_category_deletes_entries() {
+        let dir = setup();
+        write_categories_json(dir.path(), &vec!["article".into(), "page".into()]).unwrap();
+        let mut meta = HashMap::new();
+        meta.insert(
+            "article".to_string(),
+            CategorySettings {
+                render_in_lists: true,
+                show_title: true,
+                title: None,
+                post_template_slug: None,
+                list_template_slug: None,
+            },
+        );
+        write_category_meta_json(dir.path(), &meta).unwrap();
+
+        remove_category(dir.path(), "article").unwrap();
+
+        let cats = read_categories_json(dir.path()).unwrap();
+        assert!(!cats.contains(&"article".to_string()));
+        assert!(cats.contains(&"page".to_string()));
+
+        let meta = read_category_meta_json(dir.path()).unwrap();
+        assert!(!meta.contains_key("article"));
+    }
+}

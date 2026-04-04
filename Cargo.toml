@@ -27,6 +27,8 @@ thiserror = "2"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
+image = "0.25"
+rust-stemmers = "1"
 
 # UI framework
 iced = { version = "0.13", features = ["wgpu", "advanced", "image"] }

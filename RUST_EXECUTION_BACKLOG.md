@@ -64,37 +64,37 @@ Rules:
 
 ### `bds-core/db`
 
-- verify schema compatibility against existing projects
-- add FTS5 virtual tables (`posts_fts`, `media_fts`) for in-app full-text search
-- verify `mediaTranslations` table read/write
-- verify `postLinks` table read/write
+- ~~verify schema compatibility against existing projects~~ **DONE**
+- ~~add FTS5 virtual tables (`posts_fts`, `media_fts`) for in-app full-text search~~ **DONE**
+- ~~verify `mediaTranslations` table read/write~~ **DONE**
+- ~~verify `postLinks` table read/write~~ **DONE**
 
 ### `bds-core/engine`
 
-- implement `ProjectEngine`
-- implement `PostEngine`
-- implement `MediaEngine`
-- implement `PostMediaEngine`
-- implement `TagEngine`
-- implement `MetaEngine`
-- implement metadata diff flow (posts, media, scripts, templates)
-- implement rebuild-from-filesystem flow
+- ~~implement `ProjectEngine`~~ **DONE**
+- ~~implement `PostEngine`~~ **DONE**
+- ~~implement `MediaEngine`~~ **DONE**
+- ~~implement `PostMediaEngine`~~ **DONE**
+- ~~implement `TagEngine`~~ **DONE**
+- ~~implement `MetaEngine`~~ **DONE**
+- ~~implement metadata diff flow (posts, media, scripts, templates)~~ **DONE**
+- ~~implement rebuild-from-filesystem flow~~ **DONE**
 
 ### `bds-core/util`
 
-- frontmatter parser/writer via `serde_yaml`
-- translation file parser/writer
-- sidecar parser/writer
-- content hashing support via `sha2`
-- thumbnail generation via `image` crate (resize, WEBP encoding)
-- recursive directory traversal via `walkdir` (for rebuild-from-filesystem)
+- ~~frontmatter parser/writer via `serde_yaml`~~ **DONE**
+- ~~translation file parser/writer~~ **DONE**
+- ~~sidecar parser/writer~~ **DONE**
+- ~~content hashing support via `sha2`~~ **DONE**
+- ~~thumbnail generation via `image` crate (resize, WEBP encoding)~~ **DONE**
+- ~~recursive directory traversal via `walkdir` (for rebuild-from-filesystem)~~ **DONE**
 
 ### Validation
 
-- round-trip persistence tests
-- rebuild tests
-- metadata diff tests
-- golden-file comparisons for written files
+- ~~round-trip persistence tests~~ **DONE** (38 m1_validation integration tests)
+- ~~rebuild tests~~ **DONE**
+- ~~metadata diff tests~~ **DONE** (full coverage matrix: 13 post fields, 6 media, 4 template, 5 script)
+- ~~golden-file comparisons for written files~~ **DONE**
 
 ## Milestone M2: Native Workspace
 
