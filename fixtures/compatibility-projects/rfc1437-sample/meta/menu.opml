@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Blog Menu</title>
+  </head>
+  <body>
+    <outline id="menu-home" text="Home" type="home" pageSlug="home"/>
+    <outline id="menu-item-1771702362053-rlnggl" text="Bilderarchiv" type="submenu">
+      <outline id="menu-item-1771703216203-dbcm8z" text="Bilderarchiv 2022" type="page" pageId="f93e6a75-bf87-4167-9a94-2129dcbbba77" pageSlug="bilderarchiv-2022"/>
+      <outline id="menu-item-1771703181850-9oe1xx" text="Bilderarchiv 2016" type="page" pageId="23264416-c611-4cd4-9541-1589031d7629" pageSlug="bilderarchiv-2016"/>
+      <outline id="menu-item-1771703158134-c67mgx" text="Bilderarchiv 2015" type="page" pageId="36040f22-6c0d-41ee-a7d6-2ca08274c0ab" pageSlug="bilderarchiv-2015"/>
+      <outline id="menu-item-1771703153078-2nsyzt" text="Bilderarchiv 2014" type="page" pageId="f0bcd4c5-b930-4af8-a392-c58b7a9dcd10" pageSlug="bilderarchiv-2014"/>
+      <outline id="menu-item-1771703139343-cairck" text="Bilderarchiv 2013" type="page" pageId="c1f061ff-1aa1-434d-ae96-649d786091f0" pageSlug="bilderarchiv-2013"/>
+      <outline id="menu-item-1771702369363-0f5nu5" text="Bilderarchiv 2012" type="page" pageId="9bbbd362-28c5-4976-ab2a-f41a7dbed1df" pageSlug="bilderarchiv-2012"/>
+      <outline id="menu-item-1771702400031-08mxqe" text="Bilderarchiv 2011" type="page" pageId="49defe84-465d-4fa9-88d1-903f7ddab0f0" pageSlug="bilderarchiv-2011"/>
+      <outline id="menu-item-1771702382805-fdmdek" text="Bilderarchiv 2010" type="page" pageId="9c66de36-c842-4821-8dae-8b24aebd11d4" pageSlug="bilderarchiv-2010"/>
+      <outline id="menu-item-1772972918918-gxfm8i" text="Bilderarchiv 2009" type="page" pageId="052f4fa7-1b2d-4085-8db8-2a2b469e978f" pageSlug="bilderarchiv-2009"/>
+      <outline id="menu-item-1772972924742-tzty78" text="Bilderarchiv 2008" type="page" pageId="ee151fef-53b0-4996-a058-abfd9434470a" pageSlug="bilderarchiv-2008"/>
+      <outline id="menu-item-1772972929295-p7cl0z" text="Bilderarchiv 2005" type="page" pageId="b5549fdf-821e-4469-8201-85b070ad0d10" pageSlug="bilderarchiv-2005"/>
+      <outline id="menu-item-1772972935881-ao1i9d" text="Bilderarchiv 2004" type="page" pageId="21ab17e7-8f08-4198-bde0-67f51016d449" pageSlug="bilderarchiv-2004"/>
+      <outline id="menu-item-1772972941258-vtlm0f" text="Bilderarchiv 2003" type="page" pageId="28663110-cf9b-44b1-a65e-3701231d3e5e" pageSlug="bilderarchiv-2003"/>
+    </outline>
+    <outline id="menu-item-1771741351538-3ujwwj" text="Fotoblog" type="category-archive" categoryName="picture"/>
+    <outline id="menu-item-1771699781348-4id9k5" text="Tag Cloud" type="page" pageId="89ab7f6d-eeae-45e0-a3b5-852c49afc000" pageSlug="tag-cloud"/>
+    <outline id="menu-item-1771706684591-bbsft3" text="Spieleblog" type="category-archive" categoryName="spielelog"/>
+    <outline id="menu-item-1771707717571-qabd95" text="Kochbuch" type="category-archive" categoryName="kochbuch"/>
+    <outline id="menu-item-1772207640214-jvd4o9" text="Wiki" type="page" pageId="a6cb9d7a-0497-4e27-a657-19140133ba6b" pageSlug="wiki"/>
+    <outline id="menu-item-1771699761787-pbc5tg" text="Impressum" type="page" pageId="7afc5f1c-9189-4d63-a386-fb9ce8eda470" pageSlug="impressum"/>
+  </body>
+</opml>

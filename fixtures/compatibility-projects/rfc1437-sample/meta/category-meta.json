@@ -1,0 +1,42 @@
+{
+  "article": {
+    "renderInLists": true,
+    "showTitle": true,
+    "title": "Artikel"
+  },
+  "picture": {
+    "renderInLists": true,
+    "showTitle": true,
+    "title": "Fotoblog"
+  },
+  "aside": {
+    "renderInLists": true,
+    "showTitle": false,
+    "title": "Linkblog"
+  },
+  "page": {
+    "renderInLists": false,
+    "showTitle": true,
+    "title": "Seiten"
+  },
+  "kochbuch": {
+    "renderInLists": true,
+    "showTitle": true,
+    "title": "Kochbuch"
+  },
+  "metaowl": {
+    "renderInLists": true,
+    "showTitle": true,
+    "title": "metaowl"
+  },
+  "spielelog": {
+    "renderInLists": true,
+    "showTitle": true,
+    "title": "Spieleblog"
+  },
+  "wiki": {
+    "renderInLists": false,
+    "showTitle": true,
+    "title": "wiki"
+  }
+}

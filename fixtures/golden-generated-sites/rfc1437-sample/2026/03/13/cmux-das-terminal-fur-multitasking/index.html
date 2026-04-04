@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="de" data-language-prefix="">
+  <head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Content-type: matter-transport/sentient-life-form</title>
+  
+  <link rel="stylesheet" href="/assets/pico.slate.min.css" />
+  <link rel="stylesheet" href="/assets/lightbox.min.css" />
+  <link rel="stylesheet" href="/assets/highlight.min.css" />
+  <link rel="stylesheet" href="/assets/vanilla-calendar.min.css" />
+  <link rel="stylesheet" href="/assets/bds.css" />
+  
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/rss.xml" />
+  <link rel="alternate" type="application/atom+xml" title="Atom" href="/atom.xml" />
+  
+  <script defer src="/assets/highlight.min.js"></script>
+  <script defer src="/assets/code-enhancements.js"></script>
+  <script defer src="/assets/d3.layout.cloud.js"></script>
+  <script defer src="/assets/tag-cloud.js"></script>
+  <script defer src="/assets/lightbox.min.js"></script>
+  <script defer src="/assets/vanilla-calendar.min.js"></script>
+  <script defer src="/assets/calendar-runtime.js"></script>
+  <script defer src="/assets/search-runtime.js"></script>
+  <link rel="stylesheet" href="/pagefind/pagefind-ui.css" />
+  <script defer src="/pagefind/pagefind-ui.js"></script>
+</head>
+
+  <body>
+    <main>
+      
+<nav class="language-switcher" aria-label="Sprache">
+  
+    
+      <span class="language-switcher-badge language-switcher-badge-current" aria-current="true" title="de">🇩🇪</span>
+    
+  
+    
+      <a class="language-switcher-badge" href="/en" data-lang-prefix="/en" title="en">🇬🇧</a>
+    
+  
+  <div class="blog-search-widget" aria-label="Seitensuche">
+    <button type="button" class="blog-search-toggle" data-blog-search-toggle aria-label="Seitensuche">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    </button>
+    <div class="blog-search-panel" data-blog-search-panel hidden>
+      <div id="blog-search" data-blog-search-root data-search-placeholder="Suchen..."></div>
+    </div>
+  </div>
+</nav>
+<script>
+(function(){
+  var links=document.querySelectorAll('.language-switcher-badge[data-lang-prefix]');
+  var path=location.pathname.replace(/^\/[a-z]{2}(?=\/|$)/,'') || '/';
+  links.forEach(function(a){a.href=(a.dataset.langPrefix||'')+path;});
+}());
+</script>
+
+
+      <h1>cmux — Das Terminal für Multitasking</h1>
+      <nav class="blog-menu">
+  
+    <ul class="blog-menu-list">
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/">Home</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item blog-menu-item-with-children">
+      
+        <span class="blog-menu-link">Bilderarchiv</span>
+      
+      
+        <div class="blog-menu-submenu">
+          <ul class="blog-menu-list">
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2022/">Bilderarchiv 2022</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2016/">Bilderarchiv 2016</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2015/">Bilderarchiv 2015</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2014/">Bilderarchiv 2014</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2013/">Bilderarchiv 2013</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2012/">Bilderarchiv 2012</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2011/">Bilderarchiv 2011</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2010/">Bilderarchiv 2010</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2009/">Bilderarchiv 2009</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2008/">Bilderarchiv 2008</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2005/">Bilderarchiv 2005</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2004/">Bilderarchiv 2004</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/bilderarchiv-2003/">Bilderarchiv 2003</a>
+      
+      
+    </li>
+  
+
+  
+</ul>
+
+        </div>
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/category/picture/">Fotoblog</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/tag-cloud/">Tag Cloud</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/category/spielelog/">Spieleblog</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/category/kochbuch/">Kochbuch</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/wiki/">Wiki</a>
+      
+      
+    </li>
+  
+    <li class="blog-menu-item">
+      
+        <a class="blog-menu-link" href="/impressum/">Impressum</a>
+      
+      
+    </li>
+  
+
+  
+    <li class="blog-menu-item blog-menu-calendar">
+      <button
+        type="button"
+        class="blog-menu-calendar-button"
+        data-blog-calendar-toggle
+        data-blog-calendar-year="2026"
+        data-blog-calendar-month="3"
+        aria-label="Kalender öffnen"
+        title="Kalender öffnen"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+          <rect x="3" y="5" width="18" height="16" rx="2" ry="2"></rect>
+          <line x1="3" y1="9" x2="21" y2="9"></line>
+          <line x1="8" y1="3" x2="8" y2="7"></line>
+          <line x1="16" y1="3" x2="16" y2="7"></line>
+        </svg>
+      </button>
+
+      <section
+        id="blog-calendar"
+        class="blog-calendar-panel"
+        data-blog-calendar-panel
+        data-i18n-loading="Kalender wird geladen …"
+        data-i18n-error="Kalenderdaten konnten nicht geladen werden."
+        hidden
+      >
+        <header class="blog-calendar-header">
+          <strong>Archivkalender</strong>
+          <button
+            type="button"
+            class="blog-calendar-close"
+            data-blog-calendar-close
+            aria-label="Kalender schließen"
+            title="Kalender schließen"
+          >
+            ×
+          </button>
+        </header>
+        <div class="blog-calendar-content">
+          <div data-blog-calendar-root></div>
+          <p class="blog-calendar-status" data-blog-calendar-status>Kalender wird geladen …</p>
+        </div>
+      </section>
+    </li>
+  
+</ul>
+
+  
+</nav>
+
+      
+      <div class="single-post-taxonomy" aria-label="Taxonomie">
+        
+        <a class="single-post-taxonomy-bubble single-post-taxonomy-bubble-category" href="/category/aside/">aside</a>
+        
+        
+        
+        <a class="single-post-taxonomy-bubble single-post-taxonomy-bubble-tag" href="/tag/programmierung/">programmierung</a>
+        
+        
+        <a class="single-post-taxonomy-bubble single-post-taxonomy-bubble-tag" href="/tag/mac-os-x/">mac-os-x</a>
+        
+        
+        <a class="single-post-taxonomy-bubble single-post-taxonomy-bubble-tag" href="/tag/sysadmin/">sysadmin</a>
+        
+      </div>
+      
+      <article class="single-post" data-template="single-post" data-pagefind-body>
+        <div class="post"><p><a href="https://www.cmux.dev/de">cmux — Das Terminal für Multitasking</a> ist ein ziemlich geniales Terminal-Programm für die gerade durch Agentic Coding wieder verstärkt kommenden CLI Workflows. Und was mich begeistert: es hat eine saubere Persistierung von offenen Workspaces in denen man dann mehrere Tabs haben kann, so dass ich meine Arbeitsumgebung nicht ständig offen lassen muss. Ich habe immer gerne diverse Verzeichnisse direkt offen, weil ich zwischen mehreren hin und her wechsel wärend der Programmierung, das läuft mit CMUX deutlich besser als mit allen anderen.</p>
+</div>
+      </article>
+      
+      <div class="single-post-backlinks" aria-label="Rückverweise">
+        <span class="single-post-backlinks-label">Verlinkt von</span>
+        
+        <a class="single-post-taxonomy-bubble single-post-backlink-bubble" href="/2026/03/13/ghostty">ghostty</a>
+        
+      </div>
+      
+    </main>
+  </body>
+</html>

@@ -1,0 +1,630 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>rfc1437</title>
+    <link>https://www.rfc1437.de/</link>
+    <description>Content-type: matter-transport/sentient-life-form</description>
+    <lastBuildDate>Sun, 15 Mar 2026 09:36:46 GMT</lastBuildDate>
+    <generator>bDS</generator>
+    <item>
+      <title>Pagefind | Pagefind — Static low-bandwidth search at scale</title>
+      <link>https://www.rfc1437.de/2026/03/15/pagefind-pagefind-static-low-bandwidth-search-at-scale</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/15/pagefind-pagefind-static-low-bandwidth-search-at-scale</guid>
+      <pubDate>Sun, 15 Mar 2026 09:36:46 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Pagefind | Pagefind — Static low-bandwidth search at scale](https://pagefind.app/) ist eine statische Suchmaschine für statisch generiertes HTML, so wie mein Blog. Und wird demnächst die Suche auf diesem Blog betreiben. Keine externen abhängigkeiten, kein Server, keine Komplexität der Infrastruktur - einfach nur ein paar zusätzliche Files, die mit hochgeladen werden. Und natürlich aktives JavaScript im Browser.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Pagefind | Pagefind — Static low-bandwidth search at scale](https://pagefind.app/) ist eine statische Suchmaschine für statisch generiertes HTML, so wie mein Blog. Und wird demnächst die Suche auf diesem Blog betreiben. Keine externen abhängigkeiten, kein Server, keine Komplexität der Infrastruktur - einfach nur ein paar zusätzliche Files, die mit hochgeladen werden. Und natürlich aktives JavaScript im Browser.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>javascript</category>
+      <category>nodejs</category>
+    </item>
+    <item>
+      <title>pi.dev</title>
+      <link>https://www.rfc1437.de/2026/03/14/pi-dev</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/14/pi-dev</guid>
+      <pubDate>Sat, 14 Mar 2026 20:38:58 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[pi.dev](https://shittycodingagent.ai/) ist ein minimalistischer Harness für agentic coding, dessen Fokus nicht auf Features, sondern auf Erweiterbarkeit liegt. Die Grundidee ist solide:. eine sehr einfache Harness die durch Typescript-Plugins erweitert werden kann, so dass sich die Harness an den eigenen Workflow anpassen und an die eigenen Anforderungen. Werde ich mir vielleicht demnächst mal angucken.</p>]]></description>
+      <content:encoded><![CDATA[<p>[pi.dev](https://shittycodingagent.ai/) ist ein minimalistischer Harness für agentic coding, dessen Fokus nicht auf Features, sondern auf Erweiterbarkeit liegt. Die Grundidee ist solide:. eine sehr einfache Harness die durch Typescript-Plugins erweitert werden kann, so dass sich die Harness an den eigenen Workflow anpassen und an die eigenen Anforderungen. Werde ich mir vielleicht demnächst mal angucken.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>vibecoding</category>
+    </item>
+    <item>
+      <title>steveyegge/beads: Beads - A memory upgrade for your coding agent</title>
+      <link>https://www.rfc1437.de/2026/03/13/steveyegge-beads-beads-a-memory-upgrade-for-your-coding-agent</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/steveyegge-beads-beads-a-memory-upgrade-for-your-coding-agent</guid>
+      <pubDate>Fri, 13 Mar 2026 16:10:34 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[steveyegge/beads: Beads - A memory upgrade for your coding agent](https://github.com/steveyegge/beads) ist ein Todo-Listen-Tool für Agenten. Im Prinzip ein Gedächtnis für Projekte über das sich Agenten steuern können (hinterlegen von Tasks und Features) und auch komplexere Abläufe gesteuert werden können, bei denen ein Agent über eine ganze Reihe von Issues laufen muss und diese lösen muss, wo Tasks abhängigkeiten haben können und Agenten nur den Satz an Aufgaben sehen, die auch wirklich gerade angegangen werden können. Interessant für Projekte, in denen man Agenten in Loops laufen lassen will, um größere Aufgaben zu lösen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[steveyegge/beads: Beads - A memory upgrade for your coding agent](https://github.com/steveyegge/beads) ist ein Todo-Listen-Tool für Agenten. Im Prinzip ein Gedächtnis für Projekte über das sich Agenten steuern können (hinterlegen von Tasks und Features) und auch komplexere Abläufe gesteuert werden können, bei denen ein Agent über eine ganze Reihe von Issues laufen muss und diese lösen muss, wo Tasks abhängigkeiten haben können und Agenten nur den Satz an Aufgaben sehen, die auch wirklich gerade angegangen werden können. Interessant für Projekte, in denen man Agenten in Loops laufen lassen will, um größere Aufgaben zu lösen.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>vibecoding</category>
+    </item>
+    <item>
+      <title>dolthub/doltgresql: DoltgreSQL - Version Controlled PostgreSQL</title>
+      <link>https://www.rfc1437.de/2026/03/13/dolthub-doltgresql-doltgresql-version-controlled-postgresql</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/dolthub-doltgresql-doltgresql-version-controlled-postgresql</guid>
+      <pubDate>Fri, 13 Mar 2026 15:17:32 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[dolthub/doltgresql: DoltgreSQL - Version Controlled PostgreSQL](https://github.com/dolthub/doltgresql) ist der PostgreSQL-flavored Partner von [dolthub/dolt: Dolt – Git for Data](/posts/dolthub-dolt-dolt-git-for-data) und bietet die gleichen Features, nur mit Anlehnung an PostgreSQL und einem Binär-Interface das zu PostgreSQL kompatibel ist.</p>]]></description>
+      <content:encoded><![CDATA[<p>[dolthub/doltgresql: DoltgreSQL - Version Controlled PostgreSQL](https://github.com/dolthub/doltgresql) ist der PostgreSQL-flavored Partner von [dolthub/dolt: Dolt – Git for Data](/posts/dolthub-dolt-dolt-git-for-data) und bietet die gleichen Features, nur mit Anlehnung an PostgreSQL und einem Binär-Interface das zu PostgreSQL kompatibel ist.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>postgresql</category>
+      <category>datenbank</category>
+    </item>
+    <item>
+      <title>dolthub/dolt: Dolt – Git for Data</title>
+      <link>https://www.rfc1437.de/2026/03/13/dolthub-dolt-dolt-git-for-data</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/dolthub-dolt-dolt-git-for-data</guid>
+      <pubDate>Fri, 13 Mar 2026 15:17:25 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[dolthub/dolt: Dolt – Git for Data](https://github.com/dolthub/dolt?tab=readme-ov-file) ist eine SQL Datenbank, die intern mit Mechanismen wie git arbeitet und dadurch Daten-Branches und Merges unterstützt und allgemein die Möglichkeit bietet, dass Daten in der Datenbank versioniert und mit History funktionieren. Und das ganze auch analog zu git erlaubt die Datenchanges über die Versionsverwaltung zu verteilen. Im Prinzip &quot;slow transaction shipping&quot;.</p>]]></description>
+      <content:encoded><![CDATA[<p>[dolthub/dolt: Dolt – Git for Data](https://github.com/dolthub/dolt?tab=readme-ov-file) ist eine SQL Datenbank, die intern mit Mechanismen wie git arbeitet und dadurch Daten-Branches und Merges unterstützt und allgemein die Möglichkeit bietet, dass Daten in der Datenbank versioniert und mit History funktionieren. Und das ganze auch analog zu git erlaubt die Datenchanges über die Versionsverwaltung zu verteilen. Im Prinzip &quot;slow transaction shipping&quot;.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>datenbank</category>
+    </item>
+    <item>
+      <title>paperclipai/paperclip: Open-source orchestration for zero-human companies</title>
+      <link>https://www.rfc1437.de/2026/03/13/paperclipai-paperclip-open-source-orchestration-for-zero-human-companies</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/paperclipai-paperclip-open-source-orchestration-for-zero-human-companies</guid>
+      <pubDate>Fri, 13 Mar 2026 15:00:21 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[paperclipai/paperclip: Open-source orchestration for zero-human companies](https://github.com/paperclipai/paperclip) ist ein Ansatz um Agenten zu orchestrieren und zu verwalten. Das interessante hier ist, dass es mit einer Organisation angelehnt an eine Firmenorganisation arbeitet und mit Mitteln die Kommunikation der Agenten abbildet, die eine gute Transparenz bieten könnte. Ich habe es noch nicht ausprobiert, aber neben [gastown](https://github.com/steveyegge/gastown) eines der interessanteren Projekte zu diesem Thema. Das ganze Umfeld von Agent-Orchestrierung ist alles noch recht neu, von daher ist das noch ein großes Feld an Experimenten, aber spannend zu beobachten.</p>]]></description>
+      <content:encoded><![CDATA[<p>[paperclipai/paperclip: Open-source orchestration for zero-human companies](https://github.com/paperclipai/paperclip) ist ein Ansatz um Agenten zu orchestrieren und zu verwalten. Das interessante hier ist, dass es mit einer Organisation angelehnt an eine Firmenorganisation arbeitet und mit Mitteln die Kommunikation der Agenten abbildet, die eine gute Transparenz bieten könnte. Ich habe es noch nicht ausprobiert, aber neben [gastown](https://github.com/steveyegge/gastown) eines der interessanteren Projekte zu diesem Thema. Das ganze Umfeld von Agent-Orchestrierung ist alles noch recht neu, von daher ist das noch ein großes Feld an Experimenten, aber spannend zu beobachten.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>vibecoding</category>
+    </item>
+    <item>
+      <title>Ghostty</title>
+      <link>https://www.rfc1437.de/2026/03/13/ghostty</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/ghostty</guid>
+      <pubDate>Fri, 13 Mar 2026 11:38:27 GMT</pubDate>
+      <description><![CDATA[<p>[Ghostty](https://ghostty.org/) ist die Basis, auf der [cmux — Das Terminal für Multitasking](/posts/cmux-das-terminal-fur-multitasking) aufgebaut wurde. Generell ebenfalls ein sehr nettes Terminal, das auch deutlich schneller reagiert als das Standardterminal und auch schon sehr gut funktioniert. Was mir nicht gefiel, war dass Tabs nicht automatisch in den passenden Pfaden wieder neu geöffnet wurden, wenn das Programm beendet wurde. Ich habe einfach zu lange persistente Sessions, die ich immer wieder aufgreife. Das macht cmux einfach besser.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Ghostty](https://ghostty.org/) ist die Basis, auf der [cmux — Das Terminal für Multitasking](/posts/cmux-das-terminal-fur-multitasking) aufgebaut wurde. Generell ebenfalls ein sehr nettes Terminal, das auch deutlich schneller reagiert als das Standardterminal und auch schon sehr gut funktioniert. Was mir nicht gefiel, war dass Tabs nicht automatisch in den passenden Pfaden wieder neu geöffnet wurden, wenn das Programm beendet wurde. Ich habe einfach zu lange persistente Sessions, die ich immer wieder aufgreife. Das macht cmux einfach besser.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>sysadmin</category>
+      <category>mac-os-x</category>
+    </item>
+    <item>
+      <title>cmux — Das Terminal für Multitasking</title>
+      <link>https://www.rfc1437.de/2026/03/13/cmux-das-terminal-fur-multitasking</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/13/cmux-das-terminal-fur-multitasking</guid>
+      <pubDate>Fri, 13 Mar 2026 07:21:42 GMT</pubDate>
+      <description><![CDATA[<p>[cmux — Das Terminal für Multitasking](https://www.cmux.dev/de) ist ein ziemlich geniales Terminal-Programm für die gerade durch Agentic Coding wieder verstärkt kommenden CLI Workflows. Und was mich begeistert: es hat eine saubere Persistierung von offenen Workspaces in denen man dann mehrere Tabs haben kann, so dass ich meine Arbeitsumgebung nicht ständig offen lassen muss. Ich habe immer gerne diverse Verzeichnisse direkt offen, weil ich zwischen mehreren hin und her wechsel wärend der Programmierung, das läuft mit CMUX deutlich besser als mit allen anderen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[cmux — Das Terminal für Multitasking](https://www.cmux.dev/de) ist ein ziemlich geniales Terminal-Programm für die gerade durch Agentic Coding wieder verstärkt kommenden CLI Workflows. Und was mich begeistert: es hat eine saubere Persistierung von offenen Workspaces in denen man dann mehrere Tabs haben kann, so dass ich meine Arbeitsumgebung nicht ständig offen lassen muss. Ich habe immer gerne diverse Verzeichnisse direkt offen, weil ich zwischen mehreren hin und her wechsel wärend der Programmierung, das läuft mit CMUX deutlich besser als mit allen anderen.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>mac-os-x</category>
+      <category>sysadmin</category>
+    </item>
+    <item>
+      <title>NuGet Gallery | Photino.Blazor.CustomWindow 1.3.1</title>
+      <link>https://www.rfc1437.de/2026/03/12/nuget-gallery-photino-blazor-customwindow-1-3-1</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/12/nuget-gallery-photino-blazor-customwindow-1-3-1</guid>
+      <pubDate>Thu, 12 Mar 2026 20:13:10 GMT</pubDate>
+      <description><![CDATA[<p>[NuGet Gallery | Photino.Blazor.CustomWindow 1.3.1](https://www.nuget.org/packages/Photino.Blazor.CustomWindow) ist eine Library für Photino Blazor, mit der man Fenster Chrome-less machen kann. Also Titelbalken und Standarddekorationen entfernen kann. Idee dahinter ist darüber mehr Kontrolle über das Look-and-Feel zu bekommen und kompaktere UIs zu schaffen. Mit dieser Library bekommt man dann Grundfunktionen zurück wie Fenstergrößenänderungen und andere Standardelemente, die Benutzer erwarten, aber unter voller Kontrolle der Anwendung.</p>]]></description>
+      <content:encoded><![CDATA[<p>[NuGet Gallery | Photino.Blazor.CustomWindow 1.3.1](https://www.nuget.org/packages/Photino.Blazor.CustomWindow) ist eine Library für Photino Blazor, mit der man Fenster Chrome-less machen kann. Also Titelbalken und Standarddekorationen entfernen kann. Idee dahinter ist darüber mehr Kontrolle über das Look-and-Feel zu bekommen und kompaktere UIs zu schaffen. Mit dieser Library bekommt man dann Grundfunktionen zurück wie Fenstergrößenänderungen und andere Standardelemente, die Benutzer erwarten, aber unter voller Kontrolle der Anwendung.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>c#</category>
+    </item>
+    <item>
+      <title>OpenClaw Memory Masterclass: The complete guide to agent memory that survives • VelvetShark</title>
+      <link>https://www.rfc1437.de/2026/03/07/openclaw-memory-masterclass-the-complete-guide-to-agent-memory-that-survives-velvetshark</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/07/openclaw-memory-masterclass-the-complete-guide-to-agent-memory-that-survives-velvetshark</guid>
+      <pubDate>Sat, 07 Mar 2026 05:53:59 GMT</pubDate>
+      <description><![CDATA[<p>[OpenClaw Memory Masterclass: The complete guide to agent memory that survives • VelvetShark](https://velvetshark.com/openclaw-memory-masterclass) - interessante Zusammenstellung des Memory-Systems und der Fallstricke mit Compaction bei Openclaw. Der Agent ist ja dazu da, über lange Zeit zu laufen, dadurch ist aber auch immer die Gefahr, dass Compaction gerade in komplexeren Situationen mitten drin zuschlägt. Und openclaw läuft autonom, also will man sicher sein, dass es auch kontinuierlich weitergeht.</p>]]></description>
+      <content:encoded><![CDATA[<p>[OpenClaw Memory Masterclass: The complete guide to agent memory that survives • VelvetShark](https://velvetshark.com/openclaw-memory-masterclass) - interessante Zusammenstellung des Memory-Systems und der Fallstricke mit Compaction bei Openclaw. Der Agent ist ja dazu da, über lange Zeit zu laufen, dadurch ist aber auch immer die Gefahr, dass Compaction gerade in komplexeren Situationen mitten drin zuschlägt. Und openclaw läuft autonom, also will man sicher sein, dass es auch kontinuierlich weitergeht.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>llm</category>
+      <category>openclaw</category>
+    </item>
+    <item>
+      <title>unum-cloud/USearch: Fast Open-Source Search &amp; Clustering engine × for Vectors &amp; Arbitrary Objects × in C++, C, Python, JavaScript, Rust, Java, Objective-C, Swift, C#, GoLang, and Wolfram 🔍</title>
+      <link>https://www.rfc1437.de/2026/03/05/unum-cloud-usearch-fast-open-source-search-clustering-engine-x-for-vectors-arbitrary-objects-x-in-c-c-python-javascript-rust-java-objective-c-swift-c-golang-and-wolfram</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/05/unum-cloud-usearch-fast-open-source-search-clustering-engine-x-for-vectors-arbitrary-objects-x-in-c-c-python-javascript-rust-java-objective-c-swift-c-golang-and-wolfram</guid>
+      <pubDate>Thu, 05 Mar 2026 21:18:44 GMT</pubDate>
+      <description><![CDATA[<p>[unum-cloud/USearch](https://github.com/unum-cloud/USearch) - drin was drauf steht. Also eine Library, die einen Index für Vektoren bietet, die z.B. aus Embedding stammen können und so semantisch ähnliche Texte finden können. Nicht Text-ähnlich, sondern semantisch, also Inhalt. Spannendes Thema, die dafür nötigen Modelle sind mit den LLMs verwandt, aber eben nicht large, sondern small - sie brauchen nicht voll zu verstehen und zu generieren, weil sie nur Vektoren erstellen, die dann gegeneinander verglichen werden können und je höher die Ähnlichkeit, desto höher die Ähnlichkeit der Texte im Thema. Cooles kleines Feature für bDS.</p>]]></description>
+      <content:encoded><![CDATA[<p>[unum-cloud/USearch](https://github.com/unum-cloud/USearch) - drin was drauf steht. Also eine Library, die einen Index für Vektoren bietet, die z.B. aus Embedding stammen können und so semantisch ähnliche Texte finden können. Nicht Text-ähnlich, sondern semantisch, also Inhalt. Spannendes Thema, die dafür nötigen Modelle sind mit den LLMs verwandt, aber eben nicht large, sondern small - sie brauchen nicht voll zu verstehen und zu generieren, weil sie nur Vektoren erstellen, die dann gegeneinander verglichen werden können und je höher die Ähnlichkeit, desto höher die Ähnlichkeit der Texte im Thema. Cooles kleines Feature für bDS.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>llm</category>
+    </item>
+    <item>
+      <title>waybarrios/vllm-mlx: OpenAI and Anthropic compatible server for Apple Silicon.</title>
+      <link>https://www.rfc1437.de/2026/03/02/waybarrios-vllm-mlx-openai-and-anthropic-compatible-server-for-apple-silicon</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/02/waybarrios-vllm-mlx-openai-and-anthropic-compatible-server-for-apple-silicon</guid>
+      <pubDate>Mon, 02 Mar 2026 11:05:49 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[waybarrios/vllm-mlx: OpenAI and Anthropic compatible server for Apple Silicon.](https://github.com/waybarrios/vllm-mlx) Den benutze ich, um [mlx-community/gemma-3-12b-it-4bit](/posts/mlx-community-gemma-3-12b-it-4bit-hugging-face) auf meinem MacBook Air zu betreiben. Klappt sehr gut, kleines Shell-Script zum Starten des Servers und dann bin ich autonom. Nicht so komfortabel wie Ollama, aber dafür unterstützt es perfekt Apple&apos;s MLX und nutzt damit Silicon gut aus.</p>]]></description>
+      <content:encoded><![CDATA[<p>[waybarrios/vllm-mlx: OpenAI and Anthropic compatible server for Apple Silicon.](https://github.com/waybarrios/vllm-mlx) Den benutze ich, um [mlx-community/gemma-3-12b-it-4bit](/posts/mlx-community-gemma-3-12b-it-4bit-hugging-face) auf meinem MacBook Air zu betreiben. Klappt sehr gut, kleines Shell-Script zum Starten des Servers und dann bin ich autonom. Nicht so komfortabel wie Ollama, aber dafür unterstützt es perfekt Apple&apos;s MLX und nutzt damit Silicon gut aus.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>llm</category>
+    </item>
+    <item>
+      <title>mlx-community/gemma-3-12b-it-4bit · Hugging Face</title>
+      <link>https://www.rfc1437.de/2026/03/02/mlx-community-gemma-3-12b-it-4bit-hugging-face</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/02/mlx-community-gemma-3-12b-it-4bit-hugging-face</guid>
+      <pubDate>Mon, 02 Mar 2026 11:03:41 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[mlx-community/gemma-3-12b-it-4bit · Hugging Face](https://huggingface.co/mlx-community/gemma-3-12b-it-4bit) ist das bisher beste Modell für lokalen Betrieb, mit dem ich die Bildbetitelung und sogar lokalen Chat realisieren kann. Nicht das schnellste, da es schon recht groß ist, aber für Offline-Betrieb absolut geeignet, wenn ich mir da ein paar Mechanismen für Batchverarbeitung von Bildern etc. einfallen lasse. Das könnte gerade für Urlaubszeiten super spannend sein. Eine Bildbeschreibung liegt dann zwar bei einer Minute, aber hey, dafür keine Abhängigkeiten.</p>]]></description>
+      <content:encoded><![CDATA[<p>[mlx-community/gemma-3-12b-it-4bit · Hugging Face](https://huggingface.co/mlx-community/gemma-3-12b-it-4bit) ist das bisher beste Modell für lokalen Betrieb, mit dem ich die Bildbetitelung und sogar lokalen Chat realisieren kann. Nicht das schnellste, da es schon recht groß ist, aber für Offline-Betrieb absolut geeignet, wenn ich mir da ein paar Mechanismen für Batchverarbeitung von Bildern etc. einfallen lasse. Das könnte gerade für Urlaubszeiten super spannend sein. Eine Bildbeschreibung liegt dann zwar bei einer Minute, aber hey, dafür keine Abhängigkeiten.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>llm</category>
+    </item>
+    <item>
+      <title>Models.dev — An open-source database of AI models</title>
+      <link>https://www.rfc1437.de/2026/03/01/models-dev-an-open-source-database-of-ai-models</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/01/models-dev-an-open-source-database-of-ai-models</guid>
+      <pubDate>Sun, 01 Mar 2026 12:40:31 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Models.dev — An open-source database of AI models](https://models.dev/) ist eine sehr praktische Seite, die für alle möglichen Anbieter und alle möglichen LLMs Rahmenparameter liefert, inklusive sogar API Preise. Und technische Parameter wie Input/Output Tokens.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Models.dev — An open-source database of AI models](https://models.dev/) ist eine sehr praktische Seite, die für alle möglichen Anbieter und alle möglichen LLMs Rahmenparameter liefert, inklusive sogar API Preise. Und technische Parameter wie Input/Output Tokens.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>llm</category>
+    </item>
+    <item>
+      <title>Ollama</title>
+      <link>https://www.rfc1437.de/2026/03/01/ollama</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/03/01/ollama</guid>
+      <pubDate>Sun, 01 Mar 2026 11:40:25 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Ollama](https://ollama.com/) - eine Runtime-Umgebung für LLMs, die es erlaubt Modelle lokal zu betreiben. Mein Lieblingsmodell zur Zeit: [qwen2.5vl:7b-q4_K_M](https://ollama.com/library/qwen2.5vl:7b-q4_K_M). Mit nur 6.6 GB Größe läuft das problemlos auf einem MacBook Air M4 und hat noch genug Speicher und Kapazität frei um Programme nebenbei laufen zu lassen. Das Modell ist im Chat erstaunlich brauchbar und vor allem hat es klasse Vision-Fähigkeiten. Ideal um für Bilder Titel, Alt-Texte oder Zusammenfassungen zu liefern, ohne dafür Geld an große Provider abzudrücken. Und ein wichtiger Baustein, um bDS wieder zurück zu full-offline zu bringen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Ollama](https://ollama.com/) - eine Runtime-Umgebung für LLMs, die es erlaubt Modelle lokal zu betreiben. Mein Lieblingsmodell zur Zeit: [qwen2.5vl:7b-q4_K_M](https://ollama.com/library/qwen2.5vl:7b-q4_K_M). Mit nur 6.6 GB Größe läuft das problemlos auf einem MacBook Air M4 und hat noch genug Speicher und Kapazität frei um Programme nebenbei laufen zu lassen. Das Modell ist im Chat erstaunlich brauchbar und vor allem hat es klasse Vision-Fähigkeiten. Ideal um für Bilder Titel, Alt-Texte oder Zusammenfassungen zu liefern, ohne dafür Geld an große Provider abzudrücken. Und ein wichtiger Baustein, um bDS wieder zurück zu full-offline zu bringen.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>llm</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>mistralai/mistral-vibe: Minimal CLI coding agent by Mistral</title>
+      <link>https://www.rfc1437.de/2026/02/28/mistralai-mistral-vibe-minimal-cli-coding-agent-by-mistral</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/28/mistralai-mistral-vibe-minimal-cli-coding-agent-by-mistral</guid>
+      <pubDate>Sat, 28 Feb 2026 18:58:21 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[mistralai/mistral-vibe: Minimal CLI coding agent by Mistral](https://github.com/mistralai/mistral-vibe) - begleitend zum [AI Studio - Mistral AI](/posts/ai-studio-mistral-ai) gibt es die Vibe-Coding Oberfläche zu Devstral auch als Open Source. Sehr nett, weil es ein gutes Paar macht. Wird definitiv bei mir etwas ausprobiert, auch wenn ich sicherlich für große Projekte dann eher zu den Boliden (Opus 4.6) greifen würde.</p>]]></description>
+      <content:encoded><![CDATA[<p>[mistralai/mistral-vibe: Minimal CLI coding agent by Mistral](https://github.com/mistralai/mistral-vibe) - begleitend zum [AI Studio - Mistral AI](/posts/ai-studio-mistral-ai) gibt es die Vibe-Coding Oberfläche zu Devstral auch als Open Source. Sehr nett, weil es ein gutes Paar macht. Wird definitiv bei mir etwas ausprobiert, auch wenn ich sicherlich für große Projekte dann eher zu den Boliden (Opus 4.6) greifen würde.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>vibecoding</category>
+      <category>llm</category>
+      <category>mistral</category>
+    </item>
+    <item>
+      <title>AI Studio - Mistral AI</title>
+      <link>https://www.rfc1437.de/2026/02/28/ai-studio-mistral-ai</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/28/ai-studio-mistral-ai</guid>
+      <pubDate>Sat, 28 Feb 2026 18:55:50 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[AI Studio - Mistral AI](https://console.mistral.ai/home) - da in den USA ja doch wieder die Lage etwas angespannter wird, und einfach weil man immer mal gucken sollte, was außerhalb der USA passiert, hier ein Link auf eine europäische Alternative zu den großen US Betreibern. Mistral bietet mit Devstral 2 ein Coding-Modell an, das nicht nur open weights ist (also frei zu bekommen und zu betreiben, wenn man die nötige Hardware hat), sondern auch im Betrieb bei Nutzung von Mistral selber recht günstig ist. Und die Leistung liegt etwas oberhalb Claude Haiku 4.5, und zwar unterhalb Sonnet 4.5, aber nicht super weit. Also durchaus brauchbar und meine ersten Experimente waren nicht schlecht. Leider keine Vision-Fähigkeit, also für Experimente mit Bildern nicht so geeignet (und daher für mein bDS nicht ideal), aber trotzdem spannend genug um es im Auge zu behalten.</p>]]></description>
+      <content:encoded><![CDATA[<p>[AI Studio - Mistral AI](https://console.mistral.ai/home) - da in den USA ja doch wieder die Lage etwas angespannter wird, und einfach weil man immer mal gucken sollte, was außerhalb der USA passiert, hier ein Link auf eine europäische Alternative zu den großen US Betreibern. Mistral bietet mit Devstral 2 ein Coding-Modell an, das nicht nur open weights ist (also frei zu bekommen und zu betreiben, wenn man die nötige Hardware hat), sondern auch im Betrieb bei Nutzung von Mistral selber recht günstig ist. Und die Leistung liegt etwas oberhalb Claude Haiku 4.5, und zwar unterhalb Sonnet 4.5, aber nicht super weit. Also durchaus brauchbar und meine ersten Experimente waren nicht schlecht. Leider keine Vision-Fähigkeit, also für Experimente mit Bildern nicht so geeignet (und daher für mein bDS nicht ideal), aber trotzdem spannend genug um es im Auge zu behalten.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>vibecoding</category>
+      <category>llm</category>
+      <category>mistral</category>
+    </item>
+    <item>
+      <title>ZK I Zettel 1 (1) - Niklas Luhmann-Archiv</title>
+      <link>https://www.rfc1437.de/2026/02/28/zk-i-zettel-1-1-niklas-luhmann-archiv</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/28/zk-i-zettel-1-1-niklas-luhmann-archiv</guid>
+      <pubDate>Sat, 28 Feb 2026 15:35:59 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[ZK I Zettel 1 \(1\) - Niklas Luhmann-Archiv](https://niklas-luhmann-archiv.de/bestand/zettelkasten/zettel/ZK_1_NB_1_1_V) - woher die Inspiration für mein Blog kommt, bzw. was mich immer unter der technischen Oberfläche bewegt hat.</p>]]></description>
+      <content:encoded><![CDATA[<p>[ZK I Zettel 1 \(1\) - Niklas Luhmann-Archiv](https://niklas-luhmann-archiv.de/bestand/zettelkasten/zettel/ZK_1_NB_1_1_V) - woher die Inspiration für mein Blog kommt, bzw. was mich immer unter der technischen Oberfläche bewegt hat.</p>]]></content:encoded>
+      <category>aside</category>
+    </item>
+    <item>
+      <title>Agent UI Standards Multiply: MCP Apps and Google’s A2UI - Richard MacManus</title>
+      <link>https://www.rfc1437.de/2026/02/28/agent-ui-standards-multiply-mcp-apps-and-google-s-a2ui-richard-macmanus</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/28/agent-ui-standards-multiply-mcp-apps-and-google-s-a2ui-richard-macmanus</guid>
+      <pubDate>Sat, 28 Feb 2026 06:02:52 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>wer so wie ich gerne einen Überblick über UI-integration von LLMs haben möchte und sich fragt, wie A2UI und MCP Apps im Vergleich arbeiten und was sie bieten: [Agent UI Standards Multiply: MCP Apps and Google’s A2UI - Richard MacManus](https://ricmac.org/2025/12/19/agent-ui-standards-multiply-mcp-apps-and-googles-a2ui/) hilft. Ich habe in bDS ja A2UI implementiert, damit im internen Chat das LLM auch visuelle Aspekte nutzen kann, und das gefällt mir schon sehr gut. Aber die Idee, Teile meines UI auch in externe Agents einzubringen ist auch faszinierend. Auch wenn ich finde, dass &quot;lokales HTML/JS in einem IFrame&quot; irgendwie erstmal nach Hack klingt, aber vieles im LLM Umfeld gibt mir das Gefühl im Moment, einfach weil ja alles über einen normalen Text-Stream geschoben wird und man hofft, dass die LLMs sich an die Formate halten (selbst A2UI arbeitet so).</p>]]></description>
+      <content:encoded><![CDATA[<p>wer so wie ich gerne einen Überblick über UI-integration von LLMs haben möchte und sich fragt, wie A2UI und MCP Apps im Vergleich arbeiten und was sie bieten: [Agent UI Standards Multiply: MCP Apps and Google’s A2UI - Richard MacManus](https://ricmac.org/2025/12/19/agent-ui-standards-multiply-mcp-apps-and-googles-a2ui/) hilft. Ich habe in bDS ja A2UI implementiert, damit im internen Chat das LLM auch visuelle Aspekte nutzen kann, und das gefällt mir schon sehr gut. Aber die Idee, Teile meines UI auch in externe Agents einzubringen ist auch faszinierend. Auch wenn ich finde, dass &quot;lokales HTML/JS in einem IFrame&quot; irgendwie erstmal nach Hack klingt, aber vieles im LLM Umfeld gibt mir das Gefühl im Moment, einfach weil ja alles über einen normalen Text-Stream geschoben wird und man hofft, dass die LLMs sich an die Formate halten (selbst A2UI arbeitet so).</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>llm</category>
+    </item>
+    <item>
+      <title>cloudflare/cobweb: COBOL to WebAssembly compiler</title>
+      <link>https://www.rfc1437.de/2026/02/27/cloudflare-cobweb-cobol-to-webassembly-compiler</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/27/cloudflare-cobweb-cobol-to-webassembly-compiler</guid>
+      <pubDate>Fri, 27 Feb 2026 13:43:32 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[cloudflare/cobweb: COBOL to WebAssembly compiler](https://github.com/cloudflare/cobweb) - ich lass das einfach mal hier liegen. Soll doch jemand anders den alten Kram wegräumen. [was soll man da auch anderes sagen](https://blog.cloudflare.com/cloudflare-workers-now-support-cobol/).</p>]]></description>
+      <content:encoded><![CDATA[<p>[cloudflare/cobweb: COBOL to WebAssembly compiler](https://github.com/cloudflare/cobweb) - ich lass das einfach mal hier liegen. Soll doch jemand anders den alten Kram wegräumen. [was soll man da auch anderes sagen](https://blog.cloudflare.com/cloudflare-workers-now-support-cobol/).</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>Pyodide</title>
+      <link>https://www.rfc1437.de/2026/02/27/pyodide</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/27/pyodide</guid>
+      <pubDate>Fri, 27 Feb 2026 13:23:39 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Pyodide](https://pyodide.org/en/stable/) ist so ein bisschen mein Lebensretter in bDS: ich muss nämlich gestehen, ich bin jetzt nicht wirklich super tief in TypeScript drin und hab auch eigentlich keine Lust das selber zu schreiben. Wenn die KI das macht, ist das ok, da gibt es genug Wissen auf das ein LLM zurückgreifen kann, aber ich will eigentlich nicht mich da tief einarbeiten. Und Python ist schon seit langem eine meiner favorisierten Sprachen. Und Pyodide bietet genau das: eine Portierung von CPython auf WebAssembly. Das bietet eine angenehme Sprache für Scripte und Makros, die aber auf alles zugreifen kann, was die Applikation macht und - wenn ich das mal will - auch Python Libraries ladenm kann.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Pyodide](https://pyodide.org/en/stable/) ist so ein bisschen mein Lebensretter in bDS: ich muss nämlich gestehen, ich bin jetzt nicht wirklich super tief in TypeScript drin und hab auch eigentlich keine Lust das selber zu schreiben. Wenn die KI das macht, ist das ok, da gibt es genug Wissen auf das ein LLM zurückgreifen kann, aber ich will eigentlich nicht mich da tief einarbeiten. Und Python ist schon seit langem eine meiner favorisierten Sprachen. Und Pyodide bietet genau das: eine Portierung von CPython auf WebAssembly. Das bietet eine angenehme Sprache für Scripte und Makros, die aber auf alles zugreifen kann, was die Applikation macht und - wenn ich das mal will - auch Python Libraries ladenm kann.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>Drizzle ORM - Why Drizzle?</title>
+      <link>https://www.rfc1437.de/2026/02/27/drizzle-orm-why-drizzle</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/27/drizzle-orm-why-drizzle</guid>
+      <pubDate>Fri, 27 Feb 2026 13:17:08 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Drizzle ORM](https://orm.drizzle.team/docs/overview) - war ein Vorschlag der KI beim Bau von bDS und hat sich sehr bewährt. Sauberer ORM für TypeScript mit einer recht netten API, die mich stark an Django erinnert. Zusätzlich saubere Abbildung von Migrations, die dann aber einfach SQL erlauben, also auch komplexere Migrationen ermöglichen. Und bisher völlig unauffällig im Betrieb. Was besonders interessant ist: da gibts eine direkte Übersetzung nach GraphQL, so dass man die objekte dann auch nach außen auf ein API legen kann, was ich mir glaube ich mal angucken sollte (bzw. mich bei der KI beschweren sollte, dass es sich das mal anguckt). Ich bin ja immer ein Fan von flexiblen Standard-Integrationen um externe Tools anzubinden.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Drizzle ORM](https://orm.drizzle.team/docs/overview) - war ein Vorschlag der KI beim Bau von bDS und hat sich sehr bewährt. Sauberer ORM für TypeScript mit einer recht netten API, die mich stark an Django erinnert. Zusätzlich saubere Abbildung von Migrations, die dann aber einfach SQL erlauben, also auch komplexere Migrationen ermöglichen. Und bisher völlig unauffällig im Betrieb. Was besonders interessant ist: da gibts eine direkte Übersetzung nach GraphQL, so dass man die objekte dann auch nach außen auf ein API legen kann, was ich mir glaube ich mal angucken sollte (bzw. mich bei der KI beschweren sollte, dass es sich das mal anguckt). Ich bin ja immer ein Fan von flexiblen Standard-Integrationen um externe Tools anzubinden.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>A2UI</title>
+      <link>https://www.rfc1437.de/2026/02/27/a2ui</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/27/a2ui</guid>
+      <pubDate>Fri, 27 Feb 2026 13:13:21 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[A2UI](https://a2ui.org/) ist ein interessantes Projekt für ein streaming-orientiertes Protokoll für Anwendungen mit LLM Integration. Die Grundidee ist Streaming von JSON Schnipseln aus denen sich dann inkrementell das UI zusammenbaut, und das LLM hat die Kontrolle darüber, was in das UI rein wandert. Es erlaubt dem LLM mehr als nur simple textuelle Beschreibungen oder einfache Ascii-Grafiken zu produzieren und gibt auch Rückfragen des LLM eine andere Optik. Das ganze kommt von Google und wird auf einem offenen [github Projekt](https://github.com/google/A2UI) gepflegt. In bDS habe ich das ganze auch eingebaut und das hat schon was, wenn man über seine Blogposts eine Heatmap der Verteilung auf die Monate bekommen kann.</p>]]></description>
+      <content:encoded><![CDATA[<p>[A2UI](https://a2ui.org/) ist ein interessantes Projekt für ein streaming-orientiertes Protokoll für Anwendungen mit LLM Integration. Die Grundidee ist Streaming von JSON Schnipseln aus denen sich dann inkrementell das UI zusammenbaut, und das LLM hat die Kontrolle darüber, was in das UI rein wandert. Es erlaubt dem LLM mehr als nur simple textuelle Beschreibungen oder einfache Ascii-Grafiken zu produzieren und gibt auch Rückfragen des LLM eine andere Optik. Das ganze kommt von Google und wird auf einem offenen [github Projekt](https://github.com/google/A2UI) gepflegt. In bDS habe ich das ganze auch eingebaut und das hat schon was, wenn man über seine Blogposts eine Heatmap der Verteilung auf die Monate bekommen kann.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>Waggle Dance</title>
+      <link>https://www.rfc1437.de/2026/02/23/waggle-dance</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/23/waggle-dance</guid>
+      <pubDate>Mon, 23 Feb 2026 20:20:07 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Waggle Dance](https://boardgamegeek.com/boardgame/158572/waggle-dance) . oldie, but goldie. Immer wieder spaßig wie dieses doch recht einfache Spiel die Leute mitnehmen kann, auch über 10 Jahren nach seiner Veröffentlichung.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Waggle Dance](https://boardgamegeek.com/boardgame/158572/waggle-dance) . oldie, but goldie. Immer wieder spaßig wie dieses doch recht einfache Spiel die Leute mitnehmen kann, auch über 10 Jahren nach seiner Veröffentlichung.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>spielelog</category>
+      <category>spielen</category>
+    </item>
+    <item>
+      <title>OpenCode | Der Open-Source AI-Coding-Agent</title>
+      <link>https://www.rfc1437.de/2026/02/22/opencode-der-open-source-ai-coding-agent</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/22/opencode-der-open-source-ai-coding-agent</guid>
+      <pubDate>Sun, 22 Feb 2026 18:07:25 GMT</pubDate>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[OpenCode | Der Open-Source AI-Coding-Agent](https://opencode.ai/de) - ein open-source coding agent der so langsam Claude Code den Rang ablaufen könnte. Sehr gut in der Ausführung und vor allem Provider-agnostisch. Man kann jedes Modell anhängen, sogar ein selber lokal gehostetes mit LM Studio oder ollama. Wenn man einfach mal spielen will, kann man es auch einfach nur runterladen und loslegen, sogar ohne eine Kreditkarte zu hinterlegen (dann natürlich mit limitierten Tokens, aber für erste Experimente durchaus nutzbar. Und unabhängig von den großen Anbietern (ok, außer deren Modelle, wenn man die benutzen will - und für ernsthaftes Coding sind die leider noch notwendig). OpenCode bietet auch selber AI Modelle an, die dann abgerechnet werden, aber ein paar Modelle sind immer frei verfügbar und bieten damit durchaus ernsthaftes Experimentieren ohne Investment.</p>]]></description>
+      <content:encoded><![CDATA[<p>[OpenCode | Der Open-Source AI-Coding-Agent](https://opencode.ai/de) - ein open-source coding agent der so langsam Claude Code den Rang ablaufen könnte. Sehr gut in der Ausführung und vor allem Provider-agnostisch. Man kann jedes Modell anhängen, sogar ein selber lokal gehostetes mit LM Studio oder ollama. Wenn man einfach mal spielen will, kann man es auch einfach nur runterladen und loslegen, sogar ohne eine Kreditkarte zu hinterlegen (dann natürlich mit limitierten Tokens, aber für erste Experimente durchaus nutzbar. Und unabhängig von den großen Anbietern (ok, außer deren Modelle, wenn man die benutzen will - und für ernsthaftes Coding sind die leider noch notwendig). OpenCode bietet auch selber AI Modelle an, die dann abgerechnet werden, aber ein paar Modelle sind immer frei verfügbar und bieten damit durchaus ernsthaftes Experimentieren ohne Investment.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>vibecoding</category>
+      <category>programmierung</category>
+    </item>
+    <item>
+      <title>Steve Yegge on Vibe Coding</title>
+      <link>https://www.rfc1437.de/2026/02/22/steve-yegge-on-vibe-coding</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/22/steve-yegge-on-vibe-coding</guid>
+      <pubDate>Sun, 22 Feb 2026 14:43:25 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Steve Yegge spricht im Interview über die Zukunft der Programmierung und die Herausforderungen des Vibe Codings. Der Autor teilt seine Erfahrungen und sieht einen Umbruch vergleichbar mit der Einführung von Hochsprachen.</p>]]></description>
+      <content:encoded><![CDATA[<p>Steve Yegge spricht im Interview über die Zukunft der Programmierung und die Herausforderungen des Vibe Codings. Der Autor teilt seine Erfahrungen und sieht einen Umbruch vergleichbar mit der Einführung von Hochsprachen.</p>]]></content:encoded>
+      <category>article</category>
+      <category>programmierung</category>
+      <category>vibecoding</category>
+    </item>
+    <item>
+      <title>bDS langsam benutzbar</title>
+      <link>https://www.rfc1437.de/2026/02/22/neue-software-langsam-benutzbar</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/22/neue-software-langsam-benutzbar</guid>
+      <pubDate>Sun, 22 Feb 2026 12:28:19 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>So langsam macht die neue Software Spaß, alles was man für die Benutzung und Erstellung braucht ist weitestgehend vorhanden. Ein paar kleine Schönheitsfehler hat sie moch und es gibt noch das eine oder andere Feature, das ich will, aber ich kann schon alles machen, was ich wirklich als Minimum brauche. Veröffentlichen geht jetzt einfach mit einem shell script:</p>]]></description>
+      <content:encoded><![CDATA[<p>So langsam macht die neue Software Spaß, alles was man für die Benutzung und Erstellung braucht ist weitestgehend vorhanden. Ein paar kleine Schönheitsfehler hat sie moch und es gibt noch das eine oder andere Feature, das ich will, aber ich kann schon alles machen, was ich wirklich als Minimum brauche. Veröffentlichen geht jetzt einfach mit einem shell script:</p><p>```bash<br />#!/bin/sh</p><p>cd ~/Blogs/rfc1437.de/html</p><p>rsync -rav --delete \<br />	--exclude=&apos;thumbnails/&apos; \<br />	--exclude=&apos;media/&apos; \<br />	* git.rfc1437.de:git-server/html/</p><p>cd ..</p><p>rsync -rav --delete thumbnails/ git.rfc1437.de:git-server/html/thumbnails/<br />rsync -rav --exclude=&apos;*.meta&apos; --delete media/ git.rfc1437.de:git-server/html/media/<br />```</p><p>Ja, das war jetzt nur um meine Source-Formatierung zu testen. Und?</p>]]></content:encoded>
+      <category>article</category>
+      <category>sysadmin</category>
+    </item>
+    <item>
+      <title>Blogging Desktop Server</title>
+      <link>https://www.rfc1437.de/2026/02/16/blogging-desktop-server</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2026/02/16/blogging-desktop-server</guid>
+      <pubDate>Mon, 16 Feb 2026 13:40:48 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Big Damn Stupid](https://git.rfc1437.de/hugo/rfc1437) - ne, Blogging Desktop Server. Im Moment mein Lieblingsprojekt an dem ich mit Vibe-Coding herumspiele und mir eine Software baue, mit der ich das Blog betreiben kann. Aber diesmal mit der klaren Perspektive, dass ich nicht wieder dem Bitrot oder der Komplexitätsspirale erliege. Simple Software mit brauchbarer Oberfläche für die Pflege der Blogbeiträge, aber die Speicherung als Markdown Files mit YAML Frontmatter um einfach stabil für die Zukunft zu sein. Das ganze dann mit sqlite für Caching und Volltextsuche und andere Komfort-Features und git für die Synchronisation der Blog-Daten, und git-lfs für die Bilder. Fühlt sich gerade richtig brauchbar an.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Big Damn Stupid](https://git.rfc1437.de/hugo/rfc1437) - ne, Blogging Desktop Server. Im Moment mein Lieblingsprojekt an dem ich mit Vibe-Coding herumspiele und mir eine Software baue, mit der ich das Blog betreiben kann. Aber diesmal mit der klaren Perspektive, dass ich nicht wieder dem Bitrot oder der Komplexitätsspirale erliege. Simple Software mit brauchbarer Oberfläche für die Pflege der Blogbeiträge, aber die Speicherung als Markdown Files mit YAML Frontmatter um einfach stabil für die Zukunft zu sein. Das ganze dann mit sqlite für Caching und Volltextsuche und andere Komfort-Features und git für die Synchronisation der Blog-Daten, und git-lfs für die Bilder. Fühlt sich gerade richtig brauchbar an.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>programmierung</category>
+      <category>blogging</category>
+      <category>vibecoding</category>
+    </item>
+    <item>
+      <title>Schotten Totten 2</title>
+      <link>https://www.rfc1437.de/2023/08/27/schotten-totten-2-board-game-boardgamegeek</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2023/08/27/schotten-totten-2-board-game-boardgamegeek</guid>
+      <pubDate>Sun, 27 Aug 2023 19:27:23 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Schotten Totten 2](https://boardgamegeek.com/boardgame/300930/schotten-totten-2) entwickelt sich zu einem unserer Lieblings-Spiele für zwei Spieler. Ein Remake des alten Schotten Totten (das es leider nicht mehr zu kaufen gibt unter dem Namen, nur als Battle Line, aber das eben nur auf Englisch). Im Gegensatz zum ersten Spiel jetzt asymmetrisch mit gerade genug Unterschied in der Spielweise, dass sich die beiden Seiten definitiv unterschiedlich anfühlen, aber trotzdem noch größtenteils die gleichen Sachen machen. Schnell aufgebaut, schnell gespielt und schnell weggeräumt mit genug Taktik um einen für ein paar Spiele zu fesseln. Und der Grafik-Stil ist einfach nett.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Schotten Totten 2](https://boardgamegeek.com/boardgame/300930/schotten-totten-2) entwickelt sich zu einem unserer Lieblings-Spiele für zwei Spieler. Ein Remake des alten Schotten Totten (das es leider nicht mehr zu kaufen gibt unter dem Namen, nur als Battle Line, aber das eben nur auf Englisch). Im Gegensatz zum ersten Spiel jetzt asymmetrisch mit gerade genug Unterschied in der Spielweise, dass sich die beiden Seiten definitiv unterschiedlich anfühlen, aber trotzdem noch größtenteils die gleichen Sachen machen. Schnell aufgebaut, schnell gespielt und schnell weggeräumt mit genug Taktik um einen für ein paar Spiele zu fesseln. Und der Grafik-Stil ist einfach nett.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>spielelog</category>
+      <category>spielen</category>
+    </item>
+    <item>
+      <title>Tak</title>
+      <link>https://www.rfc1437.de/2023/08/27/tak-board-game-boardgamegeek</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2023/08/27/tak-board-game-boardgamegeek</guid>
+      <pubDate>Sun, 27 Aug 2023 19:23:47 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Tak](https://boardgamegeek.com/boardgame/197405/tak) ist ein ziemlich interessantes Spiel: [inspiriert aus einem Fantasy-Roman von Patrick Rothfuss](https://en.wikipedia.org/wiki/Tak_\(game\)), zum Leben erweckt als eine fiktives &quot;klassisches&quot; Strategiespiel. Das schöne daran: man kann es sich problemlos selber machen, wenn man will und geschickt ist. Die Regeln sind super simpel und leicht gelernt, das Spiel aber trickreich mit vielen Möglichkeiten dem Gegner Fallen zu stellen. Wird vermutlich für unseren nächsten Urlaub mitgenommen, weil praktisch zum Draussen spielen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Tak](https://boardgamegeek.com/boardgame/197405/tak) ist ein ziemlich interessantes Spiel: [inspiriert aus einem Fantasy-Roman von Patrick Rothfuss](https://en.wikipedia.org/wiki/Tak_\(game\)), zum Leben erweckt als eine fiktives &quot;klassisches&quot; Strategiespiel. Das schöne daran: man kann es sich problemlos selber machen, wenn man will und geschickt ist. Die Regeln sind super simpel und leicht gelernt, das Spiel aber trickreich mit vielen Möglichkeiten dem Gegner Fallen zu stellen. Wird vermutlich für unseren nächsten Urlaub mitgenommen, weil praktisch zum Draussen spielen.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>spielelog</category>
+      <category>spielen</category>
+      <category>tak</category>
+    </item>
+    <item>
+      <title>In-depth tutorial: How to set up 2FA TOTP with KeepassXC, Aegis and Authy. | Linux.org</title>
+      <link>https://www.rfc1437.de/2023/08/27/in-depth-tutorial-how-to-set-up-2fa-totp-with-keepassxc-aegis-and-authy-linux-org</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2023/08/27/in-depth-tutorial-how-to-set-up-2fa-totp-with-keepassxc-aegis-and-authy-linux-org</guid>
+      <pubDate>Sun, 27 Aug 2023 10:55:08 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Weil mich Google Authenticator ärgert: [In-depth tutorial: How to set up 2FA TOTP with KeepassXC, Aegis and Authy. | Linux.org](https://www.linux.org/threads/in-depth-tutorial-how-to-set-up-2fa-totp-with-keepassxc-aegis-and-authy.36577/). Keepassxc ist deutlich netter, wie ich finde, und ist deutlich kontrollierbarer für mich.</p>]]></description>
+      <content:encoded><![CDATA[<p>Weil mich Google Authenticator ärgert: [In-depth tutorial: How to set up 2FA TOTP with KeepassXC, Aegis and Authy. | Linux.org](https://www.linux.org/threads/in-depth-tutorial-how-to-set-up-2fa-totp-with-keepassxc-aegis-and-authy.36577/). Keepassxc ist deutlich netter, wie ich finde, und ist deutlich kontrollierbarer für mich.</p>]]></content:encoded>
+      <category>aside</category>
+    </item>
+    <item>
+      <title>Mal wieder auf Linux ...</title>
+      <link>https://www.rfc1437.de/2023/08/19/mal-wieder-auf-linux</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2023/08/19/mal-wieder-auf-linux</guid>
+      <pubDate>Sat, 19 Aug 2023 13:26:04 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>... und natürlich tuts Surround-Sound meines Notebooks nicht mehr, aus Gründen. Und Fingerprint-Login macht weitaus weniger Sinn, wenn man nach Login dann doch das Passwort für den Keyring eingeben muss. Wenn der wenigstens erst beim ersten Bedarf nach einem Passwort käme, dann wärs ja ok, aber der geht direkt nach Login auf. Bah.</p>]]></description>
+      <content:encoded><![CDATA[<p>... und natürlich tuts Surround-Sound meines Notebooks nicht mehr, aus Gründen. Und Fingerprint-Login macht weitaus weniger Sinn, wenn man nach Login dann doch das Passwort für den Keyring eingeben muss. Wenn der wenigstens erst beim ersten Bedarf nach einem Passwort käme, dann wärs ja ok, aber der geht direkt nach Login auf. Bah.</p><p>Ansonsten bin ich allerdings angenehm überrascht davon, wie gut die Linux-Unterstützung für das Lenovo T480 ist. Alles andere funktioniert bisher tadellos.</p>]]></content:encoded>
+      <category>article</category>
+      <category>linux</category>
+    </item>
+    <item>
+      <title>Autumn Leaves</title>
+      <link>https://www.rfc1437.de/2022/11/11/autumn-leaves</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2022/11/11/autumn-leaves</guid>
+      <pubDate>Fri, 11 Nov 2022 12:06:46 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>en</dc:language>
+      <description><![CDATA[<p>![autumn leaf against fuzzy background with other leaves and sky](media/2022/11/20221111_0177.jpg)</p>]]></description>
+      <content:encoded><![CDATA[<p>![autumn leaf against fuzzy background with other leaves and sky](media/2022/11/20221111_0177.jpg)</p>]]></content:encoded>
+      <category>picture</category>
+    </item>
+    <item>
+      <title>Prime Time for Prime Slime</title>
+      <link>https://www.rfc1437.de/2022/11/06/prime-time-for-prime-slime</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2022/11/06/prime-time-for-prime-slime</guid>
+      <pubDate>Sun, 06 Nov 2022 12:59:14 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>en</dc:language>
+      <description><![CDATA[<p>[Prime Time for Prime Slime](https://www.moxfield.com/users/rfc1437) is the second of my &quot;reinventing the past&quot; deck lists. It is actually my first commander precon deck - Mimeoplasm - just spiced up to 11. It kinda is funny how I stuck with the theme of the deck, transitioning it from the precon to Ooze tribal and later reanimator, then turned it into Muldrotha combo and again turned it back to Mimeoplasm, when the Prime Slime secret lair came out (I love the art style), going full on Necrotic Ooze combo this time. It is a ton of fun to play, which is why some of the old stuff from my collection made it&apos;s way into that deck. #EDH #MtG #MagicTheGathering</p>]]></description>
+      <content:encoded><![CDATA[<p>[Prime Time for Prime Slime](https://www.moxfield.com/users/rfc1437) is the second of my &quot;reinventing the past&quot; deck lists. It is actually my first commander precon deck - Mimeoplasm - just spiced up to 11. It kinda is funny how I stuck with the theme of the deck, transitioning it from the precon to Ooze tribal and later reanimator, then turned it into Muldrotha combo and again turned it back to Mimeoplasm, when the Prime Slime secret lair came out (I love the art style), going full on Necrotic Ooze combo this time. It is a ton of fun to play, which is why some of the old stuff from my collection made it&apos;s way into that deck. #EDH #MtG #MagicTheGathering</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>edh</category>
+      <category>magicthegathering</category>
+      <category>mtg</category>
+    </item>
+    <item>
+      <title>Sweet, so sweet</title>
+      <link>https://www.rfc1437.de/2022/11/05/sweet-so-sweet</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2022/11/05/sweet-so-sweet</guid>
+      <pubDate>Sat, 05 Nov 2022 07:08:12 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>en</dc:language>
+      <description><![CDATA[<p>![P1010853 01](media/2022/11/P1010853_01.jpg)</p>]]></description>
+      <content:encoded><![CDATA[<p>![P1010853 01](media/2022/11/P1010853_01.jpg)</p>]]></content:encoded>
+      <category>picture</category>
+      <category>photography</category>
+    </item>
+    <item>
+      <title>Kaalia of the Blast</title>
+      <link>https://www.rfc1437.de/2022/11/05/kaalia-of-the-blast</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2022/11/05/kaalia-of-the-blast</guid>
+      <pubDate>Sat, 05 Nov 2022 06:37:13 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>en</dc:language>
+      <description><![CDATA[<p>[Kaalia of the Blast](https://www.moxfield.com/decks/t4ZVxFbALUS1ciFv6s7tmQ) is one of my &quot;lets recreate original commander&quot; decks. The idea is to keep close to the original structure - one commander with the focus of the deck, a supporting commander that could become the main with some changes, and a big dragon in the same colors. And have the game plan of one of the originals, too. So in a way an updated Kaalia with a bit more focus and dedication, but still Angel/Dragon/Demon beatdown. #EDH #MtG</p>]]></description>
+      <content:encoded><![CDATA[<p>[Kaalia of the Blast](https://www.moxfield.com/decks/t4ZVxFbALUS1ciFv6s7tmQ) is one of my &quot;lets recreate original commander&quot; decks. The idea is to keep close to the original structure - one commander with the focus of the deck, a supporting commander that could become the main with some changes, and a big dragon in the same colors. And have the game plan of one of the originals, too. So in a way an updated Kaalia with a bit more focus and dedication, but still Angel/Dragon/Demon beatdown. #EDH #MtG</p>]]></content:encoded>
+      <category>aside</category>
+      <category>edh</category>
+      <category>magicthegathering</category>
+      <category>mtg</category>
+    </item>
+    <item>
+      <title>Abdel, Agent of the Iron Throne</title>
+      <link>https://www.rfc1437.de/2022/08/22/abdel-agent-of-the-iron-throne-commander-edh-agent-of-the-iron-throne-and-abdel-adrian-gorions-ward-deck-list-mtg-moxfield-an-mtg-deck-builder-site-for-magic-the-gathering</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2022/08/22/abdel-agent-of-the-iron-throne-commander-edh-agent-of-the-iron-throne-and-abdel-adrian-gorions-ward-deck-list-mtg-moxfield-an-mtg-deck-builder-site-for-magic-the-gathering</guid>
+      <pubDate>Mon, 22 Aug 2022 06:54:04 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Abdel, Agent of the Iron Throne](https://www.moxfield.com/users/rfc1437) ist meine neueste high-power, near-competetive Kreation. Das Deck hat einen sehr linearen Combo Plan mit viel Redundanz in den Teilen, und vor allem sowohl Combo-Element als auch Combo-Payoff in der Command Zone. Was an Interaktion aufgrund der Farben fehlt, wird durch Resilienz ersetzt. Ich mag ja lineare Combo, weil das dem Spiel einen klaren Plan vorgibt und es zum Beispiel Mulligan-Entscheidungen deutlich einfacher macht.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Abdel, Agent of the Iron Throne](https://www.moxfield.com/users/rfc1437) ist meine neueste high-power, near-competetive Kreation. Das Deck hat einen sehr linearen Combo Plan mit viel Redundanz in den Teilen, und vor allem sowohl Combo-Element als auch Combo-Payoff in der Command Zone. Was an Interaktion aufgrund der Farben fehlt, wird durch Resilienz ersetzt. Ich mag ja lineare Combo, weil das dem Spiel einen klaren Plan vorgibt und es zum Beispiel Mulligan-Entscheidungen deutlich einfacher macht.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>edh</category>
+      <category>magicthegathering</category>
+      <category>mtg</category>
+    </item>
+    <item>
+      <title>Dargo for the Lulz</title>
+      <link>https://www.rfc1437.de/2021/01/14/dargo-for-the-lulz</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2021/01/14/dargo-for-the-lulz</guid>
+      <pubDate>Thu, 14 Jan 2021 12:32:10 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Dargo for the Lulz](https://www.moxfield.com/decks/WO7RNg0DOkaJWTiM-cfWiQ) ist ein Deck, das mich positiv überrascht hat, wie stark es ist. Ich würde es in eine ähnliche Gegend wie Godo stellen, also durchaus cEDH viable. Zwar ist die Combo nicht alleine der Commander, aber es braucht nur eine weitere Karte (Phyrexian Altar) und es geht los, wenn noch ein paar Treasures rumliegen oder Kreaturen zum Opfern da sind. Und der Plan-B mit Beatdown funktioniert auch gut.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Dargo for the Lulz](https://www.moxfield.com/decks/WO7RNg0DOkaJWTiM-cfWiQ) ist ein Deck, das mich positiv überrascht hat, wie stark es ist. Ich würde es in eine ähnliche Gegend wie Godo stellen, also durchaus cEDH viable. Zwar ist die Combo nicht alleine der Commander, aber es braucht nur eine weitere Karte (Phyrexian Altar) und es geht los, wenn noch ein paar Treasures rumliegen oder Kreaturen zum Opfern da sind. Und der Plan-B mit Beatdown funktioniert auch gut.</p>]]></content:encoded>
+      <category>aside</category>
+    </item>
+    <item>
+      <title>Brettspielrunde - wie macht man das in Zeiten von Corona?</title>
+      <link>https://www.rfc1437.de/2020/03/27/brettspielrunde-wie-macht-man-das-in-zeiten-von-corona</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2020/03/27/brettspielrunde-wie-macht-man-das-in-zeiten-von-corona</guid>
+      <pubDate>Fri, 27 Mar 2020 18:45:02 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Also wir haben da eine Lösung gefunden. Und es lief richtig gut - 6 Spieler waren dabei, jeder zu Hause. Bei mir war das Spiel und eine Kamerakonstruktion, um das Bild ins Internet zu stellen - und mit Microsoft Teams dann allen nach Hause zu liefern. Dazu dann Headsets und los gings, Spiel erklären, spielen, gemeinsam drüber reden - all das geht auch zu Zeiten des Social Distancing.</p>]]></description>
+      <content:encoded><![CDATA[<p>Also wir haben da eine Lösung gefunden. Und es lief richtig gut - 6 Spieler waren dabei, jeder zu Hause. Bei mir war das Spiel und eine Kamerakonstruktion, um das Bild ins Internet zu stellen - und mit Microsoft Teams dann allen nach Hause zu liefern. Dazu dann Headsets und los gings, Spiel erklären, spielen, gemeinsam drüber reden - all das geht auch zu Zeiten des Social Distancing.</p><p>![IMG 20200326 181231](media/2020/03/IMG_20200326_181231.jpg)</p><p>Das Kamera-Stativ hatte ich eh schon, der kleine Schwenkarm mit Handy-Halterung kostet 35€ und das Handy - sowas hat man oft ja schon da. Dann auf dem Handy eine kleine App - &quot;IP Webcam&quot; - mit der die Kamera des Handy über eine Webseite erreichbar wird. Und auf dem Notebook Teams,  mit dem ich das Fenster des Browsers mit allen Teilnehmern geteilt habe. Und los kanns gehen!</p>]]></content:encoded>
+      <category>article</category>
+    </item>
+    <item>
+      <title>Jhoira, Scrap That! (Commander / EDH MTG Deck)</title>
+      <link>https://www.rfc1437.de/2020/03/13/jhoira-scrap-that-commander-edh-mtg-deck</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2020/03/13/jhoira-scrap-that-commander-edh-mtg-deck</guid>
+      <pubDate>Fri, 13 Mar 2020 18:03:55 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Jhoira, Scrap That!](http://tappedout.net/mtg-decks/jhoira-scrap-that/) ist mitlerweile mein primäres Deck für cEDH und es hat sich verdammt gut bewährt bisher. Das Deck hat eigentlich immer eine Line, kann auf fast alles reagieren und hat gute Rebuild-Fähigkeiten. Durch mehrere überlappende Combos bietet es flexible Wege durch Stax oder Hate hindurch trotzdem zu gewinnen. Und selbst wenn ich nicht gewinne: das Deck hinterlässt bei den Gegnern definitiv einen bleibenden Eindruck.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Jhoira, Scrap That!](http://tappedout.net/mtg-decks/jhoira-scrap-that/) ist mitlerweile mein primäres Deck für cEDH und es hat sich verdammt gut bewährt bisher. Das Deck hat eigentlich immer eine Line, kann auf fast alles reagieren und hat gute Rebuild-Fähigkeiten. Durch mehrere überlappende Combos bietet es flexible Wege durch Stax oder Hate hindurch trotzdem zu gewinnen. Und selbst wenn ich nicht gewinne: das Deck hinterlässt bei den Gegnern definitiv einen bleibenden Eindruck.</p>]]></content:encoded>
+      <category>aside</category>
+    </item>
+    <item>
+      <title>Rurik: Dawn of Kiev</title>
+      <link>https://www.rfc1437.de/2020/02/20/rurik-dawn-of-kiev</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2020/02/20/rurik-dawn-of-kiev</guid>
+      <pubDate>Thu, 20 Feb 2020 18:05:19 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Rurik: Dawn of Kiev](https://boardgamegeek.com/boardgame/228328/rurik-dawn-kiev) ist ein Kickstarter-Spiel, das bei mir vor ein paar Wochen eingetrudelt ist und seit dem ein paar Mal auf dem Tisch war. Interessante Aspekte bei dem Spiel sind die Aktionswahl mit unterschiedlich bewerteten Beratern in einer eigenen Auktionsphase, in der man die Aktionsmöglichkeiten selektiert und ein bischen die Reihenfolge, in der man diese ausführt, aber wie stark die Aktion sein wird, hängt von dem Mitspielern ab. Ausgewertet werden die Aktionen erst in der zweiten Phase, in der man dann zusehen muss, mit dem was man bekommt klar zu kommen. Die Zielwertungen sind sehr nah beieinander, jeder Punkt zählt. Dazu noch sehr nettes Spielmaterial und eine praktische Sortiereinlage.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Rurik: Dawn of Kiev](https://boardgamegeek.com/boardgame/228328/rurik-dawn-kiev) ist ein Kickstarter-Spiel, das bei mir vor ein paar Wochen eingetrudelt ist und seit dem ein paar Mal auf dem Tisch war. Interessante Aspekte bei dem Spiel sind die Aktionswahl mit unterschiedlich bewerteten Beratern in einer eigenen Auktionsphase, in der man die Aktionsmöglichkeiten selektiert und ein bischen die Reihenfolge, in der man diese ausführt, aber wie stark die Aktion sein wird, hängt von dem Mitspielern ab. Ausgewertet werden die Aktionen erst in der zweiten Phase, in der man dann zusehen muss, mit dem was man bekommt klar zu kommen. Die Zielwertungen sind sehr nah beieinander, jeder Punkt zählt. Dazu noch sehr nettes Spielmaterial und eine praktische Sortiereinlage.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>spielelog</category>
+      <category>spielen</category>
+    </item>
+    <item>
+      <title>Bears on a Plane (Commander / EDH MTG Deck)</title>
+      <link>https://www.rfc1437.de/2020/02/20/bears-on-a-plane-commander-edh-mtg-deck</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2020/02/20/bears-on-a-plane-commander-edh-mtg-deck</guid>
+      <pubDate>Thu, 20 Feb 2020 13:46:09 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Bears on a Plane](http://tappedout.net/mtg-decks/bears-on-a-plane/) ist mein Versuch ein effektives Prison-Deck in cEDH zu bauen. Erste Versuche mit dem Deck waren dementsprechend &quot;disgusting&quot;. Kann nur sporadisch getestet werden wegen Anger-Management-Issues der Playgroup ...</p>]]></description>
+      <content:encoded><![CDATA[<p>[Bears on a Plane](http://tappedout.net/mtg-decks/bears-on-a-plane/) ist mein Versuch ein effektives Prison-Deck in cEDH zu bauen. Erste Versuche mit dem Deck waren dementsprechend &quot;disgusting&quot;. Kann nur sporadisch getestet werden wegen Anger-Management-Issues der Playgroup ...</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+    </item>
+    <item>
+      <title>Tin Elves (Commander / EDH MTG Deck)</title>
+      <link>https://www.rfc1437.de/2019/11/08/tin-elves-commander-edh-mtg-deck</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/11/08/tin-elves-commander-edh-mtg-deck</guid>
+      <pubDate>Fri, 08 Nov 2019 19:10:20 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Tin Elves](http://tappedout.net/mtg-decks/tin-elves/) - Blechelfen. Mein letztes Artefakt-Combo Deck für Magic the Gathering. Hat sich beim letzten Spiel super solide angefühlt. Das Deck geht hart auf Artefakte-Combos, benutzt dafür aber eine Reihe von Elementen, die auch super gut für eine Aggro-Strategie funktionieren. Wenn mir meine Combo-Teile weggeschossen werden, greife ich einfach mit einer Horder Thoptern an. Und Emry als Commander hilft mir um den Commander-Tax herum zu kommen, weil ihre Affinity-to-Artifacts Fähigkeit in diesem Deck Gold wert ist - und da sie zusätzlich auch noch ein Combo-Element ist, hat das Deck sehr gute Chancen auf Comebacks aus dem Hintertreffen. Ich werde die Liste vermutlich noch etwas stabilisieren, aber die Zusammenstellung scheint ein echter Treffer zu sein. Geht vermutlich mit nach Bologna.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Tin Elves](http://tappedout.net/mtg-decks/tin-elves/) - Blechelfen. Mein letztes Artefakt-Combo Deck für Magic the Gathering. Hat sich beim letzten Spiel super solide angefühlt. Das Deck geht hart auf Artefakte-Combos, benutzt dafür aber eine Reihe von Elementen, die auch super gut für eine Aggro-Strategie funktionieren. Wenn mir meine Combo-Teile weggeschossen werden, greife ich einfach mit einer Horder Thoptern an. Und Emry als Commander hilft mir um den Commander-Tax herum zu kommen, weil ihre Affinity-to-Artifacts Fähigkeit in diesem Deck Gold wert ist - und da sie zusätzlich auch noch ein Combo-Element ist, hat das Deck sehr gute Chancen auf Comebacks aus dem Hintertreffen. Ich werde die Liste vermutlich noch etwas stabilisieren, aber die Zusammenstellung scheint ein echter Treffer zu sein. Geht vermutlich mit nach Bologna.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>magicthegathering</category>
+      <category>spielen</category>
+    </item>
+    <item>
+      <title>Wingspan</title>
+      <link>https://www.rfc1437.de/2019/11/08/wingspan</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/11/08/wingspan</guid>
+      <pubDate>Fri, 08 Nov 2019 18:06:27 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Wingspan](https://boardgamegeek.com/boardgame/266192/wingspan) ist mein diesjähriger Neuzugang aus Essen (nicht der einzige, aber der, den ich bisher gespielt hab) und ich bin sehr zufrieden, das Spiel gekauft zu haben. Ein Tableau-Builder mit Karten, bei dem die Karten die Aktionsmöglichkeiten verbessern - das fängt schon mal perfekt für mich an. Variabler Setup, geheime Ziele und hohes Combo-Potential in den Karten machts noch besser. Und die ersten Spiele mit 2 und 5 Spielern waren super spannend. Das Spiel bietet einen nette Eskalationskurve im Spiel - die Runden haben weniger und weniger Aktionen, die Aktionen selber werden aber besser und besser. Und wenn man mal eine produktive Combo trifft, fühlt sich das einfach gut an. Dazu ordentliche Verarbeitung der Materialen und ansprechende Grafik, das ist ein slam-dunk für mich.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Wingspan](https://boardgamegeek.com/boardgame/266192/wingspan) ist mein diesjähriger Neuzugang aus Essen (nicht der einzige, aber der, den ich bisher gespielt hab) und ich bin sehr zufrieden, das Spiel gekauft zu haben. Ein Tableau-Builder mit Karten, bei dem die Karten die Aktionsmöglichkeiten verbessern - das fängt schon mal perfekt für mich an. Variabler Setup, geheime Ziele und hohes Combo-Potential in den Karten machts noch besser. Und die ersten Spiele mit 2 und 5 Spielern waren super spannend. Das Spiel bietet einen nette Eskalationskurve im Spiel - die Runden haben weniger und weniger Aktionen, die Aktionen selber werden aber besser und besser. Und wenn man mal eine produktive Combo trifft, fühlt sich das einfach gut an. Dazu ordentliche Verarbeitung der Materialen und ansprechende Grafik, das ist ein slam-dunk für mich.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>spielelog</category>
+      <category>spielen</category>
+      <category>wingspan</category>
+    </item>
+    <item>
+      <title>Golos, Combo Pilgrim (Commander / EDH MTG Deck)</title>
+      <link>https://www.rfc1437.de/2019/08/20/golos-combo-pilgrim-commander-edh-mtg-deck</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/08/20/golos-combo-pilgrim-commander-edh-mtg-deck</guid>
+      <pubDate>Tue, 20 Aug 2019 17:56:45 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Golos is on a pilgrimage to find the most efficient combos to run in his deck - [and I am helping him](http://tappedout.net/mtg-decks/golos-combo-pilgrim/) to achieve his goal. Meine letzte Deckliste, an der ich arbeite. Wird ziemlich hart in Richtung cEDH laufen. Bei den ersten Spielen fühlte sich das schon richtig gut an, auch wenn ein bischen das explosive Combo-Feeling fehlte. Aber das ist in meiner Meta vielleicht auch gar nicht schlecht, wir spielen eher längere Spiele. Daher ist die Liste mehr auf Antworten und weniger auf T2 Combo-Win ausgelegt. Aber von dem, was die Liste macht, geht das voll in meine präferierte Richtung - nicht Suicide-Combo, sondern erstmal schauen was geht, dann zuschlagen, wenn keiner genug antworten haben kann.</p>]]></description>
+      <content:encoded><![CDATA[<p>Golos is on a pilgrimage to find the most efficient combos to run in his deck - [and I am helping him](http://tappedout.net/mtg-decks/golos-combo-pilgrim/) to achieve his goal. Meine letzte Deckliste, an der ich arbeite. Wird ziemlich hart in Richtung cEDH laufen. Bei den ersten Spielen fühlte sich das schon richtig gut an, auch wenn ein bischen das explosive Combo-Feeling fehlte. Aber das ist in meiner Meta vielleicht auch gar nicht schlecht, wir spielen eher längere Spiele. Daher ist die Liste mehr auf Antworten und weniger auf T2 Combo-Win ausgelegt. Aber von dem, was die Liste macht, geht das voll in meine präferierte Richtung - nicht Suicide-Combo, sondern erstmal schauen was geht, dann zuschlagen, wenn keiner genug antworten haben kann.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>cedh</category>
+      <category>magicthegathering</category>
+    </item>
+    <item>
+      <title>Marvel Champions - Fantasy Flight Games</title>
+      <link>https://www.rfc1437.de/2019/08/02/marvel-champions-fantasy-flight-games</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/08/02/marvel-champions-fantasy-flight-games</guid>
+      <pubDate>Fri, 02 Aug 2019 12:19:43 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[Marvel Champions - Fantasy Flight Games](https://www.fantasyflightgames.com/en/news/2019/7/31/marvel-champions/) Wow, das kommt unerwartet. Es sieht stark nach einem weiteren Ableger des LOTR Systems aus, allerdings auf den ersten Blick etwas streamlined. Aber wenn das ganze trotzdem die Spieltiefe von LOTR erreicht, wärs klasse. Ich habe zwar mitlerweile eine gut laufende Magic Spielrunde, aber so für zwischendurch fand ich LOTR immer eigentlich recht spannend, da viele Spielentscheidungen (speziell der Szenario-spezifische Bau eines Decks) sehr nah an Magic ran kommen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[Marvel Champions - Fantasy Flight Games](https://www.fantasyflightgames.com/en/news/2019/7/31/marvel-champions/) Wow, das kommt unerwartet. Es sieht stark nach einem weiteren Ableger des LOTR Systems aus, allerdings auf den ersten Blick etwas streamlined. Aber wenn das ganze trotzdem die Spieltiefe von LOTR erreicht, wärs klasse. Ich habe zwar mitlerweile eine gut laufende Magic Spielrunde, aber so für zwischendurch fand ich LOTR immer eigentlich recht spannend, da viele Spielentscheidungen (speziell der Szenario-spezifische Bau eines Decks) sehr nah an Magic ran kommen.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>spielen</category>
+    </item>
+    <item>
+      <title>Pauper Comes to Paper | MAGIC: THE GATHERING</title>
+      <link>https://www.rfc1437.de/2019/06/28/pauper-comes-to-paper-magic-the-gathering</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/06/28/pauper-comes-to-paper-magic-the-gathering</guid>
+      <pubDate>Fri, 28 Jun 2019 06:46:02 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Wow, [Pauper Comes to Paper](https://magic.wizards.com/en/articles/archive/news/pauper-comes-paper-2019-06-27) - mit vereinheitlichter Legalität. Leider werden gleich zwei meiner Lieblings-Commons gebannt: Hymn to Tourach und High Tide. Schade. Aber trotzdem schön, endlich eine einheitliche Legalität für Karten zu haben.</p>]]></description>
+      <content:encoded><![CDATA[<p>Wow, [Pauper Comes to Paper](https://magic.wizards.com/en/articles/archive/news/pauper-comes-paper-2019-06-27) - mit vereinheitlichter Legalität. Leider werden gleich zwei meiner Lieblings-Commons gebannt: Hymn to Tourach und High Tide. Schade. Aber trotzdem schön, endlich eine einheitliche Legalität für Karten zu haben.</p>]]></content:encoded>
+      <category>aside</category>
+      <category>magicthegathering</category>
+      <category>pauper</category>
+    </item>
+    <item>
+      <title>The London Mulligan | MAGIC: THE GATHERING</title>
+      <link>https://www.rfc1437.de/2019/06/03/the-london-mulligan-magic-the-gathering</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/06/03/the-london-mulligan-magic-the-gathering</guid>
+      <pubDate>Mon, 03 Jun 2019 15:03:37 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>Der [London Mulligan](https://magic.wizards.com/en/articles/archive/news/london-mulligan-2019-06-03) wird der offizielle Mulligan in Magic ab Core Set 2020. Klasse. Wir haben den in Commander ausprobiert und er war völlig ok. Und in Pauper wars auch gut. Klar, es gibt sicherlich ein paar Decks, die übermäßig profitieren, aber das kann man anderweitig regeln. Der neue Mulligan hilft einfach &quot;Nicht-Spiele&quot; aufgrund von mehrfachen schlechten Starthänden zu vermeiden. Es gibt nix nervigeres als ein Spiel im Mulligan zu verlieren, weil einfach jede Hand ohne Länder oder nur Länder war.</p>]]></description>
+      <content:encoded><![CDATA[<p>Der [London Mulligan](https://magic.wizards.com/en/articles/archive/news/london-mulligan-2019-06-03) wird der offizielle Mulligan in Magic ab Core Set 2020. Klasse. Wir haben den in Commander ausprobiert und er war völlig ok. Und in Pauper wars auch gut. Klar, es gibt sicherlich ein paar Decks, die übermäßig profitieren, aber das kann man anderweitig regeln. Der neue Mulligan hilft einfach &quot;Nicht-Spiele&quot; aufgrund von mehrfachen schlechten Starthänden zu vermeiden. Es gibt nix nervigeres als ein Spiel im Mulligan zu verlieren, weil einfach jede Hand ohne Länder oder nur Länder war.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>magicthegathering</category>
+    </item>
+    <item>
+      <title>A Force to be Reckoned With | Article by Jim Davis</title>
+      <link>https://www.rfc1437.de/2019/05/20/a-force-to-be-reckoned-with-article-by-jim-davis</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/05/20/a-force-to-be-reckoned-with-article-by-jim-davis</guid>
+      <pubDate>Mon, 20 May 2019 15:49:19 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[A Force to be Reckoned With](https://www.coolstuffinc.com/a/jimdavis-05202019-a-force-to-be-reckoned-with/) - die neue Karte &quot;Force of Vigor&quot; hat mal eben zwei meiner Decks deutlich getroffen. Jhoira als Artefakt-Storm-Deck und Paradox Arcum als Artefakt-Kombo sind beide ziemlich abhängig von ihren Artefakten und Enchantments, so eine Karte kann die mal eben abschalten. Instant-speed. Für lau. Autsch. Wenn andere Liste stärker auf Mana-Dorks statt Mana-Rocks gehen, haben sie genug grüne Karten um den FoV aktiv zu bekommen. Und dann bin ich raus. Jhoira kann sich vielleicht noch knapp halten, Storm hat in der Regel mehrere Vektoren, aber da Artefakte nur mit Shimmer Myr instant-speed werden (und der als Artefakt angreifbar bleibt), ist Arcum wirklich hart betroffen.</p>]]></description>
+      <content:encoded><![CDATA[<p>[A Force to be Reckoned With](https://www.coolstuffinc.com/a/jimdavis-05202019-a-force-to-be-reckoned-with/) - die neue Karte &quot;Force of Vigor&quot; hat mal eben zwei meiner Decks deutlich getroffen. Jhoira als Artefakt-Storm-Deck und Paradox Arcum als Artefakt-Kombo sind beide ziemlich abhängig von ihren Artefakten und Enchantments, so eine Karte kann die mal eben abschalten. Instant-speed. Für lau. Autsch. Wenn andere Liste stärker auf Mana-Dorks statt Mana-Rocks gehen, haben sie genug grüne Karten um den FoV aktiv zu bekommen. Und dann bin ich raus. Jhoira kann sich vielleicht noch knapp halten, Storm hat in der Regel mehrere Vektoren, aber da Artefakte nur mit Shimmer Myr instant-speed werden (und der als Artefakt angreifbar bleibt), ist Arcum wirklich hart betroffen.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>cedh</category>
+      <category>magicthegathering</category>
+    </item>
+    <item>
+      <title>May 20, 2019 Banned and Restricted Announcement | MAGIC: THE GATHERING</title>
+      <link>https://www.rfc1437.de/2019/05/20/may-20-2019-banned-and-restricted-announcement-magic-the-gathering</link>
+      <guid isPermaLink="true">https://www.rfc1437.de/2019/05/20/may-20-2019-banned-and-restricted-announcement-magic-the-gathering</guid>
+      <pubDate>Mon, 20 May 2019 15:15:55 GMT</pubDate>
+      <author>hugo</author>
+      <dc:language>de</dc:language>
+      <description><![CDATA[<p>[May 20, 2019 Banned and Restricted Announcement](https://magic.wizards.com/en/articles/archive/news/may-20-2019-banned-and-restricted-announcement) - da hat mir Wizards of the Coast mal eben zwei meiner Decks komplett neutralisiert - Izzet Blitz braucht die kostenlosen Spells um seine Kreaturen zu pumpen oder Direktschaden zu aktivieren und Skred Delver brauchte sie um die Hand zu füllen im Mittelspiel. Autsch. Ok, in letzter Zeit hab ich meistens Tron gespielt (oder mal GB Tortex, wenn mir nach wilden Boardstates war), aber trotzdem, Skred Delver war immer noch mein Lieblingsdeck wegen seiner explosiven Comebacks.</p>]]></description>
+      <content:encoded><![CDATA[<p>[May 20, 2019 Banned and Restricted Announcement](https://magic.wizards.com/en/articles/archive/news/may-20-2019-banned-and-restricted-announcement) - da hat mir Wizards of the Coast mal eben zwei meiner Decks komplett neutralisiert - Izzet Blitz braucht die kostenlosen Spells um seine Kreaturen zu pumpen oder Direktschaden zu aktivieren und Skred Delver brauchte sie um die Hand zu füllen im Mittelspiel. Autsch. Ok, in letzter Zeit hab ich meistens Tron gespielt (oder mal GB Tortex, wenn mir nach wilden Boardstates war), aber trotzdem, Skred Delver war immer noch mein Lieblingsdeck wegen seiner explosiven Comebacks.</p>]]></content:encoded>
+      <category>article</category>
+      <category>aside</category>
+      <category>magicthegathering</category>
+      <category>pauper</category>
+    </item>
+  </channel>
+</rss>

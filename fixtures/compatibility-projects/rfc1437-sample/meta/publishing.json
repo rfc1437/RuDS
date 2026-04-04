@@ -1,0 +1,6 @@
+{
+  "sshHost": "git.rfc1437.de",
+  "sshUser": "gb",
+  "sshRemotePath": "/home/gb/git-server/html",
+  "sshMode": "rsync"
+}

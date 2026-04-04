@@ -1,4 +1,4 @@
-mod app;
-mod platform;
+pub mod app;
+pub mod platform;
 
 pub use app::BdsApp;

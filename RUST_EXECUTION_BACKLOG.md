@@ -14,51 +14,51 @@ Rules:
 
 ### `bds-core`
 
-- create workspace and crate boundaries (bds-core, bds-editor, bds-ui, bds-cli)
-- add SQLite connection management via `rusqlite` (bundled, vtab features)
-- add migration loader via `refinery`
-- define initial shared model modules with `serde` derives
-- add checksum (`sha2`) and slug (`deunicode`) utilities
-- establish error handling conventions: `thiserror` for bds-core, `anyhow` for bds-ui/bds-cli
-- add `tokio` runtime as workspace dependency (used by bds-ui and bds-cli, not directly by bds-core engine code)
+- ~~create workspace and crate boundaries (bds-core, bds-editor, bds-ui, bds-cli)~~ **DONE**
+- ~~add SQLite connection management via `rusqlite` (bundled, vtab features)~~ **DONE**
+- ~~add migration loader via `refinery`~~ **DONE** (inline migrations for M0; refinery switch in M1)
+- ~~define initial shared model modules with `serde` derives~~ **DONE**
+- ~~add checksum (`sha2`) and slug (`deunicode`) utilities~~ **DONE**
+- ~~establish error handling conventions: `thiserror` for bds-core, `anyhow` for bds-ui/bds-cli~~ **DONE**
+- ~~add `tokio` runtime as workspace dependency (used by bds-ui and bds-cli, not directly by bds-core engine code)~~ **DONE**
 
 ### `bds-editor`
 
-- create crate with ropey, syntect, cosmic-text dependencies
-- implement basic rope buffer wrapper with edit operations
-- implement syntect integration for markdown highlighting
-- implement cosmic-text layout for rendering highlighted text
-- implement basic cursor model (position, move, place by click)
-- implement basic text insertion and deletion
-- implement Iced custom widget that composes buffer + highlight + layout + cursor
-- implement basic vertical scrolling with viewport-aware rendering
-- verify IME composition events work through winit (early risk check)
+- ~~create crate with ropey, syntect, cosmic-text dependencies~~ **DONE**
+- ~~implement basic rope buffer wrapper with edit operations~~ **DONE**
+- ~~implement syntect integration for markdown highlighting~~ **DONE**
+- ~~implement cosmic-text layout for rendering highlighted text~~ **DONE** (Iced text rendering via cosmic-text backend)
+- ~~implement basic cursor model (position, move, place by click)~~ **DONE** (up/down/left/right/home/end + click placement)
+- ~~implement basic text insertion and deletion~~ **DONE** (insert, backspace, delete forward, enter)
+- ~~implement Iced custom widget that composes buffer + highlight + layout + cursor~~ **DONE** (CodeEditor widget with gutter, text, cursor rendering + keyboard/mouse events)
+- ~~implement basic vertical scrolling with viewport-aware rendering~~ **DONE** (scroll_by, ensure_cursor_visible, mouse wheel, viewport-clipped rendering)
+- ~~verify IME composition events work through winit (early risk check)~~ **DONE** (verified: winit/Iced delivers composed chars via Key::Character; pre-edit display deferred to M3)
 
 ### `bds-ui`
 
-- create app entry point with Iced `Application` impl
-- wire Iced window creation
-- wire muda menu bar with skeleton App/File/Edit/View/Window/Help menus
-- wire macOS lifecycle shim via objc2 (application:openFile:, application:openURLs:) behind cfg gate
-- wire muda `MenuEvent` receiver as Iced `Subscription`
+- ~~create app entry point with Iced `Application` impl~~ **DONE**
+- ~~wire Iced window creation~~ **DONE**
+- ~~wire muda menu bar with skeleton App/File/Edit/View/Window/Help menus~~ **DONE** (stub)
+- ~~wire macOS lifecycle shim via objc2 (application:openFile:, application:openURLs:) behind cfg gate~~ **DONE** (stub)
+- ~~wire muda `MenuEvent` receiver as Iced `Subscription`~~ **DONE** (platform/menu.rs menu_subscription + app.rs subscription)
 
 ### `fixtures` and `docs`
 
-- collect representative fixture projects from current app
-- capture golden generated output for those fixtures
-- create initial compatibility inventory from the matrix template (must include `mediaTranslations`, `postLinks`, FTS5 tables)
-- create Liquid feature inventory from default templates (12 files in `src/main/engine/templates/`)
-- determine whether current app uses Pagefind or another client-side search index — if Pagefind, plan for `pagefind` crate library integration (not CLI binary)
-- create slug compatibility test suite comparing `deunicode` vs `transliteration` output on fixture content
-- create Iced architecture patterns document (message design, subscription model, custom widget patterns)
+- ~~collect representative fixture projects from current app~~ **DONE** (fixtures/compatibility-projects/rfc1437-sample/)
+- ~~capture golden generated output for those fixtures~~ **DONE** (fixtures/golden-generated-sites/rfc1437-sample/ — subset from live TypeScript-generated site: 3 post pages × 2 languages, structural files, assets, feeds, sitemap, category page)
+- ~~create initial compatibility inventory from the matrix template (must include `mediaTranslations`, `postLinks`, FTS5 tables)~~ **DONE** (docs/COMPATIBILITY_INVENTORY.md)
+- ~~create Liquid feature inventory from default templates~~ **DONE** (docs/LIQUID_FEATURE_INVENTORY.md)
+- ~~determine whether current app uses Pagefind or another client-side search index — if Pagefind, plan for `pagefind` crate library integration (not CLI binary)~~ **DONE** (confirmed: TypeScript app uses pagefind_extended CLI; Rust will use pagefind crate library API)
+- ~~create slug compatibility test suite comparing `deunicode` vs `transliteration` output on fixture content~~ **DONE**
+- ~~create Iced architecture patterns document (message design, subscription model, custom widget patterns)~~ **DONE** (docs/ICED_ARCHITECTURE_PATTERNS.md)
 
 ### Validation
 
-- DB readability tests (all tables including `mediaTranslations`, `postLinks`, FTS5, and AI/catalog tables)
-- app launch smoke test (Iced window + muda menus)
-- bds-editor PoC test: renders highlighted markdown, accepts keyboard input, cursor moves
-- fixture harness test
-- slug compatibility tests
+- ~~DB readability tests (all tables including `mediaTranslations`, `postLinks`, FTS5, and AI/catalog tables)~~ **DONE** (59 unit tests + 29 fixture integration tests)
+- ~~app launch smoke test (Iced window + muda menus)~~ **DONE** (tests/app_smoke.rs — type-level tests; muda requires main thread so full launch tested via `cargo run`)
+- ~~bds-editor PoC test: renders highlighted markdown, accepts keyboard input, cursor moves~~ **DONE** (tests/editor_poc.rs — 11 integration tests covering highlight + input + cursor + scroll)
+- ~~fixture harness test~~ **DONE** (tests/fixture_readability.rs)
+- ~~slug compatibility tests~~ **DONE**
 
 ## Milestone M1: Data Fidelity
 

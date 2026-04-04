@@ -1,0 +1,15 @@
+{
+  "name": "rfc1437",
+  "description": "Content-type: matter-transport/sentient-life-form",
+  "mainLanguage": "de",
+  "defaultAuthor": "hugo",
+  "maxPostsPerPage": 50,
+  "publicUrl": "https://www.rfc1437.de",
+  "picoTheme": "slate",
+  "blogmarkCategory": "aside",
+  "pythonRuntimeMode": "webworker",
+  "semanticSimilarityEnabled": true,
+  "blogLanguages": [
+    "en"
+  ]
+}

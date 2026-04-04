@@ -4,6 +4,10 @@ use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use crate::app::Message;
 
 /// Build the native menu bar with standard application menus.
+///
+/// On macOS, also calls `init_for_nsapp()` to register the menu with AppKit.
+/// This requires an active NSApplication, so it will silently fail in
+/// test contexts without one (muda returns an error that we discard).
 pub fn build_menu_bar() -> Menu {
     let menu = Menu::new();
 
