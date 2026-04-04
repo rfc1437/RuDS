@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, container, row, text, Space};
 use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
@@ -57,7 +57,7 @@ fn airplane_active(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Dropdown trigger button style.
-fn dropdown_trigger(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn dropdown_trigger(_theme: &Theme, status: button::Status) -> button::Style {
     let bg = match status {
         button::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.27),
         _ => Color::TRANSPARENT,
@@ -75,7 +75,7 @@ fn dropdown_trigger(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Dropdown item style.
-fn dropdown_item(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn dropdown_item(_theme: &Theme, status: button::Status) -> button::Style {
     let bg = match status {
         button::Status::Hovered => Color::from_rgb(0.25, 0.25, 0.30),
         _ => Color::from_rgb(0.18, 0.18, 0.22),
@@ -93,7 +93,7 @@ fn dropdown_item(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Dropdown container background.
-fn dropdown_bg(_theme: &Theme) -> container::Style {
+pub fn dropdown_bg(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color::from_rgb(0.18, 0.18, 0.22))),
         border: Border {
@@ -115,7 +115,6 @@ pub fn view(
     media_count: usize,
     locale: UiLocale,
     offline_mode: bool,
-    locale_dropdown_open: bool,
     task_snapshots: &[TaskSnapshot],
 ) -> Element<'static, Message> {
     let label_color = Color::from_rgb(0.60, 0.60, 0.65);
@@ -175,7 +174,7 @@ pub fn view(
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let status_row = container(
+    container(
         row![
             left,
             Space::with_width(Length::Fill),
@@ -186,43 +185,6 @@ pub fn view(
     )
     .width(Length::Fill)
     .height(Length::Fixed(24.0))
-    .style(bar_style);
-
-    // If dropdown is open, stack it above the status bar
-    if locale_dropdown_open {
-        let items: Vec<Element<'static, Message>> = UiLocale::all()
-            .iter()
-            .map(|&l| {
-                let flag_text = text(l.flag_emoji())
-                    .size(16)
-                    .shaping(Shaping::Advanced);
-
-                button(flag_text)
-                    .on_press(Message::SetUiLocale(l))
-                    .padding([4, 8])
-                    .width(Length::Fill)
-                    .style(dropdown_item)
-                    .into()
-            })
-            .collect();
-
-        let dropdown_menu = container(
-            iced::widget::Column::with_children(items).spacing(2).padding(4),
-        )
-        .style(dropdown_bg);
-
-        // Align dropdown to the right, above the status bar
-        let dropdown_row = row![
-            Space::with_width(Length::Fill),
-            dropdown_menu,
-            // offset from right edge to roughly align with the flag trigger
-            Space::with_width(Length::Fixed(40.0)),
-        ];
-
-        column![dropdown_row, status_row]
-            .width(Length::Fill)
-            .into()
-    } else {
-        status_row.into()
-    }
+    .style(bar_style)
+    .into()
 }

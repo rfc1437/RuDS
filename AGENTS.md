@@ -30,6 +30,7 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - all automatic AI activities must be gated by airplane (offline) mode of the app and either use the local model or inform the user via toast
 - metadata needs to be flushed to the filesystem and needs to be included in metadata diff tool and in rebuild from filesystem. All three aspects have to be in sync with each other.
 - if you add new metadata, add them to publishing, metadata-diff and rebuild-from-database
+- Rust and its ecosystem are new and moving fast. you're builtin knowledge is probably outdated. use the web to make sure you know what you are doing.
 
 ## important behaviour
 

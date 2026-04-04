@@ -1,5 +1,6 @@
-use iced::widget::{column, container, row, Space};
-use iced::{Background, Color, Element, Length, Theme};
+use iced::widget::{button, column, container, row, stack, text, Space};
+use iced::widget::text::Shaping;
+use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
 
@@ -98,12 +99,60 @@ pub fn view(
         media_count,
         locale,
         offline_mode,
-        locale_dropdown_open,
         task_snapshots,
     );
 
-    column![main_row, separator_h(), status]
+    let base_layout: Element<'static, Message> = column![main_row, separator_h(), status]
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
+        .into();
+
+    if locale_dropdown_open {
+        // Build the dropdown menu overlay
+        let items: Vec<Element<'static, Message>> = UiLocale::all()
+            .iter()
+            .map(|&l| {
+                let flag_text = text(l.flag_emoji())
+                    .size(16)
+                    .shaping(Shaping::Advanced);
+
+                button(flag_text)
+                    .on_press(Message::SetUiLocale(l))
+                    .padding([4, 8])
+                    .style(status_bar::dropdown_item)
+                    .into()
+            })
+            .collect();
+
+        let dropdown_menu = container(
+            iced::widget::Column::with_children(items).spacing(2).padding(4),
+        )
+        .style(status_bar::dropdown_bg);
+
+        // Position the dropdown at bottom-right, above the status bar (24px)
+        let overlay: Element<'static, Message> = container(
+            container(
+                row![
+                    Space::with_width(Length::Fill),
+                    dropdown_menu,
+                    // Offset from right edge to align near the flag trigger
+                    Space::with_width(Length::Fixed(40.0)),
+                ]
+            )
+            .width(Length::Fill)
+            .align_y(Alignment::End)
+            .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 }) // above status bar
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(Alignment::End)
+        .into();
+
+        stack![base_layout, overlay]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        base_layout
+    }
 }
