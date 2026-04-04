@@ -197,6 +197,9 @@ impl BdsApp {
         registry.set_enabled(MenuAction::Save, false);
         registry.set_enabled(MenuAction::PublishSelected, false);
         registry.set_enabled(MenuAction::PreviewPost, false);
+        registry.set_enabled(MenuAction::Find, false);
+        registry.set_enabled(MenuAction::Replace, false);
+        registry.set_enabled(MenuAction::OpenInBrowser, false);
 
         #[cfg(target_os = "macos")]
         let (_lifecycle_tx, _lifecycle_rx) = crate::platform::macos::lifecycle_channel();
@@ -449,12 +452,75 @@ impl BdsApp {
 
             // ── Blog engine actions ──
             Message::RebuildDatabase => {
-                self.add_output("Rebuilding database...");
-                // Actual rebuild dispatch deferred to later milestones
+                let ready = self.db.is_some()
+                    && self.active_project.is_some()
+                    && self.data_dir.is_some();
+                if ready {
+                    self.add_output(&t(self.ui_locale, "engine.rebuildStarted"));
+                    let db = self.db.as_ref().unwrap();
+                    let project_id = self.active_project.as_ref().unwrap().id.clone();
+                    let data_dir = self.data_dir.as_ref().unwrap().clone();
+                    match engine::rebuild::rebuild_from_filesystem(db.conn(), &data_dir, &project_id) {
+                        Ok(report) => {
+                            let posts = report.posts_created + report.posts_updated;
+                            let media = report.media_created + report.media_updated;
+                            let templates = report.templates_created + report.templates_updated;
+                            let scripts = report.scripts_created + report.scripts_updated;
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.rebuildComplete",
+                                &[
+                                    ("posts", &posts.to_string()),
+                                    ("media", &media.to_string()),
+                                    ("templates", &templates.to_string()),
+                                    ("scripts", &scripts.to_string()),
+                                ],
+                            ));
+                        }
+                        Err(e) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.rebuildFailed",
+                                &[("error", &e.to_string())],
+                            ));
+                        }
+                    }
+                }
                 Task::none()
             }
             Message::ReindexText => {
-                self.add_output("Reindexing search text...");
+                let ready = self.db.is_some()
+                    && self.active_project.is_some()
+                    && self.data_dir.is_some();
+                if ready {
+                    self.add_output(&t(self.ui_locale, "engine.reindexStarted"));
+                    let db = self.db.as_ref().unwrap();
+                    let project_id = self.active_project.as_ref().unwrap().id.clone();
+                    let data_dir = self.data_dir.as_ref().unwrap().clone();
+                    let main_lang = engine::meta::read_project_json(&data_dir)
+                        .ok()
+                        .and_then(|m| m.main_language)
+                        .unwrap_or_else(|| "en".to_string());
+                    match engine::search::reindex_all(db.conn(), &project_id, &main_lang) {
+                        Ok(report) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.reindexComplete",
+                                &[
+                                    ("posts", &report.posts_indexed.to_string()),
+                                    ("media", &report.media_indexed.to_string()),
+                                ],
+                            ));
+                        }
+                        Err(e) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.reindexFailed",
+                                &[("error", &e.to_string())],
+                            ));
+                        }
+                    }
+                }
                 Task::none()
             }
             Message::RunMetadataDiff => {
@@ -523,7 +589,39 @@ impl BdsApp {
         match action {
             // File
             MenuAction::NewPost => {
-                // Will create post + open tab in later milestones
+                if let (Some(db), Some(project), Some(data_dir)) =
+                    (&self.db, &self.active_project, &self.data_dir)
+                {
+                    let title = t(self.ui_locale, "post.untitled");
+                    match engine::post::create_post(
+                        db.conn(),
+                        data_dir,
+                        &project.id,
+                        &title,
+                        Some(""),
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                    ) {
+                        Ok(post) => {
+                            let tab = Tab {
+                                id: post.id.clone(),
+                                tab_type: TabType::Post,
+                                title: post.title.clone(),
+                                is_transient: true,
+                            };
+                            let idx = tabs::open_tab(&mut self.tabs, tab);
+                            if let Some(t) = self.tabs.get(idx) {
+                                self.active_tab = Some(t.id.clone());
+                            }
+                        }
+                        Err(e) => {
+                            self.add_output(&format!("Failed to create post: {e}"));
+                        }
+                    }
+                }
                 Task::none()
             }
             MenuAction::ImportMedia => crate::platform::dialog::pick_media_files(),
@@ -565,20 +663,122 @@ impl BdsApp {
             MenuAction::RebuildDatabase => Task::done(Message::RebuildDatabase),
             MenuAction::ReindexText => Task::done(Message::ReindexText),
             MenuAction::MetadataDiff => Task::done(Message::RunMetadataDiff),
-            MenuAction::RegenerateCalendar => Task::none(),
-            MenuAction::ValidateTranslations => {
-                self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
+            MenuAction::RegenerateCalendar => {
+                let ready = self.db.is_some()
+                    && self.active_project.is_some()
+                    && self.data_dir.is_some();
+                if ready {
+                    self.add_output(&t(self.ui_locale, "engine.calendarStarted"));
+                    let db = self.db.as_ref().unwrap();
+                    let project_id = self.active_project.as_ref().unwrap().id.clone();
+                    let data_dir = self.data_dir.as_ref().unwrap().clone();
+                    match engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id) {
+                        Ok(()) => {
+                            self.add_output(&t(self.ui_locale, "engine.calendarComplete"));
+                        }
+                        Err(e) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.calendarFailed",
+                                &[("error", &e.to_string())],
+                            ));
+                        }
+                    }
+                } else {
+                    self.add_output(&t(self.ui_locale, "engine.calendarNoProject"));
+                }
                 Task::none()
             }
-            MenuAction::FillMissingTranslations => Task::none(),
-            MenuAction::GenerateSitemap => Task::none(),
+            MenuAction::ValidateTranslations => {
+                self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
+                let ready = self.db.is_some()
+                    && self.active_project.is_some()
+                    && self.data_dir.is_some();
+                if ready {
+                    self.add_output(&t(self.ui_locale, "engine.validateTranslationsStarted"));
+                    let db = self.db.as_ref().unwrap();
+                    let project_id = self.active_project.as_ref().unwrap().id.clone();
+                    let data_dir = self.data_dir.as_ref().unwrap().clone();
+                    match engine::validate_translations::validate_translations(
+                        db.conn(),
+                        &data_dir,
+                        &project_id,
+                    ) {
+                        Ok(report) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.validateTranslationsComplete",
+                                &[
+                                    ("dbIssues", &report.db_issues.len().to_string()),
+                                    ("fsIssues", &report.fs_issues.len().to_string()),
+                                ],
+                            ));
+                        }
+                        Err(e) => {
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "engine.validateTranslationsFailed",
+                                &[("error", &e.to_string())],
+                            ));
+                        }
+                    }
+                }
+                Task::none()
+            }
+            MenuAction::FillMissingTranslations => {
+                if self.offline_mode {
+                    self.add_output(&t(self.ui_locale, "engine.fillMissingTranslationsOffline"));
+                } else {
+                    // AI translation not yet available — inform user
+                    self.add_output(&t(self.ui_locale, "engine.fillMissingTranslationsNoAi"));
+                }
+                Task::none()
+            }
+            MenuAction::GenerateSitemap => {
+                if self.active_project.is_some() {
+                    self.add_output(&t(self.ui_locale, "engine.generateSiteStarted"));
+                    // Regenerate calendar as subset until full template rendering (M3+)
+                    if let Some(db) = &self.db {
+                        let project_id = self.active_project.as_ref().unwrap().id.clone();
+                        let data_dir = self.data_dir.as_ref().unwrap().clone();
+                        let _ = engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id);
+                    }
+                } else {
+                    self.add_output(&t(self.ui_locale, "engine.generateSiteNoProject"));
+                }
+                Task::none()
+            }
             MenuAction::ValidateSite => {
                 self.open_singleton_tab(TabType::SiteValidation, "Site Validation");
                 Task::none()
             }
-            MenuAction::UploadSite => Task::none(),
+            MenuAction::UploadSite => {
+                if self.offline_mode {
+                    self.add_output(&t(self.ui_locale, "engine.uploadOffline"));
+                } else if let Some(data_dir) = &self.data_dir {
+                    // Check publishing credentials
+                    let pub_prefs = engine::meta::read_publishing_json(data_dir).ok();
+                    let has_creds = pub_prefs
+                        .as_ref()
+                        .map(|p| {
+                            p.ssh_host.as_ref().map_or(false, |h| !h.is_empty())
+                                && p.ssh_user.as_ref().map_or(false, |u| !u.is_empty())
+                        })
+                        .unwrap_or(false);
+                    if !has_creds {
+                        self.add_output(&t(self.ui_locale, "engine.uploadMissingCredentials"));
+                    } else {
+                        self.add_output(&t(self.ui_locale, "engine.uploadStarted"));
+                        // SSH upload requires async SSH library (deferred to publishing milestone)
+                    }
+                }
+                Task::none()
+            }
             // Help
-            MenuAction::About => Task::none(),
+            MenuAction::About => {
+                self.add_output(&t(self.ui_locale, "menu.item.about"));
+                Task::none()
+            }
             MenuAction::OpenDocumentation => {
                 self.open_singleton_tab(TabType::Documentation, "Documentation");
                 Task::none()

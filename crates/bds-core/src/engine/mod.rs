@@ -11,6 +11,9 @@ pub mod script_rebuild;
 pub mod task;
 pub mod metadata_diff;
 pub mod rebuild;
+pub mod search;
+pub mod calendar;
+pub mod validate_translations;
 
 pub use error::{EngineError, EngineResult};
 pub use context::EngineContext;
