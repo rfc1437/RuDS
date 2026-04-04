@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use rusqlite::Connection;
 
@@ -27,6 +28,9 @@ pub struct FullRebuildReport {
     pub errors: Vec<String>,
 }
 
+/// Progress callback: (percent 0.0..1.0, phase description).
+pub type ProgressFn = Arc<dyn Fn(f32, &str) + Send + Sync>;
+
 /// Orchestrate a full rebuild from filesystem into the database.
 ///
 /// Ensures FTS tables exist, then rebuilds posts, media, templates, and scripts
@@ -36,41 +40,88 @@ pub fn rebuild_from_filesystem(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<FullRebuildReport> {
+    rebuild_from_filesystem_with_progress(conn, data_dir, project_id, None)
+}
+
+/// Like `rebuild_from_filesystem` but accepts an optional progress callback.
+pub fn rebuild_from_filesystem_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_progress: Option<ProgressFn>,
+) -> EngineResult<FullRebuildReport> {
     let mut report = FullRebuildReport::default();
+    let progress = |pct: f32, msg: &str| {
+        if let Some(ref f) = on_progress {
+            f(pct, msg);
+        }
+    };
+
+    // Phase weights: posts 0.0..0.35, media 0.35..0.70, templates 0.70..0.85, scripts 0.85..1.0
 
     // 1. Ensure FTS tables exist
+    progress(0.0, "Ensuring FTS tables...");
     fts::ensure_fts_tables(conn)?;
 
-    // 2. Rebuild posts
-    let post_report = post::rebuild_posts_from_filesystem(conn, data_dir, project_id)?;
+    // 2. Rebuild posts  (0.00 .. 0.35)
+    progress(0.01, "Scanning posts...");
+    let post_item_cb: Option<post::ItemProgressFn> = on_progress.as_ref().map(|cb| {
+        let cb = Arc::clone(cb);
+        let f: post::ItemProgressFn = Box::new(move |current, total, name| {
+            let phase_pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+            let global_pct = 0.01 + phase_pct * 0.34;
+            let msg = format!("Posts: {current}/{total} \u{2014} {name}");
+            cb(global_pct, &msg);
+        });
+        f
+    });
+    let post_report = post::rebuild_posts_from_filesystem_with_progress(
+        conn, data_dir, project_id, post_item_cb,
+    )?;
     report.posts_created = post_report.posts_created;
     report.posts_updated = post_report.posts_updated;
     report.translations_created = post_report.translations_created;
     report.translations_updated = post_report.translations_updated;
     report.errors.extend(post_report.errors);
 
-    // 3. Rebuild media
-    let media_report = media::rebuild_media_from_filesystem(conn, data_dir, project_id)?;
+    // 3. Rebuild media  (0.35 .. 0.70)
+    progress(0.35, "Scanning media...");
+    let media_item_cb: Option<media::ItemProgressFn> = on_progress.as_ref().map(|cb| {
+        let cb = Arc::clone(cb);
+        let f: media::ItemProgressFn = Box::new(move |current, total, name| {
+            let phase_pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+            let global_pct = 0.35 + phase_pct * 0.35;
+            let msg = format!("Media: {current}/{total} \u{2014} {name}");
+            cb(global_pct, &msg);
+        });
+        f
+    });
+    let media_report = media::rebuild_media_from_filesystem_with_progress(
+        conn, data_dir, project_id, media_item_cb,
+    )?;
     report.media_created = media_report.media_created;
     report.media_updated = media_report.media_updated;
     report.media_translations_created = media_report.translations_created;
     report.media_translations_updated = media_report.translations_updated;
     report.errors.extend(media_report.errors);
 
-    // 4. Rebuild templates
+    // 4. Rebuild templates  (0.70 .. 0.85)
+    progress(0.70, "Rebuilding templates...");
     let tpl_report =
         template_rebuild::rebuild_templates_from_filesystem(conn, data_dir, project_id)?;
     report.templates_created = tpl_report.created;
     report.templates_updated = tpl_report.updated;
     report.errors.extend(tpl_report.errors);
 
-    // 5. Rebuild scripts
+    // 5. Rebuild scripts  (0.85 .. 1.0)
+    progress(0.85, "Rebuilding scripts...");
     let script_report =
         script_rebuild::rebuild_scripts_from_filesystem(conn, data_dir, project_id)?;
     report.scripts_created = script_report.created;
     report.scripts_updated = script_report.updated;
     report.errors.extend(script_report.errors);
 
+    progress(1.0, "Rebuild complete");
     Ok(report)
 }
 

@@ -329,6 +329,19 @@ pub fn rebuild_media_from_filesystem(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<MediaRebuildReport> {
+    rebuild_media_from_filesystem_with_progress(conn, data_dir, project_id, None)
+}
+
+/// Per-item progress callback: (current_item, total_items, item_description).
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+
+/// Like `rebuild_media_from_filesystem` but with optional per-item progress.
+pub fn rebuild_media_from_filesystem_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<MediaRebuildReport> {
     let mut report = MediaRebuildReport::default();
     let media_dir = data_dir.join("media");
 
@@ -356,8 +369,6 @@ pub fn rebuild_media_from_filesystem(
             continue;
         }
 
-        // Determine if this is a translation sidecar: {name}.{lang}.meta
-        // where lang is exactly 2 lowercase letters.
         if is_translation_sidecar(file_name) {
             translation_sidecars.push(path.to_path_buf());
         } else {
@@ -365,8 +376,14 @@ pub fn rebuild_media_from_filesystem(
         }
     }
 
+    let total = canonical_sidecars.len() + translation_sidecars.len();
+
     // Process canonical sidecars first
-    for path in &canonical_sidecars {
+    for (i, path) in canonical_sidecars.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+            cb(i + 1, total, name);
+        }
         match rebuild_canonical_media(conn, data_dir, project_id, path) {
             Ok(created) => {
                 if created {
@@ -382,7 +399,12 @@ pub fn rebuild_media_from_filesystem(
     }
 
     // Process translation sidecars
-    for path in &translation_sidecars {
+    let offset = canonical_sidecars.len();
+    for (i, path) in translation_sidecars.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+            cb(offset + i + 1, total, name);
+        }
         match rebuild_translation_sidecar(conn, data_dir, project_id, path) {
             Ok(created) => {
                 if created {
@@ -494,10 +516,9 @@ fn rebuild_canonical_media(
         sc.size
     };
 
-    // Get checksum (if file exists)
+    // Get checksum (if file exists) — streamed to avoid loading large files into memory
     let checksum = if abs_file.exists() {
-        let bytes = fs::read(&abs_file)?;
-        Some(content_hash(&bytes))
+        Some(crate::util::file_hash(&abs_file)?)
     } else {
         None
     };

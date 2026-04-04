@@ -129,12 +129,24 @@ pub fn view(
         .filter(|t| t.status == "running")
         .collect();
     let task_indicator: Element<'static, Message> = if !running.is_empty() {
-        let first = running[0].label.clone();
-        if running.len() > 1 {
-            text(format!("{first} (+{})", running.len() - 1)).size(11).color(label_color).into()
+        let first = &running[0];
+        let progress_str = first.progress
+            .map(|p| format!(" {:.0}%", p * 100.0))
+            .unwrap_or_default();
+        let phase_str = first.message
+            .as_deref()
+            .unwrap_or("");
+        let extra = if running.len() > 1 {
+            format!(" (+{})", running.len() - 1)
         } else {
-            text(first).size(11).color(label_color).into()
-        }
+            String::new()
+        };
+        let display = if phase_str.is_empty() {
+            format!("{}{progress_str}{extra}", first.label)
+        } else {
+            format!("{phase_str}{progress_str}{extra}")
+        };
+        text(display).size(11).color(label_color).into()
     } else {
         Space::with_width(0).into()
     };

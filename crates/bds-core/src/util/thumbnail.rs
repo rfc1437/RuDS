@@ -236,15 +236,16 @@ fn apply_orientation(img: DynamicImage, orientation: u16) -> DynamicImage {
     }
 }
 
-/// Extract image dimensions from a file.
+/// Extract image dimensions from a file (header-only, no full decode).
 pub fn image_dimensions(path: &Path) -> Result<(u32, u32), String> {
-    let img = ImageReader::open(path)
+    let reader = ImageReader::open(path)
         .map_err(|e| format!("open: {e}"))?
         .with_guessed_format()
-        .map_err(|e| format!("format: {e}"))?
-        .decode()
-        .map_err(|e| format!("decode: {e}"))?;
-    Ok(img.dimensions())
+        .map_err(|e| format!("format: {e}"))?;
+    let (w, h) = reader
+        .into_dimensions()
+        .map_err(|e| format!("dimensions: {e}"))?;
+    Ok((w, h))
 }
 
 /// Detect MIME type from file extension.

@@ -452,6 +452,19 @@ pub fn rebuild_posts_from_filesystem(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<RebuildReport> {
+    rebuild_posts_from_filesystem_with_progress(conn, data_dir, project_id, None)
+}
+
+/// Per-item progress callback: (current_item, total_items, item_description).
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+
+/// Like `rebuild_posts_from_filesystem` but with optional per-item progress.
+pub fn rebuild_posts_from_filesystem_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<RebuildReport> {
     let mut report = RebuildReport::default();
     let posts_dir = data_dir.join("posts");
 
@@ -477,8 +490,6 @@ pub fn rebuild_posts_from_filesystem(
         }
 
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        // Check if it's a translation: {slug}.{lang}.md
-        // The stem would be {slug}.{lang}
         if is_translation_filename(stem) {
             translation_files.push(path.to_path_buf());
         } else {
@@ -486,8 +497,14 @@ pub fn rebuild_posts_from_filesystem(
         }
     }
 
+    let total = canonical_files.len() + translation_files.len();
+
     // Process canonical posts first
-    for path in &canonical_files {
+    for (i, path) in canonical_files.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+            cb(i + 1, total, name);
+        }
         match rebuild_canonical_post(conn, data_dir, project_id, path) {
             Ok(created) => {
                 if created {
@@ -503,7 +520,12 @@ pub fn rebuild_posts_from_filesystem(
     }
 
     // Process translations
-    for path in &translation_files {
+    let offset = canonical_files.len();
+    for (i, path) in translation_files.iter().enumerate() {
+        if let Some(ref cb) = on_item {
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+            cb(offset + i + 1, total, name);
+        }
         match rebuild_translation(conn, data_dir, project_id, path) {
             Ok(created) => {
                 if created {

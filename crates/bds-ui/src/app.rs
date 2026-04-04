@@ -7,7 +7,7 @@ use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::Project;
+use bds_core::model::{Post, Project};
 
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -93,6 +93,13 @@ pub struct BdsApp {
     active_project: Option<Project>,
     projects: Vec<Project>,
     data_dir: Option<PathBuf>,
+
+    // Counts
+    post_count: usize,
+    media_count: usize,
+
+    // Sidebar data
+    sidebar_posts: Vec<Post>,
 
     // Navigation
     sidebar_view: SidebarView,
@@ -215,6 +222,9 @@ impl BdsApp {
                 active_project: active_project.clone(),
                 projects,
                 data_dir,
+                post_count: 0,
+                media_count: 0,
+                sidebar_posts: Vec::new(),
                 sidebar_view: SidebarView::Posts,
                 sidebar_visible: true,
                 tabs: Vec::new(),
@@ -305,6 +315,7 @@ impl BdsApp {
                         .and_then(|p| p.data_path.as_ref())
                         .map(PathBuf::from);
                 }
+                self.refresh_counts();
                 Task::none()
             }
             Message::SwitchProject(project_id) => {
@@ -459,10 +470,14 @@ impl BdsApp {
             Message::RebuildDatabase => {
                 self.spawn_engine_task(
                     "engine.rebuildStarted",
-                    |db_path, project_id, data_dir| {
+                    |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::rebuild::rebuild_from_filesystem(db.conn(), &data_dir, &project_id)
-                            .map_err(|e| e.to_string())?;
+                        let on_progress: engine::rebuild::ProgressFn = Arc::new(move |pct, msg| {
+                            tm.report_progress(tid, Some(pct), Some(msg.to_string()));
+                        });
+                        let report = engine::rebuild::rebuild_from_filesystem_with_progress(
+                            db.conn(), &data_dir, &project_id, Some(on_progress),
+                        ).map_err(|e| e.to_string())?;
                         let posts = report.posts_created + report.posts_updated;
                         let media = report.media_created + report.media_updated;
                         let templates = report.templates_created + report.templates_updated;
@@ -474,12 +489,14 @@ impl BdsApp {
             Message::ReindexText => {
                 self.spawn_engine_task(
                     "engine.reindexStarted",
-                    |db_path, project_id, data_dir| {
+                    |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.0), Some("Reading project config...".into()));
                         let main_lang = engine::meta::read_project_json(&data_dir)
                             .ok()
                             .and_then(|m| m.main_language)
                             .unwrap_or_else(|| "en".to_string());
+                        tm.report_progress(tid, Some(0.10), Some("Reindexing...".into()));
                         let report = engine::search::reindex_all(db.conn(), &project_id, &main_lang)
                             .map_err(|e| e.to_string())?;
                         Ok(format!("posts={}, media={}", report.posts_indexed, report.media_indexed))
@@ -489,8 +506,9 @@ impl BdsApp {
             Message::RegenerateCalendar => {
                 self.spawn_engine_task(
                     "engine.calendarStarted",
-                    |db_path, project_id, data_dir| {
+                    |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.10), Some("Generating calendar JSON...".into()));
                         engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
                             .map_err(|e| e.to_string())?;
                         Ok("done".to_string())
@@ -501,8 +519,9 @@ impl BdsApp {
                 self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
                 self.spawn_engine_task(
                     "engine.validateTranslationsStarted",
-                    |db_path, project_id, data_dir| {
+                    |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.10), Some("Checking translations...".into()));
                         let report = engine::validate_translations::validate_translations(
                             db.conn(), &data_dir, &project_id,
                         ).map_err(|e| e.to_string())?;
@@ -513,8 +532,9 @@ impl BdsApp {
             Message::GenerateSite => {
                 self.spawn_engine_task(
                     "engine.generateSiteStarted",
-                    |db_path, project_id, data_dir| {
+                    |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.10), Some("Generating calendar...".into()));
                         engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
                             .map_err(|e| e.to_string())?;
                         Ok("done".to_string())
@@ -536,6 +556,7 @@ impl BdsApp {
                         self.add_output(&format!("{label} failed: {err}"));
                     }
                 }
+                self.refresh_counts();
                 self.refresh_task_snapshots();
                 Task::none()
             }
@@ -561,11 +582,12 @@ impl BdsApp {
             self.panel_tab,
             &self.task_snapshots,
             &self.output_entries,
+            &self.sidebar_posts,
             active_name,
             &self.projects,
             self.active_project.as_ref().map(|p| p.id.as_str()),
-            0, // post_count — populated in later milestones
-            0, // media_count — populated in later milestones
+            self.post_count,
+            self.media_count,
             self.offline_mode,
             self.locale_dropdown_open,
             self.project_dropdown_open,
@@ -769,13 +791,18 @@ impl BdsApp {
     /// Returns `Task::none()` if no active project/db/data_dir.
     /// Otherwise registers the task, logs the start message, and returns an
     /// async `Task` that opens a fresh DB connection on a worker thread.
+    ///
+    /// The closure receives `(db_path, project_id, data_dir, task_manager, task_id)`.
+    /// Use `task_manager.report_progress(task_id, percent, message)` for live updates.
     fn spawn_engine_task<F>(
         &mut self,
         label_key: &str,
         work: F,
     ) -> Task<Message>
     where
-        F: FnOnce(PathBuf, String, PathBuf) -> Result<String, String> + Send + 'static,
+        F: FnOnce(PathBuf, String, PathBuf, Arc<TaskManager>, TaskId) -> Result<String, String>
+            + Send
+            + 'static,
     {
         let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
             return Task::none();
@@ -792,10 +819,11 @@ impl BdsApp {
         self.refresh_task_snapshots();
 
         let label_for_msg = label.clone();
+        let tm = Arc::clone(&self.task_manager);
 
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || work(db_path, project_id, data_dir))
+                tokio::task::spawn_blocking(move || work(db_path, project_id, data_dir, tm, task_id))
                     .await
                     .unwrap_or_else(|e| Err(format!("task panicked: {e}")))
             },
@@ -805,5 +833,25 @@ impl BdsApp {
                 result,
             },
         )
+    }
+
+    fn refresh_counts(&mut self) {
+        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
+            self.post_count = bds_core::db::queries::post::count_posts_by_project(
+                db.conn(),
+                &project.id,
+            )
+            .unwrap_or(0) as usize;
+            self.media_count = bds_core::db::queries::media::count_media_by_project(
+                db.conn(),
+                &project.id,
+            )
+            .unwrap_or(0) as usize;
+            self.sidebar_posts = bds_core::db::queries::post::list_posts_by_project(
+                db.conn(),
+                &project.id,
+            )
+            .unwrap_or_default();
+        }
     }
 }

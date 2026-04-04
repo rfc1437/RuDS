@@ -1,11 +1,13 @@
-use iced::widget::{column, container, scrollable, text, Space};
+use iced::widget::{button, column, container, scrollable, text, Space};
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
+use bds_core::model::Post;
 
 use crate::app::Message;
 use crate::i18n::t;
 use crate::state::navigation::SidebarView;
+use crate::state::tabs::{Tab, TabType};
 
 /// Sidebar container style — dark background with right border separator.
 fn sidebar_style(_theme: &Theme) -> container::Style {
@@ -17,6 +19,20 @@ fn sidebar_style(_theme: &Theme) -> container::Style {
             radius: 0.0.into(),
         },
         ..container::Style::default()
+    }
+}
+
+/// Sidebar item button style.
+fn item_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.27),
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::from_rgb(0.80, 0.80, 0.85),
+        border: Border::default(),
+        ..button::Style::default()
     }
 }
 
@@ -38,19 +54,63 @@ fn placeholder_key(view: SidebarView) -> &'static str {
 
 pub fn view(
     sidebar_view: SidebarView,
+    posts: &[Post],
     locale: UiLocale,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
-    let placeholder = t(locale, placeholder_key(sidebar_view));
+    let muted = Color::from_rgb(0.50, 0.50, 0.55);
+
+    let header = text(header_text)
+        .size(13)
+        .color(Color::from_rgb(0.85, 0.85, 0.90));
+
+    let body: Element<'static, Message> = match sidebar_view {
+        SidebarView::Posts => {
+            if posts.is_empty() {
+                text(t(locale, placeholder_key(sidebar_view)))
+                    .size(12)
+                    .color(muted)
+                    .into()
+            } else {
+                let items: Vec<Element<'static, Message>> = posts
+                    .iter()
+                    .map(|p| {
+                        let status_indicator = match p.status {
+                            bds_core::model::PostStatus::Draft => "\u{25CB} ",      // ○
+                            bds_core::model::PostStatus::Published => "\u{25CF} ",   // ●
+                            bds_core::model::PostStatus::Archived => "\u{25A1} ",    // □
+                        };
+                        let label = format!("{status_indicator}{}", p.title);
+                        button(text(label).size(12))
+                            .on_press(Message::OpenTab(Tab {
+                                id: p.id.clone(),
+                                tab_type: TabType::Post,
+                                title: p.title.clone(),
+                                is_transient: true,
+                            }))
+                            .padding([3, 6])
+                            .width(Length::Fill)
+                            .style(item_style)
+                            .into()
+                    })
+                    .collect();
+                iced::widget::Column::with_children(items)
+                    .spacing(1)
+                    .into()
+            }
+        }
+        _ => {
+            text(t(locale, placeholder_key(sidebar_view)))
+                .size(12)
+                .color(muted)
+                .into()
+        }
+    };
 
     let content = column![
-        text(header_text)
-            .size(13)
-            .color(Color::from_rgb(0.85, 0.85, 0.90)),
+        header,
         Space::with_height(8.0),
-        text(placeholder)
-            .size(12)
-            .color(Color::from_rgb(0.50, 0.50, 0.55)),
+        body,
     ]
     .spacing(4)
     .padding(12);

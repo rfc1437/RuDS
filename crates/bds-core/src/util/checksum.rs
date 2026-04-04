@@ -1,4 +1,6 @@
 use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::Path;
 
 /// Compute a hex-encoded SHA-256 hash of the given content.
 pub fn content_hash(content: &[u8]) -> String {
@@ -6,6 +8,21 @@ pub fn content_hash(content: &[u8]) -> String {
     hasher.update(content);
     let result = hasher.finalize();
     hex::encode(result)
+}
+
+/// Compute a hex-encoded SHA-256 hash of a file by streaming (8 KB chunks).
+pub fn file_hash(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 // sha2 doesn't include hex encoding, so we use a tiny inline helper.

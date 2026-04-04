@@ -59,6 +59,14 @@ pub fn list_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::R
     rows.collect()
 }
 
+pub fn count_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM media WHERE project_id = ?1",
+        params![project_id],
+        |row| row.get(0),
+    )
+}
+
 pub fn update_media(conn: &Connection, m: &Media) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE media SET

@@ -106,13 +106,19 @@ pub fn view(
                 let items: Vec<Element<'static, Message>> = task_snapshots
                     .iter()
                     .map(|snap| {
+                        let progress_str = snap.progress
+                            .map(|p| format!(" ({:.0}%)", p * 100.0))
+                            .unwrap_or_default();
+                        let phase_str = snap.message
+                            .as_deref()
+                            .map(|m| format!(" \u{2014} {m}"))
+                            .unwrap_or_default();
                         let status_text = format!(
-                            "{} \u{2014} {}{}",
+                            "{} \u{2014} {}{}{}",
                             snap.label,
                             snap.status,
-                            snap.progress
-                                .map(|p| format!(" ({:.0}%)", p * 100.0))
-                                .unwrap_or_default(),
+                            progress_str,
+                            phase_str,
                         );
                         text(status_text).size(11).color(Color::from_rgb(0.70, 0.70, 0.75)).into()
                     })
