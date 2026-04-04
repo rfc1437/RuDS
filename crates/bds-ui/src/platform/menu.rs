@@ -289,13 +289,16 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = menu.append(&blog_menu);
     let _ = menu.append(&help_menu);
 
-    // Attach on macOS
-    #[cfg(target_os = "macos")]
-    {
-        let _ = menu.init_for_nsapp();
-    }
-
     (menu, reg)
+}
+
+/// Attach the built menu to the macOS NSApp.
+///
+/// Must be called **after** the event loop has started (e.g. from the
+/// init task or first update), not during `build_menu_bar`.
+#[cfg(target_os = "macos")]
+pub fn init_menu_for_nsapp(menu: &Menu) {
+    let _ = menu.init_for_nsapp();
 }
 
 /// Re-translate every registered menu item for a new locale.

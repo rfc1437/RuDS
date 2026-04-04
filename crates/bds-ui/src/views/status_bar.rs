@@ -7,6 +7,7 @@ use bds_core::i18n::UiLocale;
 use crate::app::Message;
 use crate::i18n::tw;
 use crate::state::navigation::TaskSnapshot;
+use crate::views::project_selector;
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -119,9 +120,9 @@ pub fn view(
 ) -> Element<'static, Message> {
     let label_color = Color::from_rgb(0.60, 0.60, 0.65);
 
-    // ── Left: project name + task indicator ──
-    let project_label = active_project_name.unwrap_or("\u{2014}").to_string();
-    let project_text = text(project_label).size(12).color(Color::from_rgb(0.80, 0.80, 0.85));
+    // ── Left: project selector trigger + task indicator ──
+    let project_name = active_project_name.unwrap_or("\u{2014}");
+    let project_trigger = project_selector::trigger_button(project_name);
 
     let running: Vec<&TaskSnapshot> = task_snapshots
         .iter()
@@ -138,7 +139,9 @@ pub fn view(
         Space::with_width(0).into()
     };
 
-    let left = row![project_text, task_indicator].spacing(12);
+    let left = row![project_trigger, task_indicator]
+        .spacing(12)
+        .align_y(Alignment::Center);
 
     // ── Right side ──
 

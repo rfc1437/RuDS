@@ -65,6 +65,7 @@ pub enum Message {
     SetOfflineMode(bool),
     SetUiLocale(UiLocale),
     ToggleLocaleDropdown,
+    ToggleProjectDropdown,
 
     // Blog actions (dispatched to engine)
     RebuildDatabase,
@@ -73,6 +74,7 @@ pub enum Message {
     BlogTaskFinished { label: String, result: Result<(), String> },
 
     Noop,
+    InitMenuBar,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -115,6 +117,7 @@ pub struct BdsApp {
     // Flags
     offline_mode: bool,
     locale_dropdown_open: bool,
+    project_dropdown_open: bool,
 
     // macOS lifecycle receiver
     #[cfg(target_os = "macos")]
@@ -188,7 +191,9 @@ impl BdsApp {
             Task::done(Message::ProjectsLoaded(projects.clone()))
         };
 
-        // Disable items that need selection
+        // Chain menu initialization after project loading
+        // (must happen after the event loop has started for macOS)
+        let init_task = Task::batch([init_task, Task::done(Message::InitMenuBar)]);
         registry.set_enabled(MenuAction::Save, false);
         registry.set_enabled(MenuAction::PublishSelected, false);
         registry.set_enabled(MenuAction::PreviewPost, false);
@@ -216,6 +221,7 @@ impl BdsApp {
                 ui_locale: locale,
                 offline_mode: false,
                 locale_dropdown_open: false,
+                project_dropdown_open: false,
                 #[cfg(target_os = "macos")]
                 _lifecycle_rx,
             },
@@ -294,6 +300,7 @@ impl BdsApp {
                 Task::none()
             }
             Message::SwitchProject(project_id) => {
+                self.project_dropdown_open = false;
                 if let Some(ref db) = self.db {
                     match engine::project::set_active_project(db.conn(), &project_id) {
                         Ok(()) => {
@@ -431,6 +438,12 @@ impl BdsApp {
             }
             Message::ToggleLocaleDropdown => {
                 self.locale_dropdown_open = !self.locale_dropdown_open;
+                self.project_dropdown_open = false;
+                Task::none()
+            }
+            Message::ToggleProjectDropdown => {
+                self.project_dropdown_open = !self.project_dropdown_open;
+                self.locale_dropdown_open = false;
                 Task::none()
             }
 
@@ -463,6 +476,11 @@ impl BdsApp {
             }
 
             Message::Noop => Task::none(),
+            Message::InitMenuBar => {
+                #[cfg(target_os = "macos")]
+                menu::init_menu_for_nsapp(&self._menu_bar);
+                Task::none()
+            }
         }
     }
 
@@ -479,10 +497,13 @@ impl BdsApp {
             &self.task_snapshots,
             &self.output_entries,
             active_name,
+            &self.projects,
+            self.active_project.as_ref().map(|p| p.id.as_str()),
             0, // post_count — populated in later milestones
             0, // media_count — populated in later milestones
             self.offline_mode,
             self.locale_dropdown_open,
+            self.project_dropdown_open,
             self.ui_locale,
         )
     }

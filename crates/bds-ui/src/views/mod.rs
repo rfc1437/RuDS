@@ -4,4 +4,5 @@ pub mod sidebar;
 pub mod tab_bar;
 pub mod status_bar;
 pub mod panel;
+pub mod project_selector;
 pub mod welcome;

@@ -71,6 +71,9 @@ fn new_message_variants_constructable() {
     // Settings
     let _offline = Message::SetOfflineMode(true);
     let _locale = Message::SetUiLocale(UiLocale::De);
+    let _toggle_locale = Message::ToggleLocaleDropdown;
+    let _toggle_project = Message::ToggleProjectDropdown;
+    let _init_menu = Message::InitMenuBar;
 
     // Blog actions
     let _rebuild = Message::RebuildDatabase;

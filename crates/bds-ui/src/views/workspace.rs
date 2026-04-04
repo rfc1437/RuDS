@@ -3,11 +3,12 @@ use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
+use bds_core::model::Project;
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
 use crate::state::tabs::Tab;
-use crate::views::{activity_bar, panel, sidebar, status_bar, tab_bar, welcome};
+use crate::views::{activity_bar, panel, project_selector, sidebar, status_bar, tab_bar, welcome};
 
 /// Main content area background.
 fn content_bg(_theme: &Theme) -> container::Style {
@@ -54,10 +55,13 @@ pub fn view(
     output_entries: &[OutputEntry],
     // Status bar
     active_project_name: Option<&str>,
+    projects: &[Project],
+    active_project_id: Option<&str>,
     post_count: usize,
     media_count: usize,
     offline_mode: bool,
     locale_dropdown_open: bool,
+    project_dropdown_open: bool,
     // i18n
     locale: UiLocale,
 ) -> Element<'static, Message> {
@@ -107,8 +111,8 @@ pub fn view(
         .height(Length::Fill)
         .into();
 
-    if locale_dropdown_open {
-        // Build the dropdown menu overlay
+    // Overlay: either locale dropdown or project dropdown (mutually exclusive)
+    let overlay: Option<Element<'static, Message>> = if locale_dropdown_open {
         let items: Vec<Element<'static, Message>> = UiLocale::all()
             .iter()
             .map(|&l| {
@@ -129,25 +133,52 @@ pub fn view(
         )
         .style(status_bar::dropdown_bg);
 
-        // Position the dropdown at bottom-right, above the status bar (24px)
-        let overlay: Element<'static, Message> = container(
+        // Position at bottom-right, above status bar
+        Some(
             container(
-                row![
-                    Space::with_width(Length::Fill),
-                    dropdown_menu,
-                    // Offset from right edge to align near the flag trigger
-                    Space::with_width(Length::Fixed(40.0)),
-                ]
+                container(
+                    row![
+                        Space::with_width(Length::Fill),
+                        dropdown_menu,
+                        Space::with_width(Length::Fixed(40.0)),
+                    ]
+                )
+                .width(Length::Fill)
+                .align_y(Alignment::End)
+                .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 })
             )
             .width(Length::Fill)
+            .height(Length::Fill)
             .align_y(Alignment::End)
-            .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 }) // above status bar
+            .into()
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(Alignment::End)
-        .into();
+    } else if project_dropdown_open {
+        let dropdown = project_selector::view(projects, active_project_id, locale);
 
+        // Position at bottom-left, above status bar
+        Some(
+            container(
+                container(
+                    row![
+                        Space::with_width(Length::Fixed(8.0)),
+                        dropdown,
+                        Space::with_width(Length::Fill),
+                    ]
+                )
+                .width(Length::Fill)
+                .align_y(Alignment::End)
+                .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 })
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(Alignment::End)
+            .into()
+        )
+    } else {
+        None
+    };
+
+    if let Some(overlay) = overlay {
         stack![base_layout, overlay]
             .width(Length::Fill)
             .height(Length::Fill)
