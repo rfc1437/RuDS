@@ -201,6 +201,15 @@ impl TaskManager {
         tasks.iter().find(|t| t.id == task_id).and_then(|t| t.message.clone())
     }
 
+    /// Return a snapshot of all tasks for UI display.
+    pub fn snapshots(&self) -> Vec<(TaskId, String, TaskStatus, Option<f32>, Option<String>)> {
+        let tasks = self.tasks.lock().unwrap();
+        tasks
+            .iter()
+            .map(|t| (t.id, t.label.clone(), t.status.clone(), t.progress, t.message.clone()))
+            .collect()
+    }
+
     /// Promote the next queued task to running if capacity allows.
     fn promote_next(tasks: &mut Vec<TaskEntry>, max_concurrent: usize) {
         let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();

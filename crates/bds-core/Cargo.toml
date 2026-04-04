@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 walkdir = { workspace = true }
 image = { workspace = true }
 rust-stemmers = { workspace = true }
+sys-locale = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

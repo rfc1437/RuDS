@@ -10,6 +10,10 @@ bds-editor = { workspace = true }
 iced = { workspace = true }
 muda = { workspace = true }
 rfd = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+open = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 
@@ -17,3 +21,6 @@ tokio = { workspace = true }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

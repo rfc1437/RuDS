@@ -29,9 +29,12 @@ tokio = { version = "1", features = ["full"] }
 walkdir = "2"
 image = "0.25"
 rust-stemmers = "1"
+sys-locale = "0.3"
+dirs = "5"
+open = "5"
 
 # UI framework
-iced = { version = "0.13", features = ["wgpu", "advanced", "image"] }
+iced = { version = "0.13", features = ["wgpu", "advanced", "image", "tokio"] }
 
 # Editor widget
 cosmic-text = "0.12"

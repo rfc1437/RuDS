@@ -1,0 +1,7 @@
+pub mod workspace;
+pub mod activity_bar;
+pub mod sidebar;
+pub mod tab_bar;
+pub mod status_bar;
+pub mod panel;
+pub mod welcome;
