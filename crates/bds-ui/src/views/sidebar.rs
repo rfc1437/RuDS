@@ -4,8 +4,6 @@ use iced::widget::{button, column, container, image, row, scrollable, text, text
 use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
-use bds_core::util::paths::thumbnail_path;
-
 use bds_core::i18n::UiLocale;
 use bds_core::model::{Media, Post, Script, Template};
 
@@ -110,18 +108,6 @@ fn format_file_size(size: i64) -> String {
     } else {
         format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
     }
-}
-
-/// Resolve the small thumbnail path for a media item on disk.
-/// Returns Some(path) if the media is an image and the thumbnail file exists.
-fn resolve_thumbnail_path(data_dir: Option<&Path>, media: &Media) -> Option<PathBuf> {
-    let data_dir = data_dir?;
-    if !media.mime_type.starts_with("image/") {
-        return None;
-    }
-    let rel = thumbnail_path(&media.id, "small", "webp");
-    let full = data_dir.join(&rel);
-    if full.exists() { Some(full) } else { None }
 }
 
 /// Truncate a media title to the max length, appending "..." if over limit.
@@ -518,10 +504,13 @@ pub fn view(
     templates: &[Template],
     post_filter: &PostFilter,
     media_filter: &MediaFilter,
+    media_thumbs: &std::collections::HashMap<String, Option<PathBuf>>,
+    posts_has_more: bool,
+    media_has_more: bool,
     width: f32,
     active_tab: Option<&str>,
     locale: UiLocale,
-    data_dir: Option<&Path>,
+    _data_dir: Option<&Path>,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
@@ -670,6 +659,23 @@ pub fn view(
                         top_items.push(make_post_item(p));
                     }
                 }
+
+                // "Load More" button
+                if posts_has_more {
+                    top_items.push(Space::with_height(4.0).into());
+                    top_items.push(
+                        button(
+                            text(t(locale, "sidebar.loadMore"))
+                                .size(11)
+                                .shaping(Shaping::Advanced)
+                        )
+                            .on_press(Message::LoadMorePosts)
+                            .padding([4, 8])
+                            .width(Length::Fill)
+                            .style(filter_button_style)
+                            .into()
+                    );
+                }
             }
 
             iced::widget::Column::with_children(top_items)
@@ -746,8 +752,10 @@ pub fn view(
                         let display_name = truncate_to_fit(&display_name, text_px);
                         let style_fn = if is_active { item_active_style } else { item_style };
 
-                        // Left: 40x40 thumbnail or file icon
-                        let thumb_path = resolve_thumbnail_path(data_dir, m);
+                        // Left: 40x40 thumbnail or file icon (pre-resolved, no filesystem I/O)
+                        let thumb_path = media_thumbs
+                            .get(&m.id)
+                            .and_then(|opt| opt.as_ref());
                         let left: Element<'static, Message> = if let Some(path) = thumb_path {
                             container(
                                 image(path.to_string_lossy().to_string())
@@ -813,6 +821,23 @@ pub fn view(
                     })
                     .collect();
                 top_items.extend(items);
+
+                // "Load More" button
+                if media_has_more {
+                    top_items.push(Space::with_height(4.0).into());
+                    top_items.push(
+                        button(
+                            text(t(locale, "sidebar.loadMore"))
+                                .size(11)
+                                .shaping(Shaping::Advanced)
+                        )
+                            .on_press(Message::LoadMoreMedia)
+                            .padding([4, 8])
+                            .width(Length::Fill)
+                            .style(filter_button_style)
+                            .into()
+                    );
+                }
             }
 
             iced::widget::Column::with_children(top_items)

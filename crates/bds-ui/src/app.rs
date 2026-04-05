@@ -138,6 +138,20 @@ pub enum Message {
     TemplateLoaded(Result<Template, String>),
     ScriptLoaded(Result<Script, String>),
 
+    // Async sidebar data
+    SidebarPostsLoaded(Vec<Post>),
+    SidebarMediaLoaded {
+        items: Vec<Media>,
+        thumbs: HashMap<String, Option<std::path::PathBuf>>,
+    },
+    SidebarPostsAppended(Vec<Post>),
+    SidebarMediaAppended {
+        items: Vec<Media>,
+        thumbs: HashMap<String, Option<std::path::PathBuf>>,
+    },
+    LoadMorePosts,
+    LoadMoreMedia,
+
     Noop,
     InitMenuBar,
 }
@@ -165,6 +179,9 @@ pub struct BdsApp {
     sidebar_media: Vec<Media>,
     sidebar_scripts: Vec<Script>,
     sidebar_templates: Vec<Template>,
+    sidebar_media_thumbs: HashMap<String, Option<std::path::PathBuf>>,
+    sidebar_posts_has_more: bool,
+    sidebar_media_has_more: bool,
 
     // Sidebar filters (per sidebar_views.allium PostsView / MediaView)
     post_filter: PostFilter,
@@ -313,6 +330,9 @@ impl BdsApp {
                 sidebar_media: Vec::new(),
                 sidebar_scripts: Vec::new(),
                 sidebar_templates: Vec::new(),
+                sidebar_media_thumbs: HashMap::new(),
+                sidebar_posts_has_more: false,
+                sidebar_media_has_more: false,
                 post_filter: PostFilter::default(),
                 page_filter: PostFilter::default(),
                 media_filter: MediaFilter::default(),
@@ -375,9 +395,10 @@ impl BdsApp {
                         SidebarView::Posts | SidebarView::Pages
                     );
                 if needs_post_refresh {
-                    self.refresh_sidebar_posts();
+                    self.refresh_sidebar_posts()
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
             Message::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
@@ -471,9 +492,9 @@ impl BdsApp {
                         }
                     }
                 }
-                self.refresh_counts();
+                let sidebar_task = self.refresh_counts();
                 self.sync_menu_state();
-                Task::none()
+                sidebar_task
             }
             Message::SwitchProject(project_id) => {
                 self.project_dropdown_open = false;
@@ -767,9 +788,9 @@ impl BdsApp {
                         self.notify(ToastLevel::Error, &format!("{label} failed: {err}"));
                     }
                 }
-                self.refresh_counts();
+                let sidebar_task = self.refresh_counts();
                 self.refresh_task_snapshots();
-                Task::none()
+                sidebar_task
             }
 
             // ── Toast ──
@@ -793,8 +814,7 @@ impl BdsApp {
                     _ => &mut self.post_filter,
                 };
                 filter.search_query = query;
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::TogglePostFilterPanel => {
                 let filter = match self.sidebar_view {
@@ -811,8 +831,7 @@ impl BdsApp {
                 };
                 filter.calendar.selected_year = year;
                 filter.calendar.selected_month = None;
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::SetPostCalendarMonth(month) => {
                 let filter = match self.sidebar_view {
@@ -820,8 +839,7 @@ impl BdsApp {
                     _ => &mut self.post_filter,
                 };
                 filter.calendar.selected_month = month;
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::TogglePostTagFilter(tag) => {
                 let filter = match self.sidebar_view {
@@ -833,8 +851,7 @@ impl BdsApp {
                 } else {
                     filter.tag_filter.push(tag);
                 }
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::TogglePostCategoryFilter(cat) => {
                 let filter = match self.sidebar_view {
@@ -846,8 +863,7 @@ impl BdsApp {
                 } else {
                     filter.category_filter.push(cat);
                 }
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::ClearPostFilters => {
                 let filter = match self.sidebar_view {
@@ -855,13 +871,11 @@ impl BdsApp {
                     _ => &mut self.post_filter,
                 };
                 filter.clear();
-                self.refresh_sidebar_posts();
-                Task::none()
+                self.refresh_sidebar_posts()
             }
             Message::MediaSearchChanged(query) => {
                 self.media_filter.search_query = query;
-                self.refresh_sidebar_media();
-                Task::none()
+                self.refresh_sidebar_media()
             }
             Message::ToggleMediaFilterPanel => {
                 self.media_filter.filter_panel_visible = !self.media_filter.filter_panel_visible;
@@ -870,13 +884,11 @@ impl BdsApp {
             Message::SetMediaCalendarYear(year) => {
                 self.media_filter.calendar.selected_year = year;
                 self.media_filter.calendar.selected_month = None;
-                self.refresh_sidebar_media();
-                Task::none()
+                self.refresh_sidebar_media()
             }
             Message::SetMediaCalendarMonth(month) => {
                 self.media_filter.calendar.selected_month = month;
-                self.refresh_sidebar_media();
-                Task::none()
+                self.refresh_sidebar_media()
             }
             Message::ToggleMediaTagFilter(tag) => {
                 if let Some(pos) = self.media_filter.tag_filter.iter().position(|t| *t == tag) {
@@ -884,13 +896,45 @@ impl BdsApp {
                 } else {
                     self.media_filter.tag_filter.push(tag);
                 }
-                self.refresh_sidebar_media();
-                Task::none()
+                self.refresh_sidebar_media()
             }
             Message::ClearMediaFilters => {
                 self.media_filter.clear();
-                self.refresh_sidebar_media();
+                self.refresh_sidebar_media()
+            }
+
+            // ── Async sidebar data ──
+            Message::SidebarPostsLoaded(mut posts) => {
+                self.sidebar_posts_has_more = posts.len() > Self::SIDEBAR_PAGE_SIZE as usize;
+                posts.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
+                self.sidebar_posts = posts;
                 Task::none()
+            }
+            Message::SidebarMediaLoaded { mut items, thumbs } => {
+                self.sidebar_media_has_more = items.len() > Self::SIDEBAR_PAGE_SIZE as usize;
+                items.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
+                self.sidebar_media = items;
+                self.sidebar_media_thumbs = thumbs;
+                Task::none()
+            }
+            Message::SidebarPostsAppended(mut posts) => {
+                self.sidebar_posts_has_more = posts.len() > Self::SIDEBAR_PAGE_SIZE as usize;
+                posts.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
+                self.sidebar_posts.extend(posts);
+                Task::none()
+            }
+            Message::SidebarMediaAppended { mut items, thumbs } => {
+                self.sidebar_media_has_more = items.len() > Self::SIDEBAR_PAGE_SIZE as usize;
+                items.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
+                self.sidebar_media.extend(items);
+                self.sidebar_media_thumbs.extend(thumbs);
+                Task::none()
+            }
+            Message::LoadMorePosts => {
+                self.load_more_sidebar_posts()
+            }
+            Message::LoadMoreMedia => {
+                self.load_more_sidebar_media()
             }
 
             // ── Modal ──
@@ -1236,6 +1280,9 @@ impl BdsApp {
             &self.sidebar_templates,
             active_post_filter,
             &self.media_filter,
+            &self.sidebar_media_thumbs,
+            self.sidebar_posts_has_more,
+            self.sidebar_media_has_more,
             active_name,
             &self.projects,
             self.active_project.as_ref().map(|p| p.id.as_str()),
@@ -1534,7 +1581,7 @@ impl BdsApp {
         )
     }
 
-    fn refresh_counts(&mut self) {
+    fn refresh_counts(&mut self) -> Task<Message> {
         if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
             self.post_count = bds_core::db::queries::post::count_posts_by_project(
                 db.conn(),
@@ -1568,55 +1615,196 @@ impl BdsApp {
             }
         }
 
-        // Refresh sidebar data with current filters (separate borrows to avoid borrow conflict)
-        self.refresh_sidebar_posts();
-        self.refresh_sidebar_media();
+        // Refresh sidebar data with current filters (async — off main thread)
+        let t1 = self.refresh_sidebar_posts();
+        let t2 = self.refresh_sidebar_media();
         self.refresh_filter_metadata();
+        Task::batch([t1, t2])
     }
 
-    /// Refresh only sidebar posts using current filter state.
-    fn refresh_sidebar_posts(&mut self) {
-        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
-            use bds_core::db::queries::post::{PostFilterParams, list_posts_filtered};
+    /// Number of items to load per sidebar page.
+    /// Matches the TypeScript app's limit of 500 for initial load.
+    const SIDEBAR_PAGE_SIZE: i64 = 500;
 
-            let filter = match self.sidebar_view {
-                SidebarView::Pages => &self.page_filter,
-                _ => &self.post_filter,
-            };
-            let is_pages = self.sidebar_view == SidebarView::Pages;
+    /// Refresh only sidebar posts using current filter state (async).
+    fn refresh_sidebar_posts(&mut self) -> Task<Message> {
+        let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
 
-            let params = PostFilterParams {
-                search_query: filter.search_query.clone(),
-                year: filter.calendar.selected_year,
-                month: filter.calendar.selected_month,
-                tags: filter.tag_filter.clone(),
-                categories: filter.category_filter.clone(),
-                exclude_pages: !is_pages,
-                pages_only: is_pages,
-            };
+        use bds_core::db::queries::post::PostFilterParams;
 
-            self.sidebar_posts = list_posts_filtered(
-                db.conn(), &project.id, &params, 500, 0,
-            ).unwrap_or_default();
-        }
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let filter = match self.sidebar_view {
+            SidebarView::Pages => &self.page_filter,
+            _ => &self.post_filter,
+        };
+        let is_pages = self.sidebar_view == SidebarView::Pages;
+
+        let params = PostFilterParams {
+            search_query: filter.search_query.clone(),
+            year: filter.calendar.selected_year,
+            month: filter.calendar.selected_month,
+            tags: filter.tag_filter.clone(),
+            categories: filter.category_filter.clone(),
+            exclude_pages: !is_pages,
+            pages_only: is_pages,
+        };
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).ok();
+                    db.and_then(|db| {
+                        bds_core::db::queries::post::list_posts_filtered(
+                            db.conn(), &project_id, &params,
+                            Self::SIDEBAR_PAGE_SIZE + 1, 0,
+                        ).ok()
+                    }).unwrap_or_default()
+                }).await.unwrap_or_default()
+            },
+            Message::SidebarPostsLoaded,
+        )
     }
 
-    /// Refresh only sidebar media using current filter state.
-    fn refresh_sidebar_media(&mut self) {
-        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
-            use bds_core::db::queries::media::{MediaFilterParams, list_media_filtered};
+    /// Refresh only sidebar media using current filter state (async).
+    fn refresh_sidebar_media(&mut self) -> Task<Message> {
+        let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
 
-            let params = MediaFilterParams {
-                search_query: self.media_filter.search_query.clone(),
-                year: self.media_filter.calendar.selected_year,
-                month: self.media_filter.calendar.selected_month,
-                tags: self.media_filter.tag_filter.clone(),
-            };
+        use bds_core::db::queries::media::MediaFilterParams;
 
-            self.sidebar_media = list_media_filtered(
-                db.conn(), &project.id, &params, 500, 0,
-            ).unwrap_or_default();
-        }
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let data_dir = self.data_dir.clone();
+
+        let params = MediaFilterParams {
+            search_query: self.media_filter.search_query.clone(),
+            year: self.media_filter.calendar.selected_year,
+            month: self.media_filter.calendar.selected_month,
+            tags: self.media_filter.tag_filter.clone(),
+        };
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).ok();
+                    let items = db.and_then(|db| {
+                        bds_core::db::queries::media::list_media_filtered(
+                            db.conn(), &project_id, &params,
+                            Self::SIDEBAR_PAGE_SIZE + 1, 0,
+                        ).ok()
+                    }).unwrap_or_default();
+
+                    // Pre-resolve thumbnail paths off the main thread
+                    let thumbs: HashMap<String, Option<std::path::PathBuf>> = items.iter().map(|m| {
+                        let thumb = data_dir.as_ref().and_then(|dir| {
+                            if !m.mime_type.starts_with("image/") { return None; }
+                            let rel = bds_core::util::paths::thumbnail_path(&m.id, "small", "webp");
+                            let full = dir.join(&rel);
+                            if full.exists() { Some(full) } else { None }
+                        });
+                        (m.id.clone(), thumb)
+                    }).collect();
+
+                    (items, thumbs)
+                }).await.unwrap_or_default()
+            },
+            |(items, thumbs)| Message::SidebarMediaLoaded { items, thumbs },
+        )
+    }
+
+    /// Load more posts (append to existing sidebar data).
+    fn load_more_sidebar_posts(&mut self) -> Task<Message> {
+        let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
+
+        use bds_core::db::queries::post::PostFilterParams;
+
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let offset = self.sidebar_posts.len() as i64;
+        let filter = match self.sidebar_view {
+            SidebarView::Pages => &self.page_filter,
+            _ => &self.post_filter,
+        };
+        let is_pages = self.sidebar_view == SidebarView::Pages;
+
+        let params = PostFilterParams {
+            search_query: filter.search_query.clone(),
+            year: filter.calendar.selected_year,
+            month: filter.calendar.selected_month,
+            tags: filter.tag_filter.clone(),
+            categories: filter.category_filter.clone(),
+            exclude_pages: !is_pages,
+            pages_only: is_pages,
+        };
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).ok();
+                    db.and_then(|db| {
+                        bds_core::db::queries::post::list_posts_filtered(
+                            db.conn(), &project_id, &params,
+                            Self::SIDEBAR_PAGE_SIZE + 1, offset,
+                        ).ok()
+                    }).unwrap_or_default()
+                }).await.unwrap_or_default()
+            },
+            Message::SidebarPostsAppended,
+        )
+    }
+
+    /// Load more media (append to existing sidebar data).
+    fn load_more_sidebar_media(&mut self) -> Task<Message> {
+        let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
+
+        use bds_core::db::queries::media::MediaFilterParams;
+
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let offset = self.sidebar_media.len() as i64;
+        let data_dir = self.data_dir.clone();
+
+        let params = MediaFilterParams {
+            search_query: self.media_filter.search_query.clone(),
+            year: self.media_filter.calendar.selected_year,
+            month: self.media_filter.calendar.selected_month,
+            tags: self.media_filter.tag_filter.clone(),
+        };
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).ok();
+                    let items = db.and_then(|db| {
+                        bds_core::db::queries::media::list_media_filtered(
+                            db.conn(), &project_id, &params,
+                            Self::SIDEBAR_PAGE_SIZE + 1, offset,
+                        ).ok()
+                    }).unwrap_or_default();
+
+                    let thumbs: HashMap<String, Option<std::path::PathBuf>> = items.iter().map(|m| {
+                        let thumb = data_dir.as_ref().and_then(|dir| {
+                            if !m.mime_type.starts_with("image/") { return None; }
+                            let rel = bds_core::util::paths::thumbnail_path(&m.id, "small", "webp");
+                            let full = dir.join(&rel);
+                            if full.exists() { Some(full) } else { None }
+                        });
+                        (m.id.clone(), thumb)
+                    }).collect();
+
+                    (items, thumbs)
+                }).await.unwrap_or_default()
+            },
+            |(items, thumbs)| Message::SidebarMediaAppended { items, thumbs },
+        )
     }
 
     /// Refresh available tags, categories, and calendar data for filter widgets.

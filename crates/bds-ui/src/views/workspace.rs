@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
 use iced::widget::text::Shaping;
@@ -74,6 +74,11 @@ pub fn view<'a>(
     // Sidebar filters
     post_filter: &'a PostFilter,
     media_filter: &'a MediaFilter,
+    // Pre-resolved media thumbnail paths
+    sidebar_media_thumbs: &'a HashMap<String, Option<PathBuf>>,
+    // Pagination
+    sidebar_posts_has_more: bool,
+    sidebar_media_has_more: bool,
     // Status bar
     active_project_name: Option<&'a str>,
     projects: &'a [Project],
@@ -141,7 +146,7 @@ pub fn view<'a>(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_width, active_tab, locale, data_dir));
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_media_thumbs, sidebar_posts_has_more, sidebar_media_has_more, sidebar_width, active_tab, locale, data_dir));
 
         // Resize drag handle: 4px wide strip between sidebar and content
         let handle = container(Space::new(0, 0))
