@@ -496,13 +496,34 @@ impl EditorBuffer {
         }
     }
 
+    /// Ensure cursor is visible using visual line index (for word-wrap aware scrolling).
+    pub fn ensure_visual_line_visible(&mut self, visual_line: usize, visible_lines: usize, max_visual: usize) {
+        if visible_lines == 0 {
+            return;
+        }
+        if visual_line < self.scroll_offset {
+            self.scroll_offset = visual_line;
+        } else if visual_line >= self.scroll_offset + visible_lines {
+            self.scroll_offset = (visual_line - visible_lines + 1).min(max_visual);
+        }
+    }
+
     pub fn scroll_by(&mut self, delta: isize) {
-        let max_scroll = self.line_count().saturating_sub(1);
+        self.scroll_by_clamped(delta, self.line_count().saturating_sub(1));
+    }
+
+    /// Scroll by `delta` visual lines, clamped to `max_visual`.
+    pub fn scroll_by_clamped(&mut self, delta: isize, max_visual: usize) {
         if delta < 0 {
             self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
         } else {
-            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
+            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_visual);
         }
+    }
+
+    /// Set scroll offset directly, clamped to max.
+    pub fn set_scroll(&mut self, offset: usize, max_visual: usize) {
+        self.scroll_offset = offset.min(max_visual);
     }
 
     // ── Internal helpers ─────────────────────────────────────

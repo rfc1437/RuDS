@@ -28,6 +28,8 @@ struct EditorState {
     is_focused: bool,
     /// Track drag state for click-and-drag selection
     is_dragging: bool,
+    /// Scrollbar drag state: Some(offset from thumb top to click y)
+    scrollbar_drag: Option<f32>,
     /// Last click time for double-click detection (ms)
     last_click_time: Option<std::time::Instant>,
     last_click_line: usize,
@@ -84,6 +86,11 @@ const GUTTER_TEXT: Color = Color::from_rgb(0.45, 0.48, 0.55);
 const CURSOR_COLOR: Color = Color::from_rgb(0.9, 0.9, 0.2);
 const ACTIVE_LINE_NUM: Color = Color::from_rgb(0.75, 0.78, 0.85);
 const SELECTION_BG: Color = Color::from_rgba(0.26, 0.54, 0.79, 0.40);
+const SCROLLBAR_WIDTH: f32 = 10.0;
+const SCROLLBAR_TRACK: Color = Color::from_rgba(0.25, 0.27, 0.32, 0.5);
+const SCROLLBAR_THUMB: Color = Color::from_rgba(0.50, 0.53, 0.60, 0.7);
+const SCROLLBAR_THUMB_HOVER: Color = Color::from_rgba(0.60, 0.63, 0.70, 0.9);
+const MIN_THUMB_HEIGHT: f32 = 20.0;
 
 /// Convert syntect RGBA color to Iced Color.
 fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
@@ -139,6 +146,43 @@ fn line_text_for(buf: &EditorBuffer, line_idx: usize) -> String {
             if s.ends_with('\n') { s[..s.len() - 1].to_string() } else { s }
         })
         .unwrap_or_default()
+}
+
+/// Count total visual lines across all logical lines, accounting for word wrap.
+fn total_visual_lines(buf: &EditorBuffer, max_chars: usize) -> usize {
+    if max_chars == 0 {
+        return buf.line_count();
+    }
+    let mut total = 0usize;
+    for line_idx in 0..buf.line_count() {
+        let text = line_text_for(buf, line_idx);
+        total += word_wrap_breaks(&text, max_chars).len();
+    }
+    total
+}
+
+/// Convert a logical (line, col) to a visual line index, accounting for word wrap.
+fn logical_to_visual(buf: &EditorBuffer, line: usize, col: usize, max_chars: usize) -> usize {
+    if max_chars == 0 {
+        return line;
+    }
+    let mut vis = 0usize;
+    for idx in 0..buf.line_count() {
+        let text = line_text_for(buf, idx);
+        let breaks = word_wrap_breaks(&text, max_chars);
+        if idx == line {
+            // Find which sub-line the column falls on
+            for (i, &start) in breaks.iter().enumerate() {
+                let end = if i + 1 < breaks.len() { breaks[i + 1] } else { usize::MAX };
+                if (col >= start && col < end) || i + 1 == breaks.len() {
+                    return vis + i;
+                }
+            }
+            return vis;
+        }
+        vis += breaks.len();
+    }
+    vis
 }
 
 /// Map a visual row index (from scroll top) to (logical_line, char_offset).
@@ -487,6 +531,47 @@ where
                 }
             }
         }
+
+        // ── Scrollbar ──
+        let total_vis = total_visual_lines(&buf, max_chars);
+        let viewport_lines = (bounds.height / metrics.line_height) as usize;
+        if total_vis > viewport_lines {
+            let track_height = bounds.height;
+            let thumb_ratio = viewport_lines as f32 / total_vis as f32;
+            let thumb_height = (track_height * thumb_ratio).max(MIN_THUMB_HEIGHT);
+            let max_scroll = total_vis.saturating_sub(viewport_lines);
+            let scroll_ratio = if max_scroll > 0 { scroll as f32 / max_scroll as f32 } else { 0.0 };
+            let thumb_y = bounds.y + scroll_ratio * (track_height - thumb_height);
+            let track_x = bounds.x + bounds.width - SCROLLBAR_WIDTH;
+
+            // Track
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle { x: track_x, y: bounds.y, width: SCROLLBAR_WIDTH, height: track_height },
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                },
+                SCROLLBAR_TRACK,
+            );
+            // Thumb
+            let is_hover = state.scrollbar_drag.is_some();
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: track_x + 1.0,
+                        y: thumb_y,
+                        width: SCROLLBAR_WIDTH - 2.0,
+                        height: thumb_height,
+                    },
+                    border: iced::Border {
+                        radius: (4.0).into(),
+                        ..iced::Border::default()
+                    },
+                    shadow: iced::Shadow::default(),
+                },
+                if is_hover { SCROLLBAR_THUMB_HOVER } else { SCROLLBAR_THUMB },
+            );
+        }
     }
 
     fn on_event(
@@ -509,6 +594,68 @@ where
         } else {
             0
         };
+
+        // ── Scrollbar interaction ──
+        let track_x = bounds.x + bounds.width - SCROLLBAR_WIDTH;
+        let buf_ref = self.buffer.borrow();
+        let total_vis = total_visual_lines(&buf_ref, cpl);
+        let viewport_lines = (bounds.height / metrics.line_height) as usize;
+        drop(buf_ref);
+        let has_scrollbar = total_vis > viewport_lines;
+
+        if has_scrollbar {
+            let track_height = bounds.height;
+            let thumb_ratio = viewport_lines as f32 / total_vis as f32;
+            let thumb_height = (track_height * thumb_ratio).max(MIN_THUMB_HEIGHT);
+            let max_scroll = total_vis.saturating_sub(viewport_lines);
+
+            // Handle scrollbar drag in progress
+            if let Some(grab_offset) = state.scrollbar_drag {
+                match event {
+                    Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                        if let Some(pos) = cursor.position() {
+                            let local_y = pos.y - bounds.y - grab_offset;
+                            let scroll_range = track_height - thumb_height;
+                            let ratio = if scroll_range > 0.0 { (local_y / scroll_range).clamp(0.0, 1.0) } else { 0.0 };
+                            let new_scroll = (ratio * max_scroll as f32).round() as usize;
+                            self.buffer.borrow_mut().set_scroll(new_scroll, max_scroll);
+                        }
+                        return Status::Captured;
+                    }
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                        state.scrollbar_drag = None;
+                        return Status::Captured;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Start scrollbar drag
+            if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
+                if let Some(pos) = cursor.position() {
+                    if pos.x >= track_x && pos.x <= bounds.x + bounds.width
+                        && pos.y >= bounds.y && pos.y <= bounds.y + bounds.height
+                    {
+                        let current_scroll = self.buffer.borrow().scroll_offset();
+                        let scroll_ratio = if max_scroll > 0 { current_scroll as f32 / max_scroll as f32 } else { 0.0 };
+                        let thumb_y = bounds.y + scroll_ratio * (track_height - thumb_height);
+
+                        if pos.y >= thumb_y && pos.y <= thumb_y + thumb_height {
+                            // Clicked on thumb — start dragging
+                            state.scrollbar_drag = Some(pos.y - thumb_y);
+                        } else {
+                            // Clicked on track — jump to position
+                            let ratio = ((pos.y - bounds.y) / track_height).clamp(0.0, 1.0);
+                            let new_scroll = (ratio * max_scroll as f32).round() as usize;
+                            self.buffer.borrow_mut().set_scroll(new_scroll, max_scroll);
+                            state.scrollbar_drag = Some(thumb_height / 2.0);
+                        }
+                        state.is_focused = true;
+                        return Status::Captured;
+                    }
+                }
+            }
+        }
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -606,7 +753,11 @@ where
                         -(y / metrics.line_height) as isize
                     }
                 };
-                self.buffer.borrow_mut().scroll_by(lines);
+                let mut buf = self.buffer.borrow_mut();
+                let vis = (bounds.height / metrics.line_height) as usize;
+                let total = total_visual_lines(&buf, cpl);
+                let max_scroll = total.saturating_sub(vis);
+                buf.scroll_by_clamped(lines, max_scroll);
                 return Status::Captured;
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -617,18 +768,35 @@ where
                 let is_shift = modifiers.shift();
                 let is_alt = modifiers.alt();
 
+                // Helper: ensure cursor visible accounting for word wrap.
+                // Must be called while buf is still borrowed mutably.
+                macro_rules! ensure_vis {
+                    ($buf:expr) => {{
+                        let (cl, cc) = $buf.cursor();
+                        let vl = logical_to_visual(&$buf, cl, cc, cpl);
+                        let total = total_visual_lines(&$buf, cpl);
+                        let max_s = total.saturating_sub(vis);
+                        $buf.ensure_visual_line_visible(vl, vis, max_s);
+                    }};
+                }
+
                 match key {
                     // Cmd+Z = undo, Cmd+Shift+Z = redo
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "z" => {
                         {
                             let mut buf = self.buffer.borrow_mut();
                             if is_shift { buf.redo(); } else { buf.undo(); }
+                            ensure_vis!(buf);
                         }
                         self.emit_change(shell);
                     }
                     // Cmd+Y = redo (Windows convention)
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "y" => {
-                        self.buffer.borrow_mut().redo();
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.redo();
+                            ensure_vis!(buf);
+                        }
                         self.emit_change(shell);
                     }
                     // Cmd+A = select all
@@ -656,7 +824,10 @@ where
                         if let Some(text) =
                             clipboard.read(iced::advanced::clipboard::Kind::Standard)
                         {
-                            self.buffer.borrow_mut().insert(&text);
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.insert(&text);
+                            ensure_vis!(buf);
+                            drop(buf);
                             self.emit_change(shell);
                         }
                     }
@@ -674,7 +845,7 @@ where
                         } else {
                             buf.move_up();
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
                         let mut buf = self.buffer.borrow_mut();
@@ -683,7 +854,7 @@ where
                         } else {
                             buf.move_down();
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                         let mut buf = self.buffer.borrow_mut();
@@ -696,7 +867,7 @@ where
                         } else {
                             buf.move_left();
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                         let mut buf = self.buffer.borrow_mut();
@@ -709,7 +880,7 @@ where
                         } else {
                             buf.move_right();
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Home) => {
                         let mut buf = self.buffer.borrow_mut();
@@ -734,7 +905,7 @@ where
                         } else {
                             buf.move_page_up(vis);
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::PageDown) => {
                         let mut buf = self.buffer.borrow_mut();
@@ -743,35 +914,51 @@ where
                         } else {
                             buf.move_page_down(vis);
                         }
-                        buf.ensure_cursor_visible(vis);
+                        ensure_vis!(buf);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                         {
                             let mut buf = self.buffer.borrow_mut();
                             if is_alt {
-                                // Option+Backspace = delete word left
                                 buf.select_word_left();
                                 buf.delete_selection();
                             } else {
                                 buf.backspace();
                             }
+                            ensure_vis!(buf);
                         }
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Delete) => {
-                        self.buffer.borrow_mut().delete_forward();
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.delete_forward();
+                            ensure_vis!(buf);
+                        }
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        self.buffer.borrow_mut().insert("\n");
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.insert("\n");
+                            ensure_vis!(buf);
+                        }
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        self.buffer.borrow_mut().insert("    ");
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.insert("    ");
+                            ensure_vis!(buf);
+                        }
                         self.emit_change(shell);
                     }
                     keyboard::Key::Character(ref c) if !is_cmd => {
-                        self.buffer.borrow_mut().insert(c);
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            buf.insert(c);
+                            ensure_vis!(buf);
+                        }
                         self.emit_change(shell);
                     }
                     _ => return Status::Ignored,
