@@ -145,3 +145,42 @@ invariant ArchiveDayBlocks {
     -- Archive/list pages group posts by day
     -- Each day block has a date header and the posts for that day
 }
+
+-- ============================================================================
+-- SEARCH INDEX: PAGEFIND
+-- ============================================================================
+
+-- Pagefind builds a client-side full-text search index from generated HTML.
+-- Uses the `pagefind` crate (library API), not a CLI subprocess.
+-- Runs as the final step of the generation pipeline, after all HTML is written.
+
+rule BuildSearchIndex {
+    when: GenerateSiteCompleted(generation)
+    -- Only runs if any pages were rendered or deleted in this generation pass.
+    -- Separate index per language:
+    --   Main language: source = {html}/, output = {html}/pagefind/
+    --   Each additional language: source = {html}/{lang}/, output = {html}/{lang}/pagefind/
+    -- Each index built with force_language set to that language code.
+    for lang in {generation.language} + (generation.blog_languages - {generation.language}):
+        ensures: PagefindIndexBuilt(lang)
+}
+
+invariant PagefindHtmlMarking {
+    -- Single-post templates must include data-pagefind-body attribute
+    -- on the <article> element to scope indexing to post content only.
+    -- Pagefind ignores elements without this attribute.
+}
+
+invariant PagefindAssets {
+    -- Generated output includes Pagefind UI assets per language:
+    --   {prefix}/pagefind/pagefind-ui.css
+    --   {prefix}/pagefind/pagefind-ui.js
+    -- where prefix is "" for main language, "{lang}" for additional languages.
+    -- Frontend templates reference these via language_prefix variable.
+    -- Assets are bundled locally — no external CDN references.
+}
+
+config {
+    pagefind_threshold: Integer = 0
+    -- Minimum pages to trigger indexing (0 = always if any rendered/deleted)
+}

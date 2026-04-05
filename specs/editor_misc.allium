@@ -15,6 +15,17 @@ use "./tabs.allium" as tabs
 surface User {
     provides: ImportAnalyzeRequested(definition_id, file_path)
     provides: ImportExecuteRequested(definition_id)
+    provides: SiteValidationScanRequested()
+    provides: SiteValidationApplyRequested(report)
+    provides: TranslationValidationScanRequested()
+    provides: TranslationValidationFixRequested(report)
+    provides: DuplicateSearchRequested()
+    provides: DuplicatePairDismissed(post_id_a, post_id_b)
+    provides: DuplicatePairsBatchDismissed(pair_ids)
+    provides: MenuSaveRequested()
+    provides: MenuItemAdded(kind, data)
+    provides: MenuItemDeleted(item_id)
+    provides: MenuItemMoved(item_id, direction)
 }
 
 -- ─── Dashboard (no tab active) ───────────────────────────────
@@ -115,27 +126,47 @@ config {
 
 -- ─── Menu editor actions ────────────────────────────────────
 
--- Add item (toolbar buttons):
---   Page entry: opens lazy-loaded page picker (posts with "page" category)
---   Category archive entry: opens lazy-loaded category picker
---   Submenu: creates empty container node for nesting children
---   Home entry: always available, maximum one allowed
+rule MenuAddItem {
+    when: MenuItemAdded(kind, data)
+    -- kind = page: opens lazy-loaded page picker (posts with "page" category)
+    -- kind = category_archive: opens lazy-loaded category picker
+    -- kind = submenu: creates empty container node for nesting children
+    -- kind = home: always available, maximum one allowed
+    ensures: MenuTreeUpdated()
+}
 
--- Save: serializes tree to OPML 2.0, writes meta/menu.opml
+rule MenuSave {
+    when: MenuSaveRequested()
+    -- Serializes tree to OPML 2.0, writes meta/menu.opml
+    ensures: MenuFileWritten()
+}
 
--- Move operations (per-item buttons):
---   Up/Down: reorder within same nesting level
---   Indent: nest under previous sibling (becomes child)
---   Unindent: move to parent's level (becomes next sibling of parent)
---   Home item: protected — cannot be moved or deleted
+rule MenuMoveItem {
+    when: MenuItemMoved(item_id, direction)
+    -- direction = up | down | indent | unindent
+    -- Up/Down: reorder within same nesting level
+    -- Indent: nest under previous sibling (becomes child)
+    -- Unindent: move to parent's level (becomes next sibling of parent)
+    requires: not is_home_item(item_id)
+        -- Home item is protected: cannot be moved or deleted
+    ensures: MenuTreeUpdated()
+}
+
+rule MenuDeleteItem {
+    when: MenuItemDeleted(item_id)
+    requires: not is_home_item(item_id)
+    -- Removes item and all children, no confirmation dialog
+    ensures: MenuTreeUpdated()
+}
 
 -- Drag-and-drop reorder:
 --   Drag handle on each item
 --   Auto-expand collapsed submenus on hover (450ms delay)
 --   Drop indicators show target position and nesting level
 
--- Delete: removes item and all children, no confirmation dialog
---   Exception: home item cannot be deleted (button hidden)
+config {
+    menu_drag_expand_delay: Integer = 450
+}
 
 -- ─── Metadata diff view ──────────────────────────────────────
 
@@ -177,35 +208,149 @@ config {
 -- documentation:     renders DOCUMENTATION.md as styled HTML
 -- api_documentation: renders API.md as styled HTML
 
--- ─── Validation views ────────────────────────────────────────
+-- ─── Site validation view ───────────────────────────────────
 
--- site_validation:         checks generated site for broken links, missing assets
--- translation_validation:  checks translation completeness across languages
+-- Compares sitemap.xml to generated HTML files on disk.
+-- Detects missing pages, orphan HTML, and stale content.
 
--- ─── Validation view actions ────────────────────────────────
+value SiteValidationReport {
+    expected_url_count: Integer
+    existing_html_count: Integer
+    missing_url_paths: List<String>       -- in sitemap, no HTML on disk
+    extra_url_paths: List<String>         -- HTML on disk, not in sitemap
+    updated_post_url_paths: List<String>  -- source .md newer than HTML
+}
 
--- Site validation:
---   Scans generated HTML for broken internal links, missing assets
---   Results: list of issues with file path + line + description
---   No auto-fix actions — informational only
+-- Layout: scan button, summary line, three URL list sections.
+-- Summary: "Expected URLs: N — Existing HTML URLs: N — Missing: N — Extra: N — Updated: N"
+-- Each section: heading, list of URL paths, or "None found".
 
--- Translation validation:
---   Checks translation completeness across configured blog languages
---   Results: matrix of posts x languages, missing translations highlighted
---   No auto-fix actions — informational only
+rule SiteValidationScan {
+    when: SiteValidationScanRequested()
+    -- Parses <loc> entries from sitemap.xml into expected URL set
+    -- Scans HTML output dir for index.html files (zero-byte = missing)
+    -- Compares source .md mtime against generated HTML mtime
+    ensures: SiteValidationReport
+}
 
--- ─── Find duplicates view ────────────────────────────────────
+rule SiteValidationApply {
+    when: SiteValidationApplyRequested(report)
+    -- Classifies affected paths into generation sections (core, single, category, tag, date)
+    -- Renders only affected sections in parallel
+    -- Deletes extra HTML files, removes empty directories
+    -- Regenerates calendar if anything changed
+    -- Rebuilds search index if anything rendered or deleted
+    -- Toast: "Validation applied: N rendered, N deleted"
+    ensures: GenerateSiteRequested(sections: report.affected_sections)
+}
+
+-- ─── Translation validation view ───────────────────────────
+
+-- Checks translation integrity across DB rows and filesystem files.
+-- NOT a matrix view — it is a list of issues found.
+
+value TranslationValidationReport {
+    checked_database_row_count: Integer
+    checked_filesystem_file_count: Integer
+    invalid_database_rows: List<TranslationValidationIssue>
+    invalid_filesystem_files: List<TranslationValidationIssue>
+}
+
+value TranslationValidationIssue {
+    issue: String
+    -- Issue kinds:
+    --   missing_source_post: translationFor points to nonexistent post
+    --   same_language_as_canonical: translation language matches source post language
+    --   do_not_translate_has_translations: source post is doNotTranslate but has translations
+    --   content_in_database: published translation still has content in DB (should be on disk)
+    translation_id: String?
+    translation_for: String
+    canonical_language: String?
+    translation_language: String
+    title: String?
+    file_path: String?
+}
+
+-- Layout: Revalidate + Fix Issues buttons, summary line, two issue sections.
+-- Summary: "Checked DB rows: N — Checked files: N — Invalid DB rows: N — Invalid files: N"
+-- Each issue rendered as card with coloured left border.
+-- Card shows: issue label, source post ID, translation ID, title, languages, file path.
+
+rule TranslationValidationScan {
+    when: TranslationValidationScanRequested()
+    -- Database pass: checks all translation rows for integrity issues
+    -- Filesystem pass: scans posts/ for translation .md files, checks frontmatter
+    ensures: TranslationValidationReport
+}
+
+rule TranslationValidationFix {
+    when: TranslationValidationFixRequested(report)
+    -- content_in_database: flushes content to .md file, sets content = null in DB
+    -- missing_source_post | same_language_as_canonical | do_not_translate:
+    --   DB issues: deletes translation row
+    --   Filesystem issues: deletes the .md file
+    -- After fix: automatically re-validates
+    -- Toast: "Deleted N DB rows and N files, flushed N translations to disk"
+    ensures: TranslationValidationScan
+}
+
+-- ─── Find duplicates view ──────────────────────────────────
 
 -- Uses embedding vectors to find semantically similar posts.
--- Shows candidate pairs with similarity score.
--- See embedding.allium for vector details.
+-- Gate: requires semanticSimilarityEnabled in project metadata.
+-- If disabled: shows "Semantic similarity is not enabled" message.
 
--- ─── Find duplicates actions ────────────────────────────────
+value DuplicateSearchResult {
+    pairs: List<DuplicatePair>
+}
 
--- Uses HNSW index of post embedding vectors for similarity search
--- Shows candidate pairs: post A title, post B title, score (0.0-1.0)
--- Click on either post title opens it in a tab (preview intent)
--- No auto-merge or auto-delete actions
+value DuplicatePair {
+    post_id_a: String
+    title_a: String
+    post_id_b: String
+    title_b: String
+    similarity: Decimal                   -- 0.0 to 1.0
+    exact_match: Boolean                  -- true if titles + content identical
+}
+
+-- Layout: header, count, paginated pair list (500 per page).
+-- Each pair row: checkbox, post A title (clickable), arrow, post B title (clickable),
+--   similarity badge ("Exact duplicate" or "N% similar"), Dismiss button.
+-- Exact matches styled distinctly. Batch controls: Check All, Uncheck All,
+--   Dismiss Checked (N). Refresh button.
+
+rule DuplicateSearch {
+    when: DuplicateSearchRequested()
+    requires: semantic_similarity_enabled
+    -- Loads USearch vector index for project
+    -- For each indexed post: search 21 nearest neighbors
+    -- similarity = max(0, 1 - distance)
+    -- Filter: similarity >= threshold, exclude dismissed pairs
+    -- For 100% embedding similarity: load post bodies, compare title+content
+    --   If identical: exact_match = true
+    -- Sort: exact matches first, then descending similarity
+    ensures: DuplicateSearchResult
+}
+
+rule DuplicateDismiss {
+    when: DuplicatePairDismissed(post_id_a, post_id_b)
+    -- Inserts into dismissed_duplicate_pairs with canonical ID ordering
+    -- Excluded from future searches
+    -- See schema.allium DismissedDuplicatePair
+    ensures: PairDismissed(post_id_a, post_id_b)
+}
+
+rule DuplicateBatchDismiss {
+    when: DuplicatePairsBatchDismissed(pair_ids)
+    -- Batch insert in chunks of 100
+    ensures: for pair in pair_ids: PairDismissed(pair)
+}
+
+config {
+    duplicate_similarity_threshold: Decimal = 0.92
+    duplicate_page_size: Integer = 500
+    duplicate_neighbor_count: Integer = 21
+}
 
 -- ─── Import analysis view ───────────────────────────────────
 
