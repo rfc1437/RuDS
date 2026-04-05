@@ -174,6 +174,8 @@ pub enum SettingsMsg {
     RebuildLinks,
     RegenerateThumbnails,
     OpenDataFolder,
+    /// Navigate to a specific section from sidebar; expand it, collapse all others.
+    FocusSection(SettingsSection),
 }
 
 /// Render the settings view.

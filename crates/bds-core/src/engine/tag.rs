@@ -188,10 +188,60 @@ pub fn merge_tags(
     Ok(())
 }
 
-/// Sync tags from all posts: collect unique tag names, create missing tags in DB.
-pub fn sync_tags_from_posts(
+/// Import tags from meta/tags.json into DB, preserving colors and properties.
+/// Creates new tags or updates existing ones with file-based properties.
+pub fn import_tags_from_file(
     conn: &Connection,
     data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    let entries = match meta::read_tags_json(data_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()), // File doesn't exist or is invalid — nothing to import
+    };
+
+    let now = now_unix_ms();
+    for entry in &entries {
+        let name = entry.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        match tag_q::get_tag_by_project_and_name(conn, project_id, name) {
+            Ok(existing) => {
+                // Update color/post_template_slug from file if provided
+                if entry.color.is_some() || entry.post_template_slug.is_some() {
+                    let mut updated = existing;
+                    if entry.color.is_some() {
+                        updated.color = entry.color.clone();
+                    }
+                    if entry.post_template_slug.is_some() {
+                        updated.post_template_slug = entry.post_template_slug.clone();
+                    }
+                    updated.updated_at = now;
+                    tag_q::update_tag(conn, &updated)?;
+                }
+            }
+            Err(_) => {
+                let tag = Tag {
+                    id: Uuid::new_v4().to_string(),
+                    project_id: project_id.to_string(),
+                    name: name.to_string(),
+                    color: entry.color.clone(),
+                    post_template_slug: entry.post_template_slug.clone(),
+                    created_at: now,
+                    updated_at: now,
+                };
+                tag_q::insert_tag(conn, &tag)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sync tags from all posts: collect unique tag names, create missing tags in DB.
+/// This is additive only — it does NOT rewrite tags.json.
+pub fn sync_tags_from_posts(
+    conn: &Connection,
     project_id: &str,
 ) -> EngineResult<Vec<Tag>> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
@@ -225,7 +275,6 @@ pub fn sync_tags_from_posts(
         }
     }
 
-    rewrite_tags_json(conn, data_dir, project_id)?;
     let all_tags = tag_q::list_tags_by_project(conn, project_id)?;
     Ok(all_tags)
 }
@@ -483,15 +532,32 @@ mod tests {
         )
         .unwrap();
 
-        let tags = sync_tags_from_posts(db.conn(), dir.path(), "p1").unwrap();
+        let tags = sync_tags_from_posts(db.conn(), "p1").unwrap();
         assert_eq!(tags.len(), 3);
         let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"go"));
         assert!(names.contains(&"rust"));
         assert!(names.contains(&"web"));
+    }
 
-        let entries = meta::read_tags_json(dir.path()).unwrap();
-        assert_eq!(entries.len(), 3);
+    #[test]
+    fn import_tags_from_file_preserves_colors() {
+        let (db, dir) = setup();
+        // Write tags.json with colors
+        let entries = vec![
+            TagEntry { name: "rust".into(), color: Some("#ff0000".into()), post_template_slug: None },
+            TagEntry { name: "web".into(), color: None, post_template_slug: Some("blog".into()) },
+        ];
+        meta::write_tags_json(dir.path(), &entries).unwrap();
+
+        import_tags_from_file(db.conn(), dir.path(), "p1").unwrap();
+
+        let tags = tag_q::list_tags_by_project(db.conn(), "p1").unwrap();
+        assert_eq!(tags.len(), 2);
+        let rust_tag = tags.iter().find(|t| t.name == "rust").unwrap();
+        assert_eq!(rust_tag.color.as_deref(), Some("#ff0000"));
+        let web_tag = tags.iter().find(|t| t.name == "web").unwrap();
+        assert_eq!(web_tag.post_template_slug.as_deref(), Some("blog"));
     }
 
     #[test]

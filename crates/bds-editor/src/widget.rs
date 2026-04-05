@@ -95,12 +95,49 @@ fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
     )
 }
 
+/// Map a visual row index (from scroll top) to (logical_line, char_offset).
+/// Returns None if beyond end of buffer.
+fn visual_to_logical(
+    buf: &EditorBuffer,
+    scroll: usize,
+    visual_row: usize,
+    chars_per_visual_line: usize,
+) -> Option<(usize, usize)> {
+    if chars_per_visual_line == 0 {
+        // No wrapping — direct 1:1 mapping
+        let line = scroll + visual_row;
+        return if line < buf.line_count() { Some((line, 0)) } else { None };
+    }
+    let target = scroll + visual_row;
+    let mut vis_count = 0usize;
+    for line_idx in 0..buf.line_count() {
+        let line_chars = buf.line(line_idx)
+            .map(|l| {
+                let n = l.len_chars();
+                if n > 0 && l.char(n - 1) == '\n' { n - 1 } else { n }
+            })
+            .unwrap_or(0);
+        let wrap_count = if line_chars > chars_per_visual_line {
+            (line_chars + chars_per_visual_line - 1) / chars_per_visual_line
+        } else {
+            1
+        };
+        if vis_count + wrap_count > target {
+            let sub = target - vis_count;
+            return Some((line_idx, sub * chars_per_visual_line));
+        }
+        vis_count += wrap_count;
+    }
+    None
+}
+
 /// A syntax-highlighting code editor widget for Iced.
 pub struct CodeEditor<'a, Message> {
     buffer: &'a RefCell<EditorBuffer>,
     highlighter: &'a Highlighter,
     extension: &'a str,
     on_change: Option<Box<dyn Fn(EditorMessage) -> Message + 'a>>,
+    word_wrap: bool,
 }
 
 impl<'a, Message> CodeEditor<'a, Message> {
@@ -114,11 +151,17 @@ impl<'a, Message> CodeEditor<'a, Message> {
             highlighter,
             extension,
             on_change: None,
+            word_wrap: false,
         }
     }
 
     pub fn on_change(mut self, f: impl Fn(EditorMessage) -> Message + 'a) -> Self {
         self.on_change = Some(Box::new(f));
+        self
+    }
+
+    pub fn word_wrap(mut self, enabled: bool) -> Self {
+        self.word_wrap = enabled;
         self
     }
 }
@@ -200,22 +243,53 @@ where
         let highlighted = self.highlighter.highlight_lines(&full_text, syntax);
 
         let font = iced::Font::MONOSPACE;
+        let text_area_width = bounds.width - GUTTER_WIDTH - 8.0;
+        let chars_per_visual_line = if self.word_wrap && text_area_width > metrics.char_width {
+            (text_area_width / metrics.char_width).floor() as usize
+        } else {
+            0 // 0 = no wrapping
+        };
 
-        // Render visible lines
-        for vis_idx in 0..visible_lines {
-            let line_idx = scroll + vis_idx;
-            if line_idx >= buf.line_count() {
-                break;
+        // Build visual line map: skip 'scroll' visual lines, then render 'visible_lines' visual lines.
+        // Each entry: (logical_line, char_offset, is_first_visual_line)
+        let mut visual_rows: Vec<(usize, usize, bool)> = Vec::new();
+        let mut vis_skip = 0usize; // visual lines to skip for scroll offset
+        let mut line_idx = 0usize;
+
+        while visual_rows.len() < visible_lines && line_idx < buf.line_count() {
+            let line_chars = buf.line(line_idx)
+                .map(|l| {
+                    let n = l.len_chars();
+                    if n > 0 && l.char(n - 1) == '\n' { n - 1 } else { n }
+                })
+                .unwrap_or(0);
+
+            let wrap_count = if chars_per_visual_line > 0 && line_chars > chars_per_visual_line {
+                (line_chars + chars_per_visual_line - 1) / chars_per_visual_line
+            } else {
+                1
+            };
+
+            for w in 0..wrap_count {
+                if vis_skip < scroll {
+                    vis_skip += 1;
+                } else if visual_rows.len() < visible_lines {
+                    visual_rows.push((line_idx, w * chars_per_visual_line, w == 0));
+                }
             }
+            line_idx += 1;
+        }
 
+        let text_x = bounds.x + GUTTER_WIDTH + 8.0;
+
+        // Render visual rows
+        for (vis_idx, &(line_idx, char_offset, is_first)) in visual_rows.iter().enumerate() {
             let y = bounds.y + vis_idx as f32 * metrics.line_height;
             if y + metrics.line_height < bounds.y || y > bounds.y + bounds.height {
                 continue;
             }
 
-            let text_x = bounds.x + GUTTER_WIDTH + 8.0;
-
-            // Draw selection highlight for this line
+            // Draw selection highlight for this visual line
             if let Some(sel) = selection {
                 if !sel.is_empty() {
                     let (start, end) = sel.ordered();
@@ -223,33 +297,28 @@ where
                         .line(line_idx)
                         .map(|l| {
                             let len = l.len_chars();
-                            if len > 0 && l.char(len - 1) == '\n' {
-                                len - 1
-                            } else {
-                                len
-                            }
+                            if len > 0 && l.char(len - 1) == '\n' { len - 1 } else { len }
                         })
                         .unwrap_or(0);
 
                     if line_idx >= start.0 && line_idx <= end.0 {
                         let sel_start_col = if line_idx == start.0 { start.1 } else { 0 };
-                        let sel_end_col = if line_idx == end.0 {
-                            end.1
+                        let sel_end_col = if line_idx == end.0 { end.1 } else { line_len + 1 };
+
+                        // Clip selection to current visual line range
+                        let vis_end = if chars_per_visual_line > 0 {
+                            char_offset + chars_per_visual_line
                         } else {
-                            line_len + 1
+                            usize::MAX
                         };
-                        let sel_x = text_x + sel_start_col as f32 * metrics.char_width;
-                        let sel_w =
-                            (sel_end_col - sel_start_col) as f32 * metrics.char_width;
-                        if sel_w > 0.0 {
+                        let s = sel_start_col.max(char_offset);
+                        let e = sel_end_col.min(vis_end);
+                        if s < e {
+                            let sel_x = text_x + (s - char_offset) as f32 * metrics.char_width;
+                            let sel_w = (e - s) as f32 * metrics.char_width;
                             renderer.fill_quad(
                                 renderer::Quad {
-                                    bounds: Rectangle {
-                                        x: sel_x,
-                                        y,
-                                        width: sel_w,
-                                        height: metrics.line_height,
-                                    },
+                                    bounds: Rectangle { x: sel_x, y, width: sel_w, height: metrics.line_height },
                                     border: iced::Border::default(),
                                     shadow: iced::Shadow::default(),
                                 },
@@ -260,54 +329,70 @@ where
                 }
             }
 
-            // Line number
-            let line_num = format!("{:>4}", line_idx + 1);
-            let num_color = if line_idx == cursor_line {
-                ACTIVE_LINE_NUM
-            } else {
-                GUTTER_TEXT
-            };
-            renderer.fill_text(
-                text::Text {
-                    content: line_num,
-                    bounds: Size::new(GUTTER_WIDTH - 8.0, metrics.line_height),
-                    size: Pixels(FONT_SIZE),
-                    line_height: iced::widget::text::LineHeight::Absolute(Pixels(
-                        metrics.line_height,
-                    )),
-                    font,
-                    horizontal_alignment: iced::alignment::Horizontal::Right,
-                    vertical_alignment: iced::alignment::Vertical::Top,
-                    shaping: iced::widget::text::Shaping::Basic,
-                    wrapping: iced::widget::text::Wrapping::None,
-                },
-                Point::new(bounds.x, y),
-                num_color,
-                bounds,
-            );
+            // Line number (only on first visual line of each logical line)
+            if is_first {
+                let line_num = format!("{:>4}", line_idx + 1);
+                let num_color = if line_idx == cursor_line { ACTIVE_LINE_NUM } else { GUTTER_TEXT };
+                renderer.fill_text(
+                    text::Text {
+                        content: line_num,
+                        bounds: Size::new(GUTTER_WIDTH - 8.0, metrics.line_height),
+                        size: Pixels(FONT_SIZE),
+                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                        font,
+                        horizontal_alignment: iced::alignment::Horizontal::Right,
+                        vertical_alignment: iced::alignment::Vertical::Top,
+                        shaping: iced::widget::text::Shaping::Basic,
+                        wrapping: iced::widget::text::Wrapping::None,
+                    },
+                    Point::new(bounds.x, y),
+                    num_color,
+                    bounds,
+                );
+            }
 
             // Line content with syntax highlighting
             if line_idx < highlighted.len() {
                 let spans = &highlighted[line_idx];
-                let mut x_off = text_x;
+                // Flatten spans into characters with colors for correct wrapping
+                let mut chars_with_color: Vec<(char, Color)> = Vec::new();
                 for (style, span_text) in spans {
-                    let mut display_text = span_text.clone();
-                    if display_text.ends_with('\n') {
-                        display_text.pop();
-                    }
-                    if display_text.is_empty() {
-                        continue;
-                    }
                     let color = syntect_to_iced(style.foreground);
+                    for ch in span_text.chars() {
+                        if ch == '\n' { continue; }
+                        chars_with_color.push((ch, color));
+                    }
+                }
+
+                // Extract the slice for this visual line
+                let end_char = if chars_per_visual_line > 0 {
+                    (char_offset + chars_per_visual_line).min(chars_with_color.len())
+                } else {
+                    chars_with_color.len()
+                };
+                let slice = if char_offset < chars_with_color.len() {
+                    &chars_with_color[char_offset..end_char]
+                } else {
+                    &[]
+                };
+
+                // Group consecutive chars with same color into spans
+                let mut x_off = text_x;
+                let mut span_start = 0;
+                while span_start < slice.len() {
+                    let color = slice[span_start].1;
+                    let mut span_end = span_start + 1;
+                    while span_end < slice.len() && slice[span_end].1 == color {
+                        span_end += 1;
+                    }
+                    let display_text: String = slice[span_start..span_end].iter().map(|(c, _)| *c).collect();
                     let span_width = display_text.len() as f32 * metrics.char_width;
                     renderer.fill_text(
                         text::Text {
                             content: display_text,
                             bounds: Size::new(span_width + metrics.char_width, metrics.line_height),
                             size: Pixels(FONT_SIZE),
-                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(
-                                metrics.line_height,
-                            )),
+                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
                             font,
                             horizontal_alignment: iced::alignment::Horizontal::Left,
                             vertical_alignment: iced::alignment::Vertical::Top,
@@ -319,52 +404,61 @@ where
                         bounds,
                     );
                     x_off += span_width;
+                    span_start = span_end;
                 }
             } else if let Some(line) = buf.line(line_idx) {
                 // Fallback: plain text rendering
-                let mut line_text: String = line.chars().collect();
-                if line_text.ends_with('\n') {
-                    line_text.pop();
+                let line_text: String = line.chars().filter(|c| *c != '\n').collect();
+                let end_char = if chars_per_visual_line > 0 {
+                    (char_offset + chars_per_visual_line).min(line_text.len())
+                } else {
+                    line_text.len()
+                };
+                let display_text = if char_offset < line_text.len() {
+                    &line_text[char_offset..end_char]
+                } else {
+                    ""
+                };
+                if !display_text.is_empty() {
+                    renderer.fill_text(
+                        text::Text {
+                            content: display_text.to_string(),
+                            bounds: Size::new(text_area_width, metrics.line_height),
+                            size: Pixels(FONT_SIZE),
+                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                            font,
+                            horizontal_alignment: iced::alignment::Horizontal::Left,
+                            vertical_alignment: iced::alignment::Vertical::Top,
+                            shaping: iced::widget::text::Shaping::Advanced,
+                            wrapping: iced::widget::text::Wrapping::None,
+                        },
+                        Point::new(text_x, y),
+                        TEXT_COLOR,
+                        bounds,
+                    );
                 }
-                renderer.fill_text(
-                    text::Text {
-                        content: line_text,
-                        bounds: Size::new(
-                            bounds.width - GUTTER_WIDTH - 8.0,
-                            metrics.line_height,
-                        ),
-                        size: Pixels(FONT_SIZE),
-                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(
-                            metrics.line_height,
-                        )),
-                        font,
-                        horizontal_alignment: iced::alignment::Horizontal::Left,
-                        vertical_alignment: iced::alignment::Vertical::Top,
-                        shaping: iced::widget::text::Shaping::Advanced,
-                        wrapping: iced::widget::text::Wrapping::None,
-                    },
-                    Point::new(text_x, y),
-                    TEXT_COLOR,
-                    bounds,
-                );
             }
 
-            // Draw cursor on current line
+            // Draw cursor on this visual line if it contains the cursor
             if line_idx == cursor_line && state.is_focused {
-                let cursor_x = text_x + cursor_col as f32 * metrics.char_width;
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: cursor_x,
-                            y,
-                            width: 2.0,
-                            height: metrics.line_height,
+                let vis_end = if chars_per_visual_line > 0 {
+                    char_offset + chars_per_visual_line
+                } else {
+                    usize::MAX
+                };
+                if cursor_col >= char_offset && cursor_col < vis_end {
+                    let cursor_x = text_x + (cursor_col - char_offset) as f32 * metrics.char_width;
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: cursor_x, y, width: 2.0, height: metrics.line_height,
+                            },
+                            border: iced::Border::default(),
+                            shadow: iced::Shadow::default(),
                         },
-                        border: iced::Border::default(),
-                        shadow: iced::Shadow::default(),
-                    },
-                    CURSOR_COLOR,
-                );
+                        CURSOR_COLOR,
+                    );
+                }
             }
         }
     }
@@ -383,6 +477,12 @@ where
         let state = tree.state.downcast_mut::<EditorState>();
         let bounds = layout.bounds();
         let metrics = mono_metrics();
+        let text_area_width = bounds.width - GUTTER_WIDTH - 8.0;
+        let cpl = if self.word_wrap && text_area_width > metrics.char_width {
+            (text_area_width / metrics.char_width).floor() as usize
+        } else {
+            0
+        };
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -392,10 +492,11 @@ where
 
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
-                        let line = (pos.y / metrics.line_height) as usize
-                            + buf.scroll_offset();
-                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
-                            as usize;
+                        let vis_row = (pos.y / metrics.line_height) as usize;
+                        let raw_col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let (line, char_off) = visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
+                            .unwrap_or((buf.line_count().saturating_sub(1), 0));
+                        let col = char_off + raw_col;
 
                         // Double-click detection
                         let now = std::time::Instant::now();
@@ -429,10 +530,11 @@ where
                 if state.is_dragging && state.is_focused {
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
-                        let line = (pos.y / metrics.line_height) as usize
-                            + buf.scroll_offset();
-                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
-                            as usize;
+                        let vis_row = (pos.y / metrics.line_height) as usize;
+                        let raw_col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let (line, char_off) = visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
+                            .unwrap_or((buf.line_count().saturating_sub(1), 0));
+                        let col = char_off + raw_col;
                         // Extend selection by simulating shift+movement
                         let clamped_line = line.min(buf.line_count().saturating_sub(1));
                         let clamped_col = if clamped_line < buf.line_count() {

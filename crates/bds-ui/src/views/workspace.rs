@@ -310,7 +310,8 @@ fn route_content_area<'a>(
     match tab.tab_type {
         TabType::Post => {
             if let Some(state) = post_editors.get(tab_id) {
-                post_editor::view(state, locale)
+                let wrap = settings_state.map(|s| s.wrap_long_lines).unwrap_or(false);
+                post_editor::view(state, locale, wrap)
             } else {
                 loading_view(locale)
             }

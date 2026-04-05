@@ -1002,6 +1002,7 @@ impl BdsApp {
                             MediaEditorMsg::AltChanged(s) => { state.alt = s; state.is_dirty = true; }
                             MediaEditorMsg::CaptionChanged(s) => { state.caption = s; state.is_dirty = true; }
                             MediaEditorMsg::AuthorChanged(s) => { state.author = s; state.is_dirty = true; }
+                            MediaEditorMsg::SwitchLanguage(lang) => { state.switch_language(&lang); }
                             MediaEditorMsg::Save => {
                                 return self.save_media_editor(&tab_id);
                             }
@@ -1134,11 +1135,31 @@ impl BdsApp {
             Message::PostLoaded(result) => {
                 match result {
                     Ok(post) => {
-                        let translations = self.db.as_ref()
+                        let mut translations = self.db.as_ref()
                             .and_then(|db| bds_core::db::queries::post_translation::list_post_translations_by_post(
                                 db.conn(), &post.id,
                             ).ok())
                             .unwrap_or_default();
+                        // Published translations don't store body in DB — read from file
+                        if let Some(ref data_dir) = self.data_dir {
+                            for tr in &mut translations {
+                                if tr.content.is_none() {
+                                    let rel = bds_core::util::paths::translation_file_path(
+                                        post.created_at,
+                                        &post.slug,
+                                        &tr.language,
+                                    );
+                                    let path = data_dir.join(&rel);
+                                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                                        if let Ok((_fm, body)) =
+                                            bds_core::util::frontmatter::read_translation_file(&raw)
+                                        {
+                                            tr.content = Some(body);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         let (outlinks, backlinks) = self.load_post_links(&post.id);
                         let state = PostEditorState::from_post(&post, &self.blog_languages, &translations, outlinks, backlinks);
                         self.post_editors.insert(post.id.clone(), state);
@@ -1150,7 +1171,12 @@ impl BdsApp {
             Message::MediaLoaded(result) => {
                 match result {
                     Ok(media) => {
-                        let state = MediaEditorState::from_media(&media);
+                        let translations = self.db.as_ref()
+                            .and_then(|db| bds_core::db::queries::media_translation::list_media_translations_by_media(
+                                db.conn(), &media.id,
+                            ).ok())
+                            .unwrap_or_default();
+                        let state = MediaEditorState::from_media(&media, &self.blog_languages, &translations);
                         self.media_editors.insert(media.id.clone(), state);
                     }
                     Err(e) => self.notify(ToastLevel::Error, &e),
@@ -1873,13 +1899,22 @@ impl BdsApp {
     fn handle_tags_msg(&mut self, msg: TagsMsg) -> Task<Message> {
         // Ensure tags view state exists
         if self.tags_view_state.is_none() {
-            let tags = if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
-                bds_core::db::queries::tag::list_tags_by_project(db.conn(), &project.id)
-                    .unwrap_or_default()
+            let (tags, counts) = if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
+                let tags = bds_core::db::queries::tag::list_tags_by_project(db.conn(), &project.id)
+                    .unwrap_or_default();
+                let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project.id)
+                    .unwrap_or_default();
+                let mut counts = std::collections::HashMap::new();
+                for post in &posts {
+                    for tag_name in &post.tags {
+                        *counts.entry(tag_name.to_lowercase()).or_insert(0usize) += 1;
+                    }
+                }
+                (tags, counts)
             } else {
-                Vec::new()
+                (Vec::new(), std::collections::HashMap::new())
             };
-            self.tags_view_state = Some(TagsViewState::new(tags));
+            self.tags_view_state = Some(TagsViewState::new(tags, counts));
         }
         let state = self.tags_view_state.as_mut().unwrap();
         match msg {
@@ -2042,6 +2077,18 @@ impl BdsApp {
                     let _ = open::that(dir);
                 }
             }
+            SettingsMsg::FocusSection(section) => {
+                // Expand the target section, collapse all others
+                use crate::views::settings_view::SettingsSection;
+                let all_others: Vec<SettingsSection> = SettingsSection::all()
+                    .iter()
+                    .filter(|s| **s != section)
+                    .cloned()
+                    .collect();
+                state.collapsed = all_others;
+                // Clear search filter to ensure section is visible
+                state.search_query.clear();
+            }
         }
         Task::none()
     }
@@ -2104,9 +2151,29 @@ impl BdsApp {
                                 }
                             }
                             // Load translations for translation flags bar
-                            let translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
+                            let mut translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
                                 db.conn(), &post.id,
                             ).unwrap_or_default();
+                            // Published translations don't store body in DB — read from file
+                            if let Some(ref data_dir) = self.data_dir {
+                                for tr in &mut translations {
+                                    if tr.content.is_none() {
+                                        let rel = bds_core::util::paths::translation_file_path(
+                                            post.created_at,
+                                            &post.slug,
+                                            &tr.language,
+                                        );
+                                        let path = data_dir.join(&rel);
+                                        if let Ok(raw) = std::fs::read_to_string(&path) {
+                                            if let Ok((_fm, body)) =
+                                                bds_core::util::frontmatter::read_translation_file(&raw)
+                                            {
+                                                tr.content = Some(body);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             let (outlinks, backlinks) = self.load_post_links(&post.id);
                             self.post_editors.insert(
                                 post.id.clone(),
@@ -2123,7 +2190,10 @@ impl BdsApp {
                 if !self.media_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::media::get_media_by_id(db.conn(), &tab.id) {
                         Ok(media) => {
-                            self.media_editors.insert(media.id.clone(), MediaEditorState::from_media(&media));
+                            let translations = bds_core::db::queries::media_translation::list_media_translations_by_media(
+                                db.conn(), &media.id,
+                            ).unwrap_or_default();
+                            self.media_editors.insert(media.id.clone(), MediaEditorState::from_media(&media, &self.blog_languages, &translations));
                         }
                         Err(e) => {
                             self.notify(ToastLevel::Error, &format!("Failed to load media: {e}"));
@@ -2185,17 +2255,30 @@ impl BdsApp {
             TabType::Tags => {
                 if self.tags_view_state.is_none() {
                     let project_id = self.active_project.as_ref().map(|p| p.id.as_str()).unwrap_or("");
-                    // Sync tags from posts first to ensure tags table is populated
+                    // Import tags from file first, then sync from posts (additive only)
                     if let Some(ref data_dir) = self.data_dir {
-                        let _ = bds_core::engine::tag::sync_tags_from_posts(
+                        let _ = bds_core::engine::tag::import_tags_from_file(
                             db.conn(), data_dir, project_id,
+                        );
+                        let _ = bds_core::engine::tag::sync_tags_from_posts(
+                            db.conn(), project_id,
                         );
                     }
                     let tags = bds_core::db::queries::tag::list_tags_by_project(
                         db.conn(),
                         project_id,
                     ).unwrap_or_default();
-                    self.tags_view_state = Some(TagsViewState::new(tags));
+                    // Compute post counts per tag for cloud sizing
+                    let posts = bds_core::db::queries::post::list_posts_by_project(
+                        db.conn(), project_id,
+                    ).unwrap_or_default();
+                    let mut tag_post_counts = std::collections::HashMap::new();
+                    for post in &posts {
+                        for tag_name in &post.tags {
+                            *tag_post_counts.entry(tag_name.to_lowercase()).or_insert(0usize) += 1;
+                        }
+                    }
+                    self.tags_view_state = Some(TagsViewState::new(tags, tag_post_counts));
                 }
             }
             TabType::Settings => {

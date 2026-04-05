@@ -905,35 +905,41 @@ pub fn view(
         }
         SidebarView::Settings => {
             // Per sidebar_views.allium SettingsNav: 9 fixed-order sections
-            let sections = [
-                "settings.nav.project",
-                "settings.nav.editor",
-                "settings.nav.content",
-                "settings.nav.ai",
-                "settings.nav.technology",
-                "settings.nav.publishing",
-                "settings.nav.data",
-                "settings.nav.mcp",
-                "settings.nav.style",
+            use crate::views::settings_view::{SettingsSection, SettingsMsg};
+            let sections: &[(&str, Option<SettingsSection>)] = &[
+                ("settings.nav.project", Some(SettingsSection::Project)),
+                ("settings.nav.editor", Some(SettingsSection::Editor)),
+                ("settings.nav.content", Some(SettingsSection::Content)),
+                ("settings.nav.ai", Some(SettingsSection::AI)),
+                ("settings.nav.technology", Some(SettingsSection::Technology)),
+                ("settings.nav.publishing", Some(SettingsSection::Publishing)),
+                ("settings.nav.data", Some(SettingsSection::Data)),
+                ("settings.nav.mcp", Some(SettingsSection::MCP)),
+                ("settings.nav.style", None),
             ];
             let items: Vec<Element<'static, Message>> = sections
                 .iter()
-                .map(|key| {
+                .map(|(key, section_opt)| {
                     let label = t(locale, key);
                     let label_text = text(label)
                         .size(12)
                         .shaping(Shaping::Advanced);
-                    button(
-                        container(label_text)
-                            .width(Length::Fill)
-                    )
-                        .on_press(Message::OpenTab(Tab {
+                    let msg = if let Some(section) = section_opt {
+                        Message::Settings(SettingsMsg::FocusSection(section.clone()))
+                    } else {
+                        Message::OpenTab(Tab {
                             id: "settings".to_string(),
                             tab_type: TabType::Settings,
                             title: t(locale, "common.settings"),
                             is_transient: false,
                             is_dirty: false,
-                        }))
+                        })
+                    };
+                    button(
+                        container(label_text)
+                            .width(Length::Fill)
+                    )
+                        .on_press(msg)
                         .padding([3, 6])
                         .width(Length::Fill)
                         .style(item_style)

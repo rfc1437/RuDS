@@ -301,6 +301,7 @@ pub enum PostEditorMsg {
 pub fn view<'a>(
     state: &'a PostEditorState,
     locale: UiLocale,
+    word_wrap: bool,
 ) -> Element<'a, Message> {
     // ── Header bar ──
     let dirty_indicator = if state.is_dirty { " \u{25CF}" } else { "" };
@@ -521,6 +522,7 @@ pub fn view<'a>(
             highlighter(),
             "md",
         )
+        .word_wrap(word_wrap)
         .on_change(|msg| match msg {
             EditorMessage::ContentChanged(s) => Message::PostEditor(PostEditorMsg::ContentChanged(s)),
             EditorMessage::SaveRequested => Message::PostEditor(PostEditorMsg::Save),

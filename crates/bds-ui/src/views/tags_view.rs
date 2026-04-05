@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
@@ -23,6 +25,7 @@ pub enum TagsSection {
 pub struct TagsViewState {
     pub section: TagsSection,
     pub tags: Vec<Tag>,
+    pub tag_post_counts: HashMap<String, usize>,
     pub search_query: String,
     /// For "Manage": the currently editing tag
     pub editing_tag: Option<EditingTag>,
@@ -40,10 +43,11 @@ pub struct EditingTag {
 }
 
 impl TagsViewState {
-    pub fn new(tags: Vec<Tag>) -> Self {
+    pub fn new(tags: Vec<Tag>, tag_post_counts: HashMap<String, usize>) -> Self {
         Self {
             section: TagsSection::Cloud,
             tags,
+            tag_post_counts,
             search_query: String::new(),
             editing_tag: None,
             merge_source: None,
@@ -133,14 +137,27 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
         .into();
     }
 
+    // Calculate min/max post counts for font scaling
+    let counts: Vec<usize> = state.tags.iter()
+        .map(|t| *state.tag_post_counts.get(&t.name.to_lowercase()).unwrap_or(&0))
+        .collect();
+    let min_count = *counts.iter().min().unwrap_or(&0);
+    let max_count = *counts.iter().max().unwrap_or(&1);
+    let count_range = if max_count > min_count { (max_count - min_count) as f32 } else { 1.0 };
+    const MIN_FONT: f32 = 11.0;
+    const MAX_FONT: f32 = 24.0;
+
     let chips: Vec<Element<'a, Message>> = state
         .tags
         .iter()
         .map(|tag| {
             let color = parse_tag_color(tag.color.as_deref().unwrap_or(DEFAULT_TAG_COLOR));
-            button(text(&tag.name).size(13).color(Color::WHITE))
+            let post_count = *state.tag_post_counts.get(&tag.name.to_lowercase()).unwrap_or(&0);
+            let font_size = MIN_FONT + ((post_count - min_count) as f32 / count_range) * (MAX_FONT - MIN_FONT);
+            let vert_pad = ((MAX_FONT - font_size) / 4.0).max(2.0) as u16;
+            button(text(&tag.name).size(font_size).color(Color::WHITE))
                 .on_press(Message::Tags(TagsMsg::SelectTag(tag.id.clone())))
-                .padding([4, 10])
+                .padding([vert_pad, 10])
                 .style(move |_: &Theme, _| button::Style {
                     background: Some(Background::Color(color)),
                     border: iced::Border {

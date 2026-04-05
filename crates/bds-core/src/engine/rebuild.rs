@@ -113,13 +113,18 @@ pub fn rebuild_from_filesystem_with_progress(
     report.templates_updated = tpl_report.updated;
     report.errors.extend(tpl_report.errors);
 
-    // 5. Rebuild scripts  (0.85 .. 1.0)
+    // 5. Rebuild scripts  (0.85 .. 0.95)
     progress(0.85, "Rebuilding scripts...");
     let script_report =
         script_rebuild::rebuild_scripts_from_filesystem(conn, data_dir, project_id)?;
     report.scripts_created = script_report.created;
     report.scripts_updated = script_report.updated;
     report.errors.extend(script_report.errors);
+
+    // 6. Import tags from tags.json and sync from posts  (0.95 .. 1.0)
+    progress(0.95, "Importing tags...");
+    let _ = super::tag::import_tags_from_file(conn, data_dir, project_id);
+    let _ = super::tag::sync_tags_from_posts(conn, project_id);
 
     progress(1.0, "Rebuild complete");
     Ok(report)
