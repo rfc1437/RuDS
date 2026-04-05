@@ -164,5 +164,12 @@
   "modal.confirmDelete.delete": "Supprimer",
   "modal.confirm.title": "Confirmer",
   "modal.confirm.cancel": "Annuler",
-  "modal.confirm.confirm": "Confirmer"
+  "modal.confirm.confirm": "Confirmer",
+  "sidebar.filter.search": "Rechercher...",
+  "sidebar.filter.toggle": "Filtres",
+  "sidebar.filter.clearAll": "Effacer tous les filtres",
+  "sidebar.filter.tags": "Tags",
+  "sidebar.filter.categories": "Catégories",
+  "sidebar.filter.calendar": "Archives",
+  "sidebar.filter.noResults": "Aucun résultat"
 }

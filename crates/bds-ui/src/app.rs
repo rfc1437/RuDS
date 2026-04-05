@@ -14,6 +14,9 @@ use crate::platform::menu::{self, MenuAction, MenuRegistry};
 use crate::state::navigation::{
     handle_activity_click, OutputEntry, PanelTab, SidebarView, TaskSnapshot,
 };
+use crate::state::sidebar_filter::{
+    CalendarMonth, CalendarYear, MediaFilter, PostFilter,
+};
 use crate::state::tabs::{self, Tab, TabType};
 use crate::state::toast::{Toast, ToastLevel};
 use crate::views::{modal, workspace};
@@ -79,6 +82,21 @@ pub enum Message {
     DismissToast(u64),
     ExpireToasts,
 
+    // Sidebar filters
+    PostSearchChanged(String),
+    TogglePostFilterPanel,
+    SetPostCalendarYear(Option<i32>),
+    SetPostCalendarMonth(Option<u32>),
+    TogglePostTagFilter(String),
+    TogglePostCategoryFilter(String),
+    ClearPostFilters,
+    MediaSearchChanged(String),
+    ToggleMediaFilterPanel,
+    SetMediaCalendarYear(Option<i32>),
+    SetMediaCalendarMonth(Option<u32>),
+    ToggleMediaTagFilter(String),
+    ClearMediaFilters,
+
     // Modal
     ShowModal(modal::ModalState),
     DismissModal,
@@ -121,6 +139,11 @@ pub struct BdsApp {
     sidebar_media: Vec<Media>,
     sidebar_scripts: Vec<Script>,
     sidebar_templates: Vec<Template>,
+
+    // Sidebar filters (per sidebar_views.allium PostsView / MediaView)
+    post_filter: PostFilter,
+    page_filter: PostFilter,
+    media_filter: MediaFilter,
 
     // Navigation
     sidebar_view: SidebarView,
@@ -252,6 +275,9 @@ impl BdsApp {
                 sidebar_media: Vec::new(),
                 sidebar_scripts: Vec::new(),
                 sidebar_templates: Vec::new(),
+                post_filter: PostFilter::default(),
+                page_filter: PostFilter::default(),
+                media_filter: MediaFilter::default(),
                 sidebar_view: SidebarView::Posts,
                 sidebar_visible: true,
                 sidebar_width: 280.0,
@@ -292,8 +318,18 @@ impl BdsApp {
             Message::SetActiveView(view) => {
                 let (new_view, new_visible) =
                     handle_activity_click(self.sidebar_view, self.sidebar_visible, view);
+                let old_view = self.sidebar_view;
                 self.sidebar_view = new_view;
                 self.sidebar_visible = new_visible;
+                // When switching between Posts/Pages, re-query with correct filter
+                let switched_post_scope = matches!(
+                    (old_view, new_view),
+                    (SidebarView::Posts, SidebarView::Pages)
+                    | (SidebarView::Pages, SidebarView::Posts)
+                );
+                if switched_post_scope {
+                    self.refresh_sidebar_posts();
+                }
                 Task::none()
             }
             Message::ToggleSidebar => {
@@ -691,6 +727,113 @@ impl BdsApp {
                 Task::none()
             }
 
+            // ── Sidebar filters ──
+            Message::PostSearchChanged(query) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.search_query = query;
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::TogglePostFilterPanel => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.filter_panel_visible = !filter.filter_panel_visible;
+                Task::none()
+            }
+            Message::SetPostCalendarYear(year) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.calendar.selected_year = year;
+                filter.calendar.selected_month = None;
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::SetPostCalendarMonth(month) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.calendar.selected_month = month;
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::TogglePostTagFilter(tag) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                if let Some(pos) = filter.tag_filter.iter().position(|t| *t == tag) {
+                    filter.tag_filter.remove(pos);
+                } else {
+                    filter.tag_filter.push(tag);
+                }
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::TogglePostCategoryFilter(cat) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                if let Some(pos) = filter.category_filter.iter().position(|c| *c == cat) {
+                    filter.category_filter.remove(pos);
+                } else {
+                    filter.category_filter.push(cat);
+                }
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::ClearPostFilters => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.clear();
+                self.refresh_sidebar_posts();
+                Task::none()
+            }
+            Message::MediaSearchChanged(query) => {
+                self.media_filter.search_query = query;
+                self.refresh_sidebar_media();
+                Task::none()
+            }
+            Message::ToggleMediaFilterPanel => {
+                self.media_filter.filter_panel_visible = !self.media_filter.filter_panel_visible;
+                Task::none()
+            }
+            Message::SetMediaCalendarYear(year) => {
+                self.media_filter.calendar.selected_year = year;
+                self.media_filter.calendar.selected_month = None;
+                self.refresh_sidebar_media();
+                Task::none()
+            }
+            Message::SetMediaCalendarMonth(month) => {
+                self.media_filter.calendar.selected_month = month;
+                self.refresh_sidebar_media();
+                Task::none()
+            }
+            Message::ToggleMediaTagFilter(tag) => {
+                if let Some(pos) = self.media_filter.tag_filter.iter().position(|t| *t == tag) {
+                    self.media_filter.tag_filter.remove(pos);
+                } else {
+                    self.media_filter.tag_filter.push(tag);
+                }
+                self.refresh_sidebar_media();
+                Task::none()
+            }
+            Message::ClearMediaFilters => {
+                self.media_filter.clear();
+                self.refresh_sidebar_media();
+                Task::none()
+            }
+
             // ── Modal ──
             Message::ShowModal(state) => {
                 self.active_modal = Some(state);
@@ -736,6 +879,10 @@ impl BdsApp {
 
     pub fn view(&self) -> Element<'_, Message> {
         let active_name = self.active_project.as_ref().map(|p| p.name.as_str());
+        let active_post_filter = match self.sidebar_view {
+            SidebarView::Pages => &self.page_filter,
+            _ => &self.post_filter,
+        };
 
         workspace::view(
             self.sidebar_view,
@@ -751,6 +898,8 @@ impl BdsApp {
             &self.sidebar_media,
             &self.sidebar_scripts,
             &self.sidebar_templates,
+            active_post_filter,
+            &self.media_filter,
             active_name,
             &self.projects,
             self.active_project.as_ref().map(|p| p.id.as_str()),
@@ -1053,20 +1202,7 @@ impl BdsApp {
                 &project.id,
             )
             .unwrap_or(0) as usize;
-            self.sidebar_posts = bds_core::db::queries::post::list_posts_by_project_limited(
-                db.conn(),
-                &project.id,
-                500,
-                0,
-            )
-            .unwrap_or_default();
-            self.sidebar_media = bds_core::db::queries::media::list_media_by_project_limited(
-                db.conn(),
-                &project.id,
-                500,
-                0,
-            )
-            .unwrap_or_default();
+
             self.sidebar_scripts = bds_core::db::queries::script::list_scripts_by_project(
                 db.conn(),
                 &project.id,
@@ -1077,6 +1213,7 @@ impl BdsApp {
                 &project.id,
             )
             .unwrap_or_default();
+
             // Read pico theme from project metadata for status bar badge
             if let Some(ref data_dir) = self.data_dir {
                 if let Ok(meta) = engine::meta::read_project_json(data_dir) {
@@ -1086,6 +1223,111 @@ impl BdsApp {
                 }
             }
         }
+
+        // Refresh sidebar data with current filters (separate borrows to avoid borrow conflict)
+        self.refresh_sidebar_posts();
+        self.refresh_sidebar_media();
+        self.refresh_filter_metadata();
+    }
+
+    /// Refresh only sidebar posts using current filter state.
+    fn refresh_sidebar_posts(&mut self) {
+        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
+            use bds_core::db::queries::post::{PostFilterParams, list_posts_filtered};
+
+            let filter = match self.sidebar_view {
+                SidebarView::Pages => &self.page_filter,
+                _ => &self.post_filter,
+            };
+            let is_pages = self.sidebar_view == SidebarView::Pages;
+
+            let params = PostFilterParams {
+                search_query: filter.search_query.clone(),
+                year: filter.calendar.selected_year,
+                month: filter.calendar.selected_month,
+                tags: filter.tag_filter.clone(),
+                categories: filter.category_filter.clone(),
+                exclude_pages: !is_pages,
+                pages_only: is_pages,
+            };
+
+            self.sidebar_posts = list_posts_filtered(
+                db.conn(), &project.id, &params, 500, 0,
+            ).unwrap_or_default();
+        }
+    }
+
+    /// Refresh only sidebar media using current filter state.
+    fn refresh_sidebar_media(&mut self) {
+        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
+            use bds_core::db::queries::media::{MediaFilterParams, list_media_filtered};
+
+            let params = MediaFilterParams {
+                search_query: self.media_filter.search_query.clone(),
+                year: self.media_filter.calendar.selected_year,
+                month: self.media_filter.calendar.selected_month,
+                tags: self.media_filter.tag_filter.clone(),
+            };
+
+            self.sidebar_media = list_media_filtered(
+                db.conn(), &project.id, &params, 500, 0,
+            ).unwrap_or_default();
+        }
+    }
+
+    /// Refresh available tags, categories, and calendar data for filter widgets.
+    fn refresh_filter_metadata(&mut self) {
+        if let (Some(db), Some(project)) = (&self.db, &self.active_project) {
+            use bds_core::db::queries::post;
+            use bds_core::db::queries::media;
+
+            // Post filter metadata
+            let all_tags = post::distinct_post_tags(db.conn(), &project.id)
+                .unwrap_or_default();
+            let all_cats = post::distinct_post_categories(db.conn(), &project.id)
+                .unwrap_or_default();
+
+            // Calendar counts for posts (excluding pages)
+            let post_cal = post::post_calendar_counts(
+                db.conn(), &project.id, false, true,
+            ).unwrap_or_default();
+            self.post_filter.available_tags = all_tags.clone();
+            self.post_filter.available_categories = all_cats.clone();
+            self.post_filter.calendar_years = Self::build_calendar_tree(&post_cal);
+
+            // Calendar counts for pages only
+            let page_cal = post::post_calendar_counts(
+                db.conn(), &project.id, true, false,
+            ).unwrap_or_default();
+            self.page_filter.available_tags = all_tags;
+            self.page_filter.available_categories = all_cats;
+            self.page_filter.calendar_years = Self::build_calendar_tree(&page_cal);
+
+            // Media filter metadata
+            self.media_filter.available_tags = media::distinct_media_tags(
+                db.conn(), &project.id,
+            ).unwrap_or_default();
+            let media_cal = media::media_calendar_counts(
+                db.conn(), &project.id,
+            ).unwrap_or_default();
+            self.media_filter.calendar_years = Self::build_calendar_tree(&media_cal);
+        }
+    }
+
+    /// Convert (year, month, count) tuples into CalendarYear/CalendarMonth tree.
+    fn build_calendar_tree(data: &[(i32, u32, usize)]) -> Vec<CalendarYear> {
+        let mut years: Vec<CalendarYear> = Vec::new();
+        for &(y, m, c) in data {
+            if let Some(cy) = years.iter_mut().find(|cy| cy.year == y) {
+                cy.months.push(CalendarMonth { month: m, count: c });
+            } else {
+                years.push(CalendarYear {
+                    year: y,
+                    months: vec![CalendarMonth { month: m, count: c }],
+                });
+            }
+        }
+        years
     }
 
     /// Per layout.allium PanelTabFallback invariant: if the active panel tab

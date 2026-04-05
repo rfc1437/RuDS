@@ -7,6 +7,7 @@ use bds_core::model::{Media, Post, Project, Script, Template};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
+use crate::state::sidebar_filter::{PostFilter, MediaFilter};
 use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
 use crate::views::{activity_bar, modal, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
@@ -57,6 +58,9 @@ pub fn view(
     sidebar_media: &[Media],
     sidebar_scripts: &[Script],
     sidebar_templates: &[Template],
+    // Sidebar filters
+    post_filter: &PostFilter,
+    media_filter: &MediaFilter,
     // Status bar
     active_project_name: Option<&str>,
     projects: &[Project],
@@ -110,7 +114,7 @@ pub fn view(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, sidebar_width, active_tab, locale));
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_width, active_tab, locale));
 
         // Resize drag handle: 4px wide strip between sidebar and content
         let handle = container(Space::new(0, 0))

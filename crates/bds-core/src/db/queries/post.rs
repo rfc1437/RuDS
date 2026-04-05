@@ -199,6 +199,243 @@ pub fn count_posts_by_project(conn: &Connection, project_id: &str) -> rusqlite::
     )
 }
 
+// ── Filtered queries (per sidebar_views.allium PostsView) ───
+
+/// Parameters for filtered post listing.
+/// Drafts always shown regardless of filters per spec.
+/// Published/archived respect all active filters.
+#[derive(Debug, Clone, Default)]
+pub struct PostFilterParams {
+    /// FTS search query (empty = no search filter).
+    pub search_query: String,
+    /// Year filter from calendar archive.
+    pub year: Option<i32>,
+    /// Month filter (1-12) from calendar archive.
+    pub month: Option<u32>,
+    /// Tag filter (post must have ALL of these tags).
+    pub tags: Vec<String>,
+    /// Category filter (post must have at least one of these categories).
+    pub categories: Vec<String>,
+    /// If true, excludes posts that have category "page" (case-insensitive).
+    /// Used by PostsView to hide pages from the posts list.
+    pub exclude_pages: bool,
+    /// If true, only includes posts that have category "page" (case-insensitive).
+    /// Used by PagesView.
+    pub pages_only: bool,
+}
+
+impl PostFilterParams {
+    pub fn has_active_filters(&self) -> bool {
+        !self.search_query.is_empty()
+            || self.year.is_some()
+            || !self.tags.is_empty()
+            || !self.categories.is_empty()
+    }
+}
+
+/// List posts with optional filters applied.
+/// Per sidebar_views.allium: drafts always show regardless of filters.
+/// Published/archived sections respect active filters.
+///
+/// Returns all matching posts (up to `limit`), ordered by created_at DESC.
+/// Caller splits into draft/published/archived sections.
+pub fn list_posts_filtered(
+    conn: &Connection,
+    project_id: &str,
+    filters: &PostFilterParams,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<Vec<Post>> {
+    // Build dynamic WHERE clause
+    let mut conditions = vec!["p.project_id = ?1".to_string()];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id.to_string()));
+
+    // pages_only / exclude_pages
+    if filters.pages_only {
+        conditions.push("LOWER(p.categories) LIKE '%\"page\"%'".to_string());
+    } else if filters.exclude_pages {
+        conditions.push("LOWER(p.categories) NOT LIKE '%\"page\"%'".to_string());
+    }
+
+    // For non-draft posts, apply filters. Drafts always pass.
+    // We build this as: (status = 'draft') OR (filter conditions)
+    let mut filter_conditions: Vec<String> = Vec::new();
+
+    if !filters.search_query.is_empty() {
+        let idx = param_values.len() + 1;
+        let pattern = format!("%{}%", filters.search_query.replace('%', "\\%"));
+        filter_conditions.push(format!("(p.title LIKE ?{idx} ESCAPE '\\')"));
+        param_values.push(Box::new(pattern));
+    }
+
+    if let Some(year) = filters.year {
+        // created_at is unix ms; compute year range
+        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+        let end = chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+
+        if let Some(month) = filters.month {
+            let m_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp() * 1000;
+            let next_month = if month == 12 {
+                chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+            }
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+
+            let idx1 = param_values.len() + 1;
+            let idx2 = param_values.len() + 2;
+            filter_conditions.push(format!("(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"));
+            param_values.push(Box::new(m_start));
+            param_values.push(Box::new(next_month));
+        } else {
+            let idx1 = param_values.len() + 1;
+            let idx2 = param_values.len() + 2;
+            filter_conditions.push(format!("(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"));
+            param_values.push(Box::new(start));
+            param_values.push(Box::new(end));
+        }
+    }
+
+    for tag in &filters.tags {
+        let idx = param_values.len() + 1;
+        let pattern = format!("%\"{}\"%", tag.replace('"', "\\\""));
+        filter_conditions.push(format!("(p.tags LIKE ?{idx})"));
+        param_values.push(Box::new(pattern));
+    }
+
+    for cat in &filters.categories {
+        let idx = param_values.len() + 1;
+        let pattern = format!("%\"{}\"%", cat.replace('"', "\\\""));
+        filter_conditions.push(format!("(p.categories LIKE ?{idx})"));
+        param_values.push(Box::new(pattern));
+    }
+
+    // If there are active filter conditions, apply them only to non-draft posts
+    if !filter_conditions.is_empty() {
+        let combined = filter_conditions.join(" AND ");
+        conditions.push(format!("(p.status = 'draft' OR ({combined}))"));
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let idx_limit = param_values.len() + 1;
+    let idx_offset = param_values.len() + 2;
+    param_values.push(Box::new(limit));
+    param_values.push(Box::new(offset));
+
+    let sql = format!(
+        "SELECT {POST_COLUMNS} FROM posts p WHERE {where_clause} ORDER BY p.created_at DESC LIMIT ?{idx_limit} OFFSET ?{idx_offset}"
+    );
+
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|b| b.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_refs.as_slice(), post_from_row)?;
+    rows.collect()
+}
+
+/// Year/month counts for the calendar archive widget.
+/// Returns (year, month, count) tuples, ordered by year DESC, month DESC.
+pub fn post_calendar_counts(
+    conn: &Connection,
+    project_id: &str,
+    pages_only: bool,
+    exclude_pages: bool,
+) -> rusqlite::Result<Vec<(i32, u32, usize)>> {
+    let page_filter = if pages_only {
+        " AND LOWER(categories) LIKE '%\"page\"%'"
+    } else if exclude_pages {
+        " AND LOWER(categories) NOT LIKE '%\"page\"%'"
+    } else {
+        ""
+    };
+
+    let sql = format!(
+        "SELECT
+            CAST(strftime('%Y', created_at / 1000, 'unixepoch') AS INTEGER) AS y,
+            CAST(strftime('%m', created_at / 1000, 'unixepoch') AS INTEGER) AS m,
+            COUNT(*) AS cnt
+         FROM posts
+         WHERE project_id = ?1{page_filter}
+         GROUP BY y, m
+         ORDER BY y DESC, m DESC"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        Ok((
+            row.get::<_, i32>(0)?,
+            row.get::<_, u32>(1)?,
+            row.get::<_, usize>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Collect all distinct tag values across posts for a project.
+pub fn distinct_post_tags(
+    conn: &Connection,
+    project_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT tags FROM posts WHERE project_id = ?1 AND tags != '[]'"
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        row.get::<_, String>(0)
+    })?;
+    let mut all_tags = std::collections::BTreeSet::new();
+    for json_str in rows {
+        if let Ok(json_str) = json_str {
+            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
+                all_tags.extend(tags);
+            }
+        }
+    }
+    Ok(all_tags.into_iter().collect())
+}
+
+/// Collect all distinct category values across posts for a project.
+pub fn distinct_post_categories(
+    conn: &Connection,
+    project_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT categories FROM posts WHERE project_id = ?1 AND categories != '[]'"
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        row.get::<_, String>(0)
+    })?;
+    let mut all_cats = std::collections::BTreeSet::new();
+    for json_str in rows {
+        if let Ok(json_str) = json_str {
+            if let Ok(cats) = serde_json::from_str::<Vec<String>>(&json_str) {
+                all_cats.extend(cats);
+            }
+        }
+    }
+    Ok(all_cats.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

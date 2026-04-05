@@ -116,6 +116,168 @@ pub fn delete_media(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+// ── Filtered queries (per sidebar_views.allium MediaView) ───
+
+/// Parameters for filtered media listing.
+#[derive(Debug, Clone, Default)]
+pub struct MediaFilterParams {
+    /// FTS search query (empty = no search filter).
+    pub search_query: String,
+    /// Year filter from calendar archive.
+    pub year: Option<i32>,
+    /// Month filter (1-12) from calendar archive.
+    pub month: Option<u32>,
+    /// Tag filter (media must have ALL of these tags).
+    pub tags: Vec<String>,
+}
+
+impl MediaFilterParams {
+    pub fn has_active_filters(&self) -> bool {
+        !self.search_query.is_empty()
+            || self.year.is_some()
+            || !self.tags.is_empty()
+    }
+}
+
+/// List media with optional filters applied.
+pub fn list_media_filtered(
+    conn: &Connection,
+    project_id: &str,
+    filters: &MediaFilterParams,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<Vec<Media>> {
+    let mut conditions = vec!["project_id = ?1".to_string()];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id.to_string()));
+
+    if !filters.search_query.is_empty() {
+        let idx = param_values.len() + 1;
+        let pattern = format!("%{}%", filters.search_query.replace('%', "\\%"));
+        conditions.push(format!(
+            "(COALESCE(title, original_name) LIKE ?{idx} ESCAPE '\\')"
+        ));
+        param_values.push(Box::new(pattern));
+    }
+
+    if let Some(year) = filters.year {
+        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+        let end = chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+
+        if let Some(month) = filters.month {
+            let m_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp() * 1000;
+            let next_month = if month == 12 {
+                chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+            }
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp() * 1000;
+
+            let idx1 = param_values.len() + 1;
+            let idx2 = param_values.len() + 2;
+            conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
+            param_values.push(Box::new(m_start));
+            param_values.push(Box::new(next_month));
+        } else {
+            let idx1 = param_values.len() + 1;
+            let idx2 = param_values.len() + 2;
+            conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
+            param_values.push(Box::new(start));
+            param_values.push(Box::new(end));
+        }
+    }
+
+    for tag in &filters.tags {
+        let idx = param_values.len() + 1;
+        let pattern = format!("%\"{}\"%", tag.replace('"', "\\\""));
+        conditions.push(format!("(tags LIKE ?{idx})"));
+        param_values.push(Box::new(pattern));
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let idx_limit = param_values.len() + 1;
+    let idx_offset = param_values.len() + 2;
+    param_values.push(Box::new(limit));
+    param_values.push(Box::new(offset));
+
+    let sql = format!(
+        "SELECT {MEDIA_COLUMNS} FROM media WHERE {where_clause} ORDER BY created_at DESC LIMIT ?{idx_limit} OFFSET ?{idx_offset}"
+    );
+
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|b| b.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_refs.as_slice(), media_from_row)?;
+    rows.collect()
+}
+
+/// Year/month counts for the media calendar archive widget.
+pub fn media_calendar_counts(
+    conn: &Connection,
+    project_id: &str,
+) -> rusqlite::Result<Vec<(i32, u32, usize)>> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            CAST(strftime('%Y', created_at / 1000, 'unixepoch') AS INTEGER) AS y,
+            CAST(strftime('%m', created_at / 1000, 'unixepoch') AS INTEGER) AS m,
+            COUNT(*) AS cnt
+         FROM media
+         WHERE project_id = ?1
+         GROUP BY y, m
+         ORDER BY y DESC, m DESC"
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        Ok((
+            row.get::<_, i32>(0)?,
+            row.get::<_, u32>(1)?,
+            row.get::<_, usize>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Collect all distinct tag values across media for a project.
+pub fn distinct_media_tags(
+    conn: &Connection,
+    project_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT tags FROM media WHERE project_id = ?1 AND tags != '[]'"
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        row.get::<_, String>(0)
+    })?;
+    let mut all_tags = std::collections::BTreeSet::new();
+    for json_str in rows {
+        if let Ok(json_str) = json_str {
+            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
+                all_tags.extend(tags);
+            }
+        }
+    }
+    Ok(all_tags.into_iter().collect())
+}
+
 /// Test helper: create a minimal Media value (available to sibling test modules).
 #[cfg(test)]
 pub fn make_test_media(id: &str, project_id: &str) -> Media {
