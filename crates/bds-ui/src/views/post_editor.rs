@@ -1,11 +1,13 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, text_editor, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::widget::text::{Shaping, Wrapping};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
+use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -37,7 +39,7 @@ pub struct PostEditorState {
     pub slug: String,
     pub excerpt: String,
     pub content: String,
-    pub editor_content: text_editor::Content,
+    pub editor_buffer: RefCell<EditorBuffer>,
     pub tags: Vec<String>,
     pub categories: Vec<String>,
     pub author: String,
@@ -83,7 +85,7 @@ impl Clone for PostEditorState {
             slug: self.slug.clone(),
             excerpt: self.excerpt.clone(),
             content: self.content.clone(),
-            editor_content: text_editor::Content::with_text(&self.content),
+            editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
             tags: self.tags.clone(),
             categories: self.categories.clone(),
             author: self.author.clone(),
@@ -133,7 +135,7 @@ impl PostEditorState {
             slug: post.slug.clone(),
             excerpt: post.excerpt.clone().unwrap_or_default(),
             content: content.clone(),
-            editor_content: text_editor::Content::with_text(&content),
+            editor_buffer: RefCell::new(EditorBuffer::new(&content)),
             tags: post.tags.clone(),
             categories: post.categories.clone(),
             author: post.author.clone().unwrap_or_default(),
@@ -192,7 +194,7 @@ impl PostEditorState {
                 self.title = saved.title;
                 self.excerpt = saved.excerpt;
                 self.content = saved.content.clone();
-                self.editor_content = text_editor::Content::with_text(&saved.content);
+                self.editor_buffer = RefCell::new(EditorBuffer::new(&saved.content));
                 self.status = saved.status;
                 self.is_dirty = saved.is_dirty;
             }
@@ -201,14 +203,14 @@ impl PostEditorState {
             self.title = draft.title.clone();
             self.excerpt = draft.excerpt.clone();
             self.content = draft.content.clone();
-            self.editor_content = text_editor::Content::with_text(&draft.content);
+            self.editor_buffer = RefCell::new(EditorBuffer::new(&draft.content));
             self.is_dirty = draft.is_dirty;
         } else {
             // No translation yet — blank fields
             self.title = String::new();
             self.excerpt = String::new();
             self.content = String::new();
-            self.editor_content = text_editor::Content::with_text("");
+            self.editor_buffer = RefCell::new(EditorBuffer::new(""));
             self.is_dirty = false;
         }
 
@@ -262,7 +264,7 @@ pub enum PostEditorMsg {
     TitleChanged(String),
     SlugChanged(String),
     ExcerptChanged(String),
-    ContentAction(text_editor::Action),
+    ContentChanged(String),
     AuthorChanged(String),
     TemplateSlugChanged(String),
     ToggleDoNotTranslate(bool),
@@ -461,13 +463,17 @@ pub fn view<'a>(
     };
 
     // ── Content section (fills remaining space) ──
-    let content_placeholder = t(locale, "editor.contentPlaceholder");
     let content_label = inputs::section_header(&t(locale, "editor.content"));
-    let editor_widget = text_editor(&state.editor_content)
-        .placeholder(content_placeholder)
-        .on_action(|action| Message::PostEditor(PostEditorMsg::ContentAction(action)))
-        .height(Length::Fill)
-        .style(editor_style);
+    let editor_widget: Element<'a, Message> = CodeEditor::new(
+            &state.editor_buffer,
+            highlighter(),
+            "md",
+        )
+        .on_change(|msg| match msg {
+            EditorMessage::ContentChanged(s) => Message::PostEditor(PostEditorMsg::ContentChanged(s)),
+            EditorMessage::SaveRequested => Message::PostEditor(PostEditorMsg::Save),
+        })
+        .into();
 
     // ── Footer ──
     let footer = row![
@@ -503,28 +509,6 @@ pub fn view<'a>(
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
-}
-
-/// Dark editor style for the text_editor widget.
-fn editor_style(_theme: &Theme, status: text_editor::Status) -> text_editor::Style {
-    let bg = Color::from_rgb(0.10, 0.11, 0.14);
-    let border_color = match status {
-        text_editor::Status::Focused => Color::from_rgb(0.30, 0.50, 0.80),
-        text_editor::Status::Hovered => Color::from_rgb(0.30, 0.32, 0.40),
-        _ => Color::from_rgb(0.22, 0.24, 0.30),
-    };
-    text_editor::Style {
-        background: iced::Background::Color(bg),
-        border: iced::Border {
-            radius: 4.0.into(),
-            width: 1.0,
-            color: border_color,
-        },
-        icon: Color::from_rgb(0.50, 0.52, 0.58),
-        placeholder: Color::from_rgb(0.40, 0.42, 0.48),
-        value: Color::from_rgb(0.85, 0.87, 0.92),
-        selection: Color::from_rgba(0.30, 0.50, 0.80, 0.40),
-    }
 }
 
 /// Chip input: shows existing chips as removable buttons + a text input to add new ones.

@@ -154,7 +154,7 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
         })
         .collect();
 
-    let cloud = iced::widget::Column::with_children(chips).spacing(6);
+    let cloud = row(chips).spacing(6).wrap();
 
     scrollable(
         container(cloud)

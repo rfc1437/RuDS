@@ -1,15 +1,17 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use std::cell::RefCell;
+
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 use bds_core::model::{Script, ScriptKind, ScriptStatus};
+use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::t;
 
 /// State for an open script editor.
-#[derive(Debug, Clone)]
 pub struct ScriptEditorState {
     pub script_id: String,
     pub title: String,
@@ -18,6 +20,7 @@ pub struct ScriptEditorState {
     pub entrypoint: String,
     pub enabled: bool,
     pub content: String,
+    pub editor_buffer: RefCell<EditorBuffer>,
     pub status: ScriptStatus,
     pub version: i32,
     pub created_at: i64,
@@ -25,6 +28,37 @@ pub struct ScriptEditorState {
     pub discovered_entrypoints: Vec<String>,
     pub validation_error: Option<String>,
     pub is_dirty: bool,
+}
+
+impl std::fmt::Debug for ScriptEditorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptEditorState")
+            .field("script_id", &self.script_id)
+            .field("title", &self.title)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for ScriptEditorState {
+    fn clone(&self) -> Self {
+        Self {
+            script_id: self.script_id.clone(),
+            title: self.title.clone(),
+            slug: self.slug.clone(),
+            kind: self.kind.clone(),
+            entrypoint: self.entrypoint.clone(),
+            enabled: self.enabled,
+            content: self.content.clone(),
+            editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
+            status: self.status.clone(),
+            version: self.version,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            discovered_entrypoints: self.discovered_entrypoints.clone(),
+            validation_error: self.validation_error.clone(),
+            is_dirty: self.is_dirty,
+        }
+    }
 }
 
 impl ScriptEditorState {
@@ -38,7 +72,8 @@ impl ScriptEditorState {
             kind: script.kind.clone(),
             entrypoint: script.entrypoint.clone(),
             enabled: script.enabled,
-            content,
+            content: content.clone(),
+            editor_buffer: RefCell::new(EditorBuffer::new(&content)),
             status: script.status.clone(),
             version: script.version,
             created_at: script.created_at,
@@ -157,16 +192,20 @@ pub fn view<'a>(
         .spacing(16)
         .width(Length::Fill);
 
-    // Content editor (placeholder — will use CodeEditor with Lua syntax)
+    // Content editor (CodeEditor with Lua syntax highlighting)
     let content_section: Element<'a, Message> = column![
         inputs::section_header(&t(locale, "editor.content")),
-        container(
-            text_input("", &state.content)
-                .on_input(|s| Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s)))
-                .size(14)
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(300.0)),
+        Element::from(
+            CodeEditor::new(
+                &state.editor_buffer,
+                highlighter(),
+                "lua",
+            )
+            .on_change(|msg| match msg {
+                EditorMessage::ContentChanged(s) => Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s)),
+                EditorMessage::SaveRequested => Message::ScriptEditor(ScriptEditorMsg::Save),
+            })
+        ),
     ]
     .spacing(8)
     .width(Length::Fill)
@@ -193,24 +232,31 @@ pub fn view<'a>(
     ]
     .padding(8);
 
-    let body = scrollable(
+    // Top pane: header + metadata (scrollable for overflow)
+    let top_pane = scrollable(
         column![
             header,
             meta_row1,
             meta_row2,
-            content_section,
-            validation,
-            footer,
         ]
         .spacing(12)
         .padding(16)
         .width(Length::Fill)
-    );
+    )
+    .height(Length::Shrink);
 
-    container(body)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    // Full layout: top pane (shrink), content (fill), validation + footer (shrink)
+    column![
+        top_pane,
+        content_section,
+        validation,
+        footer,
+    ]
+    .spacing(4)
+    .padding([0, 16])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn status_badge<'a>(status: &ScriptStatus) -> Element<'a, Message> {

@@ -1,7 +1,16 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
+
+/// Global highlighter singleton (expensive to create, safe to share).
+static GLOBAL_HIGHLIGHTER: LazyLock<Highlighter> = LazyLock::new(Highlighter::new);
+
+/// Return a reference to the global syntax highlighter.
+pub fn highlighter() -> &'static Highlighter {
+    &GLOBAL_HIGHLIGHTER
+}
 
 /// Syntax highlighter using syntect with line-level caching.
 pub struct Highlighter {

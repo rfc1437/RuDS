@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::sync::OnceLock;
 
 use cosmic_text::{Attrs, Buffer as CosmicBuffer, Family, FontSystem, Metrics, Shaping};
@@ -96,7 +97,7 @@ fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
 
 /// A syntax-highlighting code editor widget for Iced.
 pub struct CodeEditor<'a, Message> {
-    buffer: &'a mut EditorBuffer,
+    buffer: &'a RefCell<EditorBuffer>,
     highlighter: &'a Highlighter,
     extension: &'a str,
     on_change: Option<Box<dyn Fn(EditorMessage) -> Message + 'a>>,
@@ -104,7 +105,7 @@ pub struct CodeEditor<'a, Message> {
 
 impl<'a, Message> CodeEditor<'a, Message> {
     pub fn new(
-        buffer: &'a mut EditorBuffer,
+        buffer: &'a RefCell<EditorBuffer>,
         highlighter: &'a Highlighter,
         extension: &'a str,
     ) -> Self {
@@ -161,6 +162,7 @@ where
     ) {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<EditorState>();
+        let buf = self.buffer.borrow();
 
         // Background
         renderer.fill_quad(
@@ -187,14 +189,14 @@ where
         );
 
         let metrics = mono_metrics();
-        let (cursor_line, cursor_col) = self.buffer.cursor();
-        let scroll = self.buffer.scroll_offset();
+        let (cursor_line, cursor_col) = buf.cursor();
+        let scroll = buf.scroll_offset();
         let visible_lines = (bounds.height / metrics.line_height) as usize + 1;
-        let selection = self.buffer.selection();
+        let selection = buf.selection();
 
         // Pre-compute highlighted lines for visible range
         let syntax = self.highlighter.syntax_for_extension(self.extension);
-        let full_text = self.buffer.text();
+        let full_text = buf.text();
         let highlighted = self.highlighter.highlight_lines(&full_text, syntax);
 
         let font = iced::Font::MONOSPACE;
@@ -202,7 +204,7 @@ where
         // Render visible lines
         for vis_idx in 0..visible_lines {
             let line_idx = scroll + vis_idx;
-            if line_idx >= self.buffer.line_count() {
+            if line_idx >= buf.line_count() {
                 break;
             }
 
@@ -217,8 +219,7 @@ where
             if let Some(sel) = selection {
                 if !sel.is_empty() {
                     let (start, end) = sel.ordered();
-                    let line_len = self
-                        .buffer
+                    let line_len = buf
                         .line(line_idx)
                         .map(|l| {
                             let len = l.len_chars();
@@ -319,7 +320,7 @@ where
                     );
                     x_off += span_width;
                 }
-            } else if let Some(line) = self.buffer.line(line_idx) {
+            } else if let Some(line) = buf.line(line_idx) {
                 // Fallback: plain text rendering
                 let mut line_text: String = line.chars().collect();
                 if line_text.ends_with('\n') {
@@ -390,8 +391,9 @@ where
                     state.is_dragging = true;
 
                     if let Some(pos) = cursor.position_in(bounds) {
+                        let mut buf = self.buffer.borrow_mut();
                         let line = (pos.y / metrics.line_height) as usize
-                            + self.buffer.scroll_offset();
+                            + buf.scroll_offset();
                         let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
                             as usize;
 
@@ -405,11 +407,11 @@ where
                             && (state.last_click_col as isize - col as isize).unsigned_abs() < 3;
 
                         if is_double_click {
-                            self.buffer.select_word_at(line, col);
+                            buf.select_word_at(line, col);
                             state.last_click_time = None; // reset
                         } else {
-                            self.buffer.clear_selection();
-                            self.buffer.set_cursor(line, col);
+                            buf.clear_selection();
+                            buf.set_cursor(line, col);
                             state.last_click_time = Some(now);
                             state.last_click_line = line;
                             state.last_click_col = col;
@@ -426,15 +428,16 @@ where
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging && state.is_focused {
                     if let Some(pos) = cursor.position_in(bounds) {
+                        let mut buf = self.buffer.borrow_mut();
                         let line = (pos.y / metrics.line_height) as usize
-                            + self.buffer.scroll_offset();
+                            + buf.scroll_offset();
                         let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
                             as usize;
                         // Extend selection by simulating shift+movement
-                        let clamped_line = line.min(self.buffer.line_count().saturating_sub(1));
-                        let clamped_col = if clamped_line < self.buffer.line_count() {
+                        let clamped_line = line.min(buf.line_count().saturating_sub(1));
+                        let clamped_col = if clamped_line < buf.line_count() {
                             col.min(
-                                self.buffer
+                                buf
                                     .line(clamped_line)
                                     .map(|l| {
                                         let len = l.len_chars();
@@ -449,20 +452,21 @@ where
                         } else {
                             0
                         };
-                        self.buffer
-                            .set_selection(
-                                self.buffer
-                                    .selection()
-                                    .map(|s| s.anchor_line)
-                                    .unwrap_or(self.buffer.cursor().0),
-                                self.buffer
-                                    .selection()
-                                    .map(|s| s.anchor_col)
-                                    .unwrap_or(self.buffer.cursor().1),
+                        let anchor_line = buf
+                            .selection()
+                            .map(|s| s.anchor_line)
+                            .unwrap_or(buf.cursor().0);
+                        let anchor_col = buf
+                            .selection()
+                            .map(|s| s.anchor_col)
+                            .unwrap_or(buf.cursor().1);
+                        buf.set_selection(
+                                anchor_line,
+                                anchor_col,
                                 clamped_line,
                                 clamped_col,
                             );
-                        self.buffer.set_cursor(clamped_line, clamped_col);
+                        buf.set_cursor(clamped_line, clamped_col);
                     }
                     return Status::Captured;
                 }
@@ -474,7 +478,7 @@ where
                         -(y / metrics.line_height) as isize
                     }
                 };
-                self.buffer.scroll_by(lines);
+                self.buffer.borrow_mut().scroll_by(lines);
                 return Status::Captured;
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -488,35 +492,34 @@ where
                 match key {
                     // Cmd+Z = undo, Cmd+Shift+Z = redo
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "z" => {
-                        if is_shift {
-                            self.buffer.redo();
-                        } else {
-                            self.buffer.undo();
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            if is_shift { buf.redo(); } else { buf.undo(); }
                         }
                         self.emit_change(shell);
                     }
                     // Cmd+Y = redo (Windows convention)
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "y" => {
-                        self.buffer.redo();
+                        self.buffer.borrow_mut().redo();
                         self.emit_change(shell);
                     }
                     // Cmd+A = select all
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "a" => {
-                        self.buffer.select_all();
+                        self.buffer.borrow_mut().select_all();
                     }
                     // Cmd+C = copy
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "c" => {
-                        let text = self.buffer.selected_text();
+                        let text = self.buffer.borrow().selected_text();
                         if !text.is_empty() {
                             clipboard.write(iced::advanced::clipboard::Kind::Standard, text);
                         }
                     }
                     // Cmd+X = cut
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "x" => {
-                        let text = self.buffer.selected_text();
+                        let text = self.buffer.borrow().selected_text();
                         if !text.is_empty() {
                             clipboard.write(iced::advanced::clipboard::Kind::Standard, text);
-                            self.buffer.delete_selection();
+                            self.buffer.borrow_mut().delete_selection();
                             self.emit_change(shell);
                         }
                     }
@@ -525,7 +528,7 @@ where
                         if let Some(text) =
                             clipboard.read(iced::advanced::clipboard::Kind::Standard)
                         {
-                            self.buffer.insert(&text);
+                            self.buffer.borrow_mut().insert(&text);
                             self.emit_change(shell);
                         }
                     }
@@ -537,99 +540,110 @@ where
                     }
                     // Arrow keys with modifiers
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_up();
+                            buf.select_up();
                         } else {
-                            self.buffer.move_up();
+                            buf.move_up();
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_down();
+                            buf.select_down();
                         } else {
-                            self.buffer.move_down();
+                            buf.move_down();
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift && is_alt {
-                            self.buffer.select_word_left();
+                            buf.select_word_left();
                         } else if is_shift {
-                            self.buffer.select_left();
+                            buf.select_left();
                         } else if is_alt {
-                            self.buffer.move_word_left();
+                            buf.move_word_left();
                         } else {
-                            self.buffer.move_left();
+                            buf.move_left();
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift && is_alt {
-                            self.buffer.select_word_right();
+                            buf.select_word_right();
                         } else if is_shift {
-                            self.buffer.select_right();
+                            buf.select_right();
                         } else if is_alt {
-                            self.buffer.move_word_right();
+                            buf.move_word_right();
                         } else {
-                            self.buffer.move_right();
+                            buf.move_right();
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Home) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_home();
+                            buf.select_home();
                         } else {
-                            self.buffer.move_home();
+                            buf.move_home();
                         }
                     }
                     keyboard::Key::Named(keyboard::key::Named::End) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_end();
+                            buf.select_end();
                         } else {
-                            self.buffer.move_end();
+                            buf.move_end();
                         }
                     }
                     keyboard::Key::Named(keyboard::key::Named::PageUp) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_page_up(vis);
+                            buf.select_page_up(vis);
                         } else {
-                            self.buffer.move_page_up(vis);
+                            buf.move_page_up(vis);
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::PageDown) => {
+                        let mut buf = self.buffer.borrow_mut();
                         if is_shift {
-                            self.buffer.select_page_down(vis);
+                            buf.select_page_down(vis);
                         } else {
-                            self.buffer.move_page_down(vis);
+                            buf.move_page_down(vis);
                         }
-                        self.buffer.ensure_cursor_visible(vis);
+                        buf.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
-                        if is_alt {
-                            // Option+Backspace = delete word left
-                            self.buffer.select_word_left();
-                            self.buffer.delete_selection();
-                        } else {
-                            self.buffer.backspace();
+                        {
+                            let mut buf = self.buffer.borrow_mut();
+                            if is_alt {
+                                // Option+Backspace = delete word left
+                                buf.select_word_left();
+                                buf.delete_selection();
+                            } else {
+                                buf.backspace();
+                            }
                         }
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Delete) => {
-                        self.buffer.delete_forward();
+                        self.buffer.borrow_mut().delete_forward();
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        self.buffer.insert("\n");
+                        self.buffer.borrow_mut().insert("\n");
                         self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        self.buffer.insert("    ");
+                        self.buffer.borrow_mut().insert("    ");
                         self.emit_change(shell);
                     }
                     keyboard::Key::Character(ref c) if !is_cmd => {
-                        self.buffer.insert(c);
+                        self.buffer.borrow_mut().insert(c);
                         self.emit_change(shell);
                     }
                     _ => return Status::Ignored,
@@ -645,7 +659,7 @@ where
 impl<'a, Message> CodeEditor<'a, Message> {
     fn emit_change(&self, shell: &mut Shell<'_, Message>) {
         if let Some(ref on_change) = self.on_change {
-            let text = self.buffer.text();
+            let text = self.buffer.borrow().text();
             shell.publish((on_change)(EditorMessage::ContentChanged(text)));
         }
     }

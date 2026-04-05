@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::widget::text_editor;
 use iced::{Element, Subscription, Task};
 
 use bds_core::db::Database;
@@ -464,8 +463,12 @@ impl BdsApp {
                     }
                     // Extract content language from project metadata
                     if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
-                        self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                        let main_lang = meta.main_language.unwrap_or_else(|| "en".to_string());
+                        self.content_language = main_lang.clone();
                         self.blog_languages = meta.blog_languages;
+                        if !self.blog_languages.contains(&main_lang) {
+                            self.blog_languages.insert(0, main_lang);
+                        }
                     }
                 }
                 self.refresh_counts();
@@ -487,8 +490,12 @@ impl BdsApp {
                             if let Some(data_dir) = self.data_dir.clone() {
                                 let _ = engine::meta::startup_sync(&data_dir);
                                 if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
-                                    self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                                    let main_lang = meta.main_language.unwrap_or_else(|| "en".to_string());
+                                    self.content_language = main_lang.clone();
                                     self.blog_languages = meta.blog_languages;
+                                    if !self.blog_languages.contains(&main_lang) {
+                                        self.blog_languages.insert(0, main_lang);
+                                    }
                                 }
                             }
                             let name = self.active_project.as_ref().map(|p| p.name.clone()).unwrap_or_default();
@@ -928,13 +935,9 @@ impl BdsApp {
                             PostEditorMsg::TitleChanged(s) => { state.title = s; state.is_dirty = true; }
                             PostEditorMsg::SlugChanged(s) => { state.slug = s; state.is_dirty = true; }
                             PostEditorMsg::ExcerptChanged(s) => { state.excerpt = s; state.is_dirty = true; }
-                            PostEditorMsg::ContentAction(action) => {
-                                let is_edit = matches!(action, text_editor::Action::Edit(_));
-                                state.editor_content.perform(action);
-                                if is_edit {
-                                    state.content = state.editor_content.text();
-                                    state.is_dirty = true;
-                                }
+                            PostEditorMsg::ContentChanged(new_text) => {
+                                state.content = new_text;
+                                state.is_dirty = true;
                             }
                             PostEditorMsg::AuthorChanged(s) => { state.author = s; state.is_dirty = true; }
                             PostEditorMsg::TemplateSlugChanged(s) => { state.template_slug = s; state.is_dirty = true; }
@@ -1026,7 +1029,10 @@ impl BdsApp {
                             TemplateEditorMsg::SlugChanged(s) => { state.slug = s; state.is_dirty = true; }
                             TemplateEditorMsg::KindChanged(k) => { state.kind = k.0; state.is_dirty = true; }
                             TemplateEditorMsg::EnabledChanged(b) => { state.enabled = b; state.is_dirty = true; }
-                            TemplateEditorMsg::ContentChanged(s) => { state.content = s; state.is_dirty = true; }
+                            TemplateEditorMsg::ContentChanged(new_text) => {
+                                state.content = new_text;
+                                state.is_dirty = true;
+                            }
                             TemplateEditorMsg::Save => {
                                 return self.save_template_editor(&tab_id);
                             }
@@ -1065,9 +1071,9 @@ impl BdsApp {
                             ScriptEditorMsg::KindChanged(k) => { state.kind = k.0; state.is_dirty = true; }
                             ScriptEditorMsg::EntrypointChanged(s) => { state.entrypoint = s; state.is_dirty = true; }
                             ScriptEditorMsg::EnabledChanged(b) => { state.enabled = b; state.is_dirty = true; }
-                            ScriptEditorMsg::ContentChanged(s) => {
-                                state.discovered_entrypoints = engine::script::discover_entrypoints(&s);
-                                state.content = s;
+                            ScriptEditorMsg::ContentChanged(new_text) => {
+                                state.discovered_entrypoints = engine::script::discover_entrypoints(&new_text);
+                                state.content = new_text;
                                 state.is_dirty = true;
                             }
                             ScriptEditorMsg::Save => {
@@ -2065,7 +2071,17 @@ impl BdsApp {
             TabType::Templates => {
                 if !self.template_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::template::get_template_by_id(db.conn(), &tab.id) {
-                        Ok(template) => {
+                        Ok(mut template) => {
+                            // Published templates: read content from file
+                            if template.content.is_none() {
+                                if let Some(ref data_dir) = self.data_dir {
+                                    let rel = bds_core::util::paths::template_file_path(&template.slug);
+                                    let path = data_dir.join(&rel);
+                                    if let Ok(body) = std::fs::read_to_string(&path) {
+                                        template.content = Some(body);
+                                    }
+                                }
+                            }
                             self.template_editors.insert(template.id.clone(), TemplateEditorState::from_template(&template));
                         }
                         Err(e) => {
@@ -2077,7 +2093,17 @@ impl BdsApp {
             TabType::Scripts => {
                 if !self.script_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::script::get_script_by_id(db.conn(), &tab.id) {
-                        Ok(script) => {
+                        Ok(mut script) => {
+                            // Published scripts: read content from file
+                            if script.content.is_none() {
+                                if let Some(ref data_dir) = self.data_dir {
+                                    let rel = bds_core::util::paths::script_file_path(&script.slug);
+                                    let path = data_dir.join(&rel);
+                                    if let Ok(body) = std::fs::read_to_string(&path) {
+                                        script.content = Some(body);
+                                    }
+                                }
+                            }
                             self.script_editors.insert(script.id.clone(), ScriptEditorState::from_script(&script));
                         }
                         Err(e) => {
@@ -2096,7 +2122,29 @@ impl BdsApp {
                 }
             }
             TabType::Settings => {
-                // Settings state will be initialized lazily
+                if self.settings_state.is_none() {
+                    let mut state = SettingsViewState::default();
+                    if let Some(ref project) = self.active_project {
+                        state.project_name = project.name.clone();
+                        state.project_description = project.description.clone().unwrap_or_default();
+                        state.data_path = project.data_path.clone().unwrap_or_default();
+                    }
+                    if let Some(ref data_dir) = self.data_dir {
+                        if let Ok(meta) = engine::meta::read_project_json(data_dir) {
+                            state.public_url = meta.public_url.unwrap_or_default();
+                            state.default_author = meta.default_author.unwrap_or_default();
+                            state.max_posts_per_page = meta.max_posts_per_page.to_string();
+                        }
+                        if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
+                            state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();
+                            state.ssh_username = pub_prefs.ssh_user.unwrap_or_default();
+                            state.ssh_remote_path = pub_prefs.ssh_remote_path.unwrap_or_default();
+                            state.ssh_mode = format!("{:?}", pub_prefs.ssh_mode).to_lowercase();
+                        }
+                    }
+                    state.offline_mode = self.offline_mode;
+                    self.settings_state = Some(state);
+                }
             }
             _ => {}
         }

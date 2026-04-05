@@ -1,15 +1,17 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use std::cell::RefCell;
+
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 use bds_core::model::{Template, TemplateKind, TemplateStatus};
+use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::t;
 
 /// State for an open template editor.
-#[derive(Debug, Clone)]
 pub struct TemplateEditorState {
     pub template_id: String,
     pub title: String,
@@ -17,6 +19,7 @@ pub struct TemplateEditorState {
     pub kind: TemplateKind,
     pub enabled: bool,
     pub content: String,
+    pub editor_buffer: RefCell<EditorBuffer>,
     pub status: TemplateStatus,
     pub version: i32,
     pub created_at: i64,
@@ -25,15 +28,46 @@ pub struct TemplateEditorState {
     pub is_dirty: bool,
 }
 
+impl std::fmt::Debug for TemplateEditorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TemplateEditorState")
+            .field("template_id", &self.template_id)
+            .field("title", &self.title)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for TemplateEditorState {
+    fn clone(&self) -> Self {
+        Self {
+            template_id: self.template_id.clone(),
+            title: self.title.clone(),
+            slug: self.slug.clone(),
+            kind: self.kind.clone(),
+            enabled: self.enabled,
+            content: self.content.clone(),
+            editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
+            status: self.status.clone(),
+            version: self.version,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            validation_error: self.validation_error.clone(),
+            is_dirty: self.is_dirty,
+        }
+    }
+}
+
 impl TemplateEditorState {
     pub fn from_template(tpl: &Template) -> Self {
+        let content = tpl.content.clone().unwrap_or_default();
         Self {
             template_id: tpl.id.clone(),
             title: tpl.title.clone(),
             slug: tpl.slug.clone(),
             kind: tpl.kind.clone(),
             enabled: tpl.enabled,
-            content: tpl.content.clone().unwrap_or_default(),
+            content: content.clone(),
+            editor_buffer: RefCell::new(EditorBuffer::new(&content)),
             status: tpl.status.clone(),
             version: tpl.version,
             created_at: tpl.created_at,
@@ -136,16 +170,20 @@ pub fn view<'a>(
     );
     let meta_row2 = row![kind_select, enabled_check].spacing(16).width(Length::Fill);
 
-    // Content editor (text area placeholder — will use CodeEditor widget for liquid)
+    // Content editor (CodeEditor with Liquid/HTML syntax highlighting)
     let content_section: Element<'a, Message> = column![
         inputs::section_header(&t(locale, "editor.content")),
-        container(
-            text_input("", &state.content)
-                .on_input(|s| Message::TemplateEditor(TemplateEditorMsg::ContentChanged(s)))
-                .size(14)
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(300.0)),
+        Element::from(
+            CodeEditor::new(
+                &state.editor_buffer,
+                highlighter(),
+                "liquid",
+            )
+            .on_change(|msg| match msg {
+                EditorMessage::ContentChanged(s) => Message::TemplateEditor(TemplateEditorMsg::ContentChanged(s)),
+                EditorMessage::SaveRequested => Message::TemplateEditor(TemplateEditorMsg::Save),
+            })
+        ),
     ]
     .spacing(8)
     .width(Length::Fill)
@@ -172,24 +210,31 @@ pub fn view<'a>(
     ]
     .padding(8);
 
-    let body = scrollable(
+    // Top pane: header + metadata (scrollable for overflow)
+    let top_pane = scrollable(
         column![
             header,
             meta_row1,
             meta_row2,
-            content_section,
-            validation,
-            footer,
         ]
         .spacing(12)
         .padding(16)
         .width(Length::Fill)
-    );
+    )
+    .height(Length::Shrink);
 
-    container(body)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    // Full layout: top pane (shrink), content (fill), validation + footer (shrink)
+    column![
+        top_pane,
+        content_section,
+        validation,
+        footer,
+    ]
+    .spacing(4)
+    .padding([0, 16])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn status_badge<'a>(status: &TemplateStatus) -> Element<'a, Message> {
