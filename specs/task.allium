@@ -4,10 +4,12 @@
 -- Distilled from: src/main/engine/TaskManager.ts
 
 entity Task {
-    title: String
+    name: String
     status: pending | running | completed | failed | cancelled
     progress: Decimal?              -- 0.0..1.0
     message: String?
+    group_id: String?               -- Optional task grouping
+    group_name: String?
     created_at: Timestamp
 
     transitions status {
@@ -35,9 +37,9 @@ invariant FifoQueue {
 }
 
 rule SubmitTask {
-    when: SubmitTaskRequested(title, work)
+    when: SubmitTaskRequested(name, work)
     let running_tasks = Tasks where status = running
-    ensures: Task.created(title: title, status: pending)
+    ensures: Task.created(name: name, status: pending)
     ensures:
         if running_tasks.count < config.max_concurrent:
             TaskStarted(task, work)
@@ -79,8 +81,8 @@ invariant ProgressThrottled {
 
 -- External tasks: lifecycle controlled by caller (e.g., renderer-side scripts)
 rule RegisterExternalTask {
-    when: RegisterExternalTaskRequested(title)
-    ensures: Task.created(title: title, status: running)
+    when: RegisterExternalTaskRequested(name)
+    ensures: Task.created(name: name, status: running)
     @guidance
         -- External tasks are not managed by the queue
         -- The caller is responsible for updating status

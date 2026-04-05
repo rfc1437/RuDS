@@ -53,8 +53,8 @@ entity Post {
     template_slug: String?
     file_path: String
     checksum: String?
-    tags: Set<String>
-    categories: Set<String>
+    tags: List<String>
+    categories: List<String>
     created_at: Timestamp
     updated_at: Timestamp
     published_at: Timestamp?
@@ -112,8 +112,8 @@ rule CreatePost {
         status: draft,
         author: author,
         language: language,
-        tags: tags ?? {},
-        categories: categories ?? {},
+        tags: tags ?? [],
+        categories: categories ?? [],
         template_slug: template_slug,
         do_not_translate: false,
         file_path: ""
@@ -184,7 +184,6 @@ invariant DateBasedFileLayout {
             slug: post.slug)
 }
 
--- Slug freezing behaviour matches TypeScript app:
--- slug changes allowed on draft posts even if previously published,
--- frozen only while status = published (is_slug_frozen = published_at != null
--- is the guard, but status must also be published for the file to exist)
+-- Slug freeze: once published_at is set, the slug is permanently frozen.
+-- This matches TypeScript behaviour: is_slug_frozen = published_at != null
+-- Even if the post reverts to draft, the slug cannot be changed.

@@ -61,8 +61,10 @@ rule SetActiveProject {
 
 rule DeleteProject {
     when: DeleteProjectRequested(project)
-    requires: project != default_project
-        -- The default project cannot be deleted
+    requires: project.id != "default"
+        -- The default project (id='default') cannot be deleted
+    requires: project.is_active = false
+        -- The currently active project cannot be deleted
     ensures: not exists project
     @guidance
         -- deleteProjectWithData removes DB rows + internal directory
@@ -70,5 +72,12 @@ rule DeleteProject {
 }
 
 config {
+    default_project_id: String = "default"
     default_project_name: String = "My Blog"
+}
+
+invariant DefaultProjectExists {
+    -- A project with id='default' always exists
+    -- It is created on first launch if missing
+    exists p in Projects where p.id = "default"
 }

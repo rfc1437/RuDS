@@ -66,10 +66,11 @@ rule WritePostFile {
 -- ============================================================================
 
 value MediaSidecar {
-    -- File path: media/{id}.md
-    -- Binary file at: media/{filename}
+    -- File path: {binary_path}.meta (e.g., media/2024/03/a1b2c3d4.jpg.meta)
+    -- Binary file at: media/{YYYY}/{MM}/{uuid}.{ext}
+    -- Format: YAML-like key-value (hand-built, not gray-matter frontmatter)
+    -- Note: 'filename' is NOT written to sidecar — it is implicit from the binary path
     id: String              -- UUID v4
-    filename: String        -- Generated filename (e.g., photo_1234567890.jpg)
     original_name: String   -- Original uploaded filename
     mime_type: String
     size: Integer           -- Bytes
@@ -87,7 +88,7 @@ value MediaSidecar {
 
 invariant MediaSidecarLayout {
     for m in Media:
-        m.sidecar_path = format("media/{id}.md", id: m.id)
+        m.sidecar_path = format("{binary_path}.meta", binary_path: m.file_path)
 }
 
 -- ============================================================================
@@ -301,10 +302,11 @@ invariant ConditionalPostFields {
 }
 
 invariant RequiredMediaFields {
-    -- These fields are ALWAYS written for media
+    -- These fields are ALWAYS written for media sidecars
+    -- Note: 'filename' is NOT a sidecar field — it is the binary path itself
     for m in Media:
         required_fields(m) = {
-            id, filename, original_name, mime_type, size,
+            id, original_name, mime_type, size,
             created_at, updated_at, tags
         }
 }

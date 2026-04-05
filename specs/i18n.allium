@@ -36,7 +36,8 @@ invariant LanguageNormalization {
 
 invariant MenuTranslations {
     -- Menu item labels are separately translatable
-    -- translateMenu() uses render locale, not UI locale
+    -- translateMenu() uses UI locale (system/OS locale), NOT render locale
+    -- This follows the OS convention: menus match the system language
 }
 
 invariant RenderTranslations {

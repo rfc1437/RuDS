@@ -15,25 +15,41 @@ use "./search.allium" as search
 -- ============================================================================
 
 value MediaFileLayout {
-    -- Binary assets stored in: media/{filename}
-    -- Sidecar metadata in: media/{id}.md
-    -- Thumbnails in: thumbnails/{id}.webp
-    -- Thumbnail source filename: thumbnails/{id}_source.{ext}
-    binary_path: String       -- media/{filename}
-    sidecar_path: String      -- media/{id}.md
-    thumbnail_path: String    -- thumbnails/{id}.webp
-    thumbnail_source_path: String -- thumbnails/{id}_source.{ext}
+    -- Binary assets stored in: media/{YYYY}/{MM}/{uuid}.{ext}
+    -- Sidecar metadata in: {binary_path}.meta
+    -- Thumbnails in: thumbnails/{id[0:2]}/{id}-{size}.webp
+    -- (ai thumbnail is JPEG: thumbnails/{id[0:2]}/{id}-ai.jpg)
+    binary_path: String       -- media/{YYYY}/{MM}/{uuid}.{ext}
+    sidecar_path: String      -- {binary_path}.meta
+    thumbnail_small: String   -- thumbnails/{prefix}/{id}-small.webp
+    thumbnail_medium: String  -- thumbnails/{prefix}/{id}-medium.webp
+    thumbnail_large: String   -- thumbnails/{prefix}/{id}-large.webp
+    thumbnail_ai: String      -- thumbnails/{prefix}/{id}-ai.jpg
 }
 
 invariant MediaFileNaming {
     -- Original filename is preserved in original_name field
-    -- Stored filename is generated: {timestamp}_{random}.{ext}
-    -- Example: 1710512345678_abc123.jpg
+    -- Stored filename uses UUID v4: {uuid}.{ext}
+    -- Example: a1b2c3d4-e5f6-7890-abcd-ef1234567890.jpg
     for m in Media:
-        m.filename = format("{timestamp}_{random}.{ext}",
-            timestamp: m.created_at.milliseconds,
-            random: generate_random_string(6),
+        m.filename = format("{uuid}.{ext}",
+            uuid: generate_uuid_v4(),
             ext: file_extension(m.original_name))
+}
+
+invariant ThumbnailPathBucketing {
+    -- Thumbnails are bucketed by first 2 chars of media ID
+    -- This avoids filesystem slowdowns from too many files in one directory
+    for m in Media:
+        let prefix = m.id[0:2]
+        m.thumbnails.small = format("thumbnails/{prefix}/{id}-small.webp",
+            prefix: prefix, id: m.id)
+        m.thumbnails.medium = format("thumbnails/{prefix}/{id}-medium.webp",
+            prefix: prefix, id: m.id)
+        m.thumbnails.large = format("thumbnails/{prefix}/{id}-large.webp",
+            prefix: prefix, id: m.id)
+        m.thumbnails.ai = format("thumbnails/{prefix}/{id}-ai.jpg",
+            prefix: prefix, id: m.id)
 }
 
 -- ============================================================================
@@ -41,49 +57,69 @@ invariant MediaFileNaming {
 -- ============================================================================
 
 config {
-    -- Thumbnail configuration
-    thumbnail_width: Integer = 400
-    thumbnail_height: Integer = 300
-    thumbnail_fit: String = "cover"  -- "cover", "contain", "fill"
-    thumbnail_quality: Integer = 80   -- WEBP quality 1-100
-    thumbnail_format: String = "webp" -- Output format
+    -- Four thumbnail sizes generated per image
+    thumbnail_small_width: Integer = 150
+    thumbnail_medium_width: Integer = 400
+    thumbnail_large_width: Integer = 800
+    thumbnail_ai_size: Integer = 448       -- 448x448 square crop, JPEG
+    thumbnail_quality: Integer = 80        -- WebP quality, hardcoded
+    thumbnail_format: String = "webp"      -- All sizes except AI
+    thumbnail_ai_format: String = "jpeg"   -- AI thumbnail only
 }
 
-rule GenerateThumbnail {
+rule GenerateThumbnails {
     when: MediaImported(media)
     requires: is_image(media.mime_type)
-    -- Generate thumbnail from source image
+    -- Generate all four thumbnail sizes
     ensures: ThumbnailGenerated(
         source: media.file_path,
-        destination: media.thumbnail_path,
-        width: config.thumbnail_width,
-        height: config.thumbnail_height,
-        fit: config.thumbnail_fit,
+        destination: media.thumbnails.small,
+        width: config.thumbnail_small_width,
         quality: config.thumbnail_quality,
         format: config.thumbnail_format
     )
-    ensures: ThumbnailSourceSaved(
+    ensures: ThumbnailGenerated(
         source: media.file_path,
-        destination: media.thumbnail_source_path
+        destination: media.thumbnails.medium,
+        width: config.thumbnail_medium_width,
+        quality: config.thumbnail_quality,
+        format: config.thumbnail_format
+    )
+    ensures: ThumbnailGenerated(
+        source: media.file_path,
+        destination: media.thumbnails.large,
+        width: config.thumbnail_large_width,
+        quality: config.thumbnail_quality,
+        format: config.thumbnail_format
+    )
+    ensures: ThumbnailGenerated(
+        source: media.file_path,
+        destination: media.thumbnails.ai,
+        size: config.thumbnail_ai_size,
+        format: config.thumbnail_ai_format
     )
 }
 
 -- Thumbnail generation algorithm
 value ThumbnailGeneration {
-    -- 1. Load source image with EXIF orientation
-    -- 2. Auto-rotate based on EXIF orientation tag
-    -- 3. Resize using "cover" fit (crop to fill target dimensions)
-    -- 4. Encode as WEBP with specified quality
-    -- 5. Write to thumbnails/{id}.webp
-    
-    -- Preserve original for source thumbnail
-    -- This allows regenerating thumbnails at different sizes later
+    -- 1. Load source image
+    -- 2. Read raw image dimensions from header (not EXIF-orientation-aware)
+    -- 3. Resize: small/medium/large preserve aspect ratio (width-constrained)
+    --    AI thumbnail is a 448x448 center crop
+    -- 4. Encode as WebP (quality 80) for small/medium/large
+    --    Encode as JPEG for AI thumbnail
+    -- 5. Write to bucketed thumbnail path: thumbnails/{id[0:2]}/{id}-{size}.{ext}
+    --
+    -- No _source copy is made. Thumbnails regenerated from the original binary.
 }
 
 invariant ThumbnailExifHandling {
-    -- EXIF orientation must be respected during thumbnail generation
-    -- Photos taken with phone cameras often have incorrect orientation
-    -- without proper EXIF handling
+    -- TypeScript app reads raw image header dimensions
+    -- It does NOT apply EXIF orientation correction during thumbnail generation
+    -- Width/height stored in DB are the raw header values
+    @guidance
+        -- The Rust implementation should match this: raw header dimensions
+        -- EXIF auto-rotation can be added later as an enhancement
 }
 
 -- ============================================================================
@@ -97,28 +133,32 @@ value ImageProcessing {
         "image/webp", "image/tiff", "image/bmp",
         "image/heic", "image/heif"
     }
-    
+
     -- Output formats:
     output_formats: Set<String> = {
-        "image/webp",  -- Primary output
-        "image/jpeg",  -- Fallback for non-WEBP browsers (not used in Rust version)
-        "image/png"    -- For images with transparency
+        "image/webp",  -- Primary output for thumbnails
+        "image/jpeg"   -- AI thumbnail only
     }
-    
+
     -- Processing rules:
-    -- 1. All images are converted to WEBP for thumbnails
-    -- 2. Original format is preserved for full-size assets
-    -- 3. EXIF data is stripped from thumbnails (privacy)
-    -- 4. EXIF orientation is applied during processing
+    -- 1. All thumbnails (except AI) are encoded as WebP quality 80
+    -- 2. AI thumbnail is encoded as JPEG (for vision model compatibility)
+    -- 3. Original format is preserved for full-size assets (no conversion)
+    -- 4. EXIF data is not stripped (thumbnails are re-encoded, so EXIF is naturally absent)
 }
 
 rule ProcessImageMetadata {
     when: MediaImported(media)
-    -- Extract image metadata
-    ensures: media.width = extract_width(source_file)
-    ensures: media.height = extract_height(source_file)
-    ensures: media.mime_type = detect_mime_type(source_file)
+    -- Extract image metadata from raw file header
+    ensures: media.width = extract_width_from_header(source_file)
+    ensures: media.height = extract_height_from_header(source_file)
+    ensures: media.mime_type = detect_mime_from_extension(source_file)
     ensures: media.size = file_size(source_file)
+}
+
+invariant MimeDetection {
+    -- MIME type is detected from file extension, not from file content/magic bytes
+    -- Extension mapping: .jpg/.jpeg -> image/jpeg, .png -> image/png, etc.
 }
 
 -- ============================================================================
@@ -126,22 +166,20 @@ rule ProcessImageMetadata {
 -- ============================================================================
 
 value MediaTranslationFile {
-    -- File path: media/{id}/{language}.md
-    -- Format: YAML frontmatter with localized metadata
+    -- File path: {binary_path}.{language}.meta
+    -- Format: YAML-like key-value sidecar (same as canonical sidecar)
     translation_for: String   -- Canonical media ID
     language: String          -- ISO 639-1 code
     title: String?
     alt: String?
     caption: String?
-    created_at: Timestamp
-    updated_at: Timestamp
 }
 
 invariant MediaTranslationFileLayout {
     for t in MediaTranslations:
-        -- Stored in subdirectory per media item
-        t.file_path = format("media/{id}/{lang}.md",
-            id: t.translation_for,
+        -- Translation sidecars sit next to the binary, with language suffix
+        t.file_path = format("{binary_path}.{lang}.meta",
+            binary_path: t.media.file_path,
             lang: t.language)
 }
 
@@ -151,25 +189,24 @@ invariant MediaTranslationFileLayout {
 
 rule ImportMedia {
     when: ImportMediaRequested(source_path, project)
-    -- 1. Validate file type (must be image)
-    -- 2. Generate unique filename
-    -- 3. Copy to media/{filename}
-    -- 4. Generate thumbnail
-    -- 5. Create sidecar file with metadata
+    -- 1. Validate file type (must be supported image)
+    -- 2. Generate UUID v4 filename
+    -- 3. Copy to media/{YYYY}/{MM}/{uuid}.{ext}
+    -- 4. Write sidecar {binary_path}.meta
+    -- 5. Generate four thumbnail sizes
     -- 6. Index for search (FTS5)
-    -- 7. Generate embedding (if enabled)
     ensures: media/Media.created(
-        filename: generate_filename(),
+        filename: generate_uuid_v4_filename(source_path),
         original_name: basename(source_path),
-        mime_type: detect_mime_type(source_path),
+        mime_type: detect_mime_from_extension(source_path),
         size: file_size(source_path),
-        width: extract_width(source_path),
-        height: extract_height(source_path),
-        file_path: format("media/{filename}", filename: generated_filename),
-        sidecar_path: format("media/{id}.md", id: media_id),
+        width: extract_width_from_header(source_path),
+        height: extract_height_from_header(source_path),
+        file_path: format("media/{yyyy}/{mm}/{uuid}.{ext}"),
+        sidecar_path: format("media/{yyyy}/{mm}/{uuid}.{ext}.meta"),
         checksum: sha256(source_path)
     )
-    ensures: ThumbnailGenerated(media_id)
+    ensures: ThumbnailsGenerated(media_id)
     ensures: SearchIndexUpdated(media_id)
 }
 
@@ -198,14 +235,17 @@ rule DeleteMedia {
     when: DeleteMediaRequested(media)
     -- 1. Remove from database
     -- 2. Delete binary file
-    -- 3. Delete sidecar file
-    -- 4. Delete thumbnail files
-    -- 5. Remove from search index
-    -- 6. Remove from all post links
+    -- 3. Delete sidecar file ({binary_path}.meta)
+    -- 4. Delete all four thumbnail files
+    -- 5. Delete translation sidecars ({binary_path}.{lang}.meta)
+    -- 6. Remove from search index
+    -- 7. Remove from all post links
     ensures: FileDeleted(media.file_path)
     ensures: FileDeleted(media.sidecar_path)
-    ensures: FileDeleted(media.thumbnail_path)
-    ensures: FileDeleted(media.thumbnail_source_path)
+    ensures: FileDeleted(media.thumbnails.small)
+    ensures: FileDeleted(media.thumbnails.medium)
+    ensures: FileDeleted(media.thumbnails.large)
+    ensures: FileDeleted(media.thumbnails.ai)
     ensures: SearchIndexRemoved(media)
     ensures:
         for p in media.linked_posts:
@@ -221,7 +261,7 @@ rule ValidateMedia {
     -- Check for:
     -- 1. Missing binary files
     -- 2. Missing sidecar files
-    -- 3. Missing thumbnails
+    -- 3. Missing thumbnails (all 4 sizes)
     -- 4. Corrupted image files
     -- 5. Orphan media (not linked to any post)
     for m in project.media:
@@ -229,8 +269,14 @@ rule ValidateMedia {
             ensures: ValidationIssueReported(m, "missing_binary")
         if not file_exists(m.sidecar_path):
             ensures: ValidationIssueReported(m, "missing_sidecar")
-        if not file_exists(m.thumbnail_path):
-            ensures: ValidationIssueReported(m, "missing_thumbnail")
+        if not file_exists(m.thumbnails.small):
+            ensures: ValidationIssueReported(m, "missing_thumbnail_small")
+        if not file_exists(m.thumbnails.medium):
+            ensures: ValidationIssueReported(m, "missing_thumbnail_medium")
+        if not file_exists(m.thumbnails.large):
+            ensures: ValidationIssueReported(m, "missing_thumbnail_large")
+        if not file_exists(m.thumbnails.ai):
+            ensures: ValidationIssueReported(m, "missing_thumbnail_ai")
         if not is_valid_image(m.file_path):
             ensures: ValidationIssueReported(m, "corrupted")
         if not exists (p in Posts where m in p.linked_media):
@@ -238,13 +284,15 @@ rule ValidateMedia {
 }
 
 -- ============================================================================
--- MEDIA EXPORT/EXPORT RULES
+-- MEDIA SIDECAR FORMAT
 -- ============================================================================
 
 invariant MediaSidecarFormat {
-    -- Sidecar files use YAML frontmatter
-    -- Same structure as Media entity fields
+    -- Sidecar files use YAML-like key-value format (hand-built, not gray-matter)
+    -- Path: {binary_path}.meta
     -- Only truthy fields are written (except required fields)
+    -- Fields: title, alt, caption, author, tags, language, linkedPostIds
+    -- Note: 'filename' is NOT written to sidecar (it is the binary filename itself)
 }
 
 -- ============================================================================
@@ -252,22 +300,10 @@ invariant MediaSidecarFormat {
 -- ============================================================================
 
 config {
-    -- Image optimization settings
-    max_original_size: Integer = 20971520  -- 20 MB in bytes
-    max_width: Integer = 4096
-    max_height: Integer = 4096
-    strip_exif: Boolean = true  -- Strip EXIF from thumbnails
-    preserve_color_profile: Boolean = false  -- Don't preserve ICC profiles
-}
-
-rule OptimizeMedia {
-    when: ImportMediaRequested(source_path, project)
-    requires: file_size(source_path) <= config.max_original_size
-    -- Original files are stored as-is (no compression)
-    -- Only thumbnails are optimized
-    @guidance
-        -- Media entity is created by ImportMedia rule
-        -- This rule documents the size constraint
+    -- No file size limit on import (TypeScript app has no max_original_size check)
+    -- Original files are stored as-is (no compression, no resize)
+    -- Only thumbnails are generated from the original
+    strip_exif: Boolean = false  -- Not explicitly stripped; re-encoding naturally omits it
 }
 
 -- ============================================================================
@@ -278,7 +314,6 @@ rule IndexMediaForSearch {
     when: SearchIndexUpdated(media: media/Media)
     -- Index fields: title, alt, caption, original_name, tags
     -- Plus all translation titles, alts, and captions
-    -- Note: media.translations not available in this context
     let all_text = concat(
         media.title,
         media.alt,

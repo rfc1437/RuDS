@@ -35,7 +35,7 @@ entity Media {
     file_path: String
     sidecar_path: String
     checksum: String?
-    tags: Set<String>
+    tags: List<String>
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -85,7 +85,7 @@ rule ImportMedia {
         width: detect_width(source_file),
         height: detect_height(source_file),
         file_path: dest,
-        tags: {}
+        tags: []
     )
     ensures: FileCopied(source_file, dest)
     ensures: SidecarWritten(media)

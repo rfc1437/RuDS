@@ -48,6 +48,7 @@ invariant TemplateFileLayout {
 rule CreateTemplate {
     when: CreateTemplateRequested(title, kind, content)
     let slug = slugify(title)
+    -- Creates a draft template: content stored in DB, no file written yet
     ensures: Template.created(
         slug: slug,
         title: title,
@@ -58,6 +59,25 @@ rule CreateTemplate {
         version: 1,
         file_path: ""
     )
+}
+
+rule CreateAndPublishTemplate {
+    -- Alternative creation path: create + immediately publish (file written)
+    -- TypeScript: createTemplate() does this in one step
+    when: CreateAndPublishTemplateRequested(title, kind, content)
+    let slug = slugify(title)
+    requires: ValidateLiquid(content) = valid
+    ensures: Template.created(
+        slug: slug,
+        title: title,
+        kind: kind,
+        content: null,
+        status: published,
+        enabled: true,
+        version: 1,
+        file_path: format("templates/{slug}.liquid", slug: slug)
+    )
+    ensures: TemplateFileWritten(template)
 }
 
 rule UpdateTemplate {

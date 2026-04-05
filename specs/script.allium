@@ -43,6 +43,7 @@ invariant ScriptFileLayout {
 rule CreateScript {
     when: CreateScriptRequested(title, kind, content, entrypoint)
     let slug = slugify(title)
+    -- Creates a draft script: content stored in DB, no file written yet
     ensures: Script.created(
         slug: slug,
         title: title,
@@ -54,6 +55,26 @@ rule CreateScript {
         version: 1,
         file_path: ""
     )
+}
+
+rule CreateAndPublishScript {
+    -- Alternative creation path: create + immediately publish (file written)
+    -- TypeScript: createScript() does this in one step
+    when: CreateAndPublishScriptRequested(title, kind, content, entrypoint)
+    let slug = slugify(title)
+    requires: ValidateScript(content) = valid
+    ensures: Script.created(
+        slug: slug,
+        title: title,
+        kind: kind,
+        content: null,
+        entrypoint: entrypoint ?? "render",
+        status: published,
+        enabled: true,
+        version: 1,
+        file_path: format("scripts/{slug}.lua", slug: slug)
+    )
+    ensures: ScriptFileWritten(script)
 }
 
 rule PublishScript {
