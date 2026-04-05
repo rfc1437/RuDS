@@ -140,12 +140,6 @@ pub struct BdsApp {
 
     // Toasts
     toasts: Vec<Toast>,
-
-    // macOS lifecycle receiver and retained delegate
-    #[cfg(target_os = "macos")]
-    _lifecycle_rx: std::sync::mpsc::Receiver<crate::platform::macos::LifecycleEvent>,
-    #[cfg(target_os = "macos")]
-    _lifecycle_delegate: Option<objc2::rc::Retained<crate::platform::macos::BdsAppDelegate>>,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -223,11 +217,6 @@ impl BdsApp {
         registry.set_enabled(MenuAction::Replace, false);
         registry.set_enabled(MenuAction::OpenInBrowser, false);
 
-        #[cfg(target_os = "macos")]
-        let (_lifecycle_tx, _lifecycle_rx) = crate::platform::macos::lifecycle_channel();
-        #[cfg(target_os = "macos")]
-        let _lifecycle_delegate = crate::platform::macos::install_delegate(_lifecycle_tx);
-
         (
             Self {
                 db,
@@ -256,10 +245,6 @@ impl BdsApp {
                 project_dropdown_open: false,
                 theme_badge: String::from("pico"),
                 toasts: Vec::new(),
-                #[cfg(target_os = "macos")]
-                _lifecycle_rx,
-                #[cfg(target_os = "macos")]
-                _lifecycle_delegate,
             },
             init_task,
         )
