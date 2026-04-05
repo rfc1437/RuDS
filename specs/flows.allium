@@ -1,0 +1,455 @@
+-- allium: 1
+-- bDS UI/UX Flows and Save Side-Effects
+-- Scope: cross-cutting (all waves)
+-- Distilled from: appStore.ts, PostEditor.tsx, MediaEditor.tsx,
+--   SettingsView.tsx, PostEngine.ts, MediaEngine.ts, TemplateEngine.ts,
+--   ScriptEngine.ts, MetaEngine.ts, TagEngine.ts, NotificationWatcher.ts
+
+-- Describes the reactive data flows that connect sidebar, editor, tab bar,
+-- and backend engine operations. Covers: sidebar->editor, editor->sidebar,
+-- cross-tab coordination, and automatic side-effects on save/publish/delete.
+
+use "./layout.allium" as layout
+use "./tabs.allium" as tabs
+use "./sidebar_views.allium" as sidebar
+use "./editors.allium" as editors
+use "./post.allium" as post
+use "./media.allium" as media
+use "./search.allium" as search
+
+-- ═══════════════════════════════════════════════════════════════
+-- PART 1: UI DATA FLOW MODEL
+-- ═══════════════════════════════════════════════════════════════
+
+-- All UI coordination flows through a shared reactive store (Zustand in TS,
+-- Iced subscriptions in Rust). There are no direct calls between sidebar
+-- and editor. Both read from and write to the store; changes propagate
+-- reactively.
+
+-- ─── 1.1 Sidebar -> Editor flows ──────────────────────────────
+
+rule SidebarEntityClick {
+    when: SidebarItemClicked(entity_type, entity_id, click_type)
+    -- Single click: open as transient/preview tab
+    -- Double click: open as pinned tab
+    -- See sidebar_views.allium for per-view click rules
+    -- Effect: Editor mounts the matching view keyed by entity_id
+    -- Effect: Sidebar item highlights based on activeTabId match
+    -- If a prior transient tab of same type exists, it is replaced,
+    --   and the old editor unmounts (triggering auto-save if dirty)
+}
+
+rule SidebarCreateEntity {
+    when: SidebarCreateRequested(entity_type)
+    -- Posts/Pages: backend creates post, emits post:created,
+    --   store adds to posts list, sidebar re-renders with new item.
+    --   Does NOT open a tab automatically. User must click to open.
+    --   Sets selectedPostId for highlighting, optionally ensures sidebar visible.
+    -- Scripts/Templates: backend creates, emits event, opens tab immediately.
+    -- Chat: creates conversation, opens as pinned tab.
+    -- Import: creates definition, opens as pinned tab.
+}
+
+rule SidebarDeleteEntity {
+    when: SidebarDeleteRequested(entity_type, entity_id)
+    -- Scripts/Templates/Chat/Import: backend deletes entity,
+    --   then closeTab(entity_id) removes its tab,
+    --   activates adjacent tab or shows dashboard.
+    -- Posts/Media: deletion is triggered from the EDITOR (not sidebar).
+    --   See PostEditorDelete / MediaEditorDelete below.
+}
+
+invariant SidebarFilterIsolation {
+    -- Sidebar search/filter state is local to the sidebar component.
+    -- Filtering never affects: active tab, editor content, selectedPostId.
+    -- Only the visible list of items changes.
+}
+
+-- ─── 1.2 Editor -> Sidebar flows ──────────────────────────────
+
+rule PostTitleChanged {
+    when: PostSaved(post_id, updated_post)
+    -- Auto-save fires after 3s idle, or on Ctrl+S, or on unmount/tab switch
+    -- Store's posts array is updated with new title/metadata
+    -- Sidebar PostsList re-renders reactively showing new title
+    -- TabBar re-renders showing new title
+    ensures: dirtyPosts.remove(post_id)
+}
+
+rule PostStatusChanged {
+    when: PostStatusTransitioned(post_id, old_status, new_status)
+    -- Store's posts array is updated with new status
+    -- Sidebar detects status change (compares prev/current status maps)
+    --   and re-runs search/filter if active
+    -- Post moves between draft/published/archived sections in sidebar
+}
+
+rule PostEditorDelete {
+    when: PostDeletedFromEditor(post_id)
+    ensures: store.removePost(post_id)
+    -- Removes from posts array, clears selectedPostId if matching,
+    --   removes from dirtyPosts
+    ensures: closeTab(post_id)
+    -- Sidebar re-renders without the post
+}
+
+rule MediaEditorSave {
+    when: MediaSavedFromEditor(media_id, updated_media)
+    ensures: store.updateMedia(media_id, updated_media)
+    -- Sidebar MediaList re-renders with updated metadata
+}
+
+rule MediaEditorDelete {
+    when: MediaDeletedFromEditor(media_id)
+    ensures: store.removeMedia(media_id)
+    -- Editor.tsx safety net: detects active media tab references
+    --   non-existent item, calls closeTab(activeTab.id)
+    -- Sidebar re-renders without the media item
+}
+
+rule SettingsRebuild {
+    when: SettingsRebuildCompleted(entity_type, new_data)
+    -- Wholesale replacement of posts or media array in store
+    ensures: store.setPosts(new_data) or store.setMedia(new_data)
+    -- Sidebar re-renders entirely with fresh data
+}
+
+-- ─── 1.3 Cross-tab coordination ──────────────────────────────
+
+invariant TabSwitchDoesNotChangeSidebarView {
+    -- Switching tabs does NOT change activeView in the sidebar.
+    -- The sidebar view is controlled exclusively by the Activity Bar.
+    -- Exception: Dashboard post click explicitly sets activeView = "posts".
+}
+
+invariant SidebarHighlightFollowsActiveTab {
+    -- Sidebar item highlight is based on activeTabId === entity.id,
+    -- NOT on selectedPostId/selectedMediaId (which are separate concepts
+    -- used only for post creation flow).
+}
+
+rule TransientTabReplacement {
+    when: TransientTabBeingReplaced(old_tab, new_tab)
+    -- Old editor unmounts -> cleanup auto-save fires if dirty
+    -- New editor mounts with new entity
+    -- Sidebar highlight shifts to newly active entity
+}
+
+rule TabCloseCleanup {
+    when: TabClosed(tab)
+    -- If post tab: PostEditor unmounts, auto-save fires if dirty
+    -- Store activates adjacent tab (prefer right, then left, then null)
+    -- Sidebar highlight updates to new active tab
+    -- If no tabs remain: dashboard shown
+}
+
+rule DashboardPostClick {
+    when: DashboardPostClicked(post_id, click_type)
+    -- This is the ONLY place where opening a tab also switches sidebar view
+    ensures: setActiveView("posts")
+    ensures: setSelectedPost(post_id)
+    if click_type = single:
+        ensures: OpenTabRequested(type: post, id: post_id, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: post, id: post_id, intent: pin)
+}
+
+-- ─── 1.4 Backend -> UI event propagation ─────────────────────
+
+-- Backend engines emit events via IPC. The renderer listens and updates
+-- the shared store. Both sidebar and editor re-render reactively.
+-- Events: post:created, post:updated, post:deleted,
+--   media:imported, media:updated, media:deleted,
+--   template:created/updated/deleted, script:created/updated/deleted,
+--   entity:changed (from CLI/MCP mutations via NotificationWatcher)
+
+-- TabBar also listens directly for:
+--   post-updated (title refresh)
+--   bds:scripts-changed (script title refresh)
+--   BDS_EVENT_TEMPLATES_CHANGED (template title refresh)
+--   chat.onTitleUpdated (chat conversation title refresh)
+--   importDefinitions.onNameUpdated (import name refresh)
+
+-- Editor.tsx has safety-net useEffect guards that:
+--   Close media tabs when referenced media no longer exists in store
+--   Clear selectedPostId/selectedMediaId when entity is gone
+
+-- ═══════════════════════════════════════════════════════════════
+-- PART 2: ENGINE-LEVEL SAVE SIDE-EFFECTS
+-- ═══════════════════════════════════════════════════════════════
+
+-- When an entity is saved/published/deleted in the engine layer, a chain
+-- of automatic side-effects fires. These are NOT UI-level concerns --
+-- they happen in the backend regardless of which UI triggered them.
+
+-- ─── 2.1 Post operations ─────────────────────────────────────
+
+rule CreatePostSideEffects {
+    when: PostCreated(post)
+    ensures: FTSIndexUpdated(post)
+    ensures: EmbeddingUpdated(post)
+    -- No file written (draft lives in DB)
+}
+
+rule UpdatePostSideEffects {
+    when: PostUpdated(post, changes)
+    -- If post is published and content/metadata changes:
+    --   auto-transition status back to draft
+    -- If slug changed and file exists: rename .md file
+    -- If templateSlug changed on published post: rewrite .md frontmatter
+    ensures: FTSIndexUpdated(post)
+    if changes.content:
+        ensures: PostLinksUpdated(post)
+        -- Parses markdown/HTML links, resolves slugs to post IDs,
+        --   replaces outgoing link rows
+    ensures: EmbeddingUpdated(post)
+}
+
+rule PublishPostSideEffects {
+    when: PostPublished(post)
+    ensures: PostFileWritten(post)
+    -- posts/YYYY/MM/{slug}.md with YAML frontmatter
+    if old_file_path != new_file_path:
+        ensures: OldPostFileDeleted(old_file_path)
+    ensures: post.content = null
+    -- Content cleared from DB; lives in filesystem only
+    ensures: FTSIndexUpdated(post)
+    ensures: PostLinksUpdated(post)
+    -- Also publishes all translations:
+    for t in post.translations:
+        ensures: TranslationFileWritten(t)
+        ensures: t.content = null
+    ensures: EmbeddingUpdated(post)
+}
+
+rule DeletePostSideEffects {
+    when: PostDeleted(post)
+    if post.file_path != "":
+        ensures: PostFileDeleted(post.file_path)
+    ensures: PostLinksDeleted(post)
+    -- Deletes both source and target link rows
+    for media_link in post.linked_media:
+        ensures: MediaSidecarUpdated(media_link.media_id)
+        -- Removes post from media sidecar's linkedPostIds
+    ensures: FTSIndexDeleted(post)
+    ensures: EmbeddingRemoved(post)
+}
+
+rule DiscardPostChangesSideEffects {
+    when: PostChangesDiscarded(post)
+    -- Reads published version from file, restores DB metadata,
+    --   sets content=null, status=published
+    ensures: FTSIndexUpdated(post)
+}
+
+-- ─── 2.2 Media operations ────────────────────────────────────
+
+rule ImportMediaSideEffects {
+    when: MediaImported(media)
+    ensures: MediaFileWritten(media)
+    -- media/YYYY/MM/{uuid}.{ext}
+    ensures: SidecarFileWritten(media)
+    -- {path}.meta with YAML-like metadata
+    if media.is_image:
+        ensures: ThumbnailsGenerated(media)
+        -- small=150px, medium=400px, large=800px, ai=448x448
+        -- Asynchronous, emits thumbnailsGenerated on completion
+    ensures: FTSIndexUpdated(media)
+}
+
+rule UpdateMediaSideEffects {
+    when: MediaUpdated(media, changes)
+    ensures: SidecarFileRewritten(media)
+    -- Preserves fields caller didn't set (linkedPostIds, author)
+    ensures: FTSIndexUpdated(media)
+}
+
+rule ReplaceMediaFileSideEffects {
+    when: MediaFileReplaced(media, new_file)
+    -- Copies new file over existing path
+    if media.is_image:
+        ensures: ThumbnailsRegenerated(media)
+        -- Synchronous (awaited), not fire-and-forget
+}
+
+rule DeleteMediaSideEffects {
+    when: MediaDeleted(media)
+    ensures: MediaFileDeleted(media)
+    ensures: SidecarFileDeleted(media)
+    ensures: ThumbnailsDeleted(media)
+    ensures: PostMediaLinksDeleted(media)
+    ensures: MediaTranslationsDeleted(media)
+    -- Also deletes all translated sidecar files: {path}.{lang}.meta
+    ensures: FTSIndexDeleted(media)
+}
+
+-- ─── 2.3 Template operations ─────────────────────────────────
+
+rule CreateTemplateSideEffects {
+    when: TemplateCreated(template)
+    ensures: TemplateFileWritten(template)
+    -- templates/{slug}.liquid with YAML frontmatter
+}
+
+rule UpdateTemplateSideEffects {
+    when: TemplateUpdated(template, changes)
+    ensures: template.version = template.version + 1
+    -- DB-first update, then filesystem; rollback DB on filesystem failure
+    if changes.slug:
+        ensures: TemplateFileRenamed(template)
+        ensures: CascadeSlugUpdate(template)
+        -- Updates posts.templateSlug and tags.postTemplateSlug
+    ensures: TemplateFileRewritten(template)
+}
+
+rule PublishTemplateSideEffects {
+    when: TemplatePublished(template)
+    ensures: TemplateFileWritten(template)
+    ensures: template.content = null
+    -- Content cleared from DB
+}
+
+rule DeleteTemplateSideEffects {
+    when: TemplateDeleted(template, force)
+    if has_references and not force:
+        -- Return without deleting, report reference counts
+        ensures: nothing
+    if force:
+        ensures: ReferencingPostsCleared(template)
+        ensures: ReferencingTagsCleared(template)
+        -- Nulls out templateSlug on posts, postTemplateSlug on tags
+    ensures: TemplateFileDeleted(template)
+}
+
+-- ─── 2.4 Script operations ───────────────────────────────────
+
+-- Same pattern as templates:
+--   Create: write .lua file, insert DB
+--   Update: bump version, rewrite file, update DB
+--   Publish: write file, clear DB content
+--   Delete: delete file, delete DB row
+
+-- ─── 2.5 Tag operations ──────────────────────────────────────
+
+rule DeleteTagSideEffects {
+    when: TagDeleted(tag)
+    -- Background task:
+    -- For each post containing this tag:
+    --   Remove tag from post's tags array in DB
+    --   If published: rewrite .md file (syncPublishedPostFile)
+    ensures: TagsJsonWritten()
+    -- meta/tags.json updated
+}
+
+rule RenameTagSideEffects {
+    when: TagRenamed(old_name, new_name)
+    -- Background task:
+    -- For each post containing old_name:
+    --   Replace old_name with new_name in tags array
+    --   If published: rewrite .md file
+    ensures: TagsJsonWritten()
+}
+
+rule MergeTagsSideEffects {
+    when: TagsMerged(source_tags, target_tag)
+    -- Background task:
+    -- For each source tag, for each post containing it:
+    --   Replace source with target (dedup), update DB
+    --   If published: rewrite .md file
+    -- Delete all source tag rows
+    ensures: TagsJsonWritten()
+}
+
+-- ─── 2.6 Settings/Metadata operations ────────────────────────
+
+rule UpdateProjectMetadataSideEffects {
+    when: ProjectMetadataUpdated(metadata)
+    ensures: ProjectJsonWritten()
+    -- meta/project.json (atomic write)
+    ensures: CategoryMetaJsonWritten()
+    -- meta/category-meta.json (atomic write)
+}
+
+rule AddCategorySideEffects {
+    when: CategoryAdded(name)
+    ensures: ProjectJsonWritten()
+    ensures: CategoryMetaJsonWritten()
+    ensures: CategoriesJsonWritten()
+    -- meta/categories.json
+}
+
+rule RemoveCategorySideEffects {
+    when: CategoryRemoved(name)
+    ensures: ProjectJsonWritten()
+    ensures: CategoryMetaJsonWritten()
+    ensures: CategoriesJsonWritten()
+}
+
+rule UpdatePublishingPreferencesSideEffects {
+    when: PublishingPreferencesUpdated(prefs)
+    ensures: PublishingJsonWritten()
+    -- meta/publishing.json (atomic write)
+}
+
+-- ─── 2.7 Translation operations ──────────────────────────────
+
+rule UpsertPostTranslationSideEffects {
+    when: PostTranslationUpserted(translation, source_post)
+    -- If source is published and this is a manual edit (not auto-publish):
+    --   transition source post to draft (copies content from file to DB)
+    if source_post.status = published and translation.is_manual_edit:
+        ensures: source_post.status = draft
+        ensures: source_post.content = read_file(source_post.file_path)
+    -- If both translation and source are published:
+    --   write translation file, clear translation content from DB
+    if translation.status = published and source_post.status = published:
+        ensures: TranslationFileWritten(translation)
+        ensures: translation.content = null
+    ensures: FTSIndexUpdated(source_post)
+    -- FTS includes all translation content for the source post
+}
+
+rule UpsertMediaTranslationSideEffects {
+    when: MediaTranslationUpserted(translation, media)
+    ensures: TranslatedSidecarWritten(media, translation.language)
+    -- {path}.{lang}.meta
+}
+
+rule DeleteMediaTranslationSideEffects {
+    when: MediaTranslationDeleted(media, language)
+    ensures: TranslatedSidecarDeleted(media, language)
+}
+
+-- ─── 2.8 CLI/MCP notification sync ───────────────────────────
+
+-- When MCP CLI makes mutations, it writes to db_notifications table.
+-- NotificationWatcher polls DB file (chokidar, 100ms debounce):
+--   Reads unseen CLI notifications
+--   Calls engine.invalidate(entityId) if needed
+--   Sends entity:changed IPC event to renderer
+--   Marks rows as seen
+--   Prunes: >1h processed, >24h unprocessed
+
+-- ═══════════════════════════════════════════════════════════════
+-- PART 3: SIDE-EFFECT SUMMARY TABLE
+-- ═══════════════════════════════════════════════════════════════
+
+-- Operation          | File Write   | FTS  | Links | Thumbs | Sidecar | Embed | JSON Meta
+-- -------------------|--------------|------|-------|--------|---------|-------|----------
+-- createPost         | no (draft)   | yes  | no    | no     | no      | yes   | no
+-- updatePost         | rename only* | yes  | if Δ  | no     | no      | yes   | no
+-- publishPost        | .md + trans  | yes  | yes   | no     | no      | yes   | no
+-- deletePost         | delete .md   | del  | del   | no     | Δ media | del   | no
+-- importMedia        | copy file    | yes  | no    | async  | write   | no    | no
+-- updateMedia        | no           | yes  | no    | no     | rewrite | no    | no
+-- replaceMediaFile   | overwrite    | no   | no    | regen  | no      | no    | no
+-- deleteMedia        | delete all   | del  | no    | del    | del all | no    | no
+-- createTemplate     | .liquid      | no   | no    | no     | no      | no    | no
+-- updateTemplate     | rewrite      | no   | no    | no     | no      | no    | no
+-- deleteTemplate     | delete+casc  | no   | no    | no     | no      | no    | no
+-- deleteTag          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- renameTag          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- mergeTags          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- updateMetadata     | no           | no   | no    | no     | no      | no    | *.json
+-- addCategory        | no           | no   | no    | no     | no      | no    | *.json
+-- * updatePost rewrites file only when templateSlug changes on published post

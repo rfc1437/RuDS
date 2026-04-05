@@ -31,6 +31,7 @@ use "./layout.allium" as layout             -- App shell, activity bar, status b
 use "./tabs.allium" as tabs                 -- Tab system, editor routing, preview/pin
 use "./sidebar_views.allium" as sidebar     -- 10 sidebar views, content, behaviour
 use "./editors.allium" as editors           -- Editor view layouts, dashboard, chat panel
+use "./flows.allium" as flows               -- UI/UX flows, save side-effects, event propagation
 
 -- Integration
 use "./git.allium" as git                   -- Git operations, LFS, reconciliation
