@@ -95,15 +95,61 @@ fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
     )
 }
 
+/// Compute word-wrap break offsets for a line. Returns the char offsets where
+/// each visual line starts, e.g. [0, 42, 80]. Always starts with 0.
+/// Breaks at the last space before `max_chars`; falls back to hard break if
+/// there is no space (a single word longer than `max_chars`).
+fn word_wrap_breaks(line_text: &str, max_chars: usize) -> Vec<usize> {
+    if max_chars == 0 {
+        return vec![0];
+    }
+    let chars: Vec<char> = line_text.chars().filter(|c| *c != '\n').collect();
+    let total = chars.len();
+    if total <= max_chars {
+        return vec![0];
+    }
+    let mut breaks = vec![0usize];
+    let mut pos = 0usize;
+    while pos < total {
+        let remaining = total - pos;
+        if remaining <= max_chars {
+            break;
+        }
+        // Look for the last space within [pos..pos+max_chars]
+        let window_end = pos + max_chars;
+        let mut break_at = None;
+        for i in (pos..window_end).rev() {
+            if chars[i] == ' ' || chars[i] == '\t' {
+                break_at = Some(i + 1); // break after the space
+                break;
+            }
+        }
+        let next = break_at.unwrap_or(window_end); // hard break if no space
+        breaks.push(next);
+        pos = next;
+    }
+    breaks
+}
+
+/// Extract the line text (without trailing newline) for a logical line.
+fn line_text_for(buf: &EditorBuffer, line_idx: usize) -> String {
+    buf.line(line_idx)
+        .map(|l| {
+            let s: String = l.chars().collect();
+            if s.ends_with('\n') { s[..s.len() - 1].to_string() } else { s }
+        })
+        .unwrap_or_default()
+}
+
 /// Map a visual row index (from scroll top) to (logical_line, char_offset).
 /// Returns None if beyond end of buffer.
 fn visual_to_logical(
     buf: &EditorBuffer,
     scroll: usize,
     visual_row: usize,
-    chars_per_visual_line: usize,
+    max_chars: usize,
 ) -> Option<(usize, usize)> {
-    if chars_per_visual_line == 0 {
+    if max_chars == 0 {
         // No wrapping — direct 1:1 mapping
         let line = scroll + visual_row;
         return if line < buf.line_count() { Some((line, 0)) } else { None };
@@ -111,20 +157,12 @@ fn visual_to_logical(
     let target = scroll + visual_row;
     let mut vis_count = 0usize;
     for line_idx in 0..buf.line_count() {
-        let line_chars = buf.line(line_idx)
-            .map(|l| {
-                let n = l.len_chars();
-                if n > 0 && l.char(n - 1) == '\n' { n - 1 } else { n }
-            })
-            .unwrap_or(0);
-        let wrap_count = if line_chars > chars_per_visual_line {
-            (line_chars + chars_per_visual_line - 1) / chars_per_visual_line
-        } else {
-            1
-        };
+        let text = line_text_for(buf, line_idx);
+        let breaks = word_wrap_breaks(&text, max_chars);
+        let wrap_count = breaks.len();
         if vis_count + wrap_count > target {
             let sub = target - vis_count;
-            return Some((line_idx, sub * chars_per_visual_line));
+            return Some((line_idx, breaks[sub]));
         }
         vis_count += wrap_count;
     }
@@ -244,37 +282,29 @@ where
 
         let font = iced::Font::MONOSPACE;
         let text_area_width = bounds.width - GUTTER_WIDTH - 8.0;
-        let chars_per_visual_line = if self.word_wrap && text_area_width > metrics.char_width {
+        let max_chars = if self.word_wrap && text_area_width > metrics.char_width {
             (text_area_width / metrics.char_width).floor() as usize
         } else {
             0 // 0 = no wrapping
         };
 
         // Build visual line map: skip 'scroll' visual lines, then render 'visible_lines' visual lines.
-        // Each entry: (logical_line, char_offset, is_first_visual_line)
-        let mut visual_rows: Vec<(usize, usize, bool)> = Vec::new();
-        let mut vis_skip = 0usize; // visual lines to skip for scroll offset
+        // Each entry: (logical_line, char_start, char_end, is_first_visual_line)
+        let mut visual_rows: Vec<(usize, usize, usize, bool)> = Vec::new();
+        let mut vis_skip = 0usize;
         let mut line_idx = 0usize;
 
         while visual_rows.len() < visible_lines && line_idx < buf.line_count() {
-            let line_chars = buf.line(line_idx)
-                .map(|l| {
-                    let n = l.len_chars();
-                    if n > 0 && l.char(n - 1) == '\n' { n - 1 } else { n }
-                })
-                .unwrap_or(0);
+            let text = line_text_for(&buf, line_idx);
+            let breaks = word_wrap_breaks(&text, max_chars);
+            let line_len = text.chars().count();
 
-            let wrap_count = if chars_per_visual_line > 0 && line_chars > chars_per_visual_line {
-                (line_chars + chars_per_visual_line - 1) / chars_per_visual_line
-            } else {
-                1
-            };
-
-            for w in 0..wrap_count {
+            for (w, &start) in breaks.iter().enumerate() {
+                let end = if w + 1 < breaks.len() { breaks[w + 1] } else { line_len };
                 if vis_skip < scroll {
                     vis_skip += 1;
                 } else if visual_rows.len() < visible_lines {
-                    visual_rows.push((line_idx, w * chars_per_visual_line, w == 0));
+                    visual_rows.push((line_idx, start, end, w == 0));
                 }
             }
             line_idx += 1;
@@ -283,7 +313,7 @@ where
         let text_x = bounds.x + GUTTER_WIDTH + 8.0;
 
         // Render visual rows
-        for (vis_idx, &(line_idx, char_offset, is_first)) in visual_rows.iter().enumerate() {
+        for (vis_idx, &(line_idx, char_start, char_end, is_first)) in visual_rows.iter().enumerate() {
             let y = bounds.y + vis_idx as f32 * metrics.line_height;
             if y + metrics.line_height < bounds.y || y > bounds.y + bounds.height {
                 continue;
@@ -306,15 +336,10 @@ where
                         let sel_end_col = if line_idx == end.0 { end.1 } else { line_len + 1 };
 
                         // Clip selection to current visual line range
-                        let vis_end = if chars_per_visual_line > 0 {
-                            char_offset + chars_per_visual_line
-                        } else {
-                            usize::MAX
-                        };
-                        let s = sel_start_col.max(char_offset);
-                        let e = sel_end_col.min(vis_end);
+                        let s = sel_start_col.max(char_start);
+                        let e = sel_end_col.min(char_end);
                         if s < e {
-                            let sel_x = text_x + (s - char_offset) as f32 * metrics.char_width;
+                            let sel_x = text_x + (s - char_start) as f32 * metrics.char_width;
                             let sel_w = (e - s) as f32 * metrics.char_width;
                             renderer.fill_quad(
                                 renderer::Quad {
@@ -365,13 +390,9 @@ where
                 }
 
                 // Extract the slice for this visual line
-                let end_char = if chars_per_visual_line > 0 {
-                    (char_offset + chars_per_visual_line).min(chars_with_color.len())
-                } else {
-                    chars_with_color.len()
-                };
-                let slice = if char_offset < chars_with_color.len() {
-                    &chars_with_color[char_offset..end_char]
+                let end = char_end.min(chars_with_color.len());
+                let slice = if char_start < chars_with_color.len() {
+                    &chars_with_color[char_start..end]
                 } else {
                     &[]
                 };
@@ -409,13 +430,9 @@ where
             } else if let Some(line) = buf.line(line_idx) {
                 // Fallback: plain text rendering
                 let line_text: String = line.chars().filter(|c| *c != '\n').collect();
-                let end_char = if chars_per_visual_line > 0 {
-                    (char_offset + chars_per_visual_line).min(line_text.len())
-                } else {
-                    line_text.len()
-                };
-                let display_text = if char_offset < line_text.len() {
-                    &line_text[char_offset..end_char]
+                let end = char_end.min(line_text.len());
+                let display_text = if char_start < line_text.len() {
+                    &line_text[char_start..end]
                 } else {
                     ""
                 };
@@ -441,13 +458,22 @@ where
 
             // Draw cursor on this visual line if it contains the cursor
             if line_idx == cursor_line && state.is_focused {
-                let vis_end = if chars_per_visual_line > 0 {
-                    char_offset + chars_per_visual_line
-                } else {
-                    usize::MAX
-                };
-                if cursor_col >= char_offset && cursor_col < vis_end {
-                    let cursor_x = text_x + (cursor_col - char_offset) as f32 * metrics.char_width;
+                if cursor_col >= char_start && cursor_col < char_end {
+                    let cursor_x = text_x + (cursor_col - char_start) as f32 * metrics.char_width;
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: cursor_x, y, width: 2.0, height: metrics.line_height,
+                            },
+                            border: iced::Border::default(),
+                            shadow: iced::Shadow::default(),
+                        },
+                        CURSOR_COLOR,
+                    );
+                }
+                // Also draw cursor at end of last visual line segment
+                if cursor_col == char_end && char_end == line_text_for(&buf, line_idx).chars().count() {
+                    let cursor_x = text_x + (char_end - char_start) as f32 * metrics.char_width;
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
