@@ -44,6 +44,7 @@ fn new_message_variants_constructable() {
         tab_type: TabType::Post,
         title: "Test".to_string(),
         is_transient: false,
+        is_dirty: false,
     };
     let _open = Message::OpenTab(tab);
     let _close = Message::CloseTab("test".into());

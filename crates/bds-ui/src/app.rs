@@ -136,6 +136,7 @@ pub struct BdsApp {
     offline_mode: bool,
     locale_dropdown_open: bool,
     project_dropdown_open: bool,
+    theme_badge: String,
 
     // Toasts
     toasts: Vec<Toast>,
@@ -253,6 +254,7 @@ impl BdsApp {
                 offline_mode: false,
                 locale_dropdown_open: false,
                 project_dropdown_open: false,
+                theme_badge: String::from("pico"),
                 toasts: Vec::new(),
                 #[cfg(target_os = "macos")]
                 _lifecycle_rx,
@@ -296,6 +298,7 @@ impl BdsApp {
                 if let Some(t) = self.tabs.get(idx) {
                     self.active_tab = Some(t.id.clone());
                 }
+                self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
                 Task::none()
             }
@@ -305,6 +308,7 @@ impl BdsApp {
                 } else {
                     self.active_tab = None;
                 }
+                self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
                 Task::none()
             }
@@ -312,6 +316,7 @@ impl BdsApp {
                 if self.tabs.iter().any(|t| t.id == id) {
                     self.active_tab = Some(id);
                 }
+                self.enforce_panel_tab_fallback();
                 Task::none()
             }
             Message::PinTab(id) => {
@@ -643,6 +648,7 @@ impl BdsApp {
             self.offline_mode,
             self.locale_dropdown_open,
             self.project_dropdown_open,
+            &self.theme_badge,
             self.ui_locale,
             &self.toasts,
         )
@@ -692,6 +698,7 @@ impl BdsApp {
                                 tab_type: TabType::Post,
                                 title: post.title.clone(),
                                 is_transient: true,
+                                is_dirty: false,
                             };
                             let idx = tabs::open_tab(&mut self.tabs, tab);
                             if let Some(t) = self.tabs.get(idx) {
@@ -804,10 +811,11 @@ impl BdsApp {
 
     fn open_singleton_tab(&mut self, tab_type: TabType, title: &str) {
         let tab = Tab {
-            id: format!("singleton-{title}"),
+            id: tab_type.singleton_id().to_string(),
             tab_type,
             title: title.to_string(),
             is_transient: false,
+            is_dirty: false,
         };
         let idx = tabs::open_tab(&mut self.tabs, tab);
         if let Some(t) = self.tabs.get(idx) {
@@ -927,6 +935,31 @@ impl BdsApp {
                 0,
             )
             .unwrap_or_default();
+            // Read pico theme from project metadata for status bar badge
+            if let Some(ref data_dir) = self.data_dir {
+                if let Ok(meta) = engine::meta::read_project_json(data_dir) {
+                    if let Some(theme) = meta.pico_theme {
+                        self.theme_badge = theme;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Per layout.allium PanelTabFallback invariant: if the active panel tab
+    /// becomes unavailable (post_links when no post tab active, git_log when
+    /// neither post nor media tab active), fall back to Tasks.
+    fn enforce_panel_tab_fallback(&mut self) {
+        let active_tab_type = self.active_tab.as_ref().and_then(|id| {
+            self.tabs.iter().find(|t| t.id == *id).map(|t| &t.tab_type)
+        });
+        let is_post = active_tab_type == Some(&TabType::Post);
+        let is_post_or_media = is_post || active_tab_type == Some(&TabType::Media);
+
+        match self.panel_tab {
+            PanelTab::PostLinks if !is_post => self.panel_tab = PanelTab::Tasks,
+            PanelTab::GitLog if !is_post_or_media => self.panel_tab = PanelTab::Tasks,
+            _ => {}
         }
     }
 

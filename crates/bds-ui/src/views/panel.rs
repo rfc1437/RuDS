@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, scrollable, text, Space};
 use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
@@ -67,10 +67,14 @@ pub fn view(
     task_snapshots: &[TaskSnapshot],
     output_entries: &[OutputEntry],
     locale: UiLocale,
+    active_tab_is_post: bool,
+    active_tab_is_post_or_media: bool,
 ) -> Element<'static, Message> {
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
 
-    // Tab header
+    // Tab header — per layout.allium: tasks, output, post_links (only when
+    // active editor tab is a post), git_log (only when active tab is post or
+    // media).
     let tasks_btn = button(text(t(locale, "common.tasks")).size(12).shaping(Shaping::Advanced))
         .on_press(Message::SetPanelTab(PanelTab::Tasks))
         .padding([4, 8])
@@ -86,15 +90,34 @@ pub fn view(
         .padding([4, 6])
         .style(close_btn_style);
 
-    let tab_header = row![
-        tasks_btn,
-        output_btn,
-        Space::with_width(Length::Fill),
-        close_btn,
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center)
-    .padding([4, 8]);
+    let mut tab_row: Vec<Element<'static, Message>> = vec![
+        tasks_btn.into(),
+        output_btn.into(),
+    ];
+
+    if active_tab_is_post {
+        let post_links_btn = button(text(t(locale, "panel.postLinks")).size(12).shaping(Shaping::Advanced))
+            .on_press(Message::SetPanelTab(PanelTab::PostLinks))
+            .padding([4, 8])
+            .style(if panel_tab == PanelTab::PostLinks { tab_active } else { tab_inactive });
+        tab_row.push(post_links_btn.into());
+    }
+
+    if active_tab_is_post_or_media {
+        let git_log_btn = button(text(t(locale, "panel.gitLog")).size(12).shaping(Shaping::Advanced))
+            .on_press(Message::SetPanelTab(PanelTab::GitLog))
+            .padding([4, 8])
+            .style(if panel_tab == PanelTab::GitLog { tab_active } else { tab_inactive });
+        tab_row.push(git_log_btn.into());
+    }
+
+    tab_row.push(Space::with_width(Length::Fill).into());
+    tab_row.push(close_btn.into());
+
+    let tab_header = iced::widget::Row::with_children(tab_row)
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .padding([4, 8]);
 
     // Tab content
     let content: Element<'static, Message> = match panel_tab {
@@ -155,6 +178,18 @@ pub fn view(
                 )
                 .into()
             }
+        }
+        PanelTab::PostLinks => {
+            // Post Links content populated in M3 (editor integration)
+            container(text(t(locale, "panel.postLinksPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
+                .padding(8)
+                .into()
+        }
+        PanelTab::GitLog => {
+            // Git Log content populated in extension bucket A (git integration)
+            container(text(t(locale, "panel.gitLogPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
+                .padding(8)
+                .into()
         }
     };
 

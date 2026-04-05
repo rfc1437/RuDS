@@ -7,7 +7,7 @@ use bds_core::model::{Media, Post, Project};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
-use crate::state::tabs::Tab;
+use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
 use crate::views::{activity_bar, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
 
@@ -66,13 +66,14 @@ pub fn view(
     offline_mode: bool,
     locale_dropdown_open: bool,
     project_dropdown_open: bool,
+    theme_badge: &str,
     // i18n
     locale: UiLocale,
     // Toasts
     toasts: &[Toast],
 ) -> Element<'static, Message> {
     // Activity bar (leftmost column)
-    let activity = activity_bar::view(sidebar_view, locale);
+    let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
 
     // Tab bar
     let tabs_el = tab_bar::view(tabs, active_tab);
@@ -83,8 +84,20 @@ pub fn view(
     // Right column: tab bar + content + panel
     let mut right_col = column![tabs_el, content_area];
     if panel_visible {
+        // Determine active tab type for panel tab availability (per layout.allium PanelTabAvailability)
+        let active_tab_type = active_tab.and_then(|id| tabs.iter().find(|t| t.id == id)).map(|t| &t.tab_type);
+        let active_tab_is_post = active_tab_type == Some(&TabType::Post);
+        let active_tab_is_post_or_media = active_tab_is_post || active_tab_type == Some(&TabType::Media);
+
         right_col = right_col.push(separator_h());
-        right_col = right_col.push(panel::view(panel_tab, task_snapshots, output_entries, locale));
+        right_col = right_col.push(panel::view(
+            panel_tab,
+            task_snapshots,
+            output_entries,
+            locale,
+            active_tab_is_post,
+            active_tab_is_post_or_media,
+        ));
     }
     let right = container(right_col.width(Length::Fill).height(Length::Fill))
         .width(Length::Fill)
@@ -102,7 +115,19 @@ pub fn view(
     main_row = main_row.push(right);
     let main_row = main_row.height(Length::Fill);
 
-    // Status bar at bottom
+    // Status bar at bottom — determine active post status for status dot
+    let active_post_status: Option<String> = active_tab.and_then(|id| {
+        tabs.iter().find(|t| t.id == id && t.tab_type == TabType::Post)
+    }).and_then(|tab| {
+        sidebar_posts.iter().find(|p| p.id == tab.id).map(|p| {
+            match p.status {
+                bds_core::model::PostStatus::Draft => "draft".to_string(),
+                bds_core::model::PostStatus::Published => "published".to_string(),
+                bds_core::model::PostStatus::Archived => "archived".to_string(),
+            }
+        })
+    });
+
     let status = status_bar::view(
         active_project_name,
         post_count,
@@ -110,6 +135,8 @@ pub fn view(
         locale,
         offline_mode,
         task_snapshots,
+        theme_badge,
+        active_post_status.as_deref(),
     );
 
     let base_layout: Element<'static, Message> = column![main_row, separator_h(), status]

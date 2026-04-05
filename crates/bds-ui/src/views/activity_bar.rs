@@ -1,9 +1,11 @@
-use iced::widget::{button, column, container, svg, Column, Space};
+use iced::widget::{button, column, container, svg, text, tooltip, Column, Space};
+use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
+use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 
 // ---------------------------------------------------------------------------
@@ -93,11 +95,14 @@ fn bar_background_style(_theme: &Theme) -> container::Style {
 
 pub fn view(
     active_view: SidebarView,
-    _locale: UiLocale,
+    sidebar_visible: bool,
+    locale: UiLocale,
 ) -> Element<'static, Message> {
     let make_btn = |view: SidebarView| -> Element<'static, Message> {
         let handle = svg::Handle::from_memory(icon_svg(view));
-        let is_active = view == active_view;
+        // Per layout.allium ActivityActiveHighlight invariant:
+        // button shows active iff its view == active_view AND sidebar is visible
+        let is_active = view == active_view && sidebar_visible;
 
         // Render SVG: active = full opacity, inactive = 0.4 opacity (like bDS 60% opacity)
         let icon = svg(handle)
@@ -117,7 +122,7 @@ pub fn view(
         .style(if is_active { active_button_style } else { inactive_button_style });
 
         // Active indicator: 2px left border (like bDS/VS Code)
-        if is_active {
+        let btn_row: Element<'static, Message> = if is_active {
             let indicator = container(Space::new(0, 0))
                 .width(Length::Fixed(2.0))
                 .height(Length::Fixed(48.0))
@@ -129,7 +134,13 @@ pub fn view(
         } else {
             let spacer = Space::with_width(2.0);
             iced::widget::row![spacer, btn].into()
-        }
+        };
+
+        // Wrap in tooltip per layout.allium ActivityButton.label_key
+        let tip_text = t(locale, view.i18n_key());
+        tooltip(btn_row, text(tip_text).size(12).shaping(Shaping::Advanced), tooltip::Position::Right)
+            .gap(4)
+            .into()
     };
 
     let top_items: Vec<Element<'static, Message>> = TOP_ACTIVITIES

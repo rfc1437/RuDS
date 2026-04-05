@@ -91,6 +91,7 @@ pub fn view(
                                 tab_type: TabType::Post,
                                 title: p.title.clone(),
                                 is_transient: true,
+                                is_dirty: false,
                             }))
                             .padding([3, 6])
                             .width(Length::Fill)
@@ -123,6 +124,7 @@ pub fn view(
                                 tab_type: TabType::Media,
                                 title: display_name.to_string(),
                                 is_transient: true,
+                                is_dirty: false,
                             }))
                             .padding([3, 6])
                             .width(Length::Fill)
@@ -153,7 +155,7 @@ pub fn view(
     .padding(12);
 
     container(scrollable(content))
-        .width(Length::Fixed(240.0))
+        .width(Length::Fixed(280.0))
         .height(Length::Fill)
         .style(sidebar_style)
         .into()

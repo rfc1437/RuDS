@@ -1,6 +1,6 @@
 use iced::widget::{button, container, row, text, Space};
 use iced::widget::text::Shaping;
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::{Background, Border, Color, Element, Font, Length, Theme};
 
 use crate::app::Message;
 use crate::state::tabs::Tab;
@@ -68,28 +68,41 @@ pub fn view(
     tabs: &[Tab],
     active_tab: Option<&str>,
 ) -> Element<'static, Message> {
+    // Per tabs.allium: "Hidden when no tabs exist."
     if tabs.is_empty() {
-        return container(Space::new(0, 0))
-            .width(Length::Fill)
-            .height(Length::Fixed(35.0))
-            .style(bar_style)
-            .into();
+        return Space::with_height(0).into();
     }
 
     let tab_buttons: Vec<Element<'static, Message>> = tabs
         .iter()
         .map(|tab| {
             let is_active = active_tab == Some(tab.id.as_str());
-            let title_text = if tab.is_transient {
-                format!("{} \u{25CB}", tab.title) // hollow circle for transient
-            } else {
-                tab.title.clone()
-            };
             let tab_id = tab.id.clone();
             let close_id = tab.id.clone();
 
+            // Per tabs.allium: transient tabs show italic title
+            let title_label = if tab.is_transient {
+                text(tab.title.clone())
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .font(Font { style: iced::font::Style::Italic, ..Font::DEFAULT })
+            } else {
+                text(tab.title.clone())
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+            };
+
+            // Per tabs.allium DirtyIndicator: dot for dirty post tabs
+            let dirty_indicator = if tab.is_dirty {
+                text(" \u{25CF}").size(10).shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.90, 0.70, 0.30))
+            } else {
+                text("").size(10)
+            };
+
             let label = row![
-                text(title_text).size(12).shaping(Shaping::Advanced),
+                title_label,
+                dirty_indicator,
                 button(text("\u{2715}").size(10).shaping(Shaping::Advanced))
                     .on_press(Message::CloseTab(close_id))
                     .padding(2)

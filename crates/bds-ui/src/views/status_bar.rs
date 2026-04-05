@@ -117,6 +117,8 @@ pub fn view(
     locale: UiLocale,
     offline_mode: bool,
     task_snapshots: &[TaskSnapshot],
+    theme_badge: &str,
+    active_post_status: Option<&str>,
 ) -> Element<'static, Message> {
     let label_color = Color::from_rgb(0.60, 0.60, 0.65);
 
@@ -157,6 +159,19 @@ pub fn view(
 
     // ── Right side ──
 
+    // Post status indicator dot (per layout.allium StatusBarRight.post_status)
+    let post_status_el: Element<'static, Message> = if let Some(status) = active_post_status {
+        let (dot, color) = match status {
+            "draft" => ("\u{25CB}", Color::from_rgb(0.60, 0.60, 0.65)),      // hollow circle
+            "published" => ("\u{25CF}", Color::from_rgb(0.30, 0.75, 0.40)),   // green filled
+            "archived" => ("\u{25A0}", Color::from_rgb(0.60, 0.60, 0.65)),    // square
+            _ => ("\u{25CF}", Color::from_rgb(0.60, 0.60, 0.65)),
+        };
+        text(dot).size(11).shaping(Shaping::Advanced).color(color).into()
+    } else {
+        Space::with_width(0).into()
+    };
+
     // Post + media counts
     let posts_label = tw(locale, "statusBar.posts", &[("count", &post_count.to_string())]);
     let media_label = tw(locale, "statusBar.media", &[("count", &media_count.to_string())]);
@@ -180,8 +195,10 @@ pub fn view(
         .style(dropdown_trigger);
 
     let right = row![
+        post_status_el,
         text(posts_label).size(11).shaping(Shaping::Advanced).color(label_color),
         text(media_label).size(11).shaping(Shaping::Advanced).color(label_color),
+        text(theme_badge.to_string()).size(11).shaping(Shaping::Advanced).color(label_color),
         airplane_btn,
         locale_trigger,
         text("bDS").size(11).shaping(Shaping::Advanced).color(Color::from_rgb(0.45, 0.45, 0.50)),

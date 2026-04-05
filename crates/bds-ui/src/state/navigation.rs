@@ -32,19 +32,23 @@ impl SidebarView {
             Self::Scripts => "activity.scripts",
             Self::Templates => "activity.templates",
             Self::Tags => "activity.tags",
-            Self::Chat => "activity.chat",
+            Self::Chat => "activity.aiAssistant",
             Self::Import => "activity.import",
-            Self::Git => "activity.git",
-            Self::Settings => "activity.settings",
+            Self::Git => "activity.sourceControl",
+            Self::Settings => "common.settings",
         }
     }
 }
 
 /// Which tab is selected in the bottom panel.
+///
+/// Per layout.allium: tasks, output, post_links, git_log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelTab {
     Tasks,
     Output,
+    PostLinks,
+    GitLog,
 }
 
 /// A snapshot of a running or completed task shown in the panel.
@@ -121,6 +125,6 @@ mod tests {
     #[test]
     fn display_returns_i18n_key() {
         assert_eq!(SidebarView::Posts.to_string(), "activity.posts");
-        assert_eq!(SidebarView::Settings.to_string(), "activity.settings");
+        assert_eq!(SidebarView::Settings.to_string(), "common.settings");
     }
 }

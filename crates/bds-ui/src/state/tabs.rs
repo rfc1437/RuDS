@@ -1,4 +1,6 @@
 /// The kind of content a tab holds.
+///
+/// 17 tab types per tabs.allium spec. Each maps 1:1 to an editor route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabType {
     Post,
@@ -10,18 +12,57 @@ pub enum TabType {
     Import,
     MenuEditor,
     MetadataDiff,
+    GitDiff,
     Scripts,
     Templates,
     Documentation,
+    ApiDocumentation,
     SiteValidation,
     TranslationValidation,
+    FindDuplicates,
 }
 
 impl TabType {
-    /// Singleton tabs may only appear once in the tab bar.
-    /// Every type except `Post` and `Media` is a singleton.
+    /// Singleton tool tabs per tabs.allium: always one instance, id = type name.
+    ///
+    /// Singleton types (10): settings, tags, style, menu_editor,
+    /// documentation, api_documentation, metadata_diff, site_validation,
+    /// translation_validation, find_duplicates.
+    ///
+    /// Entity types (keyed by external ID): post, media, scripts (keyed),
+    /// templates (keyed), chat, import, git_diff.
     pub fn is_singleton(&self) -> bool {
-        !matches!(self, Self::Post | Self::Media)
+        matches!(
+            self,
+            Self::Settings
+                | Self::Style
+                | Self::Tags
+                | Self::MenuEditor
+                | Self::MetadataDiff
+                | Self::Documentation
+                | Self::ApiDocumentation
+                | Self::SiteValidation
+                | Self::TranslationValidation
+                | Self::FindDuplicates
+        )
+    }
+
+    /// Return the canonical string ID used for singleton tabs.
+    pub fn singleton_id(&self) -> &'static str {
+        match self {
+            Self::Settings => "settings",
+            Self::Style => "style",
+            Self::Tags => "tags",
+            Self::MenuEditor => "menu_editor",
+            Self::MetadataDiff => "metadata_diff",
+            Self::Documentation => "documentation",
+            Self::ApiDocumentation => "api_documentation",
+            Self::SiteValidation => "site_validation",
+            Self::TranslationValidation => "translation_validation",
+            Self::FindDuplicates => "find_duplicates",
+            // Entity types don't have a singleton ID — callers should use external IDs
+            _ => "",
+        }
     }
 }
 
@@ -32,24 +73,44 @@ pub struct Tab {
     pub tab_type: TabType,
     pub title: String,
     pub is_transient: bool,
+    /// Only post tabs show dirty state (content differs from saved).
+    pub is_dirty: bool,
 }
 
 /// Open (or focus) a tab in the tab list.
 ///
-/// * **Singleton** — if a tab with the same `TabType` already exists, return
-///   its index instead of inserting a duplicate.
-/// * **Transient** — replace an existing transient tab of the same type, or
-///   append if none exists.
-/// * Otherwise — append unconditionally.
+/// Per tabs.allium `OpenTab` rule:
+///
+/// * **Dedup** — if a tab with same `(type, id)` already exists, activate it.
+///   If the intent was `pin`, also set `is_transient = false`.
+/// * **Singleton** — if a tab of the same singleton type exists, return its
+///   index (singletons have id == type name, so dedup covers this).
+/// * **Transient replacement** — if opening as transient and a transient tab
+///   of same type exists, replace it with the new tab.
+/// * Otherwise — append a new tab.
 ///
 /// Returns the index of the resulting tab.
 pub fn open_tab(tabs: &mut Vec<Tab>, new_tab: Tab) -> usize {
+    // Dedup: exact (type, id) match → reuse
+    if let Some(idx) = tabs
+        .iter()
+        .position(|t| t.tab_type == new_tab.tab_type && t.id == new_tab.id)
+    {
+        // If intent is pin, upgrade to permanent
+        if !new_tab.is_transient {
+            tabs[idx].is_transient = false;
+        }
+        return idx;
+    }
+
+    // Singleton: only one instance allowed (catches id mismatch edge cases)
     if new_tab.tab_type.is_singleton() {
         if let Some(idx) = tabs.iter().position(|t| t.tab_type == new_tab.tab_type) {
             return idx;
         }
     }
 
+    // Transient replacement: replace existing transient of same type
     if new_tab.is_transient {
         if let Some(idx) = tabs
             .iter()
@@ -96,17 +157,18 @@ mod tests {
             tab_type,
             title: id.to_string(),
             is_transient: transient,
+            is_dirty: false,
         }
     }
 
     #[test]
     fn singleton_dedup() {
         let mut tabs = Vec::new();
-        let idx1 = open_tab(&mut tabs, make_tab("s1", TabType::Settings, false));
-        let idx2 = open_tab(&mut tabs, make_tab("s2", TabType::Settings, false));
+        let idx1 = open_tab(&mut tabs, make_tab("settings", TabType::Settings, false));
+        let idx2 = open_tab(&mut tabs, make_tab("settings", TabType::Settings, false));
         assert_eq!(idx1, idx2);
         assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].id, "s1");
+        assert_eq!(tabs[0].id, "settings");
     }
 
     #[test]
@@ -156,6 +218,49 @@ mod tests {
         let i1 = open_tab(&mut tabs, make_tab("p2", TabType::Post, false));
         assert_eq!(i0, 0);
         assert_eq!(i1, 1);
+        assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn entity_dedup_by_type_and_id() {
+        // Re-opening the same (type, id) should not create a new tab.
+        let mut tabs = Vec::new();
+        open_tab(&mut tabs, make_tab("s1", TabType::Scripts, true));
+        open_tab(&mut tabs, make_tab("s2", TabType::Scripts, true));
+        // s2 replaced s1 (transient replacement)
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].id, "s2");
+
+        // Re-open s2 — dedup should reuse
+        let idx = open_tab(&mut tabs, make_tab("s2", TabType::Scripts, false));
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(idx, 0);
+        // Pin intent should upgrade transient to permanent
+        assert!(!tabs[0].is_transient);
+    }
+
+    #[test]
+    fn scripts_not_singleton() {
+        // Script tabs are entity tabs (keyed by scriptId), not singletons
+        let mut tabs = Vec::new();
+        open_tab(&mut tabs, make_tab("s1", TabType::Scripts, false));
+        open_tab(&mut tabs, make_tab("s2", TabType::Scripts, false));
+        assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn templates_not_singleton() {
+        let mut tabs = Vec::new();
+        open_tab(&mut tabs, make_tab("t1", TabType::Templates, false));
+        open_tab(&mut tabs, make_tab("t2", TabType::Templates, false));
+        assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn chat_not_singleton() {
+        let mut tabs = Vec::new();
+        open_tab(&mut tabs, make_tab("c1", TabType::Chat, false));
+        open_tab(&mut tabs, make_tab("c2", TabType::Chat, false));
         assert_eq!(tabs.len(), 2);
     }
 }
