@@ -111,8 +111,8 @@ pub fn list_projects(conn: &Connection) -> EngineResult<Vec<Project>> {
 
 /// Delete a project row (cascading handled by queries).
 /// Rejects deletion of the default project and the currently active project.
-/// Optionally cleans up the project data directory.
-pub fn delete_project(conn: &Connection, project_id: &str, data_dir: Option<&Path>) -> EngineResult<()> {
+/// Only cleans up the internal project data directory (not external custom paths).
+pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Option<&Path>) -> EngineResult<()> {
     // Cannot delete the default project
     if project_id == DEFAULT_PROJECT_ID {
         return Err(EngineError::Validation(
@@ -129,12 +129,20 @@ pub fn delete_project(conn: &Connection, project_id: &str, data_dir: Option<&Pat
         }
     }
 
+    // Only delete internal data directory, never external custom data_path.
+    // The caller must pass the internal path only.
+    let project = q::get_project_by_id(conn, project_id)
+        .map_err(|_| EngineError::NotFound(format!("project {project_id}")))?;
+    let is_custom_path = project.data_path.is_some();
+
     q::delete_project(conn, project_id)?;
 
-    // Clean up filesystem if path provided
-    if let Some(dir) = data_dir {
-        if dir.exists() {
-            let _ = fs::remove_dir_all(dir);
+    // Clean up internal filesystem only (not custom external paths per spec)
+    if !is_custom_path {
+        if let Some(dir) = internal_data_dir {
+            if dir.exists() {
+                let _ = fs::remove_dir_all(dir);
+            }
         }
     }
 
@@ -164,7 +172,6 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
         max_posts_per_page: 50,
         blogmark_category: None,
         pico_theme: None,
-        python_runtime_mode: None,
         semantic_similarity_enabled: false,
         blog_languages: Vec::new(),
     };
@@ -291,11 +298,18 @@ mod tests {
     #[test]
     fn delete_project_removes_row() {
         let (db, dir) = setup();
-        let p_path = dir.path().join("p");
-        let p = create_project(db.conn(), "P", Some(p_path.to_str().unwrap())).unwrap();
-        delete_project(db.conn(), &p.id, Some(&p_path)).unwrap();
+        // Project with no custom data_path → uses internal directory
+        let p = create_project(
+            db.conn(),
+            "P",
+            None,
+        )
+        .unwrap();
+        let internal_dir = dir.path().join("projects").join(&p.id);
+        let _ = std::fs::create_dir_all(&internal_dir);
+        delete_project(db.conn(), &p.id, Some(&internal_dir)).unwrap();
         assert!(list_projects(db.conn()).unwrap().is_empty());
-        assert!(!p_path.exists(), "project directory should be cleaned up");
+        assert!(!internal_dir.exists(), "internal directory should be cleaned up");
     }
 
     #[test]

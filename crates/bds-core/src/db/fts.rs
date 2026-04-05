@@ -182,17 +182,26 @@ pub struct PostSearchFilters<'a> {
     pub offset: Option<usize>,
 }
 
-/// Search posts with filters. Returns matching post IDs.
+/// Search result envelope with pagination metadata per spec.
+#[derive(Debug)]
+pub struct SearchResults {
+    pub post_ids: Vec<String>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// Search posts with filters. Returns matching post IDs with pagination metadata.
 pub fn search_posts_filtered(
     conn: &Connection,
     query: &str,
     language: &str,
     filters: &PostSearchFilters,
-) -> rusqlite::Result<Vec<String>> {
+) -> rusqlite::Result<SearchResults> {
     // Get FTS matches first
     let fts_ids = search_posts(conn, query, language)?;
     if fts_ids.is_empty() {
-        return Ok(vec![]);
+        return Ok(SearchResults { post_ids: vec![], total: 0, offset: filters.offset.unwrap_or(0), limit: filters.limit.unwrap_or(0) });
     }
 
     // Apply filters by querying posts table
@@ -208,6 +217,28 @@ pub fn search_posts_filtered(
         sql.push_str(&format!("AND status = ?{param_idx} "));
         params.push(Box::new(status.to_string()));
         param_idx += 1;
+    }
+
+    if let Some(tags) = filters.tags {
+        // Filter posts whose JSON tags array contains ALL specified tags (case-insensitive)
+        for tag in tags {
+            sql.push_str(&format!(
+                "AND EXISTS (SELECT 1 FROM json_each(posts.tags) WHERE LOWER(json_each.value) = LOWER(?{param_idx})) "
+            ));
+            params.push(Box::new(tag.clone()));
+            param_idx += 1;
+        }
+    }
+
+    if let Some(categories) = filters.categories {
+        // Filter posts whose JSON categories array contains ALL specified categories (case-insensitive)
+        for cat in categories {
+            sql.push_str(&format!(
+                "AND EXISTS (SELECT 1 FROM json_each(posts.categories) WHERE LOWER(json_each.value) = LOWER(?{param_idx})) "
+            ));
+            params.push(Box::new(cat.clone()));
+            param_idx += 1;
+        }
     }
 
     if let Some(year) = filters.year {
@@ -234,13 +265,22 @@ pub fn search_posts_filtered(
 
     let _ = param_idx; // suppress unused warning
 
+    // First get total count (without LIMIT/OFFSET)
+    let count_sql = sql.replace("SELECT id FROM posts", "SELECT COUNT(*) FROM posts");
+    let total: usize = {
+        let mut stmt = conn.prepare(&count_sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        stmt.query_row(params_refs.as_slice(), |row| row.get::<_, usize>(0))?
+    };
+
     sql.push_str("ORDER BY created_at DESC ");
 
-    if let Some(limit) = filters.limit {
+    let offset = filters.offset.unwrap_or(0);
+    let limit = filters.limit.unwrap_or(total);
+
+    if filters.limit.is_some() {
         sql.push_str(&format!("LIMIT {limit} "));
-        if let Some(offset) = filters.offset {
-            sql.push_str(&format!("OFFSET {offset} "));
-        }
+        sql.push_str(&format!("OFFSET {offset} "));
     }
 
     let mut stmt = conn.prepare(&sql)?;
@@ -248,7 +288,8 @@ pub fn search_posts_filtered(
     let rows = stmt.query_map(params_refs.as_slice(), |row| {
         row.get::<_, String>(0)
     })?;
-    rows.collect()
+    let post_ids: Vec<String> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(SearchResults { post_ids, total, offset, limit })
 }
 
 /// Search media by full-text query. Returns matching media IDs.
@@ -524,7 +565,8 @@ mod tests {
             ..Default::default()
         };
         let results = search_posts_filtered(db.conn(), "post", "en", &filters).unwrap();
-        assert_eq!(results, vec!["post1"]);
+        assert_eq!(results.post_ids, vec!["post1"]);
+        assert_eq!(results.total, 1);
     }
 
     #[test]
@@ -557,7 +599,8 @@ mod tests {
             ..Default::default()
         };
         let results = search_posts_filtered(db.conn(), "year", "en", &filters).unwrap();
-        assert_eq!(results, vec!["p2024"]);
+        assert_eq!(results.post_ids, vec!["p2024"]);
+        assert_eq!(results.total, 1);
     }
 
     #[test]
@@ -583,6 +626,9 @@ mod tests {
             ..Default::default()
         };
         let results = search_posts_filtered(db.conn(), "searchable", "en", &filters).unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.post_ids.len(), 2);
+        assert_eq!(results.total, 5);
+        assert_eq!(results.offset, 1);
+        assert_eq!(results.limit, 2);
     }
 }

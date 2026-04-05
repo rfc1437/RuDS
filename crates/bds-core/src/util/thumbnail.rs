@@ -32,9 +32,9 @@ pub enum ThumbnailFit {
 /// Standard thumbnail sizes matching spec: small/medium/large are
 /// width-constrained aspect-preserving; AI is letterboxed on black.
 pub const THUMBNAIL_SIZES: &[ThumbnailSize] = &[
-    ThumbnailSize { name: "small", width: 150, height: 150, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "medium", width: 400, height: 400, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "large", width: 800, height: 800, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "small", width: 150, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "medium", width: 400, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "large", width: 800, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
     ThumbnailSize { name: "ai", width: 448, height: 448, format: ThumbnailFormat::Jpeg, fit: ThumbnailFit::Contain },
 ];
 
@@ -276,11 +276,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let source = create_test_png(dir.path());
         let dest = dir.path().join("thumb.webp");
-        let size = &THUMBNAIL_SIZES[0]; // small: 150 Inside
+        let size = &THUMBNAIL_SIZES[0]; // small: 150 width-constrained
         generate_thumbnail(&source, &dest, size, 80).unwrap();
         assert!(dest.exists());
         let (w, h) = image_dimensions(&dest).unwrap();
-        // 100x80 fits inside 150x150 without enlargement
+        // 100x80 is smaller than 150 wide, no enlargement
         assert_eq!(w, 100);
         assert_eq!(h, 80);
     }

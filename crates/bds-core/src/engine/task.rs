@@ -114,6 +114,7 @@ impl TaskManager {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
             if matches!(entry.status, TaskStatus::Running) {
+                entry.message = Some(error.clone());
                 entry.status = TaskStatus::Failed(error);
             }
         }

@@ -126,7 +126,6 @@ pub fn add_category(data_dir: &Path, category: &str) -> EngineResult<()> {
             CategorySettings {
                 render_in_lists: true,
                 show_title: true,
-                title: None,
                 post_template_slug: None,
                 list_template_slug: None,
             },
@@ -176,7 +175,6 @@ mod tests {
             max_posts_per_page: 25,
             blogmark_category: None,
             pico_theme: None,
-            python_runtime_mode: None,
             semantic_similarity_enabled: false,
             blog_languages: vec!["en".into()],
         };
@@ -209,7 +207,6 @@ mod tests {
             CategorySettings {
                 render_in_lists: true,
                 show_title: true,
-                title: None,
                 post_template_slug: None,
                 list_template_slug: None,
             },
@@ -299,7 +296,6 @@ mod tests {
             CategorySettings {
                 render_in_lists: true,
                 show_title: true,
-                title: None,
                 post_template_slug: None,
                 list_template_slug: None,
             },

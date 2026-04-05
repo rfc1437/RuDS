@@ -46,11 +46,13 @@ pub fn get_active_project(conn: &Connection) -> rusqlite::Result<Project> {
 }
 
 pub fn set_active_project(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("UPDATE projects SET is_active = 0 WHERE is_active = 1", [])?;
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("UPDATE projects SET is_active = 0 WHERE is_active = 1", [])?;
+    tx.execute(
         "UPDATE projects SET is_active = 1 WHERE id = ?1",
         params![id],
     )?;
+    tx.commit()?;
     Ok(())
 }
 

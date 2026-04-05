@@ -196,15 +196,19 @@ pub fn sync_tags_from_posts(
 ) -> EngineResult<Vec<Tag>> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
 
-    // Collect all unique tag names from posts
-    let mut tag_names = std::collections::HashSet::new();
+    // Collect all unique tag names from posts (preserve original casing per spec).
+    // Use a case-insensitive set to avoid duplicates while keeping the first-seen casing.
+    let mut seen_lower = std::collections::HashSet::new();
+    let mut tag_names = Vec::new();
     for post in &posts {
         for tag_name in &post.tags {
-            tag_names.insert(tag_name.to_lowercase());
+            if seen_lower.insert(tag_name.to_lowercase()) {
+                tag_names.push(tag_name.clone());
+            }
         }
     }
 
-    // Create any tags that don't exist yet
+    // Create any tags that don't exist yet (using original casing)
     let now = now_unix_ms();
     for name in &tag_names {
         if tag_q::get_tag_by_project_and_name(conn, project_id, name).is_err() {

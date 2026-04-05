@@ -188,7 +188,7 @@ impl BdsApp {
             .and_then(|p| p.data_path.as_ref())
             .map(PathBuf::from);
 
-        // If no projects exist, create a default one
+        // If no projects exist, ensure the default project per spec
         let init_task = if projects.is_empty() {
             if let Some(ref db) = db {
                 let default_data = dirs::data_dir()
@@ -196,13 +196,11 @@ impl BdsApp {
                     .join("bds")
                     .join("projects")
                     .join("my-blog");
-                match engine::project::create_project(
+                match engine::project::ensure_default_project(
                     db.conn(),
-                    "My Blog",
-                    Some(default_data.to_str().unwrap_or("my-blog")),
+                    Some(&default_data),
                 ) {
                     Ok(project) => {
-                        let _ = engine::project::set_active_project(db.conn(), &project.id);
                         Task::done(Message::ProjectsLoaded(vec![project]))
                     }
                     Err(_) => Task::none(),

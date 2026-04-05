@@ -31,6 +31,13 @@ pub struct MediaRebuildReport {
     pub errors: Vec<String>,
 }
 
+/// Supported image MIME types for import (per media_processing.allium).
+const SUPPORTED_IMAGE_TYPES: &[&str] = &[
+    "image/jpeg", "image/png", "image/gif",
+    "image/webp", "image/tiff", "image/bmp",
+    "image/heic", "image/heif",
+];
+
 /// Import a media file (image, etc.) into the project.
 pub fn import_media(
     conn: &Connection,
@@ -45,14 +52,21 @@ pub fn import_media(
     language: Option<&str>,
     tags: Vec<String>,
 ) -> EngineResult<Media> {
-    let id = Uuid::new_v4().to_string();
-    let now = now_unix_ms();
-
-    // Derive extension from original_name
+    // Validate file type per spec
     let ext = Path::new(original_name)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("bin");
+    let mime_type = mime_from_extension(ext).to_string();
+    if !SUPPORTED_IMAGE_TYPES.contains(&mime_type.as_str()) {
+        return Err(EngineError::Validation(format!(
+            "unsupported file type: {mime_type} (file: {original_name})"
+        )));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let now = now_unix_ms();
+
     let filename = format!("{id}.{ext}");
 
     // Compute target directory and copy file
@@ -65,13 +79,10 @@ pub fn import_media(
     }
     fs::copy(source_path, &abs_file_path)?;
 
-    // Try to get image dimensions (silently ignore errors for non-image files)
+    // Get image dimensions
     let (width, height) = image_dimensions(&abs_file_path)
         .map(|(w, h)| (Some(w as i32), Some(h as i32)))
         .unwrap_or((None, None));
-
-    // Detect MIME type from extension
-    let mime_type = mime_from_extension(ext).to_string();
 
     // Get file size
     let file_size = fs::metadata(&abs_file_path)?.len() as i64;
@@ -542,7 +553,7 @@ fn rebuild_canonical_media(
     let now = now_unix_ms();
 
     let existing = qm::get_media_by_id(conn, &sc.id);
-    match existing {
+    let created = match existing {
         Ok(mut media) => {
             // Update existing media
             media.original_name = sc.original_name;
@@ -561,11 +572,11 @@ fn rebuild_canonical_media(
             media.tags = sc.tags;
             media.updated_at = now;
             qm::update_media(conn, &media)?;
-            Ok(false)
+            false
         }
         Err(_) => {
             let media = Media {
-                id: sc.id,
+                id: sc.id.clone(),
                 project_id: project_id.to_string(),
                 filename,
                 original_name: sc.original_name,
@@ -586,9 +597,17 @@ fn rebuild_canonical_media(
                 updated_at: now,
             };
             qm::insert_media(conn, &media)?;
-            Ok(true)
+            true
         }
+    };
+
+    // Regenerate thumbnails if the binary file exists
+    if abs_file.exists() {
+        let thumbnails_dir = data_dir.join("thumbnails");
+        let _ = generate_all_thumbnails(&abs_file, &thumbnails_dir, &sc.id);
     }
+
+    Ok(created)
 }
 
 /// Rebuild a translation from a `*.{lang}.meta` sidecar. Returns true if created, false if updated.

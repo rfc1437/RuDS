@@ -26,8 +26,6 @@ pub struct ProjectMetadata {
     pub blogmark_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pico_theme: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub python_runtime_mode: Option<String>,
     #[serde(default)]
     pub semantic_similarity_enabled: bool,
     #[serde(default)]
@@ -54,8 +52,6 @@ pub struct CategorySettings {
     pub render_in_lists: bool,
     #[serde(default = "default_true")]
     pub show_title: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_template_slug: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,7 +82,6 @@ mod tests {
             max_posts_per_page: 50,
             blogmark_category: None,
             pico_theme: None,
-            python_runtime_mode: None,
             semantic_similarity_enabled: false,
             blog_languages: vec!["en".into(), "de".into()],
         };
@@ -116,7 +111,6 @@ mod tests {
         let settings: CategorySettings = serde_json::from_str(json).unwrap();
         assert!(settings.render_in_lists);
         assert!(settings.show_title);
-        assert!(settings.title.is_none());
     }
 
     #[test]
@@ -124,7 +118,6 @@ mod tests {
         let settings = CategorySettings {
             render_in_lists: false,
             show_title: true,
-            title: Some("Articles".into()),
             post_template_slug: Some("article-tpl".into()),
             list_template_slug: None,
         };
@@ -163,7 +156,7 @@ mod tests {
             name: "Test".into(),
             description: None, public_url: None, main_language: None,
             default_author: None, max_posts_per_page: 50, blogmark_category: None,
-            pico_theme: None, python_runtime_mode: None,
+            pico_theme: None,
             semantic_similarity_enabled: false, blog_languages: vec![],
         };
         assert!(meta.validate().is_ok());

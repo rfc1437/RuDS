@@ -42,7 +42,7 @@ entity Post {
     language: String?       -- ISO 639-1 code
     do_not_translate: Boolean
 
-    -- Legacy columns (read-only, no longer written)
+    -- Published snapshot columns (written on publish for diff detection)
     published_title: String?
     published_content: String?
     published_tags: String?
@@ -58,7 +58,7 @@ entity PostTranslation {
     title: String
     excerpt: String?
     content: String?        -- Draft body (null when published)
-    status: draft | published | archived
+    status: draft | published
     created_at: Timestamp
     updated_at: Timestamp
     published_at: Timestamp?

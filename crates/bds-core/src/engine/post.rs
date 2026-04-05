@@ -43,8 +43,8 @@ pub fn create_post(
     template_slug: Option<&str>,
 ) -> EngineResult<Post> {
     let id = Uuid::new_v4().to_string();
-    let raw_title = if title.is_empty() { "untitled" } else { title };
-    let base_slug = slugify(raw_title);
+    let slug_source = if title.is_empty() { "untitled" } else { title };
+    let base_slug = slugify(slug_source);
     let base_slug = if base_slug.is_empty() {
         "untitled".to_string()
     } else {
@@ -58,7 +58,7 @@ pub fn create_post(
     let post = Post {
         id,
         project_id: project_id.to_string(),
-        title: raw_title.to_string(),
+        title: title.to_string(),
         slug,
         excerpt: None,
         content: content.map(|s| s.to_string()),
@@ -338,6 +338,12 @@ pub fn delete_post(
     ql::delete_links_by_source(conn, post_id)?;
     conn.execute(
         "DELETE FROM post_links WHERE target_post_id = ?1",
+        params![post_id],
+    )?;
+
+    // Delete post-media associations
+    conn.execute(
+        "DELETE FROM post_media WHERE post_id = ?1",
         params![post_id],
     )?;
 
