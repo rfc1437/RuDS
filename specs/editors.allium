@@ -1,0 +1,415 @@
+-- allium: 1
+-- bDS Editor Views
+-- Scope: UI content area (all waves + extensions)
+-- Distilled from: PostEditor.tsx, MediaEditor.tsx, Editor.tsx (Dashboard),
+--   SettingsView.tsx, StyleView.tsx, ChatPanel.tsx, TagsView
+
+-- Describes the layout and behaviour of each editor view rendered in
+-- the main content area when a tab is active (or dashboard when no tab).
+-- Tab routing is in tabs.allium. Sidebar navigation is in sidebar_views.allium.
+
+use "./tabs.allium" as tabs
+use "./post.allium" as post
+use "./media.allium" as media
+use "./i18n.allium" as i18n
+
+-- ─── Dashboard (no tab active) ───────────────────────────────
+
+-- Shown as default/welcome view when no entity tab is active.
+-- Single centered column.
+
+value Dashboard {
+    title: String
+    subtitle: String
+    stats: DashboardStats
+    timeline: DashboardTimeline
+    tag_cloud: DashboardTagCloud
+    category_cloud: DashboardCategoryCloud
+    recent_posts: List<DashboardRecentPost>
+}
+
+value DashboardStats {
+    -- Three stat cards side by side:
+    total_posts: Integer
+    published_count: Integer
+    draft_count: Integer
+    archived_count: Integer             -- shown only if > 0
+    media_count: Integer
+    image_count: Integer
+    total_media_size: String            -- formatted B/KB/MB/GB
+    tag_count: Integer
+    category_count: Integer
+}
+
+value DashboardTimeline {
+    -- Bar chart of posts over time
+    -- Last 12 months that have data
+    -- Each bar: count label on top, month abbreviation + year below
+    -- Bar height proportional to max count
+    months: List<DashboardTimelineMonth>
+}
+
+value DashboardTimelineMonth {
+    label: String                       -- month abbreviation
+    year: Integer
+    count: Integer
+}
+
+value DashboardTagCloud {
+    -- Up to 40 tags, sorted alphabetically
+    -- Font size scaled 11px-22px based on post count
+    -- Tags with colours get coloured background with contrast text
+    -- Hover title shows post count
+    -- "and N more" text if > 40 tags
+    tags: List<DashboardTag>
+    overflow_count: Integer?
+}
+
+value DashboardTag {
+    name: String
+    count: Integer
+    color: String?
+}
+
+value DashboardCategoryCloud {
+    -- All categories as badge-like tags
+    -- Each shows category name + count
+    categories: List<DashboardCategory>
+}
+
+value DashboardCategory {
+    name: String
+    count: Integer
+}
+
+value DashboardRecentPost {
+    -- Last 5 posts by updatedAt descending
+    -- Each row: title (or "Untitled"), status badge (draft/published), date
+    -- Single-click: preview tab, double-click: pin tab
+    post_id: String
+    title: String
+    status: String
+    date: String
+}
+
+config {
+    dashboard_max_tags: Integer = 40
+    dashboard_tag_min_font: Integer = 11
+    dashboard_tag_max_font: Integer = 22
+    dashboard_recent_count: Integer = 5
+    dashboard_timeline_months: Integer = 12
+}
+
+-- ─── Post editor ──────────────────────────────────────────────
+
+-- Single vertical column. Three regions: header, body, footer.
+
+-- Header bar:
+--   Left: post title (or "Untitled") with dirty indicator dot
+--   Right: status badge, auto-save indicator, Quick Actions dropdown, Publish/Delete buttons
+-- Quick Actions:
+--   AI Analysis (suggests title, excerpt, slug)
+--   Translate Post (opens translation modal)
+
+-- Collapsible Metadata section (starts expanded when title is empty):
+--   Two-column layout. Left column: metadata fields. Right column: linked media panel.
+--   Left column fields:
+--     Title (text input), Tags (autocomplete chip input), Author (text input),
+--     Language (select + AI detect button), Do Not Translate (checkbox),
+--     Slug (read-only), Categories (chip input), Template (select, if templates exist),
+--     PostLinks (backlinks and outlinks)
+--   Right column:
+--     LinkedMediaPanel (media items linked to this post)
+
+-- Language flags bar (inline with metadata toggle):
+--   Row of flag emoji buttons for canonical language + each translation
+--   Styles: status class (draft/published), active indicator
+--   Clicking switches editor content to that language's draft
+
+-- Collapsible Excerpt section:
+--   Excerpt textarea (4 rows)
+
+-- Editor Body:
+--   Toolbar: "Content" label | mode toggle (Visual/Markdown/Preview) | action buttons
+--   Action buttons (markdown mode only): Gallery, Insert Post Link, Insert Media
+--   Visual mode: rich-text WYSIWYG editor
+--   Markdown mode: code editor with markdown-with-macros language
+--     Highlights [[macro ...]] double-bracket syntax
+--     Word wrap on, minimap off, 14px font
+--   Preview mode: iframe showing rendered preview
+--   Supports drag-and-drop of images (imports media, inserts markdown)
+
+-- Footer:
+--   Three date stamps: Created, Updated, Published (published only if publishedAt exists)
+--   Locale-formatted dates
+
+-- Modals:
+--   InsertModal for link search (Ctrl+K) and media search
+--   AISuggestionsModal for AI-generated title/excerpt/slug
+--   Translation modal: select target language, shows existing status
+--   Lightbox for content images
+
+value PostEditorView {
+    post_id: String
+    header: PostEditorHeader
+    metadata_expanded: Boolean
+    excerpt_expanded: Boolean
+    editor_mode: String                 -- visual | markdown | preview
+}
+
+value PostEditorHeader {
+    title: String                       -- post title or "Untitled"
+    is_dirty: Boolean
+    status: String                      -- draft | published | archived
+    is_auto_saving: Boolean
+}
+
+config {
+    post_auto_save_delay: Integer = 3000
+    -- milliseconds of idle before auto-save triggers
+}
+
+invariant PostAutoSave {
+    -- Auto-saves after 3 seconds of idle in the editor
+    -- Also auto-saves on unmount/tab switch
+    -- Ctrl/Cmd+S triggers immediate save
+}
+
+invariant PostDirtyTracking {
+    -- Compares canonical draft + translation drafts against saved state
+    -- Dirty indicator shown in header and tab bar
+}
+
+-- ─── Media editor ─────────────────────────────────────────────
+
+-- Single column: preview area on top, metadata form below.
+
+-- Header bar:
+--   Media display name
+--   Actions: Quick Actions dropdown, Replace File, Save, Delete
+-- Quick Actions:
+--   AI Image Analysis (image/* types only) - suggests title, alt, caption
+--   Detect Language (from metadata text)
+--   Translate Metadata (opens translation target modal)
+
+-- Preview area:
+--   Images: rendered via bds-media:// protocol with cache-busting timestamp
+--   Non-images: SVG file icon placeholder + original filename text
+
+-- Metadata form fields:
+--   File Name (read-only), MIME Type (read-only),
+--   Size (formatted as KB) + Dimensions (W x H, only if width/height exist),
+--   Title (editable), Alt Text (editable), Caption (textarea 3 rows),
+--   Tags (comma-separated text input), Author, Language (select)
+
+-- Translations section (shown only when language is set):
+--   List of existing translations: flag + language name + title
+--   Per-translation: click to edit, refresh button, delete button
+--   "No translations" message when empty
+
+-- Linked Posts section:
+--   "Link to Post" button opens post picker overlay
+--   Post picker: search input, up to 10 unlinked posts, "and N more" if >10
+--   List of currently linked posts (clickable -> navigates), unlink button
+--   "Not linked to any posts" when empty
+
+value MediaEditorView {
+    media_id: String
+    is_image: Boolean
+    file_name: String                   -- originalName, read-only
+    mime_type: String
+    file_size: String                   -- formatted
+    dimensions: String?                 -- "W x H" if available
+    title: String?
+    alt_text: String?
+    caption: String?
+    tags: String?                       -- comma-separated
+    author: String?
+    language: String?
+    translations: List<MediaTranslationItem>
+    linked_posts: List<LinkedPostItem>
+}
+
+value MediaTranslationItem {
+    language: String
+    title: String?
+}
+
+value LinkedPostItem {
+    post_id: String
+    title: String
+}
+
+-- No auto-save; explicit Save button required.
+-- Replace File opens a native file dialog.
+-- Delete shows confirmation with references (linked posts).
+
+-- ─── Settings view ────────────────────────────────────────────
+
+-- VS Code-style settings page with header + search bar + scrollable sections.
+-- Search filters sections by keyword match. "No results" with clear button.
+
+-- 8 sections (style is a separate tab, not a settings section):
+
+-- 1. Project Settings:
+--   Project Name (text), Project Description (textarea 3 rows),
+--   Data Path (text + Browse + Reset), Public URL (url),
+--   Main Language (select), Blog Languages (checkboxes, main disabled),
+--   Default Author (text), Max Posts Per Page (number 1-500 default 50),
+--   Blogmark Category (select), Blogmark Bookmarklet (copy button), Save
+
+-- 2. Editor Settings:
+--   Default Editor Mode (select: WYSIWYG/Markdown/Preview),
+--   Diff View Style (select: Inline/Side-by-side),
+--   Wrap Long Lines (checkbox), Hide Unchanged Regions (checkbox)
+
+-- 3. Content Settings (Categories):
+--   Table: Category | Title | Render in Lists | Show Titles | Post Template | List Template | Remove
+--   Protected categories: article, aside, page, picture (cannot be deleted)
+--   Add Category: text input + Add button. Reset to Defaults button
+
+-- 4. AI Assistant Settings:
+--   API keys: OpenCode, Mistral (masked display + Change, or password input + Save)
+--   Local providers: Ollama enable checkbox + capabilities table,
+--     LM Studio enable checkbox + capabilities table
+--   Offline mode: enable checkbox (disabled if no local providers),
+--     selectors for chat/title/image models (local only)
+--   Default Model (select with optgroup by provider + refresh),
+--     shows: max output tokens, context window, pricing
+--   Title Model (select), Image Analysis Model (vision-capable only)
+--   System Prompt (textarea 12 rows + Save + Reset to Default)
+
+-- 5. Technology Settings:
+--   Python Runtime Mode (select: Web Worker/Main Thread)
+--   Semantic Similarity (checkbox)
+
+-- 6. Publishing Settings (SSH):
+--   Info: SSH key auth only
+--   SSH Mode (select: scp/rsync), SSH Host, SSH Username, SSH Remote Path
+--   Save + Clear buttons
+
+-- 7. Data Maintenance:
+--   Rebuild buttons (6): Posts from Files, Media from Files, Scripts from Files,
+--     Templates from Files, Links, Regenerate Missing Thumbnails
+--   Open Data Folder button
+
+-- 8. MCP Server Settings:
+--   Status badge (port or "Not running")
+--   Per-agent rows: Claude Code, Claude Desktop, GitHub Copilot, Gemini CLI,
+--     OpenCode, Mistral Vibe, OpenAI Codex — each with Add/Remove toggle
+
+-- ─── Style view ───────────────────────────────────────────────
+
+-- Simple vertical layout: header, theme picker, controls row, preview.
+
+-- Theme Picker: grid of theme buttons (one per Pico CSS theme).
+--   Each button: swatch with 3 colour tones (accent, light bg, dark bg), theme name.
+--   Selected theme: highlighted with aria-pressed.
+
+-- Controls row: Preview Mode dropdown (Auto/Light/Dark), Apply Theme button.
+
+-- Preview: iframe of style preview page at 127.0.0.1:4123/__style-preview
+--   with theme and mode query params. Updates live on selection change.
+
+-- Apply Theme persists to project metadata.
+
+-- ─── Tags view ────────────────────────────────────────────────
+
+-- Three sections controlled by sidebar TagsNav:
+
+-- 1. Cloud: tag cloud visualization. Tags sized by post count,
+--    coloured by tag colour. Clickable to select for editing.
+
+-- 2. Manage (Create/Edit): tag name input, colour picker, template select.
+--    Edit existing tag or create new. Delete button with confirmation.
+
+-- 3. Merge: source tag select, target tag select, Merge button.
+--    Merges all posts from source tag into target, removes source.
+
+-- ─── Chat panel ───────────────────────────────────────────────
+
+-- Three-region vertical layout: header, message area, input area.
+
+-- API Key Required screen (shown when no API key):
+--   Key icon, title, description, "Open Settings" button
+
+-- Header:
+--   Left: conversation title (or "New Chat"), CSS ellipsis on overflow
+--   Right: model selector button + dropdown. Groups models by provider.
+
+-- Message area:
+--   Welcome screen (no messages, not streaming): robot icon, tips
+--   Message list: each has avatar (user=person, assistant=robot), role label, text
+--     User messages: plain text
+--     Assistant messages: rendered as GFM Markdown
+--       External images blocked (CSP), shown as links
+--     Tool markers: checkmark/dot, tool name, truncated args (30 char strings)
+--     Streaming: accumulating markdown + tool markers, thinking dots animation
+--   Auto-scrolls to bottom on new messages
+
+-- Input area:
+--   Abort/Stop button (only during streaming, square stop icon)
+--   Auto-growing textarea (max 200px). Enter sends, Shift+Enter newline
+--   Send button (up-arrow icon), disabled when empty or streaming
+
+-- Token usage tracked per conversation (displayed in status bar, not chat panel).
+-- Per-conversation model override via header selector.
+
+config {
+    chat_tool_args_max_length: Integer = 30
+    chat_input_max_height: Integer = 200
+}
+
+-- ─── Git diff view ────────────────────────────────────────────
+
+-- Renders diff for a file (working tree vs HEAD) or a commit.
+-- File diff: id = "git-diff:{filePath}"
+-- Commit diff: id = "git-diff:commit:{commitHash}"
+-- Supports inline and side-by-side diff display modes (from editor settings).
+
+-- ─── Menu editor view ────────────────────────────────────────
+
+-- Visual editor for the OPML navigation menu (meta/menu.opml).
+-- Drag-and-drop reordering of menu items.
+-- Item types: page, submenu, category_archive, home.
+-- Add/remove items, edit labels and targets.
+-- See menu.allium for data model.
+
+-- ─── Metadata diff view ──────────────────────────────────────
+
+-- Shows DB vs filesystem differences for all entity types.
+-- Each diff entry: entity type, field name, DB value, file value.
+-- Actions: apply file value to DB, or apply DB value to file.
+-- See metadata_diff.allium for diff field definitions.
+
+-- ─── Documentation views ─────────────────────────────────────
+
+-- documentation:     renders DOCUMENTATION.md as styled HTML
+-- api_documentation: renders API.md as styled HTML
+
+-- ─── Validation views ────────────────────────────────────────
+
+-- site_validation:         checks generated site for broken links, missing assets
+-- translation_validation:  checks translation completeness across languages
+
+-- ─── Find duplicates view ────────────────────────────────────
+
+-- Uses embedding vectors to find semantically similar posts.
+-- Shows candidate pairs with similarity score.
+-- See embedding.allium for vector details.
+
+-- ─── Script editor view ──────────────────────────────────────
+
+-- Code editor for Lua scripts (macros, utilities, transforms).
+-- Header: script title, kind badge, enabled toggle.
+-- Editor: code editor with Lua syntax highlighting.
+-- Toolbar: Run button, entrypoint selector.
+-- See script.allium for entity model.
+
+-- ─── Template editor view ─────────────────────────────────────
+
+-- Code editor for Liquid templates (post, list, not_found, partial).
+-- Header: template title, kind badge, enabled toggle, version.
+-- Editor: code editor with Liquid syntax highlighting.
+-- Preview: rendered template output in iframe.
+-- See template.allium for entity model and Liquid subset.

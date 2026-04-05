@@ -33,13 +33,20 @@ config {
 -- SidebarEntityList: reusable pattern for scripts, templates, chat, import.
 -- Shows: header with title + create button, scrollable item list,
 -- empty state with message + action CTA.
+-- All titles and names are CSS-truncated with ellipsis when they overflow
+-- the sidebar width.  Hard JS truncation limits are noted per view.
 
--- Date formatting for sidebar items:
---   Today -> time only (e.g. "2:30 PM")
---   Yesterday -> i18n "Yesterday"
---   <7 days -> short weekday (e.g. "Mon")
---   Older -> "Mon DD" format
+-- Relative date formatting for entity list items (chat, scripts, templates, import):
+--   Same day (diffDays=0) -> time only via toLocaleTimeString (e.g. "2:30 PM")
+--   Yesterday (diffDays=1) -> i18n key sidebar.chat.yesterday
+--   <7 days -> short weekday via toLocaleDateString weekday:short (e.g. "Mon")
+--   >=7 days -> short month + day via toLocaleDateString month:short day:numeric (e.g. "Feb 10")
 -- Locale map: en->en-US, de->de-DE, fr->fr-FR, it->it-IT, es->es-ES
+-- Fallback locale: en-US
+
+-- Post/page date formatting (different from relative dates above):
+--   toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })
+--   Example: "Feb 10, 2026"
 
 -- ─── 1. Posts view ────────────────────────────────────────────
 
@@ -64,11 +71,17 @@ value PostsView {
 value PostListItem {
     post_id: String
     type_icon: String                   -- derived from categories (below)
-    title: String                       -- fallback "Untitled"
+    title: String                       -- post.title, fallback "Untitled"; CSS ellipsis on overflow
     language_count: Integer?            -- badge shown when availableLanguages.count > 1
-    date: String                        -- drafts/archived: updatedAt; published: publishedAt ?? updatedAt
+    date: String                        -- locale-formatted (month day, year)
     active: Boolean                     -- highlighted when activeTabId = post.id
 }
+
+-- Per-item data shown (left to right):
+--   [type_icon] [title ...ellipsis]  [lang badge]
+--                                     [date]
+-- Title is CSS-truncated (white-space:nowrap, text-overflow:ellipsis).
+-- Date source: drafts/archived use updatedAt; published use publishedAt ?? updatedAt.
 
 -- Post type icon derivation from categories (first match wins, case-insensitive):
 --   picture/photo/image -> camera icon
@@ -106,11 +119,22 @@ value MediaView {
 
 value MediaGridItem {
     media_id: String
-    has_thumbnail: Boolean              -- image: custom protocol bds-thumb://{id}; non-image: file icon
-    name: String                        -- title truncated 60 chars, fallback originalName
+    has_thumbnail: Boolean              -- image: bds-thumb://{id} protocol; non-image: file icon SVG
+    name: String                        -- title truncated to 60 chars + "..." if over; fallback originalName (no truncation)
     file_size: String                   -- formatted (B / KB / MB)
     tooltip: String                     -- caption ?? originalName
     active: Boolean                     -- highlighted when activeTabId = media.id
+}
+
+-- Per-item data shown in grid cell:
+--   [thumbnail or file icon]
+--   [name ...CSS ellipsis]
+--   [file_size]
+-- Name: JS hard limit of 60 chars on title (substring + "..."), originalName not truncated.
+-- CSS also applies text-overflow:ellipsis as a safety net.
+
+config {
+    media_title_max_length: Integer = 60
 }
 
 rule MediaListClick {
@@ -133,10 +157,14 @@ value ScriptsView {
 
 value ScriptListItem {
     script_id: String
-    title: String
-    date: String                        -- relative date format
+    title: String                       -- CSS ellipsis on overflow
+    date: String                        -- relative date format (see shared patterns)
     active: Boolean
 }
+
+-- Per-item data shown:
+--   [title ...CSS ellipsis]  [delete x]
+--   [relative date]
 
 rule ScriptListClick {
     when: ScriptListItemClicked(script_id, click_type)
@@ -161,10 +189,12 @@ value TemplatesView {
 
 value TemplateListItem {
     template_id: String
-    title: String
-    date: String
+    title: String                       -- CSS ellipsis on overflow
+    date: String                        -- relative date format
     active: Boolean
 }
+
+-- Per-item data shown: same layout as ScriptListItem.
 
 rule TemplateListClick {
     when: TemplateListItemClicked(template_id, click_type)
@@ -238,9 +268,13 @@ value ChatView {
 
 value ChatListItem {
     conversation_id: String
-    title: String                       -- live-updated via onTitleUpdated events
+    title: String                       -- live-updated via onTitleUpdated; CSS ellipsis on overflow
     date: String                        -- relative date format
 }
+
+-- Per-item data shown:
+--   [title ...CSS ellipsis]  [delete x]
+--   [relative date]
 
 rule ChatListClick {
     when: ChatListItemClicked(conversation_id)
@@ -260,8 +294,8 @@ value ImportView {
 
 value ImportListItem {
     definition_id: String
-    name: String                        -- live-updated via onNameUpdated events
-    date: String
+    name: String                        -- live-updated via onNameUpdated; CSS ellipsis on overflow
+    date: String                        -- relative date format
 }
 
 rule ImportListClick {
@@ -296,17 +330,19 @@ value GitStatusFile {
 }
 
 value GitHistoryEntry {
-    short_hash: String
-    subject: String
+    short_hash: String                  -- 7 chars
+    subject: String                     -- wraps (word-break), not truncated
     author: String
     date: String                        -- locale-formatted
-    sync_status: String                 -- synced, local_only, remote_only
+    sync_status: String                 -- synced, local_only, remote_only (coloured dots)
 }
 
 -- Action buttons: fetch, pull, push, prune_lfs. All disabled while any action is loading.
 -- Changes section: file count, commit message input, commit button, file list.
+-- File paths in changes list: CSS ellipsis on overflow.
 -- Changes list polls every 2 seconds in background.
 -- Remote state refreshes every 30 seconds with auto-fetch.
+-- History entries: subject + shortHash + author + date; sync status with coloured legend dots.
 
 rule GitFileClick {
     when: GitStatusFileClicked(file_path, click_type)

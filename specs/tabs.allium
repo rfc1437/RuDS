@@ -146,24 +146,35 @@ rule ResolveEditorRoute {
 -- Horizontal strip with overflow scroll (left/right arrow buttons, 150px per click).
 -- Auto-scrolls to bring active tab into view (10px padding).
 
+config {
+    tab_min_width: Integer = 100
+    tab_max_width: Integer = 160
+    tab_scroll_step: Integer = 150
+    chat_title_max_length: Integer = 18
+    git_hash_display_length: Integer = 7
+}
+
 value TabBarItem {
-    title: String
+    title: String                     -- resolved per type (see below); CSS ellipsis at tab_max_width
     is_active: Boolean
-    is_transient: Boolean         -- italic title when true
-    is_dirty: Boolean             -- dot indicator, only for post tabs
+    is_transient: Boolean             -- italic title when true
+    is_dirty: Boolean                 -- dot indicator, only for post tabs
 }
 
 -- Tab title resolution:
---   post:          post.title from DB (listens post-updated events)
---   media:         media.originalName
---   scripts:       script.title from DB (listens scripts-changed)
---   templates:     template.title from DB (listens templates-changed)
---   chat:          conversation.title, truncated to 18 chars
---   import:        definition.name (listens name-updated)
---   git_diff file: filename from path (last path segment)
---   git_diff commit: "{shortHash} {subject}" from git history
---   singletons:    i18n key lookup (common.settings, tabBar.style, etc.)
---   fallback:      i18n:tabBar.unknown
+--   post:            post.title from DB (listens post-updated events); no JS truncation
+--   media:           media.originalName; no JS truncation
+--   scripts:         script.title from DB (listens scripts-changed); no JS truncation
+--   templates:       template.title from DB (listens templates-changed); no JS truncation
+--   chat:            conversation.title, JS-truncated to 18 chars + "..." if over limit
+--   import:          definition.name (listens name-updated); no JS truncation
+--   git_diff file:   filename only (last path segment); no JS truncation
+--   git_diff commit: "{shortHash} {subject}" (shortHash = 7 chars); fallback: 7-char hash only
+--   singletons:      i18n key lookup (common.settings, tabBar.style, etc.)
+--   fallback:        i18n:tabBar.unknown
+--
+-- All tab titles are additionally CSS-truncated (text-overflow:ellipsis, white-space:nowrap)
+-- within the tab's max-width of 160px.
 
 -- ─── Tab interactions ─────────────────────────────────────────
 
