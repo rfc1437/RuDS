@@ -1,0 +1,352 @@
+-- allium: 1
+-- bDS Sidebar Views
+-- Scope: UI content (all waves + extensions)
+-- Distilled from: Sidebar.tsx, PostsList.tsx, MediaList.tsx,
+--   SidebarEntityList.tsx, SettingsNav.tsx, TagsNav.tsx,
+--   ChatList.tsx, ImportList.tsx, ScriptsList.tsx, TemplatesList.tsx,
+--   GitSidebar.tsx, sidebarDateFormatting.ts
+
+-- Describes the content and behaviour of each of the 10 sidebar views.
+-- The sidebar shell (visibility, resize, view switching) is in layout.allium.
+-- Tab opening behaviour is in tabs.allium.
+
+use "./layout.allium" as layout
+use "./tabs.allium" as tabs
+use "./post.allium" as post
+use "./media.allium" as media
+use "./tag.allium" as tag
+use "./i18n.allium" as i18n
+
+-- ─── Sidebar view registry ───────────────────────────────────
+
+-- 10 views: posts, pages, media, scripts, templates, settings, tags, chat, import, git
+-- Default view: posts
+-- The sidebar renders exactly one view at a time, selected by active_view.
+-- Each ActivityId maps 1:1 to a SidebarView of the same name.
+
+config {
+    default_sidebar_view: String = "posts"
+}
+
+-- ─── Shared patterns ─────────────────────────────────────────
+
+-- SidebarEntityList: reusable pattern for scripts, templates, chat, import.
+-- Shows: header with title + create button, scrollable item list,
+-- empty state with message + action CTA.
+
+-- Date formatting for sidebar items:
+--   Today -> time only (e.g. "2:30 PM")
+--   Yesterday -> i18n "Yesterday"
+--   <7 days -> short weekday (e.g. "Mon")
+--   Older -> "Mon DD" format
+-- Locale map: en->en-US, de->de-DE, fr->fr-FR, it->it-IT, es->es-ES
+
+-- ─── 1. Posts view ────────────────────────────────────────────
+
+value PostsView {
+    mode: String                        -- "posts" or "pages"
+    search_query: String?               -- FTS via posts.search(query)
+    filter_panel_visible: Boolean       -- collapsible, toggled by icon button
+    calendar_filter: CalendarFilter?    -- year/month archive tree
+    tag_filter: List<String>            -- selected tags (multi-select chips with colours)
+    category_filter: List<String>       -- selected categories (multi-select chips)
+    draft_section: List<PostListItem>
+    published_section: List<PostListItem>
+    archived_section: List<PostListItem>
+    has_more: Boolean                   -- pagination, 500 per batch
+}
+
+-- Drafts section always shows all drafts regardless of filters.
+-- Published and archived sections respect active filters.
+-- "Clear All Filters" button resets search, date, tags, categories.
+-- Filters auto-refresh when any post's status changes.
+
+value PostListItem {
+    post_id: String
+    type_icon: String                   -- derived from categories (below)
+    title: String                       -- fallback "Untitled"
+    language_count: Integer?            -- badge shown when availableLanguages.count > 1
+    date: String                        -- drafts/archived: updatedAt; published: publishedAt ?? updatedAt
+    active: Boolean                     -- highlighted when activeTabId = post.id
+}
+
+-- Post type icon derivation from categories (first match wins, case-insensitive):
+--   picture/photo/image -> camera icon
+--   aside/note/quick    -> notepad icon
+--   link/bookmark       -> link icon
+--   video               -> film icon
+--   quote               -> speech bubble icon
+--   default             -> document icon
+
+rule PostListClick {
+    when: PostListItemClicked(post_id, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: post, id: post_id, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: post, id: post_id, intent: pin)
+}
+
+-- ─── 2. Pages view ───────────────────────────────────────────
+
+-- Identical to PostsView but:
+--   mode = "pages"
+--   Filters to posts with "page" category
+--   Create button auto-adds "page" category
+--   Category filter excludes "page" from chips but auto-merges into backend calls
+
+-- ─── 3. Media view ────────────────────────────────────────────
+
+value MediaView {
+    search_query: String?               -- FTS via media.search(query)
+    filter_panel_visible: Boolean
+    calendar_filter: CalendarFilter?
+    tag_filter: List<String>            -- tags only, no categories for media
+    grid: List<MediaGridItem>           -- grid layout (not list)
+}
+
+value MediaGridItem {
+    media_id: String
+    has_thumbnail: Boolean              -- image: custom protocol bds-thumb://{id}; non-image: file icon
+    name: String                        -- title truncated 60 chars, fallback originalName
+    file_size: String                   -- formatted (B / KB / MB)
+    tooltip: String                     -- caption ?? originalName
+    active: Boolean                     -- highlighted when activeTabId = media.id
+}
+
+rule MediaListClick {
+    when: MediaGridItemClicked(media_id, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: media, id: media_id, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: media, id: media_id, intent: pin)
+}
+
+-- Import button: opens native file import dialog
+
+-- ─── 4. Scripts view ──────────────────────────────────────────
+
+-- Uses SidebarEntityList pattern.
+
+value ScriptsView {
+    items: List<ScriptListItem>
+}
+
+value ScriptListItem {
+    script_id: String
+    title: String
+    date: String                        -- relative date format
+    active: Boolean
+}
+
+rule ScriptListClick {
+    when: ScriptListItemClicked(script_id, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: scripts, id: script_id, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: scripts, id: script_id, intent: pin)
+}
+
+-- Keyboard: Enter = pin, Space = preview.
+-- Delete button: deletes script and closes its tab.
+-- Create defaults: kind=utility, content='print("new script")', entrypoint='render', enabled=true.
+-- Refreshes on scripts-changed event.
+
+-- ─── 5. Templates view ───────────────────────────────────────
+
+-- Uses SidebarEntityList pattern. Same as scripts with:
+
+value TemplatesView {
+    items: List<TemplateListItem>
+}
+
+value TemplateListItem {
+    template_id: String
+    title: String
+    date: String
+    active: Boolean
+}
+
+rule TemplateListClick {
+    when: TemplateListItemClicked(template_id, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: templates, id: template_id, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: templates, id: template_id, intent: pin)
+}
+
+-- Delete: if referenced by posts or tags, shows confirmation with counts before force-delete.
+-- Create defaults: kind=post, content='', enabled=true.
+-- Refreshes on templates-changed event.
+
+-- ─── 6. Settings view ────────────────────────────────────────
+
+-- Navigation list that controls sections within the settings editor tab.
+-- 9 sections in order:
+--   1. project     (folder icon)
+--   2. editor      (notepad icon)
+--   3. content     (clipboard icon)
+--   4. ai          (robot icon)
+--   5. technology  (gear icon)
+--   6. publishing  (rocket icon)
+--   7. data        (database icon)
+--   8. mcp         (plug icon)
+--   9. style       (palette icon) -- special: opens style tab, not settings section
+
+value SettingsNav {
+    active_section: String?             -- persisted across sidebar switches
+}
+
+rule SettingsNavClick {
+    when: SettingsNavEntryClicked(section)
+    if section = style:
+        ensures: OpenTabRequested(type: style, id: style, intent: pin)
+    else:
+        ensures: OpenTabRequested(type: settings, id: settings, intent: pin)
+        ensures: ScrollToSection(section)
+    ensures: active_section = section
+    -- Active section is persisted across sidebar switches
+}
+
+-- ─── 7. Tags view ─────────────────────────────────────────────
+
+-- Navigation list that controls sections within the tags editor tab.
+-- 3 sections:
+--   1. cloud   (cloud icon)   -- tag cloud visualization
+--   2. manage  (pencil icon)  -- create/edit tags
+--   3. merge   (merge icon)   -- merge duplicate tags
+
+value TagsNav {
+    active_section: String?             -- persisted
+}
+
+rule TagsNavClick {
+    when: TagsNavEntryClicked(section)
+    ensures: OpenTabRequested(type: tags, id: tags, intent: pin)
+    ensures: ScrollToSection(section)
+    ensures: active_section = section
+    -- Active section is persisted across sidebar switches
+}
+
+-- ─── 8. Chat view ─────────────────────────────────────────────
+
+-- Uses SidebarEntityList pattern.
+
+value ChatView {
+    api_ready: Boolean                  -- shows API key prompt if false
+    items: List<ChatListItem>
+}
+
+value ChatListItem {
+    conversation_id: String
+    title: String                       -- live-updated via onTitleUpdated events
+    date: String                        -- relative date format
+}
+
+rule ChatListClick {
+    when: ChatListItemClicked(conversation_id)
+    ensures: OpenTabRequested(type: chat, id: conversation_id, intent: pin)
+    -- Chat tabs are always pinned
+}
+
+-- Delete button: deletes conversation and closes its tab.
+
+-- ─── 9. Import view ──────────────────────────────────────────
+
+-- Uses SidebarEntityList pattern.
+
+value ImportView {
+    items: List<ImportListItem>
+}
+
+value ImportListItem {
+    definition_id: String
+    name: String                        -- live-updated via onNameUpdated events
+    date: String
+}
+
+rule ImportListClick {
+    when: ImportListItemClicked(definition_id)
+    ensures: OpenTabRequested(type: import, id: definition_id, intent: pin)
+    -- Import tabs are always pinned
+}
+
+-- ─── 10. Git view ─────────────────────────────────────────────
+
+-- Full git interface, not the SidebarEntityList pattern.
+-- Three possible states: loading, not_a_repo, active_repo.
+
+-- State: not_a_repo
+--   Remote URL text input + "Initialize Git" button.
+--   Init progress with phase/percentage/detail, collapsible transcript.
+
+-- State: active_repo
+value GitActiveView {
+    branch: String                      -- current branch name
+    upstream: String?                   -- tracking info (local -> upstream)
+    ahead: Integer
+    behind: Integer
+    status_files: List<GitStatusFile>
+    history_entries: List<GitHistoryEntry>
+    has_more_history: Boolean           -- paginated, 20 per page
+}
+
+value GitStatusFile {
+    path: String
+    status: String                      -- modified, added, deleted, renamed, etc.
+}
+
+value GitHistoryEntry {
+    short_hash: String
+    subject: String
+    author: String
+    date: String                        -- locale-formatted
+    sync_status: String                 -- synced, local_only, remote_only
+}
+
+-- Action buttons: fetch, pull, push, prune_lfs. All disabled while any action is loading.
+-- Changes section: file count, commit message input, commit button, file list.
+-- Changes list polls every 2 seconds in background.
+-- Remote state refreshes every 30 seconds with auto-fetch.
+
+rule GitFileClick {
+    when: GitStatusFileClicked(file_path, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: git_diff, id: "git-diff:" + file_path, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: git_diff, id: "git-diff:" + file_path, intent: pin)
+}
+
+rule GitHistoryClick {
+    when: GitHistoryEntryClicked(commit_hash, click_type)
+    if click_type = single:
+        ensures: OpenTabRequested(type: git_diff, id: "git-diff:commit:" + commit_hash, intent: preview)
+    if click_type = double:
+        ensures: OpenTabRequested(type: git_diff, id: "git-diff:commit:" + commit_hash, intent: pin)
+}
+
+rule GitCommit {
+    when: GitCommitRequested(message)
+    ensures: git.commitAll(message)
+    -- Also: all git_diff tabs are closed and git state is reloaded
+}
+
+-- ─── Calendar archive (shared widget) ─────────────────────────
+
+-- Collapsible year/month tree.
+-- Selecting a year loads all posts/media for that year.
+-- Selecting a month narrows to that month.
+
+value CalendarFilter {
+    selected_year: Integer?
+    selected_month: Integer?            -- 1-12
+}
+
+value CalendarYear {
+    year: Integer
+    months: List<CalendarMonth>
+}
+
+value CalendarMonth {
+    month: Integer                      -- 1-12
+    count: Integer                      -- number of items in this month
+}

@@ -1,0 +1,198 @@
+-- allium: 1
+-- bDS Tab System and Editor Routing
+-- Scope: UI navigation (all waves)
+-- Distilled from: tabPolicy.ts, TabBar.tsx, editorRouting.ts, appStore.ts
+
+-- Governs the tab bar, tab lifecycle (open/close/pin), editor routing,
+-- and the relationship between tabs and the content area.
+
+use "./layout.allium" as layout
+
+-- ─── Tab types ────────────────────────────────────────────────
+
+-- 17 distinct tab types, each routing to a matching editor view.
+-- Plus "dashboard" as the no-tab default view.
+--
+-- Tab types: post, media, settings, style, tags, chat, import,
+--   menu_editor, metadata_diff, git_diff, documentation,
+--   api_documentation, site_validation, translation_validation,
+--   scripts, templates, find_duplicates
+--
+-- Editor routes: all of the above plus "dashboard" (shown when no tab is active).
+-- Route registry is 1:1: every tab type maps to itself as an editor route.
+
+-- ─── Tab entity ───────────────────────────────────────────────
+
+value Tab {
+    type: String                  -- one of the 17 tab types
+    id: String                    -- singleton: id = type name; entity: external ID
+    is_transient: Boolean         -- true = preview tab (italic title, replaceable)
+}
+
+-- ─── Tab categories ───────────────────────────────────────────
+
+-- 1. Singleton tool tabs: always one instance, never transient, id = type name.
+--    settings, tags, style, scripts (bare), menu_editor, documentation,
+--    api_documentation, metadata_diff, site_validation,
+--    translation_validation, find_duplicates
+--    Total: 11 singleton types.
+
+-- 2. Entity tabs: keyed by external ID, support preview/pin intent.
+--    post (id = postId), media (id = mediaId)
+
+-- 3. Script tabs: type = scripts, id = scriptId (NOT the singleton).
+--    Support preview/pin intent.
+
+-- 4. Template tabs: type = templates, id = templateId.
+--    Support preview/pin intent.
+
+-- 5. Chat tabs: type = chat, id = conversationId. Always pinned (not transient).
+
+-- 6. Import tabs: type = import, id = definitionId. Always pinned.
+
+-- 7. Git diff tabs: type = git_diff.
+--    File diff: id = "git-diff:{filePath}"
+--    Commit diff: id = "git-diff:commit:{commitHash}"
+--    Support preview/pin intent.
+
+-- ─── Open intent ──────────────────────────────────────────────
+
+-- preview: transient tab (replaced by next preview of same type)
+-- pin: permanent tab (persists until explicitly closed)
+
+rule DeriveTransient {
+    when: TabOpening(tab_type, intent)
+    if tab_type in singleton_tool_tabs:
+        ensures: tab.is_transient = false
+    else if tab_type = chat or tab_type = import:
+        ensures: tab.is_transient = false
+    else:
+        ensures: tab.is_transient = (intent = preview)
+}
+
+-- ─── Tab lifecycle ────────────────────────────────────────────
+
+rule OpenTab {
+    when: OpenTabRequested(type, id, intent)
+
+    -- Dedup: if tab with same (type, id) already exists, activate it.
+    --   If intent = pin, also set is_transient = false.
+    -- Transient replacement: if opening as transient and a transient tab
+    --   of same type exists, replace it with the new tab.
+    -- Otherwise: append a new tab.
+    -- Always sets active_tab to the opened/reused tab.
+    ensures: active_tab = resolved_tab
+}
+
+rule OpenTabInBackground {
+    when: OpenTabInBackgroundRequested(type, id, intent)
+    -- Same dedup/replace logic as OpenTab, but does NOT change active_tab
+}
+
+rule CloseTab {
+    when: CloseTabRequested(tab)
+    ensures: not exists tab
+    -- If tab was active: activate next tab at same index, or last tab, or null
+}
+
+rule PinTab {
+    when: PinTabRequested(tab)
+    ensures: tab.is_transient = false
+}
+
+rule ClearTabs {
+    when: ClearTabsRequested()
+    ensures: tabs = empty
+    ensures: active_tab = null
+}
+
+-- ─── Editor routing ───────────────────────────────────────────
+
+-- The editor content area renders a view based on the active tab.
+
+rule ResolveEditorRoute {
+    when: ActiveTabChanged(active_tab)
+    if active_tab = null:
+        ensures: editor_route = dashboard
+    else:
+        ensures: editor_route = active_tab.type
+        -- 1:1 mapping; every tab type maps to itself as editor route
+}
+
+-- ─── Editor views (what each route renders) ───────────────────
+
+-- dashboard:                Overview stats, timeline, tag cloud, recent posts
+-- post:                     Post editor (keyed by postId)
+-- media:                    Media editor (keyed by mediaId)
+-- settings:                 Settings view with scrollable sections
+-- style:                    Pico CSS theme editor
+-- tags:                     Tag cloud, create/edit, merge sections
+-- chat:                     AI chat panel (keyed by conversationId)
+-- import:                   Import analysis view (keyed by definitionId)
+-- menu_editor:              OPML menu editor
+-- metadata_diff:            DB vs filesystem diff viewer
+-- git_diff:                 Git diff view (file or commit, keyed by tab id)
+-- documentation:            Rendered markdown (DOCUMENTATION.md)
+-- api_documentation:        Rendered markdown (API.md)
+-- site_validation:          Generated site link/structure validation
+-- translation_validation:   Translation completeness checks
+-- scripts:                  Script editor (keyed by scriptId)
+-- templates:                Template editor (keyed by templateId)
+-- find_duplicates:          Duplicate post detection via embeddings
+
+-- ─── Tab bar rendering ───────────────────────────────────────
+
+-- Hidden when no tabs exist.
+-- Horizontal strip with overflow scroll (left/right arrow buttons, 150px per click).
+-- Auto-scrolls to bring active tab into view (10px padding).
+
+value TabBarItem {
+    title: String
+    is_active: Boolean
+    is_transient: Boolean         -- italic title when true
+    is_dirty: Boolean             -- dot indicator, only for post tabs
+}
+
+-- Tab title resolution:
+--   post:          post.title from DB (listens post-updated events)
+--   media:         media.originalName
+--   scripts:       script.title from DB (listens scripts-changed)
+--   templates:     template.title from DB (listens templates-changed)
+--   chat:          conversation.title, truncated to 18 chars
+--   import:        definition.name (listens name-updated)
+--   git_diff file: filename from path (last path segment)
+--   git_diff commit: "{shortHash} {subject}" from git history
+--   singletons:    i18n key lookup (common.settings, tabBar.style, etc.)
+--   fallback:      i18n:tabBar.unknown
+
+-- ─── Tab interactions ─────────────────────────────────────────
+
+-- Single click on tab:     activate it
+-- Double click on tab:     if transient, pin it
+-- Middle click on tab:     close it
+-- Close button:            close the tab
+
+-- ─── Dirty tracking ──────────────────────────────────────────
+
+invariant DirtyIndicator {
+    -- Only post tabs show dirty state
+    -- A post tab is dirty when its in-memory content differs from saved
+    for tab in tabs:
+        tab.is_dirty = (tab.type = post and dirtyPosts.contains(tab.id))
+}
+
+-- ─── Tab tooltip ──────────────────────────────────────────────
+
+-- Base: tab title
+-- If transient: append " (Preview)"
+-- If dirty: append " * Modified"
+
+-- ─── Keyboard shortcuts ──────────────────────────────────────
+
+-- Ctrl/Cmd+W:  close active tab
+-- Ctrl/Cmd+B:  toggle sidebar (see layout.allium)
+
+-- ─── Tab state persistence ───────────────────────────────────
+
+-- Tab state (list + activeTabId) can be serialized/restored
+-- for session continuity across project switches.

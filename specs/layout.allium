@@ -1,0 +1,252 @@
+-- allium: 1
+-- bDS Application Layout
+-- Scope: UI shell (all waves)
+-- Distilled from: src/renderer/App.tsx, ActivityBar.tsx, StatusBar.tsx,
+--   Panel.tsx, WindowTitleBar.tsx, ResizablePanel, Sidebar.tsx
+
+-- The top-level visual structure of the application window.
+-- Describes the shell (regions, toggle behaviour, resize constraints)
+-- but NOT the content of each region (see tabs.allium, sidebar_views.allium).
+
+use "./i18n.allium" as i18n
+use "./task.allium" as task
+
+-- ─── Window shell ─────────────────────────────────────────────
+
+-- +------------------------------------------------------------+
+-- | WindowTitleBar                                              |
+-- +----+--------+----------------------------+-----------------+
+-- | A  | Side-  | TabBar                     | Assistant       |
+-- | c  | bar    |----------------------------| Sidebar         |
+-- | t  | (resz) | Editor (routed by tab)     |                 |
+-- | i  |        |----------------------------+                 |
+-- | v  |        | Panel (bottom)             |                 |
+-- | i  |        |                            |                 |
+-- | t  |        |                            |                 |
+-- | y  |        |                            |                 |
+-- +----+--------+----------------------------+-----------------+
+-- | StatusBar                                                   |
+-- +------------------------------------------------------------+
+
+value AppShell {
+    title_bar: WindowTitleBar
+    activity_bar: ActivityBar
+    sidebar: ResizableRegion
+    content_area: ContentArea
+    assistant_sidebar: ResizableRegion
+    status_bar: StatusBar
+}
+
+value ContentArea {
+    -- tab_bar: see tabs.allium
+    -- editor: routed by active tab; see tabs.allium
+    panel: Panel
+}
+
+-- ─── Resizable regions ────────────────────────────────────────
+
+config {
+    sidebar_initial_width: Integer = 280
+    sidebar_min_width: Integer = 200
+    sidebar_max_width: Integer = 500
+    assistant_initial_width: Integer = 360
+    assistant_min_width: Integer = 280
+    assistant_max_width: Integer = 640
+}
+
+value ResizableRegion {
+    visible: Boolean
+    width: Integer
+    min_width: Integer
+    max_width: Integer
+}
+
+-- ─── Toggle state ─────────────────────────────────────────────
+
+value ShellVisibility {
+    sidebar_visible: Boolean
+    panel_visible: Boolean
+    assistant_sidebar_visible: Boolean
+}
+
+rule ToggleSidebar {
+    when: ToggleSidebarRequested()
+    ensures: sidebar_visible = not sidebar_visible
+}
+
+rule TogglePanel {
+    when: TogglePanelRequested()
+    ensures: panel_visible = not panel_visible
+}
+
+rule ToggleAssistantSidebar {
+    when: ToggleAssistantSidebarRequested()
+    ensures: assistant_sidebar_visible = not assistant_sidebar_visible
+}
+
+-- ─── Window title bar ─────────────────────────────────────────
+
+value WindowTitleBar {
+    -- Platform-adaptive
+    -- menu_bar: rendered only on non-Mac platforms (5 groups: File, Edit, View, Blog, Help)
+    --   Keyboard: Alt opens mnemonics, Alt+letter opens group
+    --   Arrow keys navigate groups and items, Enter/Space activates
+    --   View group hides devTools toggle when not in dev mode
+    title: String                     -- document.title, fallback "Blogging Desktop Server"
+    -- Three toggle buttons (all platforms): sidebar, panel, assistant
+}
+
+-- ─── Activity bar ─────────────────────────────────────────────
+
+-- Narrow vertical icon strip at the far-left edge of the window.
+-- Two groups: top (content views) and bottom (tools).
+
+value ActivityBar {
+    top_group: List<ActivityButton>
+    bottom_group: List<ActivityButton>
+}
+
+value ActivityButton {
+    id: String                       -- matches SidebarView name
+    label_key: String                -- i18n key for tooltip
+    badge: Badge?                    -- only git has a badge
+    active: Boolean                  -- highlighted when this view is showing
+}
+
+value Badge {
+    count: Integer
+    display: String                  -- count capped at "99+"
+}
+
+-- Exhaustive activity list with preserved order
+-- Top group (content views):
+--   1. posts      i18n:activity.posts
+--   2. pages      i18n:activity.pages
+--   3. media      i18n:activity.media
+--   4. scripts    i18n:activity.scripts
+--   5. templates  i18n:activity.templates
+--   6. tags       i18n:activity.tags
+--   7. chat       i18n:activity.aiAssistant
+--   8. import     i18n:activity.import
+-- Bottom group (tools):
+--   9. git        i18n:activity.sourceControl  (badge: pending pull count)
+--  10. settings   i18n:common.settings
+
+-- Each activity ID maps 1:1 to a SidebarView of the same name.
+
+-- ─── Activity click behaviour ─────────────────────────────────
+
+-- All activities share the same toggle-sidebar strategy.
+-- The sidebar shows the view that matches the clicked activity.
+
+rule ActivityClick {
+    when: ActivityClicked(activity_id)
+    let target_view = activity_id
+    if active_view = target_view:
+        ensures: ToggleSidebarRequested()
+        -- If already on this view, toggle sidebar open/closed
+    else:
+        ensures: active_view = target_view
+        if not sidebar_visible:
+            ensures: ToggleSidebarRequested()
+        -- Switch view; open sidebar if hidden
+}
+
+invariant ActivityActiveHighlight {
+    -- An activity button shows active state iff its view is the
+    -- current active_view AND the sidebar is visible
+    for btn in ActivityBar.all_buttons:
+        btn.active = (active_view = btn.id and sidebar_visible)
+}
+
+-- ─── Git badge ────────────────────────────────────────────────
+
+-- Only the git activity button carries a badge.
+-- Badge shows remote "behind" count, polled every 30 seconds.
+
+config {
+    git_badge_poll_interval: Integer = 30
+    -- seconds between badge refresh polls
+}
+
+rule RefreshGitBadge {
+    when: GitBadgePollTick(badge)
+    requires: online and active_project != null
+    let repo_state = git.getRepoState()
+    requires: repo_state.is_repo and repo_state.has_remote
+    ensures: git.fetch()
+    let remote_state = git.getRemoteState()
+    ensures: badge.count = max(0, remote_state.behind)
+}
+
+rule ClearGitBadge {
+    when: ClearGitBadgeTick(badge)
+    requires: not online or active_project = null or not is_repo or not has_remote
+    ensures: badge.count = 0
+}
+
+-- ─── Bottom panel ─────────────────────────────────────────────
+
+value Panel {
+    visible: Boolean
+    active_tab: String               -- tasks | output | post_links | git_log
+}
+
+-- Panel tab availability depends on active editor tab
+invariant PanelTabAvailability {
+    -- tasks:      always available
+    -- output:     always available
+    -- post_links: only when active editor tab is a post
+    -- git_log:    only when active editor tab is a post or media
+}
+
+invariant PanelTabFallback {
+    -- If active panel tab becomes unavailable, fall back to tasks
+    -- post_links unavailable when no post tab is active
+    -- git_log unavailable when neither post nor media tab is active
+}
+
+-- Tasks tab: last 10 tasks, newest first, with progress/cancel.
+--   Tasks with shared group_id are collapsible groups showing aggregate progress.
+-- Output tab: log entries with copy-all button.
+-- Post Links tab: backlinks (posts linking here) + outlinks (posts linked from here).
+--   Each entry clickable, opens linked post as pinned tab.
+-- Git Log tab: file-level git history for active post/media (up to 50 entries).
+--   For posts: path = posts/YYYY/MM/{slug}.md
+--   For media: path relative to project root
+
+-- ─── Status bar ───────────────────────────────────────────────
+
+value StatusBar {
+    left: StatusBarLeft
+    right: StatusBarRight
+}
+
+value StatusBarLeft {
+    -- Project selector dropdown to switch active project
+    running_task_message: String?       -- spinner + message when tasks running
+    running_task_overflow: Integer?     -- "+N more" count when multiple running
+}
+
+value StatusBarRight {
+    -- In display order (left to right):
+    post_status: String?                -- draft|published|archived dot, when post tab active
+    post_count: String                  -- "{count} posts"
+    media_count: String                 -- "{count} media"
+    token_usage: TokenUsage?            -- shown only when active tab is chat
+    theme_badge: String                 -- pico theme name
+    offline_mode: Boolean               -- airplane icon toggle, keyboard accessible
+    ui_language: String                 -- dropdown: en, de, fr, it, es
+    brand: String                       -- "bDS"
+}
+
+value TokenUsage {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+}
+
+-- ─── Keyboard shortcuts (global) ──────────────────────────────
+
+-- Ctrl/Cmd+B: toggle sidebar
+-- Ctrl/Cmd+W: close active tab (see tabs.allium)

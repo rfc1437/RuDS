@@ -26,6 +26,11 @@ use "./publishing.allium" as publishing     -- SSH upload (SCP / rsync)
 use "./task.allium" as task                 -- Background task manager
 use "./i18n.allium" as i18n                 -- Split localization (UI vs content)
 
+-- UI
+use "./layout.allium" as layout             -- App shell, activity bar, status bar, panels
+use "./tabs.allium" as tabs                 -- Tab system, editor routing, preview/pin
+use "./sidebar_views.allium" as sidebar     -- 10 sidebar views, content, behaviour
+
 -- Integration
 use "./git.allium" as git                   -- Git operations, LFS, reconciliation
 use "./mcp.allium" as mcp                   -- MCP server (tools, resources, proposals)
