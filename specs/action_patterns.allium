@@ -20,11 +20,11 @@ surface UserAction {
 -- ─── AI operation gating ───────────────────────────────
 
 invariant AIOperationGating {
-    -- All AI operations check airplane/offline mode before executing.
-    -- If offline mode enabled:
-    --   If local provider configured (Ollama/LM Studio): route to local model
-    --   Else: show toast "AI unavailable in offline mode", abort operation
-    -- If online: use configured provider endpoint
+    -- All AI operations route through the active endpoint for the current mode.
+    -- See ai.allium AirplaneModeGating for endpoint selection logic.
+    -- If airplane_mode: use airplane endpoint (local model, e.g. Ollama/LM Studio)
+    -- If online: use online endpoint (cloud provider)
+    -- If active endpoint not configured: show toast, abort operation
     -- Two model categories:
     --   Title model: text analysis (suggestions, translation, language detect)
     --   Image model: vision-capable (image analysis only)

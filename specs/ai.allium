@@ -46,49 +46,47 @@ entity ChatMessage {
 
 -- One-shot AI tasks (core scope, no streaming)
 -- All use OpenAI Chat Completions wire format.
--- When airplane_mode: use airplane endpoint. When online: use online endpoint.
+-- Endpoint routing: see AirplaneModeGating invariant below.
 -- When no endpoint configured for current mode: disable AI, show toast.
 
 rule AnalyzeTaxonomy {
     when: AnalyzeTaxonomyRequested(post)
-    requires: not airplane_mode
-        -- All AI activities gated by offline mode
+    requires: active_endpoint_configured
     -- Suggests tags and categories for a post
     ensures: TaxonomySuggestion(tags, categories)
 }
 
 rule AnalyzeImage {
     when: AnalyzeImageRequested(media)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     requires: is_image(media.mime_type)
-        -- Checks mime type is an image type
     -- Vision model generates alt text and caption
     ensures: ImageAnalysisResult(alt, caption)
 }
 
 rule AnalyzePost {
     when: AnalyzePostRequested(post)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     -- Generates title, excerpt, slug suggestions
     ensures: PostAnalysisResult(title, excerpt, slug)
 }
 
 rule DetectLanguage {
     when: DetectLanguageRequested(text)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     ensures: LanguageDetectionResult(language_code)
 }
 
 rule TranslatePost {
     when: TranslatePostRequested(post, target_language)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     -- Translates title, excerpt, content to target language
     ensures: TranslationResult(title, excerpt, content)
 }
 
 rule TranslateMedia {
     when: TranslateMediaRequested(media, target_language)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     -- Translates title, alt, caption to target language
     ensures: MediaTranslationResult(title, alt, caption)
 }
@@ -102,7 +100,7 @@ rule StartChat {
 
 rule SendChatMessage {
     when: SendChatMessageRequested(conversation, content)
-    requires: not airplane_mode
+    requires: active_endpoint_configured
     ensures: ChatMessage.created(conversation: conversation, role: user, content: content)
     ensures: AiStreamingResponse(conversation)
         -- AI SDK v6 streamText() with tool-call loop (max 10 rounds)
@@ -120,11 +118,13 @@ rule RefreshModelCatalog {
 }
 
 invariant AirplaneModeGating {
-    -- All AI activities must be gated by airplane (offline) mode
-    -- When airplane_mode = true: only the airplane endpoint is used
-    -- When airplane_mode = false: the online endpoint is used
-    -- If the active endpoint is not configured: AI is unavailable,
-    --   show toast notification to user
+    -- Endpoint routing based on airplane (offline) mode:
+    --   airplane_mode = true  -> use airplane endpoint (local model)
+    --   airplane_mode = false -> use online endpoint (cloud provider)
+    -- active_endpoint_configured = true iff the endpoint for the
+    --   current mode has a non-empty url (and api_key for online).
+    -- When active endpoint is not configured: AI is unavailable,
+    --   show toast "AI unavailable — configure {online|airplane} endpoint in Settings"
 }
 
 invariant TwoEndpointModel {

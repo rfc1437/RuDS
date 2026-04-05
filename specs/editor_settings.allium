@@ -37,18 +37,18 @@ surface User {
 --   Add Category: text input + Add button. Reset to Defaults button
 
 -- 4. AI Assistant Settings:
---   API keys: OpenCode, Mistral (masked display + Change, or password input + Save)
---   Local providers: Ollama enable checkbox + capabilities table,
---     LM Studio enable checkbox + capabilities table
---   Offline mode: enable checkbox (disabled if no local providers),
---     selectors for chat/title/image models (local only)
---   Default Model (select with optgroup by provider + refresh),
---     shows: max output tokens, context window, pricing
---   Title Model (select), Image Analysis Model (vision-capable only)
+--   Two-endpoint configuration (see ai.allium TwoEndpointModel):
+--     Online endpoint: URL (text), API Key (masked + Change/Save), Model (select)
+--     Airplane endpoint: URL (text), Model (select)
+--   Both use OpenAI Chat Completions wire format.
+--   Refresh Models button per endpoint: fetches model list from endpoint URL
+--   Title Model (select from active endpoint models)
+--   Image Analysis Model (select, vision-capable only)
+--   Offline mode toggle: switches between online and airplane endpoint
+--     Disabled if airplane endpoint URL is not configured
 --   System Prompt (textarea 12 rows + Save + Reset to Default)
 
 -- 5. Technology Settings:
---   Python Runtime Mode (select: Web Worker/Main Thread)
 --   Semantic Similarity (checkbox)
 
 -- 6. Publishing Settings (SSH):
@@ -69,20 +69,15 @@ surface User {
 -- ─── Settings view actions ──────────────────────────────────
 
 -- API key validation:
---   On Save: test API call to provider endpoint before persisting
+--   On Save: test API call to online endpoint before persisting
 --   On validation failure: toast error message, key not saved
---   On success: key saved, masked display shown
+--   On success: key encrypted via SecureKeyStore, masked display shown
 
--- Local provider enable/disable:
---   Enabling Ollama/LM Studio: fetches model list, shows capabilities table
---   Capabilities table columns: model name, chat, title, image (checkmarks)
---   Models auto-fetched on enable; manual refresh via Refresh Models button
-
--- Model catalog refresh:
---   Refresh button next to Default Model selector
---   Fetches available models from all enabled providers
---   Updates optgroup dropdown with provider groupings
---   Per-model info: max output tokens, context window, pricing
+-- Endpoint configuration:
+--   URL field required for both endpoints
+--   Refresh Models button fetches model list from endpoint URL
+--   Model selector populated from fetched model list
+--   Per-model info: max output tokens, context window (when available)
 
 -- Rebuild operations (Data Maintenance section):
 --   6 buttons, each executes immediately (no confirmation dialog)

@@ -88,7 +88,8 @@ rule ToggleAssistantSidebar {
 
 value WindowTitleBar {
     -- Platform-adaptive
-    -- menu_bar: rendered only on non-Mac platforms (5 groups: File, Edit, View, Blog, Help)
+    -- menu_bar: rendered only on non-Mac platforms (6 groups: App, File, Edit, View, Window, Help)
+    --   macOS: native menu bar via muda crate (same 6 groups)
     --   Keyboard: Alt opens mnemonics, Alt+letter opens group
     --   Arrow keys navigate groups and items, Enter/Space activates
     --   View group hides devTools toggle when not in dev mode

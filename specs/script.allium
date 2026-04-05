@@ -2,8 +2,7 @@
 -- bDS Scripting System
 -- Scope: core (Wave 6 — Lua runtime and scripting docs)
 -- Distilled from: src/main/engine/ScriptEngine.ts, schema.ts
--- Note: TypeScript app uses Python/Pyodide. Rust rewrite uses Lua.
--- Behavioural contract is identical; only runtime changes.
+-- Scripting runtime is Lua (mlua crate). Behavioural contract preserved.
 
 entity Script {
     slug: String
@@ -37,8 +36,7 @@ invariant ScriptFileLayout {
     for s in Scripts where file_path != "":
         s.file_path = format("scripts/{slug}.lua", slug: s.slug)
 }
--- TypeScript app uses .py with triple-quote docstring frontmatter
--- Rust app uses .lua with standard --- frontmatter
+-- Script files use .lua with standard --- YAML frontmatter
 
 rule CreateScript {
     when: CreateScriptRequested(title, kind, content, entrypoint)

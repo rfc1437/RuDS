@@ -100,7 +100,7 @@ value TemplateFrontmatter {
     id: String              -- UUID v4
     slug: String
     title: String
-    kind: post | list | not-found | partial
+    kind: post | list | not_found | partial
     enabled: Boolean
     version: Integer
     created_at: Timestamp
@@ -122,9 +122,8 @@ rule WriteTemplateFile {
 -- ============================================================================
 
 value ScriptFrontmatter {
-    -- File path: scripts/{slug}.lua (Rust) / {slug}.py (TypeScript legacy)
-    -- Note: TypeScript uses Python with triple-quote docstring delimiters
-    -- Rust uses Lua with standard YAML frontmatter
+    -- File path: scripts/{slug}.lua
+    -- YAML frontmatter delimited by --- markers
     id: String              -- UUID v4
     slug: String
     title: String
@@ -261,9 +260,10 @@ invariant MenuOpmlFormat {
 -- ============================================================================
 
 invariant TimestampFormat {
-    -- All timestamps are Unix milliseconds (number in JavaScript)
-    -- Stored as ISO 8601 strings in YAML frontmatter
-    -- Example: 2024-03-15T14:30:00.000Z
+    -- Database: Unix milliseconds stored as INTEGER columns
+    -- YAML frontmatter: ISO 8601 strings (e.g. 2024-03-15T14:30:00.000Z)
+    -- Conversion on read: parse ISO 8601 → Unix ms
+    -- Conversion on write: Unix ms → ISO 8601
 }
 
 invariant YamlFormatting {

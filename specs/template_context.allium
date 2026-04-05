@@ -227,7 +227,7 @@ invariant TemplateLookupPriority {
     -- 4. Default "post" template
     --
     -- List pages use "list" template
-    -- 404 pages use "not-found" template
+    -- 404 pages use "not_found" template
     -- Partials are referenced via {% render 'partial' %}
 }
 
@@ -257,7 +257,7 @@ rule RenderListPage {
 
 rule RenderNotFoundPage {
     when: RenderNotFoundPageRequested()
-    let template = first (t in Templates where t.kind = "not-found" and t.enabled)
+    let template = first (t in Templates where t.kind = "not_found" and t.enabled)
     let context = BuildNotFoundContext
     ensures: RenderedHtml = liquid_render(template.content, context)
 }

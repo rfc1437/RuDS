@@ -63,7 +63,7 @@ use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuil
 --
 -- MAY change intentionally:
 --   Implementation language (TS -> Rust), editor (WYSIWYG -> plain text + preview),
---   scripting runtime (Python -> Lua), process model (Electron -> native),
+--   scripting runtime (Lua), process model (Electron -> native),
 --   UI framework (React -> Iced)
 
 -- Resolved questions:

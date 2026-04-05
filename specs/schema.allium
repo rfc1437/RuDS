@@ -134,7 +134,7 @@ entity Script {
     entrypoint: String      -- Default: "render" for macros
     enabled: Boolean
     version: Integer        -- Incremented on each update
-    file_path: String       -- scripts/{slug}.lua (Rust) / {slug}.py (TS)
+    file_path: String       -- scripts/{slug}.lua
     status: draft | published
     content: String?        -- Draft body (null when published)
     created_at: Timestamp
@@ -224,52 +224,19 @@ entity ChatMessage {
     created_at: Timestamp
 }
 
-entity AiProvider {
-    id: String              -- Provider key (e.g., "opencode", "mistral")
-    name: String            -- Display name
-    env: String?            -- JSON array of env var names
-    npm: String?            -- Primary npm package
-    api: String?            -- API base URL
-    doc: String?            -- Documentation URL
-    updated_at: Timestamp
-}
-
-entity AiModel {
-    provider: String        -- FK → ai_providers.id
+entity AiCachedModel {
+    -- Cached model list fetched from endpoint /v1/models API.
+    -- Keyed by endpoint kind so online and airplane caches are separate.
+    endpoint_kind: String   -- "online" | "airplane"
     model_id: String
     name: String            -- Display name
-    family: String?         -- Model family (e.g., "claude-sonnet")
-    attachment: Boolean     -- Supports attachments
-    reasoning: Boolean      -- Supports reasoning
-    tool_call: Boolean      -- Supports tool calls
-    structured_output: Boolean
-    temperature: Boolean    -- Temperature control supported
-    knowledge: String?      -- Knowledge cutoff date
-    release_date: String?
-    last_updated_date: String?
-    open_weights: Boolean
-    input_price: Integer?   -- USD per 1M input tokens (in cents)
-    output_price: Integer?  -- USD per 1M output tokens (in cents)
-    cache_read_price: Integer?
-    cache_write_price: Integer?
-    context_window: Integer -- Max context tokens
-    max_input_tokens: Integer
-    max_output_tokens: Integer
-    interleaved: String?    -- JSON object for interleaved fields
-    status: String?         -- e.g., "deprecated"
-    provider_npm: String?   -- Per-model npm override
+    context_window: Integer?
+    max_output_tokens: Integer?
     updated_at: Timestamp
-}
-
-entity AiModelModality {
-    provider: String
-    model_id: String
-    direction: String       -- "input" | "output"
-    modality: String        -- "text" | "image" | "pdf" | "audio" | "video"
 }
 
 entity AiCatalogMeta {
-    key: String             -- "etag" | "lastFetchedAt"
+    key: String             -- "{endpoint_kind}_etag" | "{endpoint_kind}_lastFetchedAt"
     value: String
 }
 
