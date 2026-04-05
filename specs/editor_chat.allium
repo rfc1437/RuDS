@@ -5,55 +5,40 @@
 
 -- Describes the layout and behaviour of the chat panel.
 
+use "./i18n.allium" as i18n
+
 -- ─── Chat panel ───────────────────────────────────────────────
 
--- Three-region vertical layout: header, message area, input area.
-
--- API Key Required screen (shown when no API key):
---   Key icon, title, description, "Open Settings" button
-
--- Header:
---   Left: conversation title (or "New Chat"), CSS ellipsis on overflow
---   Right: model selector button + dropdown. Groups models by provider.
-
--- Message area:
---   Welcome screen (no messages, not streaming): robot icon, tips
---   Message list: each has avatar (user=person, assistant=robot), role label, text
---     User messages: plain text
---     Assistant messages: rendered as GFM Markdown
---       External images blocked (CSP), shown as links
---     Tool markers: checkmark/dot, tool name, truncated args (30 char strings)
---     Streaming: accumulating markdown + tool markers, thinking dots animation
---   Auto-scrolls to bottom on new messages
-
--- Input area:
---   Abort/Stop button (only during streaming, square stop icon)
---   Auto-growing textarea (max 200px). Enter sends, Shift+Enter newline
---   Send button (up-arrow icon), disabled when empty or streaming
-
--- Token usage tracked per conversation (displayed in status bar, not chat panel).
--- Per-conversation model override via header selector.
-
-config {
-    chat_tool_args_max_length: Integer = 30
-    chat_input_max_height: Integer = 200
+value ChatPanelView {
+    conversation_id: String?
+    needs_api_key: Boolean
+    title: String                       -- conversation title or "New Chat"
+    selected_model_id: String?
+    messages: List<ChatMessage>
+    is_streaming: Boolean
+    input_text: String
 }
 
--- ─── Model selector dropdown ──────────────────────────────────
+value ChatMessage {
+    role: String                        -- user | assistant | system
+    content: String                     -- user: plain text; assistant: GFM markdown
+    tool_markers: List<ToolMarker>
+    is_streaming: Boolean               -- true while accumulating
+}
+
+value ToolMarker {
+    tool_name: String
+    args_preview: String                -- string args truncated to config.chat_tool_args_max_length
+    is_complete: Boolean                -- checkmark when done, dot when in-progress
+}
 
 value ModelSelectorDropdown {
-    -- Dropdown in chat panel header for per-conversation model override.
-    -- Groups models by provider using section headers.
-    -- Each entry: model display name.
-    -- Expandable details per model: context window, max output tokens, pricing.
-    -- Selected model persisted with conversation record.
-    -- Changing model mid-conversation applies to subsequent messages only.
     groups: List<ModelProviderGroup>
     selected_model_id: String?
 }
 
 value ModelProviderGroup {
-    provider_name: String                -- e.g. "OpenAI", "Ollama", "LM Studio"
+    provider_name: String               -- e.g. "OpenAI", "Ollama", "LM Studio"
     models: List<ModelEntry>
 }
 
@@ -64,25 +49,82 @@ value ModelEntry {
     max_output_tokens: Integer
 }
 
--- ─── Chat panel actions ─────────────────────────────────────
+config {
+    chat_tool_args_max_length: Integer = 30
+    chat_input_max_height: Integer = 200
+}
 
--- Model selector:
---   Dropdown in header, groups models by provider (optgroup)
---   Selection is per-conversation override, persisted with conversation
---   Changing model mid-conversation applies to subsequent messages only
+surface ChatPanelSurface {
+    context panel: ChatPanelView
 
--- Streaming behaviour:
---   Messages accumulate in real-time (markdown rendered incrementally)
---   Tool call markers: checkmark icon (done) or dot (in-progress),
---     tool name, args truncated to 30 chars for string values
---   Thinking animation (three dots) during LLM processing
+    exposes:
+        panel.needs_api_key
+        panel.title
+        panel.selected_model_id
+        panel.is_streaming
+        panel.input_text
+        for msg in panel.messages:
+            msg.role
+            msg.content
+            msg.is_streaming
+            for tm in msg.tool_markers:
+                tm.tool_name
+                tm.args_preview
+                tm.is_complete
 
--- Stop/Abort:
---   Square stop icon button, visible only during active streaming
---   Stops current generation, partial message preserved as-is
+    provides:
+        ChatSendMessage(panel.conversation_id, panel.input_text)
+            when panel.input_text != "" and not panel.is_streaming
+        ChatAbortStreaming(panel.conversation_id)
+            when panel.is_streaming
+        ChatSelectModel(panel.conversation_id, model_id)
+        ChatOpenSettings()
+            when panel.needs_api_key
 
--- Assistant action dispatch:
---   Assistant tool calls can trigger navigation actions:
---     open_post(id), open_media(id), open_settings(), etc.
---   Actions dispatched through store, same as user clicks
---   Navigation actions open tabs with pin intent
+    @guarantee ApiKeyRequiredScreen
+        -- Shown when needs_api_key is true.
+        -- Key icon, title, description text, "Open Settings" button.
+        -- No chat functionality available until API key is set.
+
+    @guarantee HeaderLayout
+        -- Left: conversation title (or "New Chat"), CSS ellipsis on overflow.
+        -- Right: model selector button opening dropdown.
+
+    @guarantee ModelSelectorDropdown
+        -- Dropdown groups models by provider (section headers).
+        -- Each entry: model display name.
+        -- Expandable details: context window, max output tokens.
+        -- Selection is per-conversation override, persisted with conversation.
+        -- Changing model mid-conversation applies to subsequent messages only.
+
+    @guarantee WelcomeScreen
+        -- Shown when no messages and not streaming.
+        -- Robot icon, title, description, 5 tip bullet points.
+
+    @guarantee MessageRendering
+        -- User messages: plain text.
+        -- Assistant messages: rendered as GFM Markdown.
+        --   External images blocked (CSP), shown as links.
+        -- Tool markers: checkmark (done) or dot (in-progress) icon,
+        --   tool name, args truncated to config.chat_tool_args_max_length for strings.
+        -- Streaming: accumulating markdown + tool markers, thinking dots animation.
+
+    @guarantee AutoScroll
+        -- Message area auto-scrolls to bottom on new messages.
+
+    @guarantee InputArea
+        -- Abort/Stop button: square stop icon, visible only during streaming.
+        -- Auto-growing textarea: max config.chat_input_max_height px.
+        --   Enter sends message. Shift+Enter inserts newline.
+        -- Send button: up-arrow icon, disabled when input is empty or streaming.
+
+    @guarantee AssistantActionDispatch
+        -- Assistant tool calls can trigger navigation actions:
+        --   open_post(id), open_media(id), open_settings(), etc.
+        -- Actions dispatched through store, same as user clicks.
+        -- Navigation actions open tabs with pin intent.
+
+    @guarantee TokenTracking
+        -- Token usage tracked per conversation.
+        -- Displayed in status bar, not in the chat panel itself.
+}

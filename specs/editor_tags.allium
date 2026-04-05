@@ -5,61 +5,105 @@
 
 -- Describes the layout and behaviour of the tags view.
 
+use "./tag.allium" as tag
+use "./i18n.allium" as i18n
+
 -- ─── Tags view ────────────────────────────────────────────────
 
--- Three sections controlled by sidebar TagsNav:
+value TagsView {
+    cloud_tags: List<TagCloudItem>
+    selected_tags: List<String>         -- multi-select from cloud
+    edit_form: TagEditForm?             -- populated when exactly 1 tag selected
+    merge_source_tags: List<String>     -- 2+ selected tags for merge
+    merge_target: String?               -- target tag for merge
+}
 
--- 1. Cloud: tag cloud visualization. Tags sized by post count,
---    coloured by tag colour. Clickable to select for editing.
+value TagCloudItem {
+    name: String
+    count: Integer
+    color: String?
+}
 
--- 2. Manage (Create/Edit): tag name input, colour picker, template select.
---    Edit existing tag or create new. Delete button with confirmation.
-
--- 3. Merge: source tag select, target tag select, Merge button.
---    Merges all posts from source tag into target, removes source.
-
--- ─── Tags view actions ──────────────────────────────────────
-
--- Cloud section:
---   Tags sized by post count (same 11-22px scaling as dashboard)
---   Tags with colours get coloured background
---   Click selects tag: switches to Manage section, loads tag data
-
--- Manage section:
---   Create new: empty form, Save creates tag + writes tags.json
---   Edit existing: loads tag data into form, Save updates
---   Tag name input, colour picker, template select (optional)
---   Colour picker: 17 preset colour swatches + custom hex input field
---   Delete: opens ConfirmDialog showing post count
---     "This tag is used in N posts. Delete anyway?"
---     On confirm: background task removes tag from all posts,
---       rewrites published .md files, deletes tag, writes tags.json
-
--- Merge section:
---   Source tag multi-select, target tag single-select
---   Merge button: opens ConfirmDialog
---     "Merge N tags into {target}? This cannot be undone."
---   On confirm: background task updates all affected posts,
---     rewrites published .md files, deletes source tags, writes tags.json
-
--- Sync (maintenance action):
---   Rewrites tags.json from current DB state
-
--- ─── Colour picker popover ──────────────────────────────────
+value TagEditForm {
+    name: String                        -- editable text input
+    color: String?                      -- colour picker value
+    post_template_slug: String?         -- select from available templates
+}
 
 value ColourPickerPopover {
-    -- Inline popover positioned below tag colour field (tags view manage).
-    -- Not a modal — does not dim backdrop, no ESC/backdrop close.
-    -- Closes when clicking outside popover or selecting a colour.
-    -- Grid of 17 preset colour swatches (4x4 + 1).
-    -- Below grid: custom hex input field (#RRGGBB).
-    -- Selection is immediate — no confirm/cancel buttons.
-    -- Choosing a colour updates the tag form's colour field live.
-    presets: List<String>                -- 17 hex colour values
+    presets: List<String>               -- 17 hex colour values
     custom_hex: String?
     selected: String?
 }
 
 config {
     colour_picker_preset_count: Integer = 17
+    tag_cloud_min_font: String = "0.85rem"
+    tag_cloud_max_font: String = "1.8rem"
+}
+
+surface TagsViewSurface {
+    context view: TagsView
+
+    exposes:
+        for t in view.cloud_tags:
+            t.name
+            t.count
+            t.color
+        view.selected_tags
+        view.edit_form when view.edit_form != null
+        view.merge_target when view.merge_target != null
+
+    provides:
+        TagCloudItemClicked(tag_name)
+        TagCreateRequested(name, color)
+        TagSaveRequested(name, color, post_template_slug)
+            when view.edit_form != null
+        TagDeleteRequested(tag_name)
+            when view.selected_tags.count = 1
+        TagMergeRequested(source_tags, target_tag)
+            when view.selected_tags.count >= 2
+        TagSyncRequested()
+
+    @guarantee CloudSection
+        -- Tag cloud visualisation (section #1).
+        -- Tags sized by post count (config.tag_cloud_min_font to config.tag_cloud_max_font).
+        -- Tags with colours get coloured background with contrast text.
+        -- Multi-select: click to toggle selection. Selection count shown with clear button.
+        -- Click selects tag for editing in Manage section.
+
+    @guarantee ManageSection
+        -- Create/Edit section (section #2).
+        -- Create form: name input + colour picker + Create button.
+        -- Edit form (when exactly 1 tag selected): name input, colour picker,
+        --   post template select dropdown (optional), Save/Cancel buttons.
+        -- Delete button visible when exactly 1 tag selected.
+
+    @guarantee ColourPicker
+        -- Inline popover positioned below tag colour field.
+        -- Grid of config.colour_picker_preset_count preset colour swatches.
+        -- Below grid: custom hex input field (#RRGGBB).
+        -- Selection is immediate — no confirm/cancel buttons.
+        -- Choosing a colour updates the form's colour field live.
+
+    @guarantee MergeSection
+        -- Merge section (section #3). Requires 2+ selected tags.
+        -- Target tag select dropdown (single select from selected tags).
+        -- Merge button opens ConfirmDialog:
+        --   "Merge N tags into {target}? This cannot be undone."
+        -- Shows preview of "tags to delete" (all selected except target).
+
+    @guarantee SyncSection
+        -- Sync/Discover section (section #4).
+        -- "Discover" button rewrites tags.json from current DB state.
+
+    @guarantee DeleteConfirmation
+        -- Delete opens ConfirmDialog showing post count:
+        --   "This tag is used in N posts. Delete anyway?"
+        -- On confirm: background task removes tag from all posts,
+        --   rewrites published .md files, deletes tag, writes tags.json.
+
+    @guarantee MergeExecution
+        -- On merge confirm: background task updates all affected posts,
+        --   rewrites published .md files, deletes source tags, writes tags.json.
 }

@@ -6,22 +6,56 @@
 -- Describes the layout and behaviour of the template editor.
 -- See template.allium for entity model and Liquid subset.
 
--- ─── External surfaces ──────────────────────────────────────
-
-surface User {
-    provides: TemplateSaveRequested(template_id)
-    provides: TemplateDeleteRequested(template_id)
-}
+use "./template.allium" as template
+use "./i18n.allium" as i18n
 
 -- ─── Template editor view ─────────────────────────────────────
 
--- Code editor for Liquid templates (post, list, not_found, partial).
+value TemplateEditorView {
+    template_id: String
+    title: String                       -- editable text input
+    slug: String                        -- editable text input, auto-generated from title
+    kind: String                        -- select: post | list | not_found | partial
+    enabled: Boolean                    -- checkbox
+    content: String                     -- code editor content
+    created_at: String                  -- locale-formatted date
+    updated_at: String                  -- locale-formatted date
+}
 
--- Layout: header bar, code editor, preview pane.
--- Header: template title (editable), kind badge, enabled toggle, version display.
--- Editor: code editor with Liquid syntax highlighting.
--- Preview: rendered template output in iframe (uses sample post data).
--- Toolbar: Save button, Delete button.
+surface TemplateEditorSurface {
+    context editor: TemplateEditorView
+
+    exposes:
+        editor.title
+        editor.slug
+        editor.kind
+        editor.enabled
+        editor.created_at
+        editor.updated_at
+
+    provides:
+        TemplateSaveRequested(editor.template_id)
+        TemplateValidateRequested(editor.template_id)
+        TemplateDeleteRequested(editor.template_id)
+
+    @guarantee HeaderLayout
+        -- Header bar with template title tab.
+        -- Actions (right side): Save button, Validate button,
+        --   Delete button (danger style).
+
+    @guarantee MetadataRow
+        -- Two rows of metadata fields above the editor.
+        -- Row 1: Title (text input), Slug (text input, auto-generated from title).
+        -- Row 2: Kind (select: post/list/not-found/partial), Enabled (checkbox).
+
+    @guarantee EditorBody
+        -- Code editor with HTML/Liquid syntax highlighting.
+        -- Toolbar: "Content" label.
+        -- Syntax errors shown inline in editor on validation.
+
+    @guarantee FooterLayout
+        -- Created date and Updated date, locale-formatted.
+}
 
 -- ─── Template editor actions ────────────────────────────────
 
@@ -31,6 +65,13 @@ rule TemplateSave {
     -- If invalid: blocks save, shows error inline in editor
     -- If valid: bumps version, saves to DB + rewrites .liquid file
     -- See engine_side_effects.allium UpdateTemplateSideEffects
+}
+
+rule TemplateValidate {
+    when: TemplateValidateRequested(template_id)
+    -- Validates Liquid syntax without saving
+    -- Shows errors inline in editor
+    -- Success shown as toast or status indicator
 }
 
 rule TemplateDelete {

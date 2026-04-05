@@ -9,29 +9,11 @@
 -- warrant their own spec file.
 
 use "./tabs.allium" as tabs
-
--- ─── External surfaces ──────────────────────────────────────
-
-surface User {
-    provides: ImportAnalyzeRequested(definition_id, file_path)
-    provides: ImportExecuteRequested(definition_id)
-    provides: SiteValidationScanRequested()
-    provides: SiteValidationApplyRequested(report)
-    provides: TranslationValidationScanRequested()
-    provides: TranslationValidationFixRequested(report)
-    provides: DuplicateSearchRequested()
-    provides: DuplicatePairDismissed(post_id_a, post_id_b)
-    provides: DuplicatePairsBatchDismissed(pair_ids)
-    provides: MenuSaveRequested()
-    provides: MenuItemAdded(kind, data)
-    provides: MenuItemDeleted(item_id)
-    provides: MenuItemMoved(item_id, direction)
-}
+use "./i18n.allium" as i18n
 
 -- ─── Dashboard (no tab active) ───────────────────────────────
 
 -- Shown as default/welcome view when no entity tab is active.
--- Single centered column.
 
 value Dashboard {
     title: String
@@ -44,7 +26,6 @@ value Dashboard {
 }
 
 value DashboardStats {
-    -- Three stat cards side by side:
     total_posts: Integer
     published_count: Integer
     draft_count: Integer
@@ -57,10 +38,6 @@ value DashboardStats {
 }
 
 value DashboardTimeline {
-    -- Bar chart of posts over time
-    -- Last 12 months that have data
-    -- Each bar: count label on top, month abbreviation + year below
-    -- Bar height proportional to max count
     months: List<DashboardTimelineMonth>
 }
 
@@ -71,13 +48,8 @@ value DashboardTimelineMonth {
 }
 
 value DashboardTagCloud {
-    -- Up to 40 tags, sorted alphabetically
-    -- Font size scaled 11px-22px based on post count
-    -- Tags with colours get coloured background with contrast text
-    -- Hover title shows post count
-    -- "and N more" text if > 40 tags
     tags: List<DashboardTag>
-    overflow_count: Integer?
+    overflow_count: Integer?            -- "and N more" when > config.dashboard_max_tags
 }
 
 value DashboardTag {
@@ -87,8 +59,6 @@ value DashboardTag {
 }
 
 value DashboardCategoryCloud {
-    -- All categories as badge-like tags
-    -- Each shows category name + count
     categories: List<DashboardCategory>
 }
 
@@ -98,13 +68,10 @@ value DashboardCategory {
 }
 
 value DashboardRecentPost {
-    -- Last 5 posts by updatedAt descending
-    -- Each row: title (or "Untitled"), status badge (draft/published), date
-    -- Single-click: preview tab, double-click: pin tab
     post_id: String
-    title: String
-    status: String
-    date: String
+    title: String                       -- "Untitled" as fallback
+    status: String                      -- draft | published
+    date: String                        -- locale-formatted
 }
 
 config {
@@ -115,16 +82,144 @@ config {
     dashboard_timeline_months: Integer = 12
 }
 
+surface DashboardSurface {
+    context dash: Dashboard
+
+    exposes:
+        dash.title
+        dash.subtitle
+        dash.stats.total_posts
+        dash.stats.published_count
+        dash.stats.draft_count
+        dash.stats.archived_count when dash.stats.archived_count > 0
+        dash.stats.media_count
+        dash.stats.image_count
+        dash.stats.total_media_size
+        dash.stats.tag_count
+        dash.stats.category_count
+        for m in dash.timeline.months:
+            m.label
+            m.year
+            m.count
+        for t in dash.tag_cloud.tags:
+            t.name
+            t.count
+            t.color
+        dash.tag_cloud.overflow_count when dash.tag_cloud.overflow_count != null
+        for c in dash.category_cloud.categories:
+            c.name
+            c.count
+        for rp in dash.recent_posts:
+            rp.title
+            rp.status
+            rp.date
+
+    provides:
+        DashboardRecentPostClicked(post_id, single)
+        DashboardRecentPostClicked(post_id, double)
+
+    @guarantee StatCards
+        -- Three stat cards side by side.
+        -- Posts card: total number, breakdown tags (published/drafts/archived if > 0).
+        -- Media card: count, images count, total size (formatted bytes).
+        -- Tags card: count, categories count.
+
+    @guarantee TimelineChart
+        -- Bar chart of posts over last config.dashboard_timeline_months months that have data.
+        -- Each bar: count label on top, month abbreviation + year below.
+        -- Bar height proportional to max count.
+
+    @guarantee TagCloud
+        -- Up to config.dashboard_max_tags tags, sorted alphabetically.
+        -- Font size scaled config.dashboard_tag_min_font to config.dashboard_tag_max_font px
+        --   based on post count.
+        -- Tags with colours get coloured background with contrast text.
+        -- Hover title shows post count.
+        -- "and N more" text when overflow_count > 0.
+
+    @guarantee CategoryCloud
+        -- All categories as badge-like tags.
+        -- Each shows category name + count.
+
+    @guarantee RecentPosts
+        -- Last config.dashboard_recent_count posts by updatedAt descending.
+        -- Each row: title (or "Untitled"), status badge (draft/published), date.
+        -- Single-click: preview tab. Double-click: pin tab.
+}
+
 -- ─── Menu editor view ────────────────────────────────────────
 
 -- Visual editor for the OPML navigation menu (meta/menu.opml).
 -- See menu.allium for data model.
 
--- Layout: toolbar at top, tree view of menu items below.
--- Each item row: drag handle, icon, label, type badge, action buttons.
--- Nested items indented to show hierarchy.
+value MenuEditorView {
+    items: List<MenuTreeItem>
+}
 
--- ─── Menu editor actions ────────────────────────────────────
+value MenuTreeItem {
+    item_id: String
+    kind: String                        -- home | page | category_archive | submenu
+    label: String
+    children: List<MenuTreeItem>
+    is_home: Boolean                    -- true for the home item (protected)
+}
+
+surface MenuEditorSurface {
+    context menu: MenuEditorView
+
+    exposes:
+        for item in menu.items:
+            item.kind
+            item.label
+            item.children
+            item.is_home
+
+    provides:
+        MenuItemAdded(kind, data)
+        MenuSaveRequested()
+        MenuItemDeleted(item_id)
+            when not item.is_home
+        MenuItemMoved(item_id, direction)
+            when not item.is_home
+
+    @guarantee HeaderLayout
+        -- Title + description text.
+
+    @guarantee Toolbar
+        -- 8 icon buttons with tooltips:
+        --   Add Entry (+), Save (floppy), Add Category Archive,
+        --   Move Up, Move Down, Indent, Unindent, Delete.
+
+    @guarantee TreeView
+        -- Drag-and-drop tree with items showing:
+        --   Drag handle, kind icon (home/page/category-archive/submenu SVGs),
+        --   title, selected row highlighting.
+        -- Nested items indented to show hierarchy.
+
+    @guarantee InlineEditing
+        -- When creating page item: inline PageInput with search
+        --   (filters posts in "page" category).
+        -- When creating category archive: inline CategoryInput with search/create.
+        -- Escape cancels, selection confirms.
+
+    @guarantee HomeItemProtection
+        -- Home item cannot be moved, reordered, or deleted.
+        -- Maximum one home item allowed.
+
+    @guarantee DragDrop
+        -- Drag handle on each item.
+        -- Auto-expand collapsed submenus on hover (config.menu_drag_expand_delay ms delay).
+        -- Drop indicators show target position and nesting level.
+
+    @guarantee MoveDirections
+        -- Up/Down: reorder within same nesting level.
+        -- Indent: nest under previous sibling (becomes child).
+        -- Unindent: move to parent's level (becomes next sibling of parent).
+}
+
+config {
+    menu_drag_expand_delay: Integer = 450
+}
 
 rule MenuAddItem {
     when: MenuItemAdded(kind, data)
@@ -144,11 +239,7 @@ rule MenuSave {
 rule MenuMoveItem {
     when: MenuItemMoved(item_id, direction)
     -- direction = up | down | indent | unindent
-    -- Up/Down: reorder within same nesting level
-    -- Indent: nest under previous sibling (becomes child)
-    -- Unindent: move to parent's level (becomes next sibling of parent)
     requires: not is_home_item(item_id)
-        -- Home item is protected: cannot be moved or deleted
     ensures: MenuTreeUpdated()
 }
 
@@ -159,71 +250,187 @@ rule MenuDeleteItem {
     ensures: MenuTreeUpdated()
 }
 
--- Drag-and-drop reorder:
---   Drag handle on each item
---   Auto-expand collapsed submenus on hover (450ms delay)
---   Drop indicators show target position and nesting level
-
-config {
-    menu_drag_expand_delay: Integer = 450
-}
-
 -- ─── Metadata diff view ──────────────────────────────────────
 
 -- Shows DB vs filesystem differences for all entity types.
 -- See metadata_diff.allium for diff field definitions.
 
--- Layout: scan button at top, results grouped by entity type below.
--- Each diff entry: entity name, field name, DB value, file value,
---   two sync buttons (DB->File, File->DB).
+value MetadataDiffView {
+    is_scanning: Boolean
+    active_entity_tab: String           -- posts | media | scripts | templates
+    diff_stats: MetadataDiffStats
+    field_summaries: List<MetadataDiffFieldSummary>
+    items: List<MetadataDiffItem>
+    orphan_files: List<MetadataDiffOrphanFile>
+}
 
--- ─── Metadata diff actions ──────────────────────────────────
+value MetadataDiffStats {
+    total_posts: Integer
+    published_posts: Integer
+    draft_posts: Integer
+    media_files: Integer
+    scripts: Integer
+    templates: Integer
+}
 
--- Scan: runs 4 parallel scans (posts, media, scripts, templates)
---   Compares DB records against filesystem files field by field
---   Results grouped by entity type, sorted by entity name
---   Shows count of differences per entity type in section header
+value MetadataDiffFieldSummary {
+    field_name: String
+    diff_count: Integer
+}
 
--- Per-field sync:
---   DB -> File button: overwrites file field with DB value
---   File -> DB button: overwrites DB field with file value
---   No confirmation dialog for individual field syncs
---   Button disappears after successful sync (field now matches)
+value MetadataDiffItem {
+    entity_name: String
+    entity_type: String
+    file_missing: Boolean               -- badge shown when file not found
+    field_diffs: List<MetadataDiffField>
+}
 
--- Orphan file import:
---   Files on disk with no matching DB record shown separately
---   "Import" action creates DB record from file metadata
---   Appears at bottom of each entity type section
+value MetadataDiffField {
+    field_name: String
+    db_value: String?
+    file_value: String?
+}
+
+value MetadataDiffOrphanFile {
+    file_path: String
+    entity_type: String
+}
+
+surface MetadataDiffSurface {
+    context diff: MetadataDiffView
+
+    exposes:
+        diff.is_scanning
+        diff.active_entity_tab
+        diff.diff_stats
+        for fs in diff.field_summaries:
+            fs.field_name
+            fs.diff_count
+        for item in diff.items:
+            item.entity_name
+            item.file_missing
+            for fd in item.field_diffs:
+                fd.field_name
+                fd.db_value
+                fd.file_value
+        for orphan in diff.orphan_files:
+            orphan.file_path
+
+    provides:
+        MetadataDiffScanRequested()
+        MetadataDiffSyncFieldToFile(entity_name, field_name)
+        MetadataDiffSyncFieldToDb(entity_name, field_name)
+        MetadataDiffSyncAllFieldToFile(field_name)
+        MetadataDiffSyncAllFieldToDb(field_name)
+        MetadataDiffImportOrphan(file_path)
+
+    @guarantee HeaderLayout
+        -- Title + description text.
+        -- Stats row: 6 stat items (total posts, published, drafts, media, scripts, templates).
+
+    @guarantee ScanAction
+        -- Scan/Rescan button at top.
+        -- Progress bar + message during scan.
+
+    @guarantee EntityTabs
+        -- Tabs: Posts, Media, Scripts, Templates — each with badge count of diffs.
+
+    @guarantee FieldSummaryPills
+        -- Clickable filter pills per field, each with count.
+        -- Two bulk sync buttons per pill: DB→File and File→DB (syncs all items for that field).
+
+    @guarantee DiffItemCards
+        -- Per-item card: header (entity label + file-missing badge),
+        --   field rows (field name, DB value, file value),
+        --   two sync buttons per field (DB→File, File→DB).
+        -- Button disappears after successful sync (field now matches).
+
+    @guarantee OrphanFilesSection
+        -- Files on disk with no matching DB record shown at bottom of each entity tab.
+        -- "Import" button creates DB record from file metadata.
+
+    @guarantee NoConfirmation
+        -- Individual field syncs require no confirmation dialog.
+}
 
 -- ─── Git diff view ────────────────────────────────────────────
 
 -- Renders diff for a file (working tree vs HEAD) or a commit.
 -- File diff: id = "git-diff:{filePath}"
 -- Commit diff: id = "git-diff:commit:{commitHash}"
--- Supports inline and side-by-side diff display modes (from editor settings).
--- No actions beyond viewing — changes are managed via git sidebar.
+
+value GitDiffView {
+    diff_id: String
+    diff_type: String                   -- file | commit
+    display_mode: String                -- inline | side_by_side (from editor settings)
+}
+
+surface GitDiffSurface {
+    context diff: GitDiffView
+
+    exposes:
+        diff.diff_id
+        diff.diff_type
+        diff.display_mode
+
+    @guarantee DiffDisplayModes
+        -- Supports inline and side-by-side diff display modes.
+        -- Mode comes from editor settings (Diff View Style).
+
+    @guarantee ReadOnly
+        -- No actions beyond viewing — changes are managed via git sidebar.
+}
 
 -- ─── Documentation views ─────────────────────────────────────
 
 -- documentation:     renders DOCUMENTATION.md as styled HTML
 -- api_documentation: renders API.md as styled HTML
 
--- ─── Site validation view ───────────────────────────────────
+surface DocumentationSurface {
+    @guarantee MarkdownRendering
+        -- Renders markdown file as styled HTML.
+        -- No edit actions. Read-only view.
+}
 
--- Compares sitemap.xml to generated HTML files on disk.
--- Detects missing pages, orphan HTML, and stale content.
+-- ─── Site validation view ───────────────────────────────────
 
 value SiteValidationReport {
     expected_url_count: Integer
     existing_html_count: Integer
-    missing_url_paths: List<String>       -- in sitemap, no HTML on disk
-    extra_url_paths: List<String>         -- HTML on disk, not in sitemap
-    updated_post_url_paths: List<String>  -- source .md newer than HTML
+    missing_url_paths: List<String>     -- in sitemap, no HTML on disk
+    extra_url_paths: List<String>       -- HTML on disk, not in sitemap
+    updated_post_url_paths: List<String> -- source .md newer than HTML
 }
 
--- Layout: scan button, summary line, three URL list sections.
--- Summary: "Expected URLs: N — Existing HTML URLs: N — Missing: N — Extra: N — Updated: N"
--- Each section: heading, list of URL paths, or "None found".
+surface SiteValidationSurface {
+    context report: SiteValidationReport
+
+    exposes:
+        report.expected_url_count
+        report.existing_html_count
+        report.missing_url_paths
+        report.extra_url_paths
+        report.updated_post_url_paths
+
+    provides:
+        SiteValidationScanRequested()
+        SiteValidationApplyRequested(report)
+            when report.missing_url_paths.count > 0
+              or report.extra_url_paths.count > 0
+              or report.updated_post_url_paths.count > 0
+
+    @guarantee SummaryLine
+        -- "Expected URLs: N — Existing HTML URLs: N — Missing: N — Extra: N — Updated: N"
+
+    @guarantee UrlSections
+        -- Three sections: Missing URLs, Extra URLs, Updated URLs.
+        -- Each section: heading + list of URL paths, or "None found".
+
+    @guarantee ApplyAction
+        -- Apply button disabled when nothing to fix.
+        -- On apply: renders missing, deletes extra, re-renders updated.
+        -- Toast: "Validation applied: N rendered, N deleted".
+}
 
 rule SiteValidationScan {
     when: SiteValidationScanRequested()
@@ -240,14 +447,10 @@ rule SiteValidationApply {
     -- Deletes extra HTML files, removes empty directories
     -- Regenerates calendar if anything changed
     -- Rebuilds search index if anything rendered or deleted
-    -- Toast: "Validation applied: N rendered, N deleted"
     ensures: GenerateSiteRequested(sections: report.affected_sections)
 }
 
 -- ─── Translation validation view ───────────────────────────
-
--- Checks translation integrity across DB rows and filesystem files.
--- NOT a matrix view — it is a list of issues found.
 
 value TranslationValidationReport {
     checked_database_row_count: Integer
@@ -271,10 +474,51 @@ value TranslationValidationIssue {
     file_path: String?
 }
 
--- Layout: Revalidate + Fix Issues buttons, summary line, two issue sections.
--- Summary: "Checked DB rows: N — Checked files: N — Invalid DB rows: N — Invalid files: N"
--- Each issue rendered as card with coloured left border.
--- Card shows: issue label, source post ID, translation ID, title, languages, file path.
+surface TranslationValidationSurface {
+    context report: TranslationValidationReport
+
+    exposes:
+        report.checked_database_row_count
+        report.checked_filesystem_file_count
+        for issue in report.invalid_database_rows:
+            issue.issue
+            issue.translation_id
+            issue.translation_for
+            issue.canonical_language
+            issue.translation_language
+            issue.title
+            issue.file_path
+        for issue in report.invalid_filesystem_files:
+            issue.issue
+            issue.file_path
+
+    provides:
+        TranslationValidationScanRequested()
+        TranslationValidationFixRequested(report)
+            when report.invalid_database_rows.count > 0
+              or report.invalid_filesystem_files.count > 0
+
+    @guarantee SummaryLine
+        -- "Checked DB rows: N — Checked files: N — Invalid DB rows: N — Invalid files: N"
+
+    @guarantee IssueSections
+        -- Two sections: Database Issues, Filesystem Issues.
+        -- Each issue rendered as card with coloured left border.
+        -- Card shows: issue label, source post ID, translation ID, title, languages, file path.
+
+    @guarantee IssueTypes
+        -- same_language_as_canonical: translation language matches source.
+        -- do_not_translate_has_translations: source is doNotTranslate.
+        -- content_in_database: published translation has content in DB.
+        -- missing_source_post: translationFor references nonexistent post.
+
+    @guarantee FixAction
+        -- Revalidate button + Fix button (disabled when no issues).
+        -- Fix: content_in_database -> flush to .md file, set content null.
+        --   Other issues -> delete DB row or .md file.
+        -- After fix: automatically re-validates.
+        -- Toast: "Deleted N DB rows and N files, flushed N translations to disk".
+}
 
 rule TranslationValidationScan {
     when: TranslationValidationScanRequested()
@@ -290,18 +534,14 @@ rule TranslationValidationFix {
     --   DB issues: deletes translation row
     --   Filesystem issues: deletes the .md file
     -- After fix: automatically re-validates
-    -- Toast: "Deleted N DB rows and N files, flushed N translations to disk"
     ensures: TranslationValidationScan
 }
 
 -- ─── Find duplicates view ──────────────────────────────────
 
--- Uses embedding vectors to find semantically similar posts.
--- Gate: requires semanticSimilarityEnabled in project metadata.
--- If disabled: shows "Semantic similarity is not enabled" message.
-
 value DuplicateSearchResult {
     pairs: List<DuplicatePair>
+    has_more: Boolean                   -- pagination with config.duplicate_page_size per page
 }
 
 value DuplicatePair {
@@ -309,23 +549,67 @@ value DuplicatePair {
     title_a: String
     post_id_b: String
     title_b: String
-    similarity: Decimal                   -- 0.0 to 1.0
-    exact_match: Boolean                  -- true if titles + content identical
+    similarity: Decimal                 -- 0.0 to 1.0
+    exact_match: Boolean                -- true if titles + content identical
 }
 
--- Layout: header, count, paginated pair list (500 per page).
--- Each pair row: checkbox, post A title (clickable), arrow, post B title (clickable),
---   similarity badge ("Exact duplicate" or "N% similar"), Dismiss button.
--- Exact matches styled distinctly. Batch controls: Check All, Uncheck All,
---   Dismiss Checked (N). Refresh button.
+config {
+    duplicate_similarity_threshold: Decimal = 0.92
+    duplicate_page_size: Integer = 500
+    duplicate_neighbor_count: Integer = 21
+}
+
+surface DuplicatesSurface {
+    context result: DuplicateSearchResult
+
+    exposes:
+        for pair in result.pairs:
+            pair.title_a
+            pair.title_b
+            pair.similarity
+            pair.exact_match
+        result.has_more
+
+    provides:
+        DuplicateSearchRequested()
+        DuplicatePairDismissed(post_id_a, post_id_b)
+        DuplicatePairsBatchDismissed(pair_ids)
+        DuplicatePostClicked(post_id)
+        DuplicateShowMoreRequested()
+            when result.has_more
+
+    @guarantee SemanticSimilarityGate
+        -- Requires semanticSimilarityEnabled in project metadata.
+        -- If disabled: shows "Semantic similarity is not enabled" message.
+        -- No search functionality available when disabled.
+
+    @guarantee ActionsBar
+        -- Refresh button, Check All, Uncheck All,
+        --   Dismiss Checked (with count), disabled when none checked.
+
+    @guarantee PairRows
+        -- Each row: checkbox, post A title (clickable -> opens tab),
+        --   arrow, post B title (clickable -> opens tab),
+        --   similarity badge (percentage or "Exact Match"),
+        --   Dismiss button.
+        -- Exact matches styled distinctly from similarity matches.
+
+    @guarantee Pagination
+        -- "Show More" button when has_more is true.
+        -- config.duplicate_page_size pairs per page.
+
+    @guarantee BatchDismiss
+        -- Batch insert in chunks of 100.
+        -- Dismissed pairs excluded from future searches.
+}
 
 rule DuplicateSearch {
     when: DuplicateSearchRequested()
     requires: semantic_similarity_enabled
     -- Loads USearch vector index for project
-    -- For each indexed post: search 21 nearest neighbors
+    -- For each indexed post: search config.duplicate_neighbor_count nearest neighbors
     -- similarity = max(0, 1 - distance)
-    -- Filter: similarity >= threshold, exclude dismissed pairs
+    -- Filter: similarity >= config.duplicate_similarity_threshold, exclude dismissed
     -- For 100% embedding similarity: load post bodies, compare title+content
     --   If identical: exact_match = true
     -- Sort: exact matches first, then descending similarity
@@ -336,7 +620,6 @@ rule DuplicateDismiss {
     when: DuplicatePairDismissed(post_id_a, post_id_b)
     -- Inserts into dismissed_duplicate_pairs with canonical ID ordering
     -- Excluded from future searches
-    -- See schema.allium DismissedDuplicatePair
     ensures: PairDismissed(post_id_a, post_id_b)
 }
 
@@ -346,22 +629,139 @@ rule DuplicateBatchDismiss {
     ensures: for pair in pair_ids: PairDismissed(pair)
 }
 
-config {
-    duplicate_similarity_threshold: Decimal = 0.92
-    duplicate_page_size: Integer = 500
-    duplicate_neighbor_count: Integer = 21
-}
-
 -- ─── Import analysis view ───────────────────────────────────
 
 -- Editor for WXR (WordPress eXtended RSS) import definitions.
 -- Keyed by import definition ID. Opened as always-pinned tab.
--- Workflow: Select File -> Analyze -> Resolve Conflicts -> Execute
 
--- Layout: header (definition name), file selector, analysis results,
---   conflict resolution panel, taxonomy mapping, execute button.
+value ImportAnalysisView {
+    definition_id: String
+    definition_name: String             -- editable name input
+    uploads_folder_path: String?        -- path display + Browse button
+    wxr_file_path: String?              -- path display + Select & Analyze button
+    is_loading: Boolean
+    report: ImportAnalysisReport?
+}
 
--- ─── Import analysis actions ────────────────────────────────
+value ImportAnalysisReport {
+    site_info: ImportSiteInfo
+    post_stats: ImportEntityStats
+    page_stats: ImportEntityStats
+    media_stats: ImportMediaStats
+    category_stats: ImportTaxonomyStats
+    tag_stats: ImportTaxonomyStats
+    date_distribution: List<ImportYearDistribution>
+    conflicts: List<ImportConflict>
+    macros: List<ImportMacro>
+}
+
+value ImportSiteInfo {
+    title: String
+    url: String
+    language: String
+    source_file: String
+}
+
+value ImportEntityStats {
+    new_count: Integer
+    update_count: Integer
+    conflict_count: Integer
+    duplicate_count: Integer
+}
+
+value ImportMediaStats {
+    new_count: Integer
+    update_count: Integer
+    conflict_count: Integer
+    duplicate_count: Integer
+    missing_count: Integer
+}
+
+value ImportTaxonomyStats {
+    existing_count: Integer
+    mapped_count: Integer
+    new_count: Integer
+}
+
+value ImportYearDistribution {
+    year: Integer
+    post_count: Integer
+    media_count: Integer
+}
+
+value ImportConflict {
+    item_type: String                   -- post | page | media
+    item_name: String
+    resolution: String                  -- import | skip | merge
+}
+
+value ImportMacro {
+    name: String
+    usage_count: Integer
+    parameters: List<String>
+    validation_status: String           -- valid | invalid | unknown
+}
+
+surface ImportAnalysisSurface {
+    context analysis: ImportAnalysisView
+
+    exposes:
+        analysis.definition_name
+        analysis.uploads_folder_path
+        analysis.wxr_file_path
+        analysis.is_loading
+        analysis.report when analysis.report != null
+
+    provides:
+        ImportAnalyzeRequested(analysis.definition_id, file_path)
+            when analysis.wxr_file_path != null
+        ImportExecuteRequested(analysis.definition_id)
+            when analysis.report != null
+        ImportConflictResolutionChanged(item_name, resolution)
+        ImportTaxonomyMappingChanged(source_term, target_term)
+        ImportAITaxonomyAnalysisRequested(analysis.definition_id)
+
+    @guarantee FileSelectors
+        -- Uploads folder: path display + Browse button (native folder dialog).
+        -- WXR file: path display + Select & Analyze button (native file dialog).
+
+    @guarantee LoadingState
+        -- Spinner + progress step + detail text during analysis.
+
+    @guarantee SiteInfoCard
+        -- Shows: site title, URL, language, source file path.
+
+    @guarantee StatCards
+        -- Posts (new/update/conflict/duplicate), Pages (same),
+        --   Media (new/update/conflict/duplicate/missing),
+        --   Categories (existing/mapped/new), Tags (existing/mapped/new).
+
+    @guarantee DateDistribution
+        -- Year-by-year bar charts for posts + media.
+
+    @guarantee ConflictsSection
+        -- Collapsible. Per-item dropdown: Import/Skip/Merge.
+        -- Default: Import for new items, Skip for existing matches.
+
+    @guarantee TaxonomySection
+        -- Collapsible. Category + tag pills.
+        -- Click pill to map to existing term. Inline edit with suggestion dropdown.
+        -- AI analyze button (with model selector dropdown).
+        -- Gate: airplane mode check for AI taxonomy analysis.
+
+    @guarantee MacrosSection
+        -- Collapsible. Discovered macros with usage counts, parameters,
+        --   validation status (valid/invalid/unknown badges).
+
+    @guarantee ExecuteAction
+        -- Execute button shows importable counts (tags, posts, media, pages).
+        -- Disabled if nothing to import.
+        -- Progress bar during execution (current/total, phase, detail, ETA).
+        -- No confirmation dialog — executes immediately.
+
+    @guarantee CreatedEntitiesRefresh
+        -- Created entities appear in sidebar immediately after execution.
+}
 
 rule ImportSelectAndAnalyze {
     when: ImportAnalyzeRequested(definition_id, file_path)
@@ -370,17 +770,6 @@ rule ImportSelectAndAnalyze {
     -- Shows summary counts per entity type
     -- Identifies conflicts: duplicate slugs, existing categories/tags
 }
-
--- Conflict resolution:
---   Per-item dropdown: Import (create new), Skip (ignore), Merge (combine)
---   Default: Import for new items, Skip for existing matches
-
--- Taxonomy mapping:
---   Source categories/tags mapped to existing project categories/tags
---   Dropdown per source taxonomy term -> target term or "Create New"
---   AI taxonomy analysis (optional):
---     Gate: airplane mode check
---     Suggests mappings based on name similarity via title model
 
 rule ImportExecute {
     when: ImportExecuteRequested(definition_id)

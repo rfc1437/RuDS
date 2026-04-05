@@ -11,79 +11,16 @@ use "./tabs.allium" as tabs
 use "./post.allium" as post
 use "./i18n.allium" as i18n
 
--- ─── External surfaces ──────────────────────────────────────
-
-surface User {
-    provides: PostAIAnalysisRequested(post_id)
-    provides: PostTranslateRequested(post_id, target_language)
-    provides: PostSaved(post_id)
-    provides: PostPublishRequested(post_id)
-    provides: PostDiscardRequested(post_id)
-    provides: PostDeleteRequested(post_id)
-    provides: PostInsertLinkRequested(post_id)
-    provides: PostInsertMediaRequested(post_id)
-    provides: PostGalleryRequested(post_id)
-    provides: ImageDroppedOnEditor(post_id, file_path)
-    provides: PostLanguageDetectRequested(post_id)
-}
-
 -- ─── Post editor ──────────────────────────────────────────────
-
--- Single vertical column. Three regions: header, body, footer.
-
--- Header bar:
---   Left: post title (or "Untitled") with dirty indicator dot
---   Right: status badge, auto-save indicator, Quick Actions dropdown, Publish/Delete buttons
--- Quick Actions:
---   AI Analysis (suggests title, excerpt, slug)
---   Translate Post (opens translation modal)
-
--- Collapsible Metadata section (starts expanded when title is empty):
---   Two-column layout. Left column: metadata fields. Right column: linked media panel.
---   Left column fields:
---     Title (text input), Tags (autocomplete chip input with embedding suggestions),
---     Author (text input),
---     Language (select + AI detect button), Do Not Translate (checkbox),
---     Slug (read-only), Categories (chip input), Template (select, if templates exist),
---     PostLinks (backlinks and outlinks)
---
---   Tag autocomplete:
---     Standard: matches existing tags by name prefix (case-insensitive)
---     If semanticSimilarityEnabled: also suggests tags from similar posts
---       via SuggestTags (see embedding.allium). Finds 10 similar posts,
---       collects their tags, weights by similarity, returns top 5.
---     Suggestions merged: prefix matches first, then embedding suggestions
---   Right column:
---     LinkedMediaPanel (media items linked to this post)
-
--- Language flags bar (inline with metadata toggle):
---   Row of flag emoji buttons for canonical language + each translation
---   Styles: status class (draft/published), active indicator
---   Clicking switches editor content to that language's draft
-
--- Collapsible Excerpt section:
---   Excerpt textarea (4 rows)
-
--- Editor Body:
---   Toolbar: "Content" label | mode toggle (Visual/Markdown/Preview) | action buttons
---   Action buttons (markdown mode only): Gallery, Insert Post Link, Insert Media
---   Visual mode: rich-text WYSIWYG editor
---   Markdown mode: code editor with markdown-with-macros language
---     Highlights [[macro ...]] double-bracket syntax
---     Word wrap on, minimap off, 14px font
---   Preview mode: iframe showing rendered preview
---   Supports drag-and-drop of images (imports media, inserts markdown)
-
--- Footer:
---   Three date stamps: Created, Updated, Published (published only if publishedAt exists)
---   Locale-formatted dates
 
 value PostEditorView {
     post_id: String
     header: PostEditorHeader
-    metadata_expanded: Boolean
+    metadata: PostEditorMetadata
+    metadata_expanded: Boolean          -- starts expanded when title is empty
     excerpt_expanded: Boolean
     editor_mode: String                 -- visual | markdown | preview
+    footer: PostEditorFooter
 }
 
 value PostEditorHeader {
@@ -93,20 +30,161 @@ value PostEditorHeader {
     is_auto_saving: Boolean
 }
 
+value PostEditorMetadata {
+    title: String                       -- editable text input
+    tags: List<String>                  -- autocomplete chip input
+    author: String?                     -- text input
+    language: String?                   -- select from supported languages
+    do_not_translate: Boolean           -- checkbox
+    slug: String                        -- read-only text input
+    categories: List<String>            -- chip input
+    template_slug: String?              -- select (shown only when templates exist)
+    post_links: PostLinksPanel
+    linked_media: List<LinkedMediaItem>
+}
+
+value PostLinksPanel {
+    backlinks: List<PostLinkReference>  -- posts linking to this post
+    outlinks: List<PostLinkReference>   -- posts this post links to
+}
+
+value PostLinkReference {
+    post_id: String
+    title: String
+}
+
+value LinkedMediaItem {
+    media_id: String
+    has_thumbnail: Boolean
+    name: String
+    sort_order: Integer
+}
+
+value PostEditorFooter {
+    created_at: String                  -- locale-formatted date
+    updated_at: String                  -- locale-formatted date
+    published_at: String?               -- locale-formatted date, only when post was published
+}
+
+value TranslationFlag {
+    language: String
+    flag_emoji: String
+    status: String                      -- draft | published
+    is_active: Boolean                  -- true when this language is currently being edited
+}
+
+surface PostEditorSurface {
+    context editor: PostEditorView
+
+    exposes:
+        editor.header.title
+        editor.header.is_dirty
+        editor.header.status
+        editor.header.is_auto_saving
+        editor.metadata_expanded
+        editor.excerpt_expanded
+        editor.editor_mode
+        editor.footer.created_at
+        editor.footer.updated_at
+        editor.footer.published_at when editor.footer.published_at != null
+
+    provides:
+        PostAIAnalysisRequested(editor.post_id)
+        PostTranslateRequested(editor.post_id, target_language)
+        PostSaved(editor.post_id)
+        PostPublishRequested(editor.post_id)
+            when editor.header.status = draft
+        PostDiscardRequested(editor.post_id)
+            when editor.header.status = draft
+        PostDeleteRequested(editor.post_id)
+        PostInsertLinkRequested(editor.post_id)
+            when editor.editor_mode = markdown
+        PostInsertMediaRequested(editor.post_id)
+            when editor.editor_mode = markdown
+        PostGalleryRequested(editor.post_id)
+        ImageDroppedOnEditor(editor.post_id, file_path)
+        PostLanguageDetectRequested(editor.post_id)
+
+    @guarantee HeaderLayout
+        -- Header bar with two areas.
+        -- Left: title text with dirty indicator dot (●) when is_dirty is true.
+        -- Right: status badge, auto-save indicator (when saving),
+        --   Quick Actions dropdown, Publish button (only when draft, success style),
+        --   Discard button (only when draft), Delete button.
+
+    @guarantee QuickActionsDropdown
+        -- Dropdown menu in header with two entries:
+        --   AI Analysis (robot icon) — suggests title, excerpt, slug.
+        --   Translate Post (globe icon) — opens translation modal.
+
+    @guarantee MetadataSection
+        -- Collapsible section. Starts expanded when title is empty.
+        -- Two-column layout.
+        -- Left column: Title, Tags, Author, Language + detect button,
+        --   Do Not Translate checkbox, Slug (read-only), Categories,
+        --   Template (select, only when templates exist), PostLinks.
+        -- Right column: LinkedMediaPanel.
+
+    @guarantee TagAutocomplete
+        -- Tag input with autocomplete.
+        -- Standard: prefix match on existing tag names (case-insensitive).
+        -- When semanticSimilarityEnabled: also suggests tags from 10 similar posts,
+        --   weighted by similarity, top 5 shown.
+        -- Merged results: prefix matches first, then embedding suggestions.
+
+    @guarantee TranslationFlagsBar
+        -- Row of flag emoji buttons inline with metadata toggle.
+        -- One flag per language: canonical language + each translation.
+        -- Each flag shows status (draft/published) via CSS class.
+        -- Active flag highlighted. Click switches editor to that language's draft.
+
+    @guarantee ExcerptSection
+        -- Collapsible section with textarea (4 rows).
+
+    @guarantee EditorBodyToolbar
+        -- Toolbar: "Content" label, mode toggle (Visual/Markdown/Preview),
+        --   action buttons (markdown mode only): Gallery (with media count),
+        --   Insert Post Link, Insert Media.
+
+    @guarantee EditorModes
+        -- Visual: rich-text WYSIWYG editor.
+        -- Markdown: code editor with markdown-with-macros language,
+        --   highlighting [[macro ...]] syntax. Word wrap on, minimap off, 14px font.
+        -- Preview: iframe showing rendered preview.
+
+    @guarantee DragDropImages
+        -- Drop image file onto editor area triggers import chain.
+
+    @guarantee FooterLayout
+        -- Three date stamps: Created, Updated, Published (only when published_at exists).
+        -- Locale-formatted dates.
+
+    @guarantee LinkedMediaPanel
+        -- Right column of metadata showing media items linked to this post.
+        -- Actions: Import & Link (native file dialog), Link Existing (media picker),
+        --   Unlink (no confirmation), Reorder (drag handle), Click (opens media tab).
+}
+
 config {
     post_auto_save_delay: Integer = 3000
-    -- milliseconds of idle before auto-save triggers
+    post_content_sample_length: Integer = 2000
 }
 
 invariant PostAutoSave {
-    -- Auto-saves after 3 seconds of idle in the editor
-    -- Also auto-saves on unmount/tab switch
-    -- Ctrl/Cmd+S triggers immediate save
+    -- Auto-saves after config.post_auto_save_delay ms of idle in the editor.
+    -- Also auto-saves on unmount/tab switch.
+    -- Ctrl/Cmd+S triggers immediate save.
+    -- Saves: title, content, excerpt, tags, categories, templateSlug, language.
 }
 
 invariant PostDirtyTracking {
-    -- Compares canonical draft + translation drafts against saved state
-    -- Dirty indicator shown in header and tab bar
+    -- Compares canonical draft + translation drafts against saved state.
+    -- Dirty indicator shown in header (●) and tab bar.
+}
+
+invariant PostEditorModePersistence {
+    -- Editor mode (visual/markdown/preview) persists per session.
+    -- Default mode comes from editor settings.
 }
 
 -- ─── Post editor actions ────────────────────────────────────
@@ -115,7 +193,7 @@ rule PostAIAnalysis {
     when: PostAIAnalysisRequested(post_id)
     -- Gate: airplane mode check (see action_patterns.allium AIOperationGating)
     -- Uses title model (not default chat model)
-    -- Input: post title + excerpt + content (first 2000 chars)
+    -- Input: post title + excerpt + content (first config.post_content_sample_length chars)
     -- Response: suggested title, excerpt, slug
     -- Opens AISuggestionsModal with 3 fields:
     --   Each field: current value, suggested value, accept checkbox
@@ -227,25 +305,3 @@ rule PostLanguageDetect {
     -- Auto-sets post language field (no modal)
     -- Triggers auto-save
 }
-
--- Post editor mode switching:
---   Visual mode: rich-text WYSIWYG (TipTap in TS, not yet in Rust)
---   Markdown mode: code editor with markdown-with-macros highlighting
---   Preview mode: iframe with rendered HTML via preview server
---   Mode persists per-session, default from editor settings
-
--- Language tab switching (translation editing):
---   Flag emoji buttons in metadata bar for canonical + each translation
---   Clicking a flag loads that language's draft content into editor
---   Each flag shows status (draft/published) via CSS class
---   Active flag highlighted
-
--- LinkedMediaPanel (right column of metadata):
---   Shows media items linked to this post
---   Actions:
---     Import & Link: native file dialog, runs full import + link chain
---     Link Existing: opens media picker modal (search + grid)
---     Unlink: removes media-post link from sidecar (no confirmation)
---     Reorder: drag handle on each item
---     Click: opens media item in its own tab (preview intent)
---   Import & Link triggers: import -> thumbnail -> link -> optional AI analysis

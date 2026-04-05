@@ -9,73 +9,31 @@
 use "./media.allium" as media
 use "./i18n.allium" as i18n
 
--- ─── External surfaces ──────────────────────────────────────
-
-surface User {
-    provides: MediaAIImageAnalysisRequested(media_id)
-    provides: MediaDetectLanguageRequested(media_id)
-    provides: MediaTranslateMetadataRequested(media_id, target_language)
-    provides: MediaReplaceFileRequested(media_id)
-    provides: MediaDeleteRequested(media_id)
-    provides: MediaLinkToPostRequested(media_id)
-    provides: MediaTranslationEditClicked(media_id, language)
-    provides: MediaTranslationRefreshClicked(media_id, language)
-    provides: MediaTranslationDeleteClicked(media_id, language)
-}
-
 -- ─── Media editor ─────────────────────────────────────────────
-
--- Single column: preview area on top, metadata form below.
-
--- Header bar:
---   Media display name
---   Actions: Quick Actions dropdown, Replace File, Save, Delete
--- Quick Actions:
---   AI Image Analysis (image/* types only) - suggests title, alt, caption
---   Detect Language (from metadata text)
---   Translate Metadata (opens translation target modal)
-
--- Preview area:
---   Images: rendered via bds-media:// protocol with cache-busting timestamp
---   Non-images: SVG file icon placeholder + original filename text
-
--- Metadata form fields:
---   File Name (read-only), MIME Type (read-only),
---   Size (formatted as KB) + Dimensions (W x H, only if width/height exist),
---   Title (editable), Alt Text (editable), Caption (textarea 3 rows),
---   Tags (comma-separated text input), Author, Language (select)
-
--- Translations section (shown only when language is set):
---   List of existing translations: flag + language name + title
---   Per-translation: click to edit, refresh button, delete button
---   "No translations" message when empty
-
--- Linked Posts section:
---   "Link to Post" button opens post picker overlay
---   Post picker: search input, up to 10 unlinked posts, "and N more" if >10
---   List of currently linked posts (clickable -> navigates), unlink button
---   "Not linked to any posts" when empty
 
 value MediaEditorView {
     media_id: String
     is_image: Boolean
     file_name: String                   -- originalName, read-only
-    mime_type: String
-    file_size: String                   -- formatted
-    dimensions: String?                 -- "W x H" if available
-    title: String?
-    alt_text: String?
-    caption: String?
-    tags: String?                       -- comma-separated
-    author: String?
-    language: String?
+    mime_type: String                   -- read-only
+    file_size: String                   -- formatted, read-only
+    dimensions: String?                 -- "W x H" if width/height exist, read-only
+    title: String?                      -- editable text input
+    alt_text: String?                   -- editable text input
+    caption: String?                    -- editable textarea (3 rows)
+    tags: String?                       -- comma-separated text input
+    author: String?                     -- editable text input
+    language: String?                   -- select from supported languages
     translations: List<MediaTranslationItem>
     linked_posts: List<LinkedPostItem>
 }
 
 value MediaTranslationItem {
     language: String
+    flag_emoji: String
     title: String?
+    alt_text: String?
+    caption: String?
 }
 
 value LinkedPostItem {
@@ -83,18 +41,7 @@ value LinkedPostItem {
     title: String
 }
 
--- No auto-save; explicit Save button required.
--- Replace File opens a native file dialog.
--- Delete shows confirmation with references (linked posts).
-
--- ─── Post picker overlay ────────────────────────────────────
-
 value PostPickerOverlay {
-    -- Inline overlay positioned near "Link to Post" button (media editor).
-    -- Not a modal — positioned as dropdown below trigger button.
-    -- Search input filtering posts by title (only unlinked posts shown).
-    -- Up to 10 results displayed. "and N more" text if total exceeds 10.
-    -- Click result: links media to selected post, closes overlay.
     search_query: String
     results: List<PostPickerResult>
     overflow_count: Integer?             -- shown as "and N more" if > 0
@@ -103,6 +50,93 @@ value PostPickerOverlay {
 value PostPickerResult {
     post_id: String
     title: String
+}
+
+config {
+    media_post_picker_max_results: Integer = 10
+}
+
+surface MediaEditorSurface {
+    context editor: MediaEditorView
+
+    exposes:
+        editor.file_name
+        editor.mime_type
+        editor.file_size
+        editor.dimensions when editor.dimensions != null
+        editor.is_image
+        editor.title
+        editor.alt_text
+        editor.caption
+        editor.tags
+        editor.author
+        editor.language
+        for t in editor.translations:
+            t.language
+            t.flag_emoji
+            t.title
+        for lp in editor.linked_posts:
+            lp.post_id
+            lp.title
+
+    provides:
+        MediaAIImageAnalysisRequested(editor.media_id)
+            when editor.is_image
+        MediaDetectLanguageRequested(editor.media_id)
+        MediaTranslateMetadataRequested(editor.media_id, target_language)
+        MediaReplaceFileRequested(editor.media_id)
+        MediaSaveRequested(editor.media_id)
+        MediaDeleteRequested(editor.media_id)
+        MediaLinkToPostRequested(editor.media_id)
+        MediaTranslationEditClicked(editor.media_id, language)
+        MediaTranslationRefreshClicked(editor.media_id, language)
+        MediaTranslationDeleteClicked(editor.media_id, language)
+        MediaUnlinkPostRequested(editor.media_id, post_id)
+
+    @guarantee HeaderLayout
+        -- Header bar with media display name.
+        -- Actions (right side): Quick Actions dropdown, Replace File button,
+        --   Save button, Delete button (danger style).
+
+    @guarantee QuickActionsDropdown
+        -- Dropdown menu in header with three entries:
+        --   AI Image Analysis (robot icon) — only shown for image/* MIME types.
+        --   Detect Language (magnifier icon).
+        --   Translate Metadata (globe icon).
+
+    @guarantee PreviewArea
+        -- Images: rendered via bds-media:// protocol with cache-busting timestamp.
+        -- Non-images: SVG file icon placeholder + original filename text.
+
+    @guarantee MetadataForm
+        -- Form fields in order:
+        --   File Name (disabled input), MIME Type (disabled input),
+        --   Size + Dimensions row (disabled inputs),
+        --   Title (text input), Alt Text (text input), Caption (textarea, 3 rows),
+        --   Tags (comma-separated text input), Author (text input),
+        --   Language (select from supported languages).
+
+    @guarantee TranslationsSection
+        -- Shown only when language is set.
+        -- List of existing translations: flag emoji + language name + title.
+        -- Per-translation actions: click to edit inline, refresh button, delete button.
+        -- "No translations" message when list is empty.
+
+    @guarantee LinkedPostsSection
+        -- "Link to Post" button opens inline post picker overlay.
+        -- List of currently linked posts with document icon. Click navigates to post tab.
+        -- Per-post unlink button (×).
+        -- "Not linked to any posts" message when list is empty.
+
+    @guarantee PostPickerOverlay
+        -- Inline overlay positioned near "Link to Post" button (not a modal).
+        -- Search input filtering unlinked posts by title.
+        -- Up to config.media_post_picker_max_results results displayed.
+        -- "and N more" text when total exceeds limit.
+        -- Click result: links media to selected post, closes overlay.
+
+    @guarantee NoAutoSave
+        -- Unlike the post editor, media editor requires explicit Save button.
 }
 
 -- ─── Media editor actions ─────────────────────────────────────
@@ -161,7 +195,8 @@ rule MediaLinkToPost {
     when: MediaLinkToPostRequested(media_id)
     -- Opens inline post picker overlay (not a modal, positioned near button)
     -- Search input filtering unlinked posts by title
-    -- Up to 10 results shown, "and N more" text if results exceed 10
+    -- Up to config.media_post_picker_max_results results shown
+    -- "and N more" text if results exceed limit
     -- Click links media to selected post (updates sidecar linkedPostIds)
     -- Linked posts list refreshes immediately
 }

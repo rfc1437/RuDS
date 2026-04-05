@@ -5,116 +5,251 @@
 
 -- Describes the layout and behaviour of the settings and style views.
 
--- ─── External surfaces ──────────────────────────────────────
-
-surface User {
-    provides: StyleThemeSelected(theme_name)
-    provides: StyleApplyRequested(theme_name)
-}
+use "./i18n.allium" as i18n
 
 -- ─── Settings view ────────────────────────────────────────────
 
--- VS Code-style settings page with header + search bar + scrollable sections.
--- Search filters sections by keyword match. "No results" with clear button.
+value SettingsView {
+    search_query: String?               -- filters sections by keyword match
+    active_sections: List<String>       -- visible sections after search filter
+}
 
--- 8 sections (style is a separate tab, not a settings section):
+value SettingsProjectSection {
+    project_name: String                -- text input
+    project_description: String         -- textarea (3 rows)
+    data_path: String                   -- text input + Browse button + Reset button
+    public_url: String                  -- url input
+    main_language: String               -- select
+    blog_languages: List<String>        -- checkboxes (main language disabled)
+    default_author: String              -- text input
+    max_posts_per_page: Integer         -- number input (1-500, default 50)
+    blogmark_category: String           -- select from categories
+}
 
--- 1. Project Settings:
---   Project Name (text), Project Description (textarea 3 rows),
---   Data Path (text + Browse + Reset), Public URL (url),
---   Main Language (select), Blog Languages (checkboxes, main disabled),
---   Default Author (text), Max Posts Per Page (number 1-500 default 50),
---   Blogmark Category (select), Blogmark Bookmarklet (copy button), Save
+value SettingsEditorSection {
+    default_mode: String                -- select: wysiwyg | markdown | preview
+    diff_view_style: String             -- select: inline | side-by-side
+    wrap_long_lines: Boolean            -- checkbox
+    hide_unchanged_regions: Boolean     -- checkbox
+}
 
--- 2. Editor Settings:
---   Default Editor Mode (select: WYSIWYG/Markdown/Preview),
---   Diff View Style (select: Inline/Side-by-side),
---   Wrap Long Lines (checkbox), Hide Unchanged Regions (checkbox)
+value SettingsCategoryRow {
+    name: String                        -- read-only for protected categories
+    title: String                       -- editable
+    render_in_lists: Boolean            -- checkbox
+    show_titles: Boolean                -- checkbox
+    post_template_slug: String?         -- select
+    list_template_slug: String?         -- select
+    is_protected: Boolean               -- true for: article, aside, page, picture
+}
 
--- 3. Content Settings (Categories):
---   Table: Category | Title | Render in Lists | Show Titles | Post Template | List Template | Remove
---   Protected categories: article, aside, page, picture (cannot be deleted)
---   Add Category: text input + Add button. Reset to Defaults button
+value SettingsAISection {
+    anthropic_api_key: String?          -- masked + Change/Save
+    mistral_api_key: String?            -- masked + Change/Save
+    ollama_enabled: Boolean             -- toggle, shows model capabilities table (tools/vision)
+    lm_studio_enabled: Boolean          -- toggle, shows model capabilities table
+    offline_mode: Boolean               -- toggle, switches between online and airplane endpoint
+    default_model: String?              -- select from active endpoint models
+    title_model: String?                -- select
+    image_analysis_model: String?       -- select (vision-capable only)
+    system_prompt: String               -- textarea (12 rows) + Save + Reset to Default
+}
 
--- 4. AI Assistant Settings:
---   Two-endpoint configuration (see ai.allium TwoEndpointModel):
---     Online endpoint: URL (text), API Key (masked + Change/Save), Model (select)
---     Airplane endpoint: URL (text), Model (select)
---   Both use OpenAI Chat Completions wire format.
---   Refresh Models button per endpoint: fetches model list from endpoint URL
---   Title Model (select from active endpoint models)
---   Image Analysis Model (select, vision-capable only)
---   Offline mode toggle: switches between online and airplane endpoint
---     Disabled if airplane endpoint URL is not configured
---   System Prompt (textarea 12 rows + Save + Reset to Default)
+value SettingsPublishingSection {
+    ssh_mode: String                    -- select: scp | rsync
+    ssh_host: String                    -- text input
+    ssh_username: String                -- text input
+    ssh_remote_path: String             -- text input
+}
 
--- 5. Technology Settings:
---   Semantic Similarity (checkbox)
+value SettingsMCPSection {
+    status: String                      -- port number or "Not running"
+    agents: List<MCPAgentRow>
+}
 
--- 6. Publishing Settings (SSH):
---   Info: SSH key auth only
---   SSH Mode (select: scp/rsync), SSH Host, SSH Username, SSH Remote Path
---   Save + Clear buttons
+value MCPAgentRow {
+    agent_name: String                  -- Claude Code, Claude Desktop, GitHub Copilot, etc.
+    is_installed: Boolean               -- Add/Remove toggle
+}
 
--- 7. Data Maintenance:
---   Rebuild buttons (6): Posts from Files, Media from Files, Scripts from Files,
---     Templates from Files, Links, Regenerate Missing Thumbnails
---   Open Data Folder button
+invariant SettingsProtectedCategories {
+    -- Protected categories (article, aside, page, picture) cannot be deleted.
+    -- Their Remove button is disabled.
+}
 
--- 8. MCP Server Settings:
---   Status badge (port or "Not running")
---   Per-agent rows: Claude Code, Claude Desktop, GitHub Copilot, Gemini CLI,
---     OpenCode, Mistral Vibe, OpenAI Codex — each with Add/Remove toggle
+invariant SettingsMCPAgents {
+    -- MCP section has exactly 7 agent rows in this order:
+    -- Claude Code, Claude Desktop, GitHub Copilot, Gemini CLI,
+    -- OpenCode, Mistral Vibe, OpenAI Codex.
+}
+
+config {
+    settings_max_posts_per_page: Integer = 500
+    settings_default_posts_per_page: Integer = 50
+    settings_system_prompt_rows: Integer = 12
+}
+
+surface SettingsViewSurface {
+    context settings: SettingsView
+
+    exposes:
+        settings.search_query
+        settings.active_sections
+
+    provides:
+        SettingsSearchChanged(query)
+        SettingsProjectSaved(project_data)
+        SettingsEditorSaved(editor_data)
+        SettingsCategoryAdded(category_name)
+        SettingsCategoryUpdated(category_row)
+        SettingsCategoryRemoved(category_name)
+        SettingsCategoriesResetToDefaults()
+        SettingsAIApiKeySaved(provider, key)
+        SettingsAIModelRefreshRequested(endpoint)
+        SettingsAISystemPromptSaved(prompt)
+        SettingsAISystemPromptReset()
+        SettingsPublishingSaved(publishing_data)
+        SettingsPublishingCleared()
+        SettingsMCPAgentToggled(agent_name)
+        SettingsRebuildRequested(entity_type)
+        SettingsRegenerateThumbnailsRequested()
+        SettingsOpenDataFolderRequested()
+        StyleThemeSelected(theme_name)
+        StyleApplyRequested(theme_name)
+
+    @guarantee SearchBar
+        -- Search input in header filters sections by keyword match.
+        -- "No results" message with clear button when no sections match.
+
+    @guarantee ProjectSection
+        -- Section 1: Project Name, Description (textarea 3 rows), Data Path (text + Browse + Reset),
+        --   Public URL, Main Language (select), Blog Languages (checkbox grid, main disabled),
+        --   Default Author, Max Posts Per Page (number 1-500),
+        --   Blogmark Category (select), Blogmark Bookmarklet (copy button), Save button.
+
+    @guarantee BookmarkletCopy
+        -- Copy button copies bookmarklet JavaScript to clipboard.
+        -- Bookmarklet uses project's publicUrl to construct POST endpoint.
+
+    @guarantee EditorSection
+        -- Section 2: Default Editor Mode (select: WYSIWYG/Markdown/Preview),
+        --   Diff View Style (select: Inline/Side-by-side),
+        --   Wrap Long Lines (checkbox), Hide Unchanged Regions (checkbox).
+
+    @guarantee ContentCategoriesSection
+        -- Section 3: Table with columns: Category, Title, Render in Lists,
+        --   Show Titles, Post Template, List Template, Remove.
+        -- Protected categories (article, aside, page, picture) cannot be deleted.
+        -- Add Category: text input + Add button, validates non-empty and unique.
+        -- "Reset to Defaults" restores default categories set.
+
+    @guarantee AISection
+        -- Section 4: Anthropic API key, Mistral API key (both masked + Change/Save),
+        --   Ollama toggle (with model capabilities table: tools/vision),
+        --   LM Studio toggle (with capabilities table),
+        --   Offline mode toggle (with dedicated model selectors for chat/title/image),
+        --   Default model (with catalog info: max output, context window),
+        --   Title model, Image analysis model,
+        --   System prompt (textarea config.settings_system_prompt_rows rows + Save + Reset).
+
+    @guarantee AIApiKeyValidation
+        -- On Save: test API call to endpoint before persisting.
+        -- On failure: toast error message, key not saved.
+        -- On success: key encrypted via SecureKeyStore, masked display shown.
+
+    @guarantee AIModelRefresh
+        -- Refresh Models button per endpoint fetches model list from URL.
+        -- Model selector populated from fetched list.
+        -- Per-model info: max output tokens, context window (when available).
+
+    @guarantee TechnologySection
+        -- Section 5: Python runtime mode (webworker/main-thread),
+        --   Semantic Similarity toggle.
+
+    @guarantee PublishingSection
+        -- Section 6: SSH Mode (scp/rsync), Host, Username, Remote Path.
+        --   Save + Clear buttons.
+
+    @guarantee MCPSection
+        -- Section 7: Status badge (port or "Not running").
+        -- 7 agent rows with Add/Remove toggle each.
+
+    @guarantee DataMaintenanceSection
+        -- Section 8: 6 rebuild buttons (Posts from Files, Media from Files,
+        --   Scripts from Files, Templates from Files, Links,
+        --   Regenerate Missing Thumbnails).
+        -- Open Data Folder button.
+        -- Each rebuild executes immediately (no confirmation).
+        -- Runs as background task with progress in Tasks panel.
+
+    @guarantee CollapsibleSections
+        -- All 8 sections are collapsible.
+        -- Section visibility respects search filter.
+}
 
 -- ─── Settings view actions ──────────────────────────────────
 
--- API key validation:
---   On Save: test API call to online endpoint before persisting
---   On validation failure: toast error message, key not saved
---   On success: key encrypted via SecureKeyStore, masked display shown
-
--- Endpoint configuration:
---   URL field required for both endpoints
---   Refresh Models button fetches model list from endpoint URL
---   Model selector populated from fetched model list
---   Per-model info: max output tokens, context window (when available)
-
--- Rebuild operations (Data Maintenance section):
---   6 buttons, each executes immediately (no confirmation dialog)
---   Runs as background task with progress visible in Tasks panel
---   On completion: wholesale replaces store data for that entity type
---   Sidebar and editors re-render with fresh data
-
--- Category management (Content Settings):
---   Protected categories: article, aside, page, picture (Remove button disabled)
---   Add Category: text input + Add button, validates non-empty and unique
---   Per-category settings: editable inline in table row
---   "Reset to Defaults" restores default categories set
-
--- MCP per-agent config:
---   Add/Remove toggle per agent row
---   Status badge: shows port number when running, "Not running" otherwise
-
--- Bookmarklet (Project Settings):
---   Copy button copies bookmarklet JavaScript to clipboard
---   Bookmarklet uses project's publicUrl to construct POST endpoint
+rule SettingsRebuild {
+    when: SettingsRebuildRequested(entity_type)
+    -- entity_type: posts | media | scripts | templates | links | thumbnails
+    -- Executes immediately (no confirmation dialog)
+    -- Runs as background task with progress visible in Tasks panel
+    -- On completion: wholesale replaces store data for that entity type
+    -- Sidebar and editors re-render with fresh data
+}
 
 -- ─── Style view ───────────────────────────────────────────────
 
--- Simple vertical layout: header, theme picker, controls row, preview.
+value StyleView {
+    themes: List<StyleTheme>
+    selected_theme: String?
+    applied_theme: String?
+    preview_mode: String                -- auto | light | dark
+}
 
--- Theme Picker: grid of theme buttons (one per Pico CSS theme).
---   Each button: swatch with 3 colour tones (accent, light bg, dark bg), theme name.
---   Selected theme: highlighted with aria-pressed.
+value StyleTheme {
+    name: String
+    accent_color: String                -- hex
+    light_bg_color: String              -- hex
+    dark_bg_color: String               -- hex
+}
 
--- Controls row: Preview Mode dropdown (Auto/Light/Dark), Apply Theme button.
+surface StyleViewSurface {
+    context style: StyleView
 
--- Preview: iframe of style preview page at 127.0.0.1:4123/__style-preview
---   with theme and mode query params. Updates live on selection change.
+    exposes:
+        for t in style.themes:
+            t.name
+            t.accent_color
+            t.light_bg_color
+            t.dark_bg_color
+        style.selected_theme
+        style.applied_theme
+        style.preview_mode
 
--- Apply Theme persists to project metadata.
+    provides:
+        StyleThemeSelected(theme_name)
+        StyleApplyRequested(style.selected_theme)
+            when style.selected_theme != style.applied_theme
+        StylePreviewModeChanged(mode)
 
--- ─── Style view actions ─────────────────────────────────────
+    @guarantee ThemePicker
+        -- Grid of theme buttons (one per Pico CSS theme).
+        -- Each button: swatch with 3 colour tones (accent, light bg, dark bg) + theme name.
+        -- Selected theme highlighted with aria-pressed.
+
+    @guarantee ControlsRow
+        -- Preview Mode dropdown (Auto/Light/Dark).
+        -- Apply Theme button, disabled when selected_theme matches applied_theme.
+
+    @guarantee LivePreview
+        -- Iframe at 127.0.0.1:4123/__style-preview with theme and mode query params.
+        -- Updates live on selection or preview mode change.
+
+    @guarantee PreviewModeLocal
+        -- Preview mode dropdown controls iframe query param only.
+        -- Does not persist — local UI state only.
+}
 
 rule StyleThemeSelect {
     when: StyleThemeSelected(theme_name)
@@ -127,7 +262,3 @@ rule StyleApplyTheme {
     -- Persists picoTheme to project metadata (meta/project.json)
     -- See engine_side_effects.allium UpdateProjectMetadataSideEffects
 }
-
--- Preview mode dropdown (Auto/Light/Dark):
---   Controls iframe query param, live update on change
---   Does not persist — local UI state only
