@@ -298,16 +298,24 @@ mod tests {
     #[test]
     fn delete_project_removes_row() {
         let (db, dir) = setup();
-        // Project with no custom data_path → uses internal directory
-        let p = create_project(
-            db.conn(),
-            "P",
-            None,
-        )
-        .unwrap();
-        let internal_dir = dir.path().join("projects").join(&p.id);
-        let _ = std::fs::create_dir_all(&internal_dir);
-        delete_project(db.conn(), &p.id, Some(&internal_dir)).unwrap();
+        // Simulate an internal project (no custom data_path) by inserting directly
+        let now = crate::util::now_unix_ms();
+        let project = Project {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "P".to_string(),
+            slug: "p".to_string(),
+            description: None,
+            data_path: None,
+            is_active: false,
+            created_at: now,
+            updated_at: now,
+        };
+        crate::db::queries::project::insert_project(db.conn(), &project).unwrap();
+        // Create the internal directory structure under the temp dir
+        let internal_dir = dir.path().join("projects").join(&project.id);
+        create_directory_structure(&internal_dir).unwrap();
+        assert!(internal_dir.join("posts").is_dir());
+        delete_project(db.conn(), &project.id, Some(&internal_dir)).unwrap();
         assert!(list_projects(db.conn()).unwrap().is_empty());
         assert!(!internal_dir.exists(), "internal directory should be cleaned up");
     }

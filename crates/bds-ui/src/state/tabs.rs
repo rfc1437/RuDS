@@ -64,6 +64,24 @@ impl TabType {
             _ => "",
         }
     }
+
+    /// Return the i18n key for the tab title of a singleton tab type.
+    /// Per tabs.allium: singletons use i18n key lookup.
+    pub fn i18n_key(&self) -> Option<&'static str> {
+        match self {
+            Self::Settings => Some("common.settings"),
+            Self::Style => Some("tabBar.style"),
+            Self::Tags => Some("tabBar.tags"),
+            Self::MenuEditor => Some("tabBar.menuEditor"),
+            Self::MetadataDiff => Some("tabBar.metadataDiff"),
+            Self::Documentation => Some("tabBar.documentation"),
+            Self::ApiDocumentation => Some("tabBar.apiDocumentation"),
+            Self::SiteValidation => Some("tabBar.siteValidation"),
+            Self::TranslationValidation => Some("tabBar.translationValidation"),
+            Self::FindDuplicates => Some("tabBar.findDuplicates"),
+            _ => None,
+        }
+    }
 }
 
 /// A single tab in the editor area.

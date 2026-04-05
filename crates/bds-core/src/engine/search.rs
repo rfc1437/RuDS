@@ -50,16 +50,13 @@ pub fn reindex_all_with_progress(
         }
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
 
-        let trans_pairs: Vec<(String, String)> = translations
+        let trans_data: Vec<fts::PostTranslationFts> = translations
             .iter()
-            .map(|t| {
-                let text = [
-                    t.title.as_str(),
-                    t.excerpt.as_deref().unwrap_or(""),
-                    t.content.as_deref().unwrap_or(""),
-                ]
-                .join(" ");
-                (text, t.language.clone())
+            .map(|t| fts::PostTranslationFts {
+                title: t.title.clone(),
+                excerpt: t.excerpt.clone(),
+                content: t.content.clone(),
+                language: t.language.clone(),
             })
             .collect();
 
@@ -72,7 +69,7 @@ pub fn reindex_all_with_progress(
             post.content.as_deref(),
             &post.tags,
             &post.categories,
-            &trans_pairs,
+            &trans_data,
             language,
         )?;
 
@@ -87,16 +84,13 @@ pub fn reindex_all_with_progress(
         }
         let translations = media_translation::list_media_translations_by_media(conn, &m.id)?;
 
-        let trans_pairs: Vec<(String, String)> = translations
+        let trans_data: Vec<fts::MediaTranslationFts> = translations
             .iter()
-            .map(|t| {
-                let text = [
-                    t.title.as_deref().unwrap_or(""),
-                    t.alt.as_deref().unwrap_or(""),
-                    t.caption.as_deref().unwrap_or(""),
-                ]
-                .join(" ");
-                (text, t.language.clone())
+            .map(|t| fts::MediaTranslationFts {
+                title: t.title.clone(),
+                alt: t.alt.clone(),
+                caption: t.caption.clone(),
+                language: t.language.clone(),
             })
             .collect();
 
@@ -109,7 +103,7 @@ pub fn reindex_all_with_progress(
             m.caption.as_deref(),
             &m.original_name,
             &m.tags,
-            &trans_pairs,
+            &trans_data,
             language,
         )?;
 

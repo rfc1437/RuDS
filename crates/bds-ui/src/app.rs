@@ -32,11 +32,17 @@ pub enum Message {
     ToggleSidebar,
     TogglePanel,
 
+    // Sidebar resize
+    SidebarResizeStart,
+    SidebarResizeMove(f32),
+    SidebarResizeEnd,
+
     // Tabs
     OpenTab(Tab),
     CloseTab(String),
     SelectTab(String),
     PinTab(String),
+    ClearTabs,
 
     // Project
     ProjectsLoaded(Vec<Project>),
@@ -111,6 +117,8 @@ pub struct BdsApp {
     // Navigation
     sidebar_view: SidebarView,
     sidebar_visible: bool,
+    sidebar_width: f32,
+    sidebar_dragging: bool,
 
     // Tabs
     tabs: Vec<Tab>,
@@ -230,6 +238,8 @@ impl BdsApp {
                 sidebar_media: Vec::new(),
                 sidebar_view: SidebarView::Posts,
                 sidebar_visible: true,
+                sidebar_width: 280.0,
+                sidebar_dragging: false,
                 tabs: Vec::new(),
                 active_tab: None,
                 panel_visible: false,
@@ -276,6 +286,22 @@ impl BdsApp {
                 self.panel_visible = !self.panel_visible;
                 Task::none()
             }
+            Message::SidebarResizeStart => {
+                self.sidebar_dragging = true;
+                Task::none()
+            }
+            Message::SidebarResizeMove(x) => {
+                if self.sidebar_dragging {
+                    // x is global cursor position; subtract activity bar width (~48px)
+                    let effective = x - 48.0;
+                    self.sidebar_width = effective.clamp(200.0, 500.0);
+                }
+                Task::none()
+            }
+            Message::SidebarResizeEnd => {
+                self.sidebar_dragging = false;
+                Task::none()
+            }
 
             // ── Tabs ──
             Message::OpenTab(tab) => {
@@ -306,6 +332,11 @@ impl BdsApp {
             }
             Message::PinTab(id) => {
                 tabs::pin_tab(&mut self.tabs, &id);
+                Task::none()
+            }
+            Message::ClearTabs => {
+                self.tabs.clear();
+                self.active_tab = None;
                 Task::none()
             }
 
@@ -463,6 +494,12 @@ impl BdsApp {
                 self.ui_locale = locale;
                 self.locale_dropdown_open = false;
                 menu::update_menu_labels(&self.menu_registry, locale);
+                // Re-translate singleton tab titles per tabs.allium
+                for tab in &mut self.tabs {
+                    if let Some(key) = tab.tab_type.i18n_key() {
+                        tab.title = t(locale, key);
+                    }
+                }
                 Task::none()
             }
             Message::ToggleLocaleDropdown => {
@@ -533,7 +570,7 @@ impl BdsApp {
                 )
             }
             Message::ValidateTranslations => {
-                self.open_singleton_tab(TabType::TranslationValidation, "Translation Validation");
+                self.open_singleton_tab(TabType::TranslationValidation, "tabBar.translationValidation");
                 self.spawn_engine_task(
                     "engine.validateTranslationsStarted",
                     |db_path, project_id, data_dir, tm, tid| {
@@ -569,7 +606,7 @@ impl BdsApp {
                 )
             }
             Message::RunMetadataDiff => {
-                self.open_singleton_tab(TabType::MetadataDiff, "Metadata Diff");
+                self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 Task::none()
             }
             Message::EngineTaskDone { task_id, label, result } => {
@@ -617,6 +654,7 @@ impl BdsApp {
         workspace::view(
             self.sidebar_view,
             self.sidebar_visible,
+            self.sidebar_width,
             &self.tabs,
             self.active_tab.as_deref(),
             self.panel_visible,
@@ -664,12 +702,12 @@ impl BdsApp {
                 if let (Some(db), Some(project), Some(data_dir)) =
                     (&self.db, &self.active_project, &self.data_dir)
                 {
-                    let title = t(self.ui_locale, "post.untitled");
+                    let display_title = t(self.ui_locale, "post.untitled");
                     match engine::post::create_post(
                         db.conn(),
                         data_dir,
                         &project.id,
-                        &title,
+                        "",
                         Some(""),
                         Vec::new(),
                         Vec::new(),
@@ -681,7 +719,7 @@ impl BdsApp {
                             let tab = Tab {
                                 id: post.id.clone(),
                                 tab_type: TabType::Post,
-                                title: post.title.clone(),
+                                title: display_title.to_string(),
                                 is_transient: true,
                                 is_dirty: false,
                             };
@@ -713,7 +751,7 @@ impl BdsApp {
             MenuAction::Find => Task::none(),
             MenuAction::Replace => Task::none(),
             MenuAction::EditPreferences => {
-                self.open_singleton_tab(TabType::Settings, "Settings");
+                self.open_singleton_tab(TabType::Settings, "common.settings");
                 Task::none()
             }
             // View
@@ -733,7 +771,7 @@ impl BdsApp {
             MenuAction::PublishSelected => Task::none(), // Disabled in M2
             MenuAction::PreviewPost => Task::none(),     // Disabled in M2
             MenuAction::EditMenu => {
-                self.open_singleton_tab(TabType::MenuEditor, "Menu Editor");
+                self.open_singleton_tab(TabType::MenuEditor, "tabBar.menuEditor");
                 Task::none()
             }
             MenuAction::RebuildDatabase => Task::done(Message::RebuildDatabase),
@@ -751,7 +789,7 @@ impl BdsApp {
             }
             MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
             MenuAction::ValidateSite => {
-                self.open_singleton_tab(TabType::SiteValidation, "Site Validation");
+                self.open_singleton_tab(TabType::SiteValidation, "tabBar.siteValidation");
                 Task::none()
             }
             MenuAction::UploadSite => {
@@ -780,7 +818,7 @@ impl BdsApp {
                 Task::none()
             }
             MenuAction::OpenDocumentation => {
-                self.open_singleton_tab(TabType::Documentation, "Documentation");
+                self.open_singleton_tab(TabType::Documentation, "tabBar.documentation");
                 Task::none()
             }
             MenuAction::ViewOnGitHub => {
@@ -794,11 +832,12 @@ impl BdsApp {
         }
     }
 
-    fn open_singleton_tab(&mut self, tab_type: TabType, title: &str) {
+    fn open_singleton_tab(&mut self, tab_type: TabType, i18n_key: &str) {
+        let title = t(self.ui_locale, i18n_key);
         let tab = Tab {
             id: tab_type.singleton_id().to_string(),
             tab_type,
-            title: title.to_string(),
+            title,
             is_transient: false,
             is_dirty: false,
         };
@@ -806,6 +845,7 @@ impl BdsApp {
         if let Some(t) = self.tabs.get(idx) {
             self.active_tab = Some(t.id.clone());
         }
+        self.enforce_panel_tab_availability();
     }
 
     fn refresh_task_snapshots(&mut self) {
@@ -815,7 +855,7 @@ impl BdsApp {
             .into_iter()
             .map(|(id, label, status, progress, message)| {
                 let status_str = match &status {
-                    TaskStatus::Queued => "queued".to_string(),
+                    TaskStatus::Pending => "pending".to_string(),
                     TaskStatus::Running => "running".to_string(),
                     TaskStatus::Completed => "completed".to_string(),
                     TaskStatus::Failed(e) => format!("failed: {e}"),

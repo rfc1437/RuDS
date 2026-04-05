@@ -156,8 +156,19 @@ pub fn update_post(
         post.do_not_translate = dnt;
     }
 
-    // Auto-transition published post back to draft on content/metadata change
-    if post.status == PostStatus::Published {
+    // Auto-transition published or archived post back to draft on content/metadata change
+    if post.status == PostStatus::Published || post.status == PostStatus::Archived {
+        // Reload content from filesystem if content field is NULL (published state)
+        if post.content.is_none() && !post.file_path.is_empty() {
+            let abs_path = _data_dir.join(&post.file_path);
+            if abs_path.exists() {
+                if let Ok(file_content) = fs::read_to_string(&abs_path) {
+                    if let Ok((_fm, body)) = read_post_file(&file_content) {
+                        post.content = Some(body);
+                    }
+                }
+            }
+        }
         post.status = PostStatus::Draft;
     }
 
@@ -294,10 +305,24 @@ pub fn publish_post(
 }
 
 /// Archive a post.
-pub fn archive_post(conn: &Connection, post_id: &str) -> EngineResult<()> {
-    let post = qp::get_post_by_id(conn, post_id)?;
+pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<()> {
+    let mut post = qp::get_post_by_id(conn, post_id)?;
     if post.status == PostStatus::Archived {
-        return Ok(());
+        return Err(EngineError::Conflict(
+            "post is already archived".to_string(),
+        ));
+    }
+    // Reload content from filesystem if transitioning from published (content is NULL)
+    if post.status == PostStatus::Published && post.content.is_none() && !post.file_path.is_empty() {
+        let abs_path = data_dir.join(&post.file_path);
+        if abs_path.exists() {
+            if let Ok(file_content) = fs::read_to_string(&abs_path) {
+                if let Ok((_fm, body)) = read_post_file(&file_content) {
+                    post.content = Some(body);
+                    qp::update_post(conn, &post)?;
+                }
+            }
+        }
     }
     let now = now_unix_ms();
     qp::update_post_status(conn, post_id, &PostStatus::Archived, now)?;
@@ -646,17 +671,13 @@ fn publish_translation(
 /// Index a post in FTS, gathering translation texts.
 fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
     let translations = qt::list_post_translations_by_post(conn, &post.id).unwrap_or_default();
-    let translation_data: Vec<(String, String)> = translations
+    let translation_data: Vec<fts::PostTranslationFts> = translations
         .iter()
-        .map(|t| {
-            let mut parts = vec![t.title.clone()];
-            if let Some(ref exc) = t.excerpt {
-                parts.push(exc.clone());
-            }
-            if let Some(ref cnt) = t.content {
-                parts.push(cnt.clone());
-            }
-            (parts.join(" "), t.language.clone())
+        .map(|t| fts::PostTranslationFts {
+            title: t.title.clone(),
+            excerpt: t.excerpt.clone(),
+            content: t.content.clone(),
+            language: t.language.clone(),
         })
         .collect();
 
@@ -1031,7 +1052,7 @@ mod tests {
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
         // Archive so we can try updating
-        archive_post(db.conn(), &post.id).unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
 
         // Try to change slug - should fail
         let result = update_post(
@@ -1124,7 +1145,7 @@ mod tests {
         let original_published_at = published.published_at.unwrap();
 
         // Archive then re-publish
-        archive_post(db.conn(), &post.id).unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
 
         // Brief delay to ensure now() is different
         let republished = publish_post(db.conn(), dir.path(), &post.id).unwrap();
@@ -1406,7 +1427,7 @@ mod tests {
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
         // Archive then update to test auto-draft
-        archive_post(db.conn(), &post.id).unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
         // Re-publish
         let _ = publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
@@ -1475,7 +1496,7 @@ mod tests {
             vec![], vec![], None, None, None,
         ).unwrap();
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
-        archive_post(db.conn(), &post.id).unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
 
         let from_db = qp::get_post_by_id(db.conn(), &post.id).unwrap();
         assert_eq!(from_db.status, PostStatus::Archived);

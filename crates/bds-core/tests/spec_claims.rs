@@ -309,11 +309,11 @@ fn script_defaults_match_spec() {
     assert_eq!(entrypoint, "render", "spec: default entrypoint is 'render'");
     assert!(enabled, "spec: default enabled is true");
     assert_eq!(version, 1, "spec: default version is 1");
-    assert_eq!(status, "published", "spec: default status is published");
+    assert_eq!(status, "draft", "spec: default status is draft");
 }
 
 // ── spec: schema.allium — Template defaults ──
-// kind default 'post', enabled default true, version default 1, status default 'published'
+// kind default 'post', enabled default true, version default 1, status default 'draft'
 
 #[test]
 fn template_defaults_match_spec() {
@@ -339,7 +339,7 @@ fn template_defaults_match_spec() {
     assert_eq!(kind, "post", "spec: default kind is post");
     assert!(enabled, "spec: default enabled is true");
     assert_eq!(version, 1, "spec: default version is 1");
-    assert_eq!(status, "published", "spec: default status is published");
+    assert_eq!(status, "draft", "spec: default status is draft");
 }
 
 // ── spec: tag.allium — UniqueTagNamePerProject (case-insensitive) ──

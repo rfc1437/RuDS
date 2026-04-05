@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, stack, text, Space};
+use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
 use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
@@ -19,15 +19,12 @@ fn content_bg(_theme: &Theme) -> container::Style {
     }
 }
 
-/// Horizontal separator line between regions.
-fn separator_v() -> iced::widget::Container<'static, Message> {
-    container(Space::new(0, 0))
-        .width(Length::Fixed(1.0))
-        .height(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb(0.25, 0.25, 0.30))),
-            ..container::Style::default()
-        })
+/// Sidebar resize drag handle style.
+fn drag_handle_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.25, 0.25, 0.30))),
+        ..container::Style::default()
+    }
 }
 
 /// Horizontal line separator (full width).
@@ -46,6 +43,7 @@ pub fn view(
     // Navigation
     sidebar_view: SidebarView,
     sidebar_visible: bool,
+    sidebar_width: f32,
     // Tabs
     tabs: &[Tab],
     active_tab: Option<&str>,
@@ -76,7 +74,7 @@ pub fn view(
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
 
     // Tab bar
-    let tabs_el = tab_bar::view(tabs, active_tab);
+    let tabs_el = tab_bar::view(tabs, active_tab, locale);
 
     // Content area
     let content_area = welcome::view(locale);
@@ -104,12 +102,25 @@ pub fn view(
         .height(Length::Fill)
         .style(content_bg);
 
-    // Main row: activity bar | separator | sidebar? | separator | right column
+    // Main row: activity bar | sidebar? | drag handle | right column
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, locale));
-        main_row = main_row.push(separator_v());
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_width, active_tab, locale));
+
+        // Resize drag handle: 4px wide strip between sidebar and content
+        let handle = container(Space::new(0, 0))
+            .width(Length::Fixed(4.0))
+            .height(Length::Fill)
+            .style(drag_handle_style);
+
+        let handle_hover = mouse_area(handle)
+            .on_press(Message::SidebarResizeStart)
+            .on_release(Message::SidebarResizeEnd)
+            .on_move(|point| Message::SidebarResizeMove(point.x))
+            .interaction(iced::mouse::Interaction::ResizingHorizontally);
+
+        main_row = main_row.push(handle_hover);
     }
 
     main_row = main_row.push(right);

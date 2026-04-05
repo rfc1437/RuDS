@@ -745,7 +745,7 @@ mod tests {
         assert_eq!(kind, "post", "default kind must be 'post'");
         assert_eq!(enabled, 1, "default enabled must be 1");
         assert_eq!(version, 1, "default version must be 1");
-        assert_eq!(status, "published", "default status must be 'published'");
+        assert_eq!(status, "draft", "default status must be 'draft'");
     }
 
     #[test]
@@ -766,6 +766,6 @@ mod tests {
         assert_eq!(ep, "render", "default entrypoint must be 'render'");
         assert_eq!(enabled, 1, "default enabled must be 1");
         assert_eq!(version, 1, "default version must be 1");
-        assert_eq!(status, "published", "default status must be 'published'");
+        assert_eq!(status, "draft", "default status must be 'draft'");
     }
 }

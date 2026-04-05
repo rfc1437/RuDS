@@ -58,5 +58,10 @@ pub struct PublishingPreferences {
     pub ssh_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_remote_path: Option<String>,
+    #[serde(default = "default_ssh_mode")]
     pub ssh_mode: SshMode,
+}
+
+fn default_ssh_mode() -> SshMode {
+    SshMode::Scp
 }

@@ -444,20 +444,13 @@ pub fn rebuild_media_from_filesystem_with_progress(
 /// Index a media item in FTS, gathering translation texts.
 fn fts_index_media(conn: &Connection, media: &Media) -> EngineResult<()> {
     let translations = qmt::list_media_translations_by_media(conn, &media.id).unwrap_or_default();
-    let translation_data: Vec<(String, String)> = translations
+    let translation_data: Vec<fts::MediaTranslationFts> = translations
         .iter()
-        .map(|t| {
-            let mut parts = Vec::new();
-            if let Some(ref title) = t.title {
-                parts.push(title.clone());
-            }
-            if let Some(ref alt) = t.alt {
-                parts.push(alt.clone());
-            }
-            if let Some(ref caption) = t.caption {
-                parts.push(caption.clone());
-            }
-            (parts.join(" "), t.language.clone())
+        .map(|t| fts::MediaTranslationFts {
+            title: t.title.clone(),
+            alt: t.alt.clone(),
+            caption: t.caption.clone(),
+            language: t.language.clone(),
         })
         .collect();
 

@@ -10,15 +10,10 @@ use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 use crate::state::tabs::{Tab, TabType};
 
-/// Sidebar container style — dark background with right border separator.
+/// Sidebar container style — dark background.
 fn sidebar_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color::from_rgb(0.16, 0.16, 0.20))),
-        border: Border {
-            color: Color::from_rgb(0.25, 0.25, 0.30),
-            width: 1.0,
-            radius: 0.0.into(),
-        },
         ..container::Style::default()
     }
 }
@@ -32,6 +27,20 @@ fn item_style(_theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: Color::from_rgb(0.80, 0.80, 0.85),
+        border: Border::default(),
+        ..button::Style::default()
+    }
+}
+
+/// Sidebar item button style — active/selected.
+fn item_active_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(0.26, 0.26, 0.32),
+        _ => Color::from_rgb(0.22, 0.22, 0.28),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::WHITE,
         border: Border::default(),
         ..button::Style::default()
     }
@@ -53,10 +62,26 @@ fn placeholder_key(view: SidebarView) -> &'static str {
     }
 }
 
+/// sidebar_views.allium media_title_max_length = 60
+const MEDIA_TITLE_MAX_LEN: usize = 60;
+
+/// Truncate a media title to the max length, appending "..." if over limit.
+/// Per sidebar_views.allium: JS hard limit of 60 chars on title (substring + "...").
+fn truncate_media_title(title: &str) -> String {
+    if title.chars().count() > MEDIA_TITLE_MAX_LEN {
+        let truncated: String = title.chars().take(MEDIA_TITLE_MAX_LEN).collect();
+        format!("{truncated}...")
+    } else {
+        title.to_string()
+    }
+}
+
 pub fn view(
     sidebar_view: SidebarView,
     posts: &[Post],
     media: &[Media],
+    width: f32,
+    active_tab: Option<&str>,
     locale: UiLocale,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
@@ -76,30 +101,77 @@ pub fn view(
                     .color(muted)
                     .into()
             } else {
-                let items: Vec<Element<'static, Message>> = posts
-                    .iter()
-                    .map(|p| {
-                        let status_indicator = match p.status {
-                            bds_core::model::PostStatus::Draft => "\u{25CB} ",      // ○
-                            bds_core::model::PostStatus::Published => "\u{25CF} ",   // ●
-                            bds_core::model::PostStatus::Archived => "\u{25A1} ",    // □
-                        };
-                        let label = format!("{status_indicator}{}", p.title);
-                        button(text(label).size(12).shaping(Shaping::Advanced))
-                            .on_press(Message::OpenTab(Tab {
-                                id: p.id.clone(),
-                                tab_type: TabType::Post,
-                                title: p.title.clone(),
-                                is_transient: true,
-                                is_dirty: false,
-                            }))
-                            .padding([3, 6])
+                let section_header = |label: &str| -> Element<'static, Message> {
+                    text(label.to_string())
+                        .size(11)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.55, 0.55, 0.60))
+                        .into()
+                };
+
+                let make_post_item = |p: &Post| -> Element<'static, Message> {
+                    let is_active = active_tab == Some(p.id.as_str());
+                    let status_indicator = match p.status {
+                        bds_core::model::PostStatus::Draft => "\u{25CB} ",
+                        bds_core::model::PostStatus::Published => "\u{25CF} ",
+                        bds_core::model::PostStatus::Archived => "\u{25A1} ",
+                    };
+                    let label = format!("{status_indicator}{}", p.title);
+                    let label_text = text(label)
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .wrapping(iced::widget::text::Wrapping::None);
+                    let style_fn = if is_active { item_active_style } else { item_style };
+                    button(
+                        container(label_text)
                             .width(Length::Fill)
-                            .style(item_style)
-                            .into()
-                    })
-                    .collect();
-                iced::widget::Column::with_children(items)
+                            .clip(true)
+                    )
+                        .on_press(Message::OpenTab(Tab {
+                            id: p.id.clone(),
+                            tab_type: TabType::Post,
+                            title: p.title.clone(),
+                            is_transient: true,
+                            is_dirty: false,
+                        }))
+                        .padding([3, 6])
+                        .width(Length::Fill)
+                        .style(style_fn)
+                        .into()
+                };
+
+                let mut sections: Vec<Element<'static, Message>> = Vec::new();
+
+                // Draft section
+                let drafts: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Draft).collect();
+                if !drafts.is_empty() {
+                    sections.push(section_header(&t(locale, "sidebar.drafts")));
+                    for p in &drafts {
+                        sections.push(make_post_item(p));
+                    }
+                    sections.push(Space::with_height(6.0).into());
+                }
+
+                // Published section
+                let published: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Published).collect();
+                if !published.is_empty() {
+                    sections.push(section_header(&t(locale, "sidebar.published")));
+                    for p in &published {
+                        sections.push(make_post_item(p));
+                    }
+                    sections.push(Space::with_height(6.0).into());
+                }
+
+                // Archived section
+                let archived: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Archived).collect();
+                if !archived.is_empty() {
+                    sections.push(section_header(&t(locale, "sidebar.archived")));
+                    for p in &archived {
+                        sections.push(make_post_item(p));
+                    }
+                }
+
+                iced::widget::Column::with_children(sections)
                     .spacing(1)
                     .into()
             }
@@ -115,20 +187,34 @@ pub fn view(
                 let items: Vec<Element<'static, Message>> = media
                     .iter()
                     .map(|m| {
-                        let display_name = m.title.as_deref()
-                            .unwrap_or(&m.original_name);
+                        let is_active = active_tab == Some(m.id.as_str());
+                        // Per sidebar_views.allium MediaGridItem: title truncated to 60 chars + "..."
+                        // if over limit; fallback originalName (no truncation).
+                        let display_name = match m.title.as_deref() {
+                            Some(title) => truncate_media_title(title),
+                            None => m.original_name.clone(),
+                        };
                         let label = format!("\u{1F5BC} {display_name}");
-                        button(text(label).size(12).shaping(Shaping::Advanced))
+                        let label_text = text(label)
+                            .size(12)
+                            .shaping(Shaping::Advanced)
+                            .wrapping(iced::widget::text::Wrapping::None);
+                        let style_fn = if is_active { item_active_style } else { item_style };
+                        button(
+                            container(label_text)
+                                .width(Length::Fill)
+                                .clip(true)
+                        )
                             .on_press(Message::OpenTab(Tab {
                                 id: m.id.clone(),
                                 tab_type: TabType::Media,
-                                title: display_name.to_string(),
+                                title: display_name.clone(),
                                 is_transient: true,
                                 is_dirty: false,
                             }))
                             .padding([3, 6])
                             .width(Length::Fill)
-                            .style(item_style)
+                            .style(style_fn)
                             .into()
                     })
                     .collect();
@@ -154,9 +240,41 @@ pub fn view(
     .spacing(4)
     .padding(12);
 
+    // layout.allium: sidebar width is resizable, passed as parameter
     container(scrollable(content))
-        .width(Length::Fixed(280.0))
+        .width(Length::Fixed(width))
         .height(Length::Fill)
         .style(sidebar_style)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_media_title_short() {
+        assert_eq!(truncate_media_title("short title"), "short title");
+    }
+
+    #[test]
+    fn truncate_media_title_exact_60() {
+        let title: String = "a".repeat(60);
+        assert_eq!(truncate_media_title(&title), title);
+    }
+
+    #[test]
+    fn truncate_media_title_over_60() {
+        let title: String = "a".repeat(65);
+        let expected = format!("{}...", "a".repeat(60));
+        assert_eq!(truncate_media_title(&title), expected);
+    }
+
+    #[test]
+    fn truncate_media_title_unicode() {
+        // 61 Unicode chars should trigger truncation
+        let title: String = "\u{00FC}".repeat(61); // ü × 61
+        let expected = format!("{}...", "\u{00FC}".repeat(60));
+        assert_eq!(truncate_media_title(&title), expected);
+    }
 }

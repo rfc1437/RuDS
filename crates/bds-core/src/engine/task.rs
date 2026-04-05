@@ -8,7 +8,7 @@ pub type TaskId = u64;
 /// Task status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskStatus {
-    Queued,
+    Pending,
     Running,
     Completed,
     Failed(String),
@@ -28,11 +28,14 @@ pub struct TaskProgress {
 struct TaskEntry {
     id: TaskId,
     label: String,
+    group_id: Option<String>,
+    group_name: Option<String>,
     status: TaskStatus,
     cancel_flag: Arc<AtomicBool>,
     progress: Option<f32>,
     message: Option<String>,
     created_at: Instant,
+    last_progress_report: Option<Instant>,
 }
 
 /// Manages concurrent tasks with a max concurrency limit and FIFO queue.
@@ -61,11 +64,14 @@ impl TaskManager {
         let entry = TaskEntry {
             id,
             label: label.to_owned(),
-            status: TaskStatus::Queued,
+            group_id: None,
+            group_name: None,
+            status: TaskStatus::Pending,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             progress: None,
             message: None,
             created_at: Instant::now(),
+            last_progress_report: None,
         };
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -73,9 +79,20 @@ impl TaskManager {
         // Auto-start if under capacity
         let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
         if running < self.max_concurrent {
-            if let Some(t) = tasks.iter_mut().find(|t| t.id == id && t.status == TaskStatus::Queued) {
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id && t.status == TaskStatus::Pending) {
                 t.status = TaskStatus::Running;
             }
+        }
+        id
+    }
+
+    /// Submit a new task within a group. Returns its unique identifier.
+    pub fn submit_grouped(&self, label: &str, group_id: &str, group_name: &str) -> TaskId {
+        let id = self.submit(label);
+        let mut tasks = self.tasks.lock().unwrap();
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == id) {
+            entry.group_id = Some(group_id.to_owned());
+            entry.group_name = Some(group_name.to_owned());
         }
         id
     }
@@ -89,7 +106,7 @@ impl TaskManager {
             return false;
         }
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if entry.status == TaskStatus::Queued {
+            if entry.status == TaskStatus::Pending {
                 entry.status = TaskStatus::Running;
                 return true;
             }
@@ -125,7 +142,7 @@ impl TaskManager {
     pub fn cancel(&self, task_id: TaskId) {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if matches!(entry.status, TaskStatus::Running | TaskStatus::Queued) {
+            if matches!(entry.status, TaskStatus::Running | TaskStatus::Pending) {
                 entry.cancel_flag.store(true, Ordering::Release);
                 entry.status = TaskStatus::Cancelled;
             }
@@ -152,7 +169,7 @@ impl TaskManager {
     /// Count tasks that are still queued.
     pub fn pending_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().filter(|t| t.status == TaskStatus::Queued).count()
+        tasks.iter().filter(|t| t.status == TaskStatus::Pending).count()
     }
 
     /// Count tasks that are currently running.
@@ -164,7 +181,7 @@ impl TaskManager {
     /// Remove all completed, failed, and cancelled tasks.
     pub fn drain_completed(&self) {
         let mut tasks = self.tasks.lock().unwrap();
-        tasks.retain(|t| matches!(t.status, TaskStatus::Queued | TaskStatus::Running));
+        tasks.retain(|t| matches!(t.status, TaskStatus::Pending | TaskStatus::Running));
     }
 
     /// Return the label of a task.
@@ -176,16 +193,24 @@ impl TaskManager {
     /// Return the id of the first queued task (FIFO order).
     pub fn next_queued(&self) -> Option<TaskId> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.status == TaskStatus::Queued).map(|t| t.id)
+        tasks.iter().find(|t| t.status == TaskStatus::Pending).map(|t| t.id)
     }
 
-    /// Update progress for a running task.
+    /// Update progress for a running task. Throttled to at most once per 250ms.
     pub fn report_progress(&self, task_id: TaskId, progress: Option<f32>, message: Option<String>) {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
             if entry.status == TaskStatus::Running {
-                entry.progress = progress;
-                entry.message = message;
+                let now = Instant::now();
+                let should_report = match entry.last_progress_report {
+                    Some(prev) => now.duration_since(prev).as_millis() >= PROGRESS_THROTTLE_MS as u128,
+                    None => true,
+                };
+                if should_report {
+                    entry.progress = progress;
+                    entry.message = message;
+                    entry.last_progress_report = Some(now);
+                }
             }
         }
     }
@@ -215,7 +240,7 @@ impl TaskManager {
     fn promote_next(tasks: &mut Vec<TaskEntry>, max_concurrent: usize) {
         let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
         if running < max_concurrent {
-            if let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Queued) {
+            if let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Pending) {
                 t.status = TaskStatus::Running;
             }
         }
@@ -279,7 +304,7 @@ mod tests {
 
         // First 3 auto-started, 4th stays queued
         assert_eq!(mgr.running_count(), 3);
-        assert_eq!(mgr.status(ids[3]), Some(TaskStatus::Queued));
+        assert_eq!(mgr.status(ids[3]), Some(TaskStatus::Pending));
     }
 
     #[test]
@@ -354,7 +379,7 @@ mod tests {
         let b = mgr.submit("second"); // queued
 
         assert_eq!(mgr.status(a), Some(TaskStatus::Running));
-        assert_eq!(mgr.status(b), Some(TaskStatus::Queued));
+        assert_eq!(mgr.status(b), Some(TaskStatus::Pending));
 
         mgr.complete(a);
         assert_eq!(mgr.status(b), Some(TaskStatus::Running));

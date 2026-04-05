@@ -127,8 +127,11 @@ pub fn view(
                     .padding(8)
                     .into()
             } else {
+                // Per layout.allium: last 10 tasks, newest first
                 let items: Vec<Element<'static, Message>> = task_snapshots
                     .iter()
+                    .rev()
+                    .take(10)
                     .map(|snap| {
                         let progress_str = snap.progress
                             .map(|p| format!(" ({:.0}%)", p * 100.0))

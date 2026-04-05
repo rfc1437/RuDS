@@ -24,6 +24,9 @@
 *~
 .DS_Store
 
+# Test artifacts
+crates/bds-core/projects/
+
 # Environment
 .env
 .env.*

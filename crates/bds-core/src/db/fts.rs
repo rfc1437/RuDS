@@ -63,9 +63,25 @@ pub fn stem_text(text: &str, language: &str) -> String {
         .join(" ")
 }
 
+/// Structured translation data for FTS indexing of posts.
+pub struct PostTranslationFts {
+    pub title: String,
+    pub excerpt: Option<String>,
+    pub content: Option<String>,
+    pub language: String,
+}
+
+/// Structured translation data for FTS indexing of media.
+pub struct MediaTranslationFts {
+    pub title: Option<String>,
+    pub alt: Option<String>,
+    pub caption: Option<String>,
+    pub language: String,
+}
+
 /// Index a post in the FTS table with separate columns per spec.
 ///
-/// Concatenates translation text into the content column (stemmed per-language).
+/// Translation titles go to the title column, excerpts to excerpt, content to content.
 pub fn index_post(
     conn: &Connection,
     post_id: &str,
@@ -74,22 +90,37 @@ pub fn index_post(
     content: Option<&str>,
     tags: &[String],
     categories: &[String],
-    translations: &[(String, String)], // (text, language) pairs
+    translations: &[PostTranslationFts],
     language: &str,
 ) -> rusqlite::Result<()> {
     // Remove existing entry
     remove_post_from_index(conn, post_id)?;
 
-    let stemmed_title = stem_text(title, language);
-    let stemmed_excerpt = stem_text(excerpt.unwrap_or(""), language);
+    // Title column: post title + all translation titles
+    let mut title_parts = vec![stem_text(title, language)];
+    for t in translations {
+        title_parts.push(stem_text(&t.title, &t.language));
+    }
+    let stemmed_title = title_parts.join(" ");
 
-    // Content column: post content + all translation texts
+    // Excerpt column: post excerpt + all translation excerpts
+    let mut excerpt_parts = vec![stem_text(excerpt.unwrap_or(""), language)];
+    for t in translations {
+        if let Some(ref exc) = t.excerpt {
+            excerpt_parts.push(stem_text(exc, &t.language));
+        }
+    }
+    let stemmed_excerpt = excerpt_parts.join(" ");
+
+    // Content column: post content + all translation content
     let mut content_parts = Vec::new();
     if let Some(cnt) = content {
         content_parts.push(stem_text(cnt, language));
     }
-    for (text, trans_lang) in translations {
-        content_parts.push(stem_text(text, trans_lang));
+    for t in translations {
+        if let Some(ref cnt) = t.content {
+            content_parts.push(stem_text(cnt, &t.language));
+        }
     }
     let stemmed_content = content_parts.join(" ");
 
@@ -104,6 +135,8 @@ pub fn index_post(
 }
 
 /// Index a media item in the FTS table with separate columns per spec.
+///
+/// Translation titles go to the title column, alts to alt, captions to caption.
 pub fn index_media(
     conn: &Connection,
     media_id: &str,
@@ -112,21 +145,38 @@ pub fn index_media(
     caption: Option<&str>,
     original_name: &str,
     tags: &[String],
-    translations: &[(String, String)], // (text, language) pairs
+    translations: &[MediaTranslationFts],
     language: &str,
 ) -> rusqlite::Result<()> {
     remove_media_from_index(conn, media_id)?;
 
-    let stemmed_title = stem_text(title.unwrap_or(""), language);
-    let stemmed_alt = stem_text(alt.unwrap_or(""), language);
+    // Title column: media title + all translation titles
+    let mut title_parts = vec![stem_text(title.unwrap_or(""), language)];
+    for t in translations {
+        if let Some(ref ttl) = t.title {
+            title_parts.push(stem_text(ttl, &t.language));
+        }
+    }
+    let stemmed_title = title_parts.join(" ");
 
-    // Caption column: media caption + all translation texts
+    // Alt column: media alt + all translation alts
+    let mut alt_parts = vec![stem_text(alt.unwrap_or(""), language)];
+    for t in translations {
+        if let Some(ref a) = t.alt {
+            alt_parts.push(stem_text(a, &t.language));
+        }
+    }
+    let stemmed_alt = alt_parts.join(" ");
+
+    // Caption column: media caption + all translation captions
     let mut caption_parts = Vec::new();
     if let Some(c) = caption {
         caption_parts.push(stem_text(c, language));
     }
-    for (text, trans_lang) in translations {
-        caption_parts.push(stem_text(text, trans_lang));
+    for t in translations {
+        if let Some(ref cap) = t.caption {
+            caption_parts.push(stem_text(cap, &t.language));
+        }
     }
     let stemmed_caption = caption_parts.join(" ");
 
@@ -176,8 +226,12 @@ pub struct PostSearchFilters<'a> {
     pub status: Option<&'a str>,
     pub tags: Option<&'a [String]>,
     pub categories: Option<&'a [String]>,
+    pub language: Option<&'a str>,
+    pub missing_translation_language: Option<&'a str>,
     pub year: Option<i32>,
     pub month: Option<u32>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -261,6 +315,32 @@ pub fn search_posts_filtered(
             params.push(Box::new(end));
             param_idx += 2;
         }
+    }
+
+    if let Some(lang) = filters.language {
+        sql.push_str(&format!("AND (language = ?{param_idx} OR language IS NULL) "));
+        params.push(Box::new(lang.to_string()));
+        param_idx += 1;
+    }
+
+    if let Some(missing_lang) = filters.missing_translation_language {
+        sql.push_str(&format!(
+            "AND NOT EXISTS (SELECT 1 FROM post_translations WHERE post_translations.translation_for = posts.id AND post_translations.language = ?{param_idx}) "
+        ));
+        params.push(Box::new(missing_lang.to_string()));
+        param_idx += 1;
+    }
+
+    if let Some(from_ts) = filters.from {
+        sql.push_str(&format!("AND created_at >= ?{param_idx} "));
+        params.push(Box::new(from_ts));
+        param_idx += 1;
+    }
+
+    if let Some(to_ts) = filters.to {
+        sql.push_str(&format!("AND created_at <= ?{param_idx} "));
+        params.push(Box::new(to_ts));
+        param_idx += 1;
     }
 
     let _ = param_idx; // suppress unused warning
@@ -439,7 +519,12 @@ mod tests {
             Some("Beautiful spider web"),
             &["fotografie".into(), "natur".into()],
             &["picture".into()],
-            &[("Esmeralda English".into(), "en".into())],
+            &[PostTranslationFts {
+                title: "Esmeralda English".into(),
+                excerpt: None,
+                content: None,
+                language: "en".into(),
+            }],
             "en",
         ).unwrap();
 
@@ -503,7 +588,12 @@ mod tests {
         index_post(
             db.conn(), "p1", "Programmierung", None, Some("Deutsche Entwicklung"),
             &[], &[],
-            &[("English development programming".into(), "en".into())],
+            &[PostTranslationFts {
+                title: "English development programming".into(),
+                excerpt: None,
+                content: Some("English development programming".into()),
+                language: "en".into(),
+            }],
             "de",
         ).unwrap();
 

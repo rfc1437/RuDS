@@ -44,4 +44,5 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - always make sure you follow proper i18n best practices. no untranslated string constants.
 - when creating rust source code, always follow what the allium spec is saying for that part
 - when tending the allium spec, make sure you validate the spec with the installed command line utility
+- don't be lazy. don't defer or skip implementations just because you have to write code for that, that is ridiculous. if the spec says something has to be there, it has to be there.
 
