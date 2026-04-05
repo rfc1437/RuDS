@@ -30,23 +30,63 @@ config {
 
 -- ─── Shared patterns ─────────────────────────────────────────
 
--- SidebarEntityList: reusable pattern for scripts, templates, chat, import.
--- Shows: header with title + create button, scrollable item list,
--- empty state with message + action CTA.
--- All titles and names are CSS-truncated with ellipsis when they overflow
--- the sidebar width.  Hard JS truncation limits are noted per view.
+value LocaleMapping {
+    ui_locale: String                   -- en | de | fr | it | es
+    format_locale: String               -- en-US | de-DE | fr-FR | it-IT | es-ES
+}
 
--- Relative date formatting for entity list items (chat, scripts, templates, import):
---   Same day (diffDays=0) -> time only via toLocaleTimeString (e.g. "2:30 PM")
---   Yesterday (diffDays=1) -> i18n key sidebar.chat.yesterday
---   <7 days -> short weekday via toLocaleDateString weekday:short (e.g. "Mon")
---   >=7 days -> short month + day via toLocaleDateString month:short day:numeric (e.g. "Feb 10")
--- Locale map: en->en-US, de->de-DE, fr->fr-FR, it->it-IT, es->es-ES
--- Fallback locale: en-US
+default LocaleMapping en_locale = { ui_locale: "en", format_locale: "en-US" }
+default LocaleMapping de_locale = { ui_locale: "de", format_locale: "de-DE" }
+default LocaleMapping fr_locale = { ui_locale: "fr", format_locale: "fr-FR" }
+default LocaleMapping it_locale = { ui_locale: "it", format_locale: "it-IT" }
+default LocaleMapping es_locale = { ui_locale: "es", format_locale: "es-ES" }
 
--- Post/page date formatting (different from relative dates above):
---   toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })
---   Example: "Feb 10, 2026"
+config {
+    fallback_format_locale: String = "en-US"
+}
+
+value RelativeDateFormat {
+    timestamp: Timestamp
+    locale: String
+    diff_days: Integer                  -- (today - timestamp.date).days
+
+    -- Derived
+    display: String =
+        if diff_days = 0: timestamp.toLocaleTimeString(locale)
+        else if diff_days = 1: i18n/translate("sidebar.chat.yesterday", locale)
+        else if diff_days < 7: timestamp.toLocaleDateString(locale, weekday: short)
+        else: timestamp.toLocaleDateString(locale, month: short, day: numeric)
+}
+
+value PostDateFormat {
+    timestamp: Timestamp
+    locale: String
+
+    -- Derived
+    display: String = timestamp.toLocaleDateString(locale, month: short, day: numeric, year: numeric)
+    -- Example: "Feb 10, 2026"
+}
+
+value PostTypeIcon {
+    categories: List<String>
+
+    -- Derived: first category match wins, case-insensitive
+    icon: String =
+        if categories.any(c => lowercase(c) in {"picture", "photo", "image"}): "camera"
+        else if categories.any(c => lowercase(c) in {"aside", "note", "quick"}): "notepad"
+        else if categories.any(c => lowercase(c) in {"link", "bookmark"}): "link"
+        else if categories.any(c => lowercase(c) = "video"): "film"
+        else if categories.any(c => lowercase(c) = "quote"): "speech_bubble"
+        else: "document"
+}
+
+invariant SidebarEntityListPattern {
+    -- Views following this pattern (scripts, templates, chat, import) must provide:
+    -- 1. Header with localised title and create button.
+    -- 2. Scrollable list of items.
+    -- 3. Empty state with localised message and action call-to-action when items list is empty.
+    -- 4. All text in list items uses CSS text-overflow:ellipsis on sidebar width overflow.
+}
 
 -- ─── 1. Posts view ────────────────────────────────────────────
 
@@ -70,26 +110,44 @@ value PostsView {
 
 value PostListItem {
     post_id: String
-    type_icon: String                   -- derived from categories (below)
-    title: String                       -- post.title, fallback "Untitled"; CSS ellipsis on overflow
-    language_count: Integer?            -- badge shown when availableLanguages.count > 1
-    date: String                        -- locale-formatted (month day, year)
-    active: Boolean                     -- highlighted when activeTabId = post.id
+    type_icon: String                   -- derived via PostTypeIcon from source post categories
+    title: String                       -- post.title, fallback "Untitled"
+    language_count: Integer?            -- shown when availableLanguages.count > 1
+    date: String                        -- locale-formatted via PostDateFormat
+    active: Boolean                     -- true when activeTabId = post.id
 }
 
--- Per-item data shown (left to right):
---   [type_icon] [title ...ellipsis]  [lang badge]
---                                     [date]
--- Title is CSS-truncated (white-space:nowrap, text-overflow:ellipsis).
--- Date source: drafts/archived use updatedAt; published use publishedAt ?? updatedAt.
+surface PostListItemEntry {
+    context item: PostListItem
 
--- Post type icon derivation from categories (first match wins, case-insensitive):
---   picture/photo/image -> camera icon
---   aside/note/quick    -> notepad icon
---   link/bookmark       -> link icon
---   video               -> film icon
---   quote               -> speech bubble icon
---   default             -> document icon
+    exposes:
+        item.type_icon
+        item.title
+        item.language_count when item.language_count != null
+        item.date
+        item.active
+
+    provides:
+        PostListItemClicked(item.post_id, single)
+        PostListItemClicked(item.post_id, double)
+
+    @guarantee RowLayout
+        -- Row with two columns.
+        -- Left column: type_icon (fixed width, top-aligned).
+        -- Right column, line 1: title (fills available width, truncated with ellipsis)
+        --   and language_count badge (right-aligned pill, smaller font) when present.
+        -- Right column, line 2: date (smaller, muted colour).
+
+    @guarantee ActiveIndicator
+        -- When item.active is true, entry shows a coloured left-border accent.
+
+    @guarantee PostTypeBackground
+        -- Row has a subtle background tint derived from the type_icon category.
+
+    @guarantee DateSource
+        -- For published posts: date derives from publishedAt, falling back to updatedAt.
+        -- For draft and archived posts: date derives from updatedAt.
+}
 
 rule PostListClick {
     when: PostListItemClicked(post_id, click_type)
@@ -119,19 +177,42 @@ value MediaView {
 
 value MediaGridItem {
     media_id: String
-    has_thumbnail: Boolean              -- image: bds-thumb://{id} protocol; non-image: file icon SVG
-    name: String                        -- title truncated to 60 chars + "..." if over; fallback originalName (no truncation)
+    has_thumbnail: Boolean              -- image uses bds-thumb://{id} protocol; non-image uses file icon SVG
+    name: String                        -- title truncated to config.media_title_max_length + "..."; fallback originalName (no truncation)
     file_size: String                   -- formatted (B / KB / MB)
     tooltip: String                     -- caption ?? originalName
-    active: Boolean                     -- highlighted when activeTabId = media.id
+    active: Boolean                     -- true when activeTabId = media.id
 }
 
--- Per-item data shown in grid cell:
---   [thumbnail or file icon]
---   [name ...CSS ellipsis]
---   [file_size]
--- Name: JS hard limit of 60 chars on title (substring + "..."), originalName not truncated.
--- CSS also applies text-overflow:ellipsis as a safety net.
+surface MediaGridItemEntry {
+    context item: MediaGridItem
+
+    exposes:
+        item.has_thumbnail
+        item.name
+        item.file_size
+        item.tooltip
+        item.active
+
+    provides:
+        MediaGridItemClicked(item.media_id, single)
+        MediaGridItemClicked(item.media_id, double)
+
+    @guarantee CellLayout
+        -- Grid cell, row layout.
+        -- Left: 40x40 thumbnail (rounded, object-fit cover) when has_thumbnail is true;
+        --   otherwise generic file SVG icon of same dimensions.
+        -- Right column, line 1: name (truncated with ellipsis).
+        -- Right column, line 2: file_size (smaller, muted).
+
+    @guarantee NameTruncation
+        -- Title is hard-truncated at config.media_title_max_length characters
+        -- with "..." suffix appended. originalName is never hard-truncated.
+        -- CSS text-overflow:ellipsis applies as additional safety net on both.
+
+    @guarantee TooltipContent
+        -- Tooltip shows caption when available, otherwise originalName.
+}
 
 config {
     media_title_max_length: Integer = 60
@@ -149,7 +230,7 @@ rule MediaListClick {
 
 -- ─── 4. Scripts view ──────────────────────────────────────────
 
--- Uses SidebarEntityList pattern.
+-- Follows SidebarEntityListPattern.
 
 value ScriptsView {
     items: List<ScriptListItem>
@@ -157,14 +238,46 @@ value ScriptsView {
 
 value ScriptListItem {
     script_id: String
-    title: String                       -- CSS ellipsis on overflow
-    date: String                        -- relative date format (see shared patterns)
+    title: String                       -- truncated with ellipsis on overflow
+    date: String                        -- relative date format via RelativeDateFormat
     active: Boolean
 }
 
--- Per-item data shown:
---   [title ...CSS ellipsis]  [delete x]
---   [relative date]
+surface ScriptListItemEntry {
+    context item: ScriptListItem
+
+    exposes:
+        item.title
+        item.date
+        item.active
+
+    provides:
+        ScriptListItemClicked(item.script_id, single)
+        ScriptListItemClicked(item.script_id, double)
+        ScriptDeleteRequested(item.script_id)
+
+    @guarantee RowLayout
+        -- Row with two areas.
+        -- Left area (fills width), two lines:
+        --   Line 1: title (truncated with ellipsis).
+        --   Line 2: date in relative format (smaller, muted).
+        -- Right area: delete button (x), visible only on row hover, turns red on hover.
+
+    @guarantee KeyboardNavigation
+        -- Enter key: pin (opens pinned tab).
+        -- Space key: preview (opens transient tab).
+        -- Row is focusable with tabIndex and has aria-label from title.
+
+    @guarantee DeleteBehaviour
+        -- Delete removes the script and closes its open tab if any.
+
+    @guarantee CreateDefaults
+        -- New scripts default to: kind=utility, content='print("new script")',
+        -- entrypoint='render', enabled=true.
+
+    @guarantee LiveRefresh
+        -- Item list refreshes on scripts-changed event.
+}
 
 rule ScriptListClick {
     when: ScriptListItemClicked(script_id, click_type)
@@ -174,14 +287,9 @@ rule ScriptListClick {
         ensures: OpenTabRequested(type: scripts, id: script_id, intent: pin)
 }
 
--- Keyboard: Enter = pin, Space = preview.
--- Delete button: deletes script and closes its tab.
--- Create defaults: kind=utility, content='print("new script")', entrypoint='render', enabled=true.
--- Refreshes on scripts-changed event.
-
 -- ─── 5. Templates view ───────────────────────────────────────
 
--- Uses SidebarEntityList pattern. Same as scripts with:
+-- Follows SidebarEntityListPattern. Same item layout as ScriptListItemEntry.
 
 value TemplatesView {
     items: List<TemplateListItem>
@@ -189,12 +297,46 @@ value TemplatesView {
 
 value TemplateListItem {
     template_id: String
-    title: String                       -- CSS ellipsis on overflow
-    date: String                        -- relative date format
+    title: String                       -- truncated with ellipsis on overflow
+    date: String                        -- relative date format via RelativeDateFormat
     active: Boolean
 }
 
--- Per-item data shown: same layout as ScriptListItem.
+surface TemplateListItemEntry {
+    context item: TemplateListItem
+
+    exposes:
+        item.title
+        item.date
+        item.active
+
+    provides:
+        TemplateListItemClicked(item.template_id, single)
+        TemplateListItemClicked(item.template_id, double)
+        TemplateDeleteRequested(item.template_id)
+
+    @guarantee RowLayout
+        -- Row with two areas.
+        -- Left area (fills width), two lines:
+        --   Line 1: title (truncated with ellipsis).
+        --   Line 2: date in relative format (smaller, muted).
+        -- Right area: delete button (x), visible only on row hover, turns red on hover.
+
+    @guarantee KeyboardNavigation
+        -- Enter key: pin (opens pinned tab).
+        -- Space key: preview (opens transient tab).
+        -- Row is focusable with tabIndex and has aria-label from title.
+
+    @guarantee DeleteConfirmation
+        -- If template is referenced by posts or tags, shows confirmation dialog
+        -- with reference counts before force-delete.
+
+    @guarantee CreateDefaults
+        -- New templates default to: kind=post, content='', enabled=true.
+
+    @guarantee LiveRefresh
+        -- Item list refreshes on templates-changed event.
+}
 
 rule TemplateListClick {
     when: TemplateListItemClicked(template_id, click_type)
@@ -204,23 +346,49 @@ rule TemplateListClick {
         ensures: OpenTabRequested(type: templates, id: template_id, intent: pin)
 }
 
--- Delete: if referenced by posts or tags, shows confirmation with counts before force-delete.
--- Create defaults: kind=post, content='', enabled=true.
--- Refreshes on templates-changed event.
-
 -- ─── 6. Settings view ────────────────────────────────────────
 
 -- Navigation list that controls sections within the settings editor tab.
--- 9 sections in order:
---   1. project     (folder icon)
---   2. editor      (notepad icon)
---   3. content     (clipboard icon)
---   4. ai          (robot icon)
---   5. technology  (gear icon)
---   6. publishing  (rocket icon)
---   7. data        (database icon)
---   8. mcp         (plug icon)
---   9. style       (palette icon) -- special: opens style tab, not settings section
+
+value SettingsNavEntry {
+    section: String
+    icon: String
+    label_key: String
+    active: Boolean
+}
+
+invariant SettingsNavSections {
+    -- Settings navigation has exactly 9 entries in this fixed order:
+    -- 1. section="project",     icon="folder",     label_key="settings.nav.project"
+    -- 2. section="editor",      icon="notepad",    label_key="settings.nav.editor"
+    -- 3. section="content",     icon="clipboard",  label_key="settings.nav.content"
+    -- 4. section="ai",          icon="robot",      label_key="settings.nav.ai"
+    -- 5. section="technology",  icon="gear",       label_key="settings.nav.technology"
+    -- 6. section="publishing",  icon="rocket",     label_key="settings.nav.publishing"
+    -- 7. section="data",        icon="database",   label_key="settings.nav.data"
+    -- 8. section="mcp",         icon="plug",       label_key="settings.nav.mcp"
+    -- 9. section="style",       icon="palette",    label_key="settings.nav.style"
+    -- Labels are localised via their label_key through i18n.
+}
+
+surface SettingsNavEntryView {
+    context entry: SettingsNavEntry
+
+    exposes:
+        entry.icon
+        entry.label_key
+        entry.active
+
+    provides:
+        SettingsNavEntryClicked(entry.section)
+
+    @guarantee RowLayout
+        -- Row with icon (fixed 20px width, centred) and localised text label.
+        -- Active entry has distinct selection background and foreground colours.
+
+    @guarantee FixedOrder
+        -- Entries always appear in the order defined by SettingsNavSections invariant.
+}
 
 value SettingsNav {
     active_section: String?             -- persisted across sidebar switches
@@ -240,10 +408,41 @@ rule SettingsNavClick {
 -- ─── 7. Tags view ─────────────────────────────────────────────
 
 -- Navigation list that controls sections within the tags editor tab.
--- 3 sections:
---   1. cloud   (cloud icon)   -- tag cloud visualization
---   2. manage  (pencil icon)  -- create/edit tags
---   3. merge   (merge icon)   -- merge duplicate tags
+
+value TagsNavEntry {
+    section: String
+    icon: String
+    label_key: String
+    active: Boolean
+}
+
+invariant TagsNavSections {
+    -- Tags navigation has exactly 3 entries in this fixed order:
+    -- 1. section="cloud",   icon="cloud",   label_key="tags.nav.cloud"     -- tag cloud visualisation
+    -- 2. section="manage",  icon="pencil",  label_key="tags.nav.manage"    -- create/edit tags
+    -- 3. section="merge",   icon="merge",   label_key="tags.nav.merge"     -- merge duplicate tags
+    -- Labels are localised via their label_key through i18n.
+}
+
+surface TagsNavEntryView {
+    context entry: TagsNavEntry
+
+    exposes:
+        entry.icon
+        entry.label_key
+        entry.active
+
+    provides:
+        TagsNavEntryClicked(entry.section)
+
+    @guarantee RowLayout
+        -- Row with icon (fixed 20px width, centred) and localised text label.
+        -- Active entry has distinct selection background and foreground colours.
+        -- Same visual structure as SettingsNavEntryView.
+
+    @guarantee FixedOrder
+        -- Entries always appear in the order defined by TagsNavSections invariant.
+}
 
 value TagsNav {
     active_section: String?             -- persisted
@@ -259,7 +458,7 @@ rule TagsNavClick {
 
 -- ─── 8. Chat view ─────────────────────────────────────────────
 
--- Uses SidebarEntityList pattern.
+-- Follows SidebarEntityListPattern.
 
 value ChatView {
     api_ready: Boolean                  -- shows API key prompt if false
@@ -268,13 +467,34 @@ value ChatView {
 
 value ChatListItem {
     conversation_id: String
-    title: String                       -- live-updated via onTitleUpdated; CSS ellipsis on overflow
-    date: String                        -- relative date format
+    title: String                       -- live-updated via onTitleUpdated
+    date: String                        -- relative date format via RelativeDateFormat
 }
 
--- Per-item data shown:
---   [title ...CSS ellipsis]  [delete x]
---   [relative date]
+surface ChatListItemEntry {
+    context item: ChatListItem
+
+    exposes:
+        item.title
+        item.date
+
+    provides:
+        ChatListItemClicked(item.conversation_id)
+        ChatDeleteRequested(item.conversation_id)
+
+    @guarantee RowLayout
+        -- Row with two areas.
+        -- Left area (fills width), two lines:
+        --   Line 1: title (truncated with ellipsis, live-updated).
+        --   Line 2: date in relative format (smaller, muted).
+        -- Right area: delete button (x), visible only on row hover.
+
+    @guarantee DeleteBehaviour
+        -- Delete removes the conversation and closes its open tab if any.
+
+    @guarantee AlwaysPinned
+        -- Chat tabs are always opened as pinned (never transient).
+}
 
 rule ChatListClick {
     when: ChatListItemClicked(conversation_id)
@@ -282,11 +502,9 @@ rule ChatListClick {
     -- Chat tabs are always pinned
 }
 
--- Delete button: deletes conversation and closes its tab.
-
 -- ─── 9. Import view ──────────────────────────────────────────
 
--- Uses SidebarEntityList pattern.
+-- Follows SidebarEntityListPattern.
 
 value ImportView {
     items: List<ImportListItem>
@@ -294,8 +512,33 @@ value ImportView {
 
 value ImportListItem {
     definition_id: String
-    name: String                        -- live-updated via onNameUpdated; CSS ellipsis on overflow
-    date: String                        -- relative date format
+    name: String                        -- live-updated via onNameUpdated
+    date: String                        -- relative date format via RelativeDateFormat
+}
+
+surface ImportListItemEntry {
+    context item: ImportListItem
+
+    exposes:
+        item.name
+        item.date
+
+    provides:
+        ImportListItemClicked(item.definition_id)
+        ImportDeleteRequested(item.definition_id)
+
+    @guarantee RowLayout
+        -- Row with two areas.
+        -- Left area (fills width), two lines:
+        --   Line 1: name (truncated with ellipsis, live-updated).
+        --   Line 2: date in relative format (smaller, muted).
+        -- Right area: delete button (x), visible only on row hover.
+
+    @guarantee DeleteBehaviour
+        -- Delete removes the import definition and closes its open tab if any.
+
+    @guarantee AlwaysPinned
+        -- Import tabs are always opened as pinned (never transient).
 }
 
 rule ImportListClick {
@@ -329,20 +572,63 @@ value GitStatusFile {
     status: String                      -- modified, added, deleted, renamed, etc.
 }
 
+surface GitStatusFileEntry {
+    context file: GitStatusFile
+
+    exposes:
+        file.path
+        file.status
+
+    provides:
+        GitStatusFileClicked(file.path, single)
+        GitStatusFileClicked(file.path, double)
+
+    @guarantee RowLayout
+        -- Row with two elements, justified space-between.
+        -- Left: file path (truncated with ellipsis, fills available width).
+        -- Right: status badge (short uppercase code e.g. "M", "A", "D"; muted colour, fixed width).
+
+    @guarantee Tooltip
+        -- Tooltip shows "status: path" (e.g. "modified: src/main.rs").
+}
+
 value GitHistoryEntry {
     short_hash: String                  -- 7 chars
     subject: String                     -- wraps (word-break), not truncated
     author: String
     date: String                        -- locale-formatted
-    sync_status: String                 -- synced, local_only, remote_only (coloured dots)
+    sync_status: String                 -- synced, local_only, remote_only
+}
+
+surface GitHistoryEntryView {
+    context entry: GitHistoryEntry
+
+    exposes:
+        entry.short_hash
+        entry.subject
+        entry.author
+        entry.date
+        entry.sync_status
+
+    provides:
+        GitHistoryEntryClicked(entry.short_hash, single)
+        GitHistoryEntryClicked(entry.short_hash, double)
+
+    @guarantee EntryLayout
+        -- Two lines.
+        -- Line 1: subject (wraps with word-break, never truncated).
+        -- Line 2: short_hash + author + date + sync_status indicator, separated by spacing.
+
+    @guarantee SyncStatusIndicator
+        -- sync_status rendered as a coloured dot.
+        -- "synced" = both local and remote. "local_only" = local only. "remote_only" = remote only.
+        -- A colour legend is shown in the git view header.
 }
 
 -- Action buttons: fetch, pull, push, prune_lfs. All disabled while any action is loading.
 -- Changes section: file count, commit message input, commit button, file list.
--- File paths in changes list: CSS ellipsis on overflow.
 -- Changes list polls every 2 seconds in background.
 -- Remote state refreshes every 30 seconds with auto-fetch.
--- History entries: subject + shortHash + author + date; sync status with coloured legend dots.
 
 rule GitFileClick {
     when: GitStatusFileClicked(file_path, click_type)
