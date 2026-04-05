@@ -1,0 +1,168 @@
+-- allium: 1
+-- bDS Shared Modals
+-- Scope: UI overlays used across multiple editor views
+-- Distilled from: PostEditor.tsx, MediaEditor.tsx
+
+-- Shared modal components used by multiple editors.
+-- Editor-specific modals live in their respective editor spec files.
+
+use "./i18n.allium" as i18n
+
+-- ─── AI Suggestions Modal ────────────────────────────────────
+
+-- Shared modal for presenting AI suggestions with per-field accept/reject.
+-- Used by PostAIAnalysis (editor_post.allium) and
+-- MediaAIImageAnalysis (editor_media.allium).
+
+value AISuggestionsModal {
+    fields: List<AISuggestionField>
+    -- Layout: title bar ("AI Suggestions"), scrollable field list, button row
+    -- Each field rendered as a row:
+    --   Left: checkbox (accept/reject), label
+    --   Center: current value (read-only, muted), arrow, suggested value (highlighted)
+    -- Special: slug field checkbox disabled if post was ever published
+    -- Buttons: Cancel (secondary), Apply Selected (primary)
+    -- Cancel discards all; Apply writes only accepted fields to entity
+}
+
+value AISuggestionField {
+    label: String
+    current_value: String
+    suggested_value: String
+    accepted: Boolean                   -- checkbox, default true
+    locked: Boolean                     -- if true, checkbox disabled (e.g. published slug)
+}
+
+-- ─── Insert Post Link Modal ──────────────────────────────────
+
+value InsertPostLinkModal {
+    -- Two-tab modal opened by Ctrl/Cmd+K in post editor (markdown mode).
+    -- Tab 1 - Internal:
+    --   Search input (debounced 300ms, queries post titles)
+    --   Results list: post title + status badge (draft/published/archived)
+    --   If semantic similarity enabled: results ranked by vector similarity
+    --   Click result: inserts [title](/YYYY/MM/DD/slug) at cursor, closes modal
+    --   "Create Post" row at bottom of results:
+    --     Creates new post with search query as title, inserts link to it
+    -- Tab 2 - External:
+    --   URL input field (required)
+    --   Display text input field (optional)
+    --   Insert button: inserts [text](url) or bare url if no text, closes modal
+    active_tab: String                   -- internal | external
+    search_query: String
+    results: List<InsertLinkResult>
+}
+
+value InsertLinkResult {
+    post_id: String
+    title: String
+    status: String                       -- draft | published | archived
+    canonical_url: String                -- /YYYY/MM/DD/slug
+}
+
+-- ─── Insert Media Modal ──────────────────────────────────────
+
+value InsertMediaModal {
+    -- Grid modal for inserting media references into post content.
+    -- Search input filtering by media title and original filename.
+    -- Grid of media items: bds-thumb:// thumbnail (medium 400px), title below.
+    -- Click item:
+    --   Images: inserts ![alt](bds-media://id) at cursor
+    --   Non-images: inserts [originalName](bds-media://id) at cursor
+    -- Closes modal after insertion.
+    search_query: String
+    results: List<InsertMediaResult>
+}
+
+value InsertMediaResult {
+    media_id: String
+    title: String
+    original_name: String
+    is_image: Boolean
+    thumbnail_url: String?               -- bds-thumb:// for images, null for others
+}
+
+-- ─── Language Picker Modal ───────────────────────────────────
+
+value LanguagePickerModal {
+    -- Shown for Translate Post and Translate Media Metadata actions.
+    -- Lists all configured blogLanguages except source language.
+    -- Each row: flag emoji, language name, status badge if translation exists.
+    --   Existing translations show "(draft)" or "(published)" badge.
+    -- Click selects target language and initiates translation flow.
+    -- Cancel closes without action.
+    source_language: String
+    available_targets: List<LanguageTarget>
+}
+
+value LanguageTarget {
+    code: String
+    name: String
+    flag_emoji: String
+    has_existing_translation: Boolean
+    existing_status: String?             -- draft | published, if translation exists
+}
+
+-- ─── Confirm Delete Modal ────────────────────────────────────
+
+value ConfirmDeleteModal {
+    -- Custom styled modal for destructive operations with reference info.
+    -- Used by: MediaDelete (shows linked posts), TagDelete (shows post count).
+    -- Layout: warning icon, title, entity name, reference section, buttons.
+    -- Reference section: "This item is referenced by:" + bulleted list.
+    -- Buttons: Cancel (secondary), Delete (destructive red).
+    entity_name: String
+    entity_type: String                  -- media | tag
+    reference_count: Integer
+    reference_list: List<String>         -- titles of referencing entities
+}
+
+-- ─── Confirm Dialog ──────────────────────────────────────────
+
+value ConfirmDialog {
+    -- Custom styled modal for non-delete confirmations.
+    -- Used by: TagMerge ("Merge N tags into {target}? Cannot be undone.").
+    -- Layout: title, descriptive message, buttons.
+    -- Buttons: Cancel (secondary), Confirm (primary).
+    title: String
+    message: String
+}
+
+-- Native confirm dialogs (via rfd crate) are NOT modelled as values.
+-- They are simple yes/no system dialogs with a message string.
+-- Used by: PostDelete, PostDiscard, TemplateDelete (with references).
+
+-- ─── Gallery Overlay ─────────────────────────────────────────
+
+value GalleryOverlay {
+    -- Full-screen overlay showing all media linked to a post.
+    -- Opened from Gallery button in post editor toolbar (markdown mode).
+    -- Image grid: bds-thumb:// thumbnails (medium 400px), 3-4 columns.
+    -- Click image: opens LightboxView for that image.
+    -- Close: X button or ESC key.
+    post_id: String
+    images: List<GalleryImage>
+}
+
+value GalleryImage {
+    media_id: String
+    thumbnail_url: String                -- bds-thumb://media_id
+    alt_text: String?
+}
+
+value LightboxView {
+    -- Full-screen image viewer, sub-view of GalleryOverlay.
+    -- Shows single image at full resolution via bds-media:// protocol.
+    -- Navigation: left/right arrow buttons, keyboard left/right arrow keys.
+    -- Close: X button, ESC key, or click outside image area.
+    -- Header: image title or filename, index counter "3 of 12".
+    current_index: Integer
+    total_count: Integer
+    media_id: String
+    image_url: String                    -- bds-media://media_id
+    alt_text: String?
+}
+
+-- All modals rendered as centered overlay with backdrop dimming.
+-- ESC key or backdrop click closes modal (cancel semantics).
+-- Overlays (PostPicker, ColourPicker) are positioned inline near trigger.

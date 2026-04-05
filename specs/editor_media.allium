@@ -1,0 +1,188 @@
+-- allium: 1
+-- bDS Media Editor View
+-- Scope: UI content area — media editing surface
+-- Distilled from: MediaEditor.tsx
+
+-- Describes the layout and behaviour of the media editor rendered in
+-- the main content area when a media tab is active.
+
+use "./media.allium" as media
+use "./i18n.allium" as i18n
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: MediaAIImageAnalysisRequested(media_id)
+    provides: MediaDetectLanguageRequested(media_id)
+    provides: MediaTranslateMetadataRequested(media_id, target_language)
+    provides: MediaReplaceFileRequested(media_id)
+    provides: MediaDeleteRequested(media_id)
+    provides: MediaLinkToPostRequested(media_id)
+    provides: MediaTranslationEditClicked(media_id, language)
+    provides: MediaTranslationRefreshClicked(media_id, language)
+    provides: MediaTranslationDeleteClicked(media_id, language)
+}
+
+-- ─── Media editor ─────────────────────────────────────────────
+
+-- Single column: preview area on top, metadata form below.
+
+-- Header bar:
+--   Media display name
+--   Actions: Quick Actions dropdown, Replace File, Save, Delete
+-- Quick Actions:
+--   AI Image Analysis (image/* types only) - suggests title, alt, caption
+--   Detect Language (from metadata text)
+--   Translate Metadata (opens translation target modal)
+
+-- Preview area:
+--   Images: rendered via bds-media:// protocol with cache-busting timestamp
+--   Non-images: SVG file icon placeholder + original filename text
+
+-- Metadata form fields:
+--   File Name (read-only), MIME Type (read-only),
+--   Size (formatted as KB) + Dimensions (W x H, only if width/height exist),
+--   Title (editable), Alt Text (editable), Caption (textarea 3 rows),
+--   Tags (comma-separated text input), Author, Language (select)
+
+-- Translations section (shown only when language is set):
+--   List of existing translations: flag + language name + title
+--   Per-translation: click to edit, refresh button, delete button
+--   "No translations" message when empty
+
+-- Linked Posts section:
+--   "Link to Post" button opens post picker overlay
+--   Post picker: search input, up to 10 unlinked posts, "and N more" if >10
+--   List of currently linked posts (clickable -> navigates), unlink button
+--   "Not linked to any posts" when empty
+
+value MediaEditorView {
+    media_id: String
+    is_image: Boolean
+    file_name: String                   -- originalName, read-only
+    mime_type: String
+    file_size: String                   -- formatted
+    dimensions: String?                 -- "W x H" if available
+    title: String?
+    alt_text: String?
+    caption: String?
+    tags: String?                       -- comma-separated
+    author: String?
+    language: String?
+    translations: List<MediaTranslationItem>
+    linked_posts: List<LinkedPostItem>
+}
+
+value MediaTranslationItem {
+    language: String
+    title: String?
+}
+
+value LinkedPostItem {
+    post_id: String
+    title: String
+}
+
+-- No auto-save; explicit Save button required.
+-- Replace File opens a native file dialog.
+-- Delete shows confirmation with references (linked posts).
+
+-- ─── Post picker overlay ────────────────────────────────────
+
+value PostPickerOverlay {
+    -- Inline overlay positioned near "Link to Post" button (media editor).
+    -- Not a modal — positioned as dropdown below trigger button.
+    -- Search input filtering posts by title (only unlinked posts shown).
+    -- Up to 10 results displayed. "and N more" text if total exceeds 10.
+    -- Click result: links media to selected post, closes overlay.
+    search_query: String
+    results: List<PostPickerResult>
+    overflow_count: Integer?             -- shown as "and N more" if > 0
+}
+
+value PostPickerResult {
+    post_id: String
+    title: String
+}
+
+-- ─── Media editor actions ─────────────────────────────────────
+
+rule MediaAIImageAnalysis {
+    when: MediaAIImageAnalysisRequested(media_id)
+    -- Gate: airplane mode check (see action_patterns.allium AIOperationGating)
+    -- Only available for image/* MIME types (button hidden for non-images)
+    -- Uses image analysis model (vision-capable, not title model)
+    -- Input: AI-optimized JPEG thumbnail (448x448, generated on import)
+    -- Response: suggested title, alt text, caption
+    -- Opens AISuggestionsModal with 3 fields (title, alt, caption)
+    -- On confirm: applies checked fields, triggers explicit save
+}
+
+rule MediaDetectLanguage {
+    when: MediaDetectLanguageRequested(media_id)
+    -- Gate: airplane mode check
+    -- Input: concatenation of title + alt + caption text
+    -- Response: detected language code
+    -- Immediately persists to media record (no modal, no confirmation)
+    -- Triggers sidecar rewrite
+}
+
+rule MediaTranslateMetadata {
+    when: MediaTranslateMetadataRequested(media_id, target_language)
+    -- Gate: airplane mode check
+    -- Opens language picker modal (same pattern as post translate)
+    -- Two-step process:
+    --   1. If source language not set: detect it first (auto-persist)
+    --   2. Translate title, alt, caption to target language via title model
+    -- Creates/updates media translation record
+    -- Writes translated sidecar file: {path}.{lang}.meta
+}
+
+rule MediaReplaceFile {
+    when: MediaReplaceFileRequested(media_id)
+    -- Opens native file dialog (no MIME type filter)
+    -- Copies selected file over existing media file path
+    -- If image: regenerates thumbnails synchronously (awaited)
+    -- Preview area updates with cache-busting timestamp query param
+}
+
+rule MediaDeleteAction {
+    when: MediaDeleteRequested(media_id)
+    -- Opens ConfirmDeleteModal (custom modal, not native dialog)
+    -- Shows: media display name, linked posts count and list
+    -- Two buttons: Cancel, Delete (destructive red style)
+    -- On confirm: deletes file, sidecar, thumbnails, all translations,
+    --   post-media links, FTS index entry
+    -- Closes media tab, sidebar removes item
+    -- See engine_side_effects.allium DeleteMediaSideEffects
+}
+
+rule MediaLinkToPost {
+    when: MediaLinkToPostRequested(media_id)
+    -- Opens inline post picker overlay (not a modal, positioned near button)
+    -- Search input filtering unlinked posts by title
+    -- Up to 10 results shown, "and N more" text if results exceed 10
+    -- Click links media to selected post (updates sidecar linkedPostIds)
+    -- Linked posts list refreshes immediately
+}
+
+rule MediaTranslationEdit {
+    when: MediaTranslationEditClicked(media_id, language)
+    -- Loads translation fields inline (title, alt, caption) for that language
+    -- Edit in place, save persists to translated sidecar {path}.{lang}.meta
+}
+
+rule MediaTranslationRefresh {
+    when: MediaTranslationRefreshClicked(media_id, language)
+    -- Gate: airplane mode check
+    -- Re-translates from source language to target via title model
+    -- Overwrites existing translation fields
+    -- Rewrites translated sidecar file
+}
+
+rule MediaTranslationDelete {
+    when: MediaTranslationDeleteClicked(media_id, language)
+    -- Deletes translation record from DB
+    -- Deletes translated sidecar file: {path}.{lang}.meta
+    -- No confirmation dialog
+}

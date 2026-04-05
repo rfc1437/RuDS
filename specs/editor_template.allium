@@ -1,0 +1,46 @@
+-- allium: 1
+-- bDS Template Editor View
+-- Scope: UI content area — template editing surface
+-- Distilled from: TemplateEditor.tsx
+
+-- Describes the layout and behaviour of the template editor.
+-- See template.allium for entity model and Liquid subset.
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: TemplateSaveRequested(template_id)
+    provides: TemplateDeleteRequested(template_id)
+}
+
+-- ─── Template editor view ─────────────────────────────────────
+
+-- Code editor for Liquid templates (post, list, not_found, partial).
+
+-- Layout: header bar, code editor, preview pane.
+-- Header: template title (editable), kind badge, enabled toggle, version display.
+-- Editor: code editor with Liquid syntax highlighting.
+-- Preview: rendered template output in iframe (uses sample post data).
+-- Toolbar: Save button, Delete button.
+
+-- ─── Template editor actions ────────────────────────────────
+
+rule TemplateSave {
+    when: TemplateSaveRequested(template_id)
+    -- Liquid validation first (parse check for syntax errors)
+    -- If invalid: blocks save, shows error inline in editor
+    -- If valid: bumps version, saves to DB + rewrites .liquid file
+    -- See engine_side_effects.allium UpdateTemplateSideEffects
+}
+
+rule TemplateDelete {
+    when: TemplateDeleteRequested(template_id)
+    -- Checks for references: posts using this template, tags with postTemplateSlug
+    -- If references exist: native confirm dialog (rfd)
+    --   "This template is used by N posts and M tags. Force delete?"
+    --   Force delete: nulls templateSlug on referencing posts,
+    --     nulls postTemplateSlug on referencing tags
+    -- If no references: deletes without confirmation
+    -- Deletes DB record + .liquid file on disk
+    -- Closes template tab, sidebar removes item
+}

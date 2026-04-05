@@ -1,0 +1,127 @@
+-- allium: 1
+-- bDS Action Patterns and Chains
+-- Scope: cross-cutting (all waves)
+-- Distilled from: PostEditor.tsx, MediaEditor.tsx, appStore.ts
+
+-- Cross-cutting patterns for AI operations, auto-translation,
+-- drag-and-drop chains, and confirmation dialogs.
+
+use "./post.allium" as post
+use "./media.allium" as media
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface UserAction {
+    provides: AISuggestionRequested(entity_type, entity_id)
+    provides: PostSaved(post_id)
+    provides: PostAutoTranslateCompleted(post_id, language)
+}
+
+-- ─── AI operation gating ───────────────────────────────
+
+invariant AIOperationGating {
+    -- All AI operations check airplane/offline mode before executing.
+    -- If offline mode enabled:
+    --   If local provider configured (Ollama/LM Studio): route to local model
+    --   Else: show toast "AI unavailable in offline mode", abort operation
+    -- If online: use configured provider endpoint
+    -- Two model categories:
+    --   Title model: text analysis (suggestions, translation, language detect)
+    --   Image model: vision-capable (image analysis only)
+    -- Model selection: per-operation default from settings,
+    --   overrideable per-conversation in chat panel only
+}
+
+-- ─── AI suggestions pattern ────────────────────────────
+
+-- Shared flow used by PostAIAnalysis and MediaAIImageAnalysis.
+-- See modals.allium AISuggestionsModal value type.
+
+rule AISuggestionFlow {
+    when: AISuggestionRequested(entity_type, entity_id)
+    -- 1. Check AIOperationGating (abort if offline and no local model)
+    -- 2. Send request to appropriate model:
+    --      Posts: title model, input = title + excerpt + first 2000 chars
+    --      Media: image model, input = 448x448 AI thumbnail JPEG
+    -- 3. Parse response into per-field suggestions
+    -- 4. Open AISuggestionsModal:
+    --      Each field: label, current value, suggested value, accept checkbox
+    --      Accept checkboxes default to true
+    --      Special case: post slug locked (no checkbox) if ever published
+    -- 5. On Confirm: apply only accepted fields to entity
+    --      Posts: triggers auto-save (3s timer reset)
+    --      Media: triggers explicit save
+    -- 6. On Cancel: discard all suggestions, no changes
+}
+
+-- ─── Auto-translation chain ────────────────────────────
+
+rule AutoTranslationChain {
+    when: PostSaved(post_id)
+    -- Gate: AIOperationGating + post.doNotTranslate must be false
+    -- Triggered after any post save (auto-save, manual Ctrl+S, or unmount)
+    -- For each configured blogLanguage missing a translation for this post:
+    --   1. Enqueue background task: translate metadata (title, excerpt)
+    --      via title model
+    --   2. Enqueue background task: translate content (full markdown)
+    --      via title model
+    --   3. Create/update translation record in DB
+    -- Tasks: sequential per language, parallel across languages
+    -- Progress visible in Tasks panel
+}
+
+rule MediaMetadataTranslationCascade {
+    when: PostAutoTranslateCompleted(post_id, language)
+    -- After a post translation completes for a given language:
+    -- For each media item linked to this post:
+    --   If media has source language set
+    --     and no translation exists for {language}:
+    --     Enqueue background task: translate media metadata
+    --       (title, alt, caption) via title model
+    --     Creates translated sidecar file: {path}.{lang}.meta
+}
+
+-- ─── Drag-and-drop image chain ─────────────────────────
+
+-- Full chain when image file is dropped on post editor body.
+-- See editor_post.allium PostDragDropImage for trigger rule.
+
+-- Synchronous steps (user waits):
+--   1. importMedia(file) -> new media record + file copy + base sidecar
+--   2. generateThumbnails(media) -> async start (small/medium/large/ai)
+--   3. linkMediaToPost(media, post) -> update sidecar linkedPostIds
+--   4. insertMarkdownImage(cursor) -> insert ![](bds-media://id) at cursor
+
+-- Background steps (non-blocking, results auto-applied):
+--   5. If AI available: aiImageAnalysis(media)
+--        Uses image model on 448x448 AI thumbnail
+--        Results auto-applied to media metadata (NO modal for drag-drop,
+--          unlike manual Quick Action which shows AISuggestionsModal)
+--        Triggers sidecar rewrite
+--   6. If auto-translate enabled (post.doNotTranslate=false):
+--        For each blogLanguage: translateMediaMetadata(media, lang)
+--        Creates translated sidecar files
+
+-- ─── Confirmation dialog patterns ──────────────────────
+
+-- Four distinct patterns used across the application:
+
+-- Pattern 1: Native confirm dialog (rfd crate)
+--   Simple yes/no system dialog, no custom UI
+--   Used by: PostDelete, PostDiscard, TemplateDelete (when references exist)
+
+-- Pattern 2: ConfirmDeleteModal (custom modal with reference info)
+--   Shows entity name, reference counts, linked entity list
+--   Two buttons: Cancel, Delete (destructive red style)
+--   Used by: MediaDelete (shows linked posts), TagDelete (shows post count)
+
+-- Pattern 3: ConfirmDialog (custom modal for non-delete confirmations)
+--   Shows description of action and consequences
+--   Two buttons: Cancel, Confirm
+--   Used by: TagMerge ("Merge N tags into {target}? Cannot be undone.")
+
+-- Pattern 4: No confirmation (immediate execution)
+--   Action executes on click, no dialog
+--   Used by: all Rebuild operations, ScriptDelete, MenuItemDelete,
+--     MetadataDiff per-field sync, ImportExecute, MediaTranslationDelete,
+--     MediaUnlink

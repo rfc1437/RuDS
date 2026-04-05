@@ -1,0 +1,50 @@
+-- allium: 1
+-- bDS Script Editor View
+-- Scope: UI content area — script editing surface
+-- Distilled from: ScriptEditor.tsx
+
+-- Describes the layout and behaviour of the script editor.
+-- See script.allium for entity model.
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: ScriptSaveRequested(script_id)
+    provides: ScriptRunRequested(script_id)
+    provides: ScriptDeleteRequested(script_id)
+}
+
+-- ─── Script editor view ──────────────────────────────────────
+
+-- Code editor for Lua scripts (macros, utilities, transforms).
+
+-- Layout: header bar, code editor, no preview.
+-- Header: script title (editable), kind badge, enabled toggle.
+-- Editor: code editor with Lua syntax highlighting.
+-- Toolbar: Run button, Save button, Delete button, entrypoint selector.
+
+-- ─── Script editor actions ──────────────────────────────────
+
+rule ScriptSave {
+    when: ScriptSaveRequested(script_id)
+    -- Lua syntax check first (parse validation)
+    -- If syntax error: blocks save, shows error inline in editor gutter
+    -- If valid: bumps version, saves to DB + rewrites .lua file
+    -- See engine_side_effects.allium UpdateTemplateSideEffects (same pattern)
+}
+
+rule ScriptRun {
+    when: ScriptRunRequested(script_id)
+    -- Executes script in Lua runtime
+    -- Calls configured entrypoint function (default: render)
+    -- stdout/stderr directed to Output panel tab
+    -- Output panel auto-opens if not already visible
+    -- Errors shown in Output panel with line numbers
+}
+
+rule ScriptDelete {
+    when: ScriptDeleteRequested(script_id)
+    -- No confirmation dialog
+    -- Deletes DB record + .lua file on disk
+    -- Closes script tab, sidebar removes item
+}

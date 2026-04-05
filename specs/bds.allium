@@ -30,8 +30,20 @@ use "./i18n.allium" as i18n                 -- Split localization (UI vs content
 use "./layout.allium" as layout             -- App shell, activity bar, status bar, panels
 use "./tabs.allium" as tabs                 -- Tab system, editor routing, preview/pin
 use "./sidebar_views.allium" as sidebar     -- 10 sidebar views, content, behaviour
-use "./editors.allium" as editors           -- Editor view layouts, dashboard, chat panel
-use "./flows.allium" as flows               -- UI/UX flows, save side-effects, event propagation
+use "./modals.allium" as modals             -- Shared modals (AI suggestions, confirm, gallery)
+use "./editor_post.allium" as editor_post   -- Post editor view and actions
+use "./editor_media.allium" as editor_media -- Media editor view and actions
+use "./editor_settings.allium" as editor_settings -- Settings + style views
+use "./editor_tags.allium" as editor_tags   -- Tags view and colour picker
+use "./editor_chat.allium" as editor_chat   -- Chat panel and model selector
+use "./editor_script.allium" as editor_script   -- Script editor
+use "./editor_template.allium" as editor_template -- Template editor
+use "./editor_misc.allium" as editor_misc   -- Dashboard, menu, metadata diff, git diff, etc.
+
+-- Flows and side-effects
+use "./ui_data_flow.allium" as ui_data_flow -- Sidebar/editor/tab reactive coordination
+use "./engine_side_effects.allium" as engine_side_effects -- CRUD side-effect chains
+use "./action_patterns.allium" as action_patterns -- AI gating, translation chains, confirmations
 
 -- Integration
 use "./git.allium" as git                   -- Git operations, LFS, reconciliation

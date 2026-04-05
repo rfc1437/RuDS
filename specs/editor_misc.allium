@@ -1,0 +1,247 @@
+-- allium: 1
+-- bDS Miscellaneous Editor Views
+-- Scope: UI content area — dashboard, menu editor, metadata diff, git diff,
+--   documentation, validation, find duplicates, import analysis
+-- Distilled from: Editor.tsx (Dashboard), MenuEditorView.tsx,
+--   MetadataDiffPanel.tsx, ImportAnalysisView.tsx
+
+-- Describes the layout and behaviour of smaller editor views that don't
+-- warrant their own spec file.
+
+use "./tabs.allium" as tabs
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: ImportAnalyzeRequested(definition_id, file_path)
+    provides: ImportExecuteRequested(definition_id)
+}
+
+-- ─── Dashboard (no tab active) ───────────────────────────────
+
+-- Shown as default/welcome view when no entity tab is active.
+-- Single centered column.
+
+value Dashboard {
+    title: String
+    subtitle: String
+    stats: DashboardStats
+    timeline: DashboardTimeline
+    tag_cloud: DashboardTagCloud
+    category_cloud: DashboardCategoryCloud
+    recent_posts: List<DashboardRecentPost>
+}
+
+value DashboardStats {
+    -- Three stat cards side by side:
+    total_posts: Integer
+    published_count: Integer
+    draft_count: Integer
+    archived_count: Integer             -- shown only if > 0
+    media_count: Integer
+    image_count: Integer
+    total_media_size: String            -- formatted B/KB/MB/GB
+    tag_count: Integer
+    category_count: Integer
+}
+
+value DashboardTimeline {
+    -- Bar chart of posts over time
+    -- Last 12 months that have data
+    -- Each bar: count label on top, month abbreviation + year below
+    -- Bar height proportional to max count
+    months: List<DashboardTimelineMonth>
+}
+
+value DashboardTimelineMonth {
+    label: String                       -- month abbreviation
+    year: Integer
+    count: Integer
+}
+
+value DashboardTagCloud {
+    -- Up to 40 tags, sorted alphabetically
+    -- Font size scaled 11px-22px based on post count
+    -- Tags with colours get coloured background with contrast text
+    -- Hover title shows post count
+    -- "and N more" text if > 40 tags
+    tags: List<DashboardTag>
+    overflow_count: Integer?
+}
+
+value DashboardTag {
+    name: String
+    count: Integer
+    color: String?
+}
+
+value DashboardCategoryCloud {
+    -- All categories as badge-like tags
+    -- Each shows category name + count
+    categories: List<DashboardCategory>
+}
+
+value DashboardCategory {
+    name: String
+    count: Integer
+}
+
+value DashboardRecentPost {
+    -- Last 5 posts by updatedAt descending
+    -- Each row: title (or "Untitled"), status badge (draft/published), date
+    -- Single-click: preview tab, double-click: pin tab
+    post_id: String
+    title: String
+    status: String
+    date: String
+}
+
+config {
+    dashboard_max_tags: Integer = 40
+    dashboard_tag_min_font: Integer = 11
+    dashboard_tag_max_font: Integer = 22
+    dashboard_recent_count: Integer = 5
+    dashboard_timeline_months: Integer = 12
+}
+
+-- ─── Menu editor view ────────────────────────────────────────
+
+-- Visual editor for the OPML navigation menu (meta/menu.opml).
+-- See menu.allium for data model.
+
+-- Layout: toolbar at top, tree view of menu items below.
+-- Each item row: drag handle, icon, label, type badge, action buttons.
+-- Nested items indented to show hierarchy.
+
+-- ─── Menu editor actions ────────────────────────────────────
+
+-- Add item (toolbar buttons):
+--   Page entry: opens lazy-loaded page picker (posts with "page" category)
+--   Category archive entry: opens lazy-loaded category picker
+--   Submenu: creates empty container node for nesting children
+--   Home entry: always available, maximum one allowed
+
+-- Save: serializes tree to OPML 2.0, writes meta/menu.opml
+
+-- Move operations (per-item buttons):
+--   Up/Down: reorder within same nesting level
+--   Indent: nest under previous sibling (becomes child)
+--   Unindent: move to parent's level (becomes next sibling of parent)
+--   Home item: protected — cannot be moved or deleted
+
+-- Drag-and-drop reorder:
+--   Drag handle on each item
+--   Auto-expand collapsed submenus on hover (450ms delay)
+--   Drop indicators show target position and nesting level
+
+-- Delete: removes item and all children, no confirmation dialog
+--   Exception: home item cannot be deleted (button hidden)
+
+-- ─── Metadata diff view ──────────────────────────────────────
+
+-- Shows DB vs filesystem differences for all entity types.
+-- See metadata_diff.allium for diff field definitions.
+
+-- Layout: scan button at top, results grouped by entity type below.
+-- Each diff entry: entity name, field name, DB value, file value,
+--   two sync buttons (DB->File, File->DB).
+
+-- ─── Metadata diff actions ──────────────────────────────────
+
+-- Scan: runs 4 parallel scans (posts, media, scripts, templates)
+--   Compares DB records against filesystem files field by field
+--   Results grouped by entity type, sorted by entity name
+--   Shows count of differences per entity type in section header
+
+-- Per-field sync:
+--   DB -> File button: overwrites file field with DB value
+--   File -> DB button: overwrites DB field with file value
+--   No confirmation dialog for individual field syncs
+--   Button disappears after successful sync (field now matches)
+
+-- Orphan file import:
+--   Files on disk with no matching DB record shown separately
+--   "Import" action creates DB record from file metadata
+--   Appears at bottom of each entity type section
+
+-- ─── Git diff view ────────────────────────────────────────────
+
+-- Renders diff for a file (working tree vs HEAD) or a commit.
+-- File diff: id = "git-diff:{filePath}"
+-- Commit diff: id = "git-diff:commit:{commitHash}"
+-- Supports inline and side-by-side diff display modes (from editor settings).
+-- No actions beyond viewing — changes are managed via git sidebar.
+
+-- ─── Documentation views ─────────────────────────────────────
+
+-- documentation:     renders DOCUMENTATION.md as styled HTML
+-- api_documentation: renders API.md as styled HTML
+
+-- ─── Validation views ────────────────────────────────────────
+
+-- site_validation:         checks generated site for broken links, missing assets
+-- translation_validation:  checks translation completeness across languages
+
+-- ─── Validation view actions ────────────────────────────────
+
+-- Site validation:
+--   Scans generated HTML for broken internal links, missing assets
+--   Results: list of issues with file path + line + description
+--   No auto-fix actions — informational only
+
+-- Translation validation:
+--   Checks translation completeness across configured blog languages
+--   Results: matrix of posts x languages, missing translations highlighted
+--   No auto-fix actions — informational only
+
+-- ─── Find duplicates view ────────────────────────────────────
+
+-- Uses embedding vectors to find semantically similar posts.
+-- Shows candidate pairs with similarity score.
+-- See embedding.allium for vector details.
+
+-- ─── Find duplicates actions ────────────────────────────────
+
+-- Uses HNSW index of post embedding vectors for similarity search
+-- Shows candidate pairs: post A title, post B title, score (0.0-1.0)
+-- Click on either post title opens it in a tab (preview intent)
+-- No auto-merge or auto-delete actions
+
+-- ─── Import analysis view ───────────────────────────────────
+
+-- Editor for WXR (WordPress eXtended RSS) import definitions.
+-- Keyed by import definition ID. Opened as always-pinned tab.
+-- Workflow: Select File -> Analyze -> Resolve Conflicts -> Execute
+
+-- Layout: header (definition name), file selector, analysis results,
+--   conflict resolution panel, taxonomy mapping, execute button.
+
+-- ─── Import analysis actions ────────────────────────────────
+
+rule ImportSelectAndAnalyze {
+    when: ImportAnalyzeRequested(definition_id, file_path)
+    -- Parses WXR XML file
+    -- Extracts: posts, pages, media, tags, categories, authors
+    -- Shows summary counts per entity type
+    -- Identifies conflicts: duplicate slugs, existing categories/tags
+}
+
+-- Conflict resolution:
+--   Per-item dropdown: Import (create new), Skip (ignore), Merge (combine)
+--   Default: Import for new items, Skip for existing matches
+
+-- Taxonomy mapping:
+--   Source categories/tags mapped to existing project categories/tags
+--   Dropdown per source taxonomy term -> target term or "Create New"
+--   AI taxonomy analysis (optional):
+--     Gate: airplane mode check
+--     Suggests mappings based on name similarity via title model
+
+rule ImportExecute {
+    when: ImportExecuteRequested(definition_id)
+    -- No confirmation dialog — executes immediately
+    -- Processes items per conflict resolution settings
+    -- Creates posts, media, tags, categories as needed
+    -- Summary with counts shown in import view on completion
+    -- Created entities appear in sidebar immediately (store updated)
+}

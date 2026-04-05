@@ -1,0 +1,243 @@
+-- allium: 1
+-- bDS Post Editor View
+-- Scope: UI content area — post editing surface
+-- Distilled from: PostEditor.tsx
+
+-- Describes the layout and behaviour of the post editor rendered in
+-- the main content area when a post tab is active.
+-- Tab routing is in tabs.allium. Sidebar navigation is in sidebar_views.allium.
+
+use "./tabs.allium" as tabs
+use "./post.allium" as post
+use "./i18n.allium" as i18n
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: PostAIAnalysisRequested(post_id)
+    provides: PostTranslateRequested(post_id, target_language)
+    provides: PostSaved(post_id)
+    provides: PostPublishRequested(post_id)
+    provides: PostDiscardRequested(post_id)
+    provides: PostDeleteRequested(post_id)
+    provides: PostInsertLinkRequested(post_id)
+    provides: PostInsertMediaRequested(post_id)
+    provides: PostGalleryRequested(post_id)
+    provides: ImageDroppedOnEditor(post_id, file_path)
+    provides: PostLanguageDetectRequested(post_id)
+}
+
+-- ─── Post editor ──────────────────────────────────────────────
+
+-- Single vertical column. Three regions: header, body, footer.
+
+-- Header bar:
+--   Left: post title (or "Untitled") with dirty indicator dot
+--   Right: status badge, auto-save indicator, Quick Actions dropdown, Publish/Delete buttons
+-- Quick Actions:
+--   AI Analysis (suggests title, excerpt, slug)
+--   Translate Post (opens translation modal)
+
+-- Collapsible Metadata section (starts expanded when title is empty):
+--   Two-column layout. Left column: metadata fields. Right column: linked media panel.
+--   Left column fields:
+--     Title (text input), Tags (autocomplete chip input), Author (text input),
+--     Language (select + AI detect button), Do Not Translate (checkbox),
+--     Slug (read-only), Categories (chip input), Template (select, if templates exist),
+--     PostLinks (backlinks and outlinks)
+--   Right column:
+--     LinkedMediaPanel (media items linked to this post)
+
+-- Language flags bar (inline with metadata toggle):
+--   Row of flag emoji buttons for canonical language + each translation
+--   Styles: status class (draft/published), active indicator
+--   Clicking switches editor content to that language's draft
+
+-- Collapsible Excerpt section:
+--   Excerpt textarea (4 rows)
+
+-- Editor Body:
+--   Toolbar: "Content" label | mode toggle (Visual/Markdown/Preview) | action buttons
+--   Action buttons (markdown mode only): Gallery, Insert Post Link, Insert Media
+--   Visual mode: rich-text WYSIWYG editor
+--   Markdown mode: code editor with markdown-with-macros language
+--     Highlights [[macro ...]] double-bracket syntax
+--     Word wrap on, minimap off, 14px font
+--   Preview mode: iframe showing rendered preview
+--   Supports drag-and-drop of images (imports media, inserts markdown)
+
+-- Footer:
+--   Three date stamps: Created, Updated, Published (published only if publishedAt exists)
+--   Locale-formatted dates
+
+value PostEditorView {
+    post_id: String
+    header: PostEditorHeader
+    metadata_expanded: Boolean
+    excerpt_expanded: Boolean
+    editor_mode: String                 -- visual | markdown | preview
+}
+
+value PostEditorHeader {
+    title: String                       -- post title or "Untitled"
+    is_dirty: Boolean
+    status: String                      -- draft | published | archived
+    is_auto_saving: Boolean
+}
+
+config {
+    post_auto_save_delay: Integer = 3000
+    -- milliseconds of idle before auto-save triggers
+}
+
+invariant PostAutoSave {
+    -- Auto-saves after 3 seconds of idle in the editor
+    -- Also auto-saves on unmount/tab switch
+    -- Ctrl/Cmd+S triggers immediate save
+}
+
+invariant PostDirtyTracking {
+    -- Compares canonical draft + translation drafts against saved state
+    -- Dirty indicator shown in header and tab bar
+}
+
+-- ─── Post editor actions ────────────────────────────────────
+
+rule PostAIAnalysis {
+    when: PostAIAnalysisRequested(post_id)
+    -- Gate: airplane mode check (see action_patterns.allium AIOperationGating)
+    -- Uses title model (not default chat model)
+    -- Input: post title + excerpt + content (first 2000 chars)
+    -- Response: suggested title, excerpt, slug
+    -- Opens AISuggestionsModal with 3 fields:
+    --   Each field: current value, suggested value, accept checkbox
+    --   Slug field locked (no accept checkbox) if post was ever published
+    -- On confirm: applies only checked fields, triggers auto-save
+}
+
+rule PostTranslateAction {
+    when: PostTranslateRequested(post_id, target_language)
+    -- Gate: airplane mode check
+    -- Opens language picker modal:
+    --   Available target languages from project blogLanguages
+    --   Existing translations shown with status badge (draft/published)
+    -- Two sequential AI calls via title model:
+    --   1. Translate metadata (title, excerpt) to target language
+    --   2. Translate content (full markdown body) to target language
+    -- Creates/updates translation record in DB
+    -- If source post is published: transitions source to draft
+    --   (copies file content back to DB so it can be edited)
+}
+
+rule PostAutoTranslateOnSave {
+    when: PostSaved(post_id)
+    -- Gate: airplane mode check + auto_translate not disabled (doNotTranslate=false)
+    -- For each configured blog language missing a translation:
+    --   Enqueue background translation task (title model)
+    -- Each task: translate metadata + content, create translation record
+    -- Cascades to linked media: for each linked media item,
+    --   translate media metadata for missing languages
+    -- See action_patterns.allium AutoTranslationChain for full chain
+}
+
+rule PostPublishAction {
+    when: PostPublishRequested(post_id)
+    -- Implicit save first (awaited) if post is dirty
+    -- Then calls engine publish (see engine_side_effects.allium PublishPostSideEffects)
+    -- Also publishes all translations whose source language is published
+    -- UI updates: status badge -> published, sidebar section move
+}
+
+rule PostDiscardChanges {
+    when: PostDiscardRequested(post_id)
+    -- Only available for published posts with pending draft changes
+    -- Native confirm dialog (rfd): "Discard changes to this post?"
+    -- On confirm: reads published version from .md file,
+    --   restores DB to published state (content=null, status=published)
+    -- Editor reloads with restored content
+}
+
+rule PostDeleteAction {
+    when: PostDeleteRequested(post_id)
+    -- Native confirm dialog (rfd): "Delete this post?"
+    -- If published: also deletes .md file and all translation files
+    -- If never published: only deletes DB record
+    -- Removes from DB, closes tab, sidebar removes item
+    -- See engine_side_effects.allium DeletePostSideEffects
+}
+
+rule PostInsertLink {
+    when: PostInsertLinkRequested(post_id)
+    -- Keyboard shortcut: Ctrl/Cmd+K
+    -- Opens InsertPostLinkModal with two tabs: Internal, External
+    -- Internal tab:
+    --   Search input (debounced, queries post titles)
+    --   Results list: title + status badge (draft/published)
+    --   If semantic similarity enabled: results ranked by similarity
+    --   Click inserts markdown link: [title](/YYYY/MM/DD/slug)
+    --   "Create Post" option at bottom of search results:
+    --     Creates new post with search query as title
+    --     Inserts link to newly created post
+    -- External tab:
+    --   URL input + optional display text input
+    --   Inserts: [text](url) or bare url if no display text
+}
+
+rule PostInsertMedia {
+    when: PostInsertMediaRequested(post_id)
+    -- Opens InsertMediaModal (media search variant)
+    -- Search input, grid of media items with bds-thumb:// thumbnails
+    -- Click inserts markdown:
+    --   Images: ![alt](bds-media://id)
+    --   Non-images: [originalName](bds-media://id)
+}
+
+rule PostGalleryAction {
+    when: PostGalleryRequested(post_id)
+    -- Opens gallery overlay showing all media linked to this post
+    -- Image grid with bds-thumb:// thumbnails
+    -- Click on image opens lightbox (full-size bds-media:// preview)
+    -- Lightbox: left/right arrow navigation, close button, ESC to close
+}
+
+rule PostDragDropImage {
+    when: ImageDroppedOnEditor(post_id, file_path)
+    -- Chain of operations (see action_patterns.allium DragDropImageChain):
+    -- 1. Import media file -> media record + file copy + sidecar
+    -- 2. Generate thumbnails (async: small/medium/large/ai)
+    -- 3. Link media to post (update sidecar linkedPostIds)
+    -- 4. Insert markdown image at cursor: ![](bds-media://id)
+    -- 5. If AI available: AI image analysis (async, auto-applied, no modal)
+    -- 6. If auto-translate enabled: cascade translate media metadata
+    -- Steps 1-4 synchronous. Steps 5-6 background tasks.
+}
+
+rule PostLanguageDetect {
+    when: PostLanguageDetectRequested(post_id)
+    -- Gate: airplane mode check
+    -- Sends content sample to title model
+    -- Auto-sets post language field (no modal)
+    -- Triggers auto-save
+}
+
+-- Post editor mode switching:
+--   Visual mode: rich-text WYSIWYG (TipTap in TS, not yet in Rust)
+--   Markdown mode: code editor with markdown-with-macros highlighting
+--   Preview mode: iframe with rendered HTML via preview server
+--   Mode persists per-session, default from editor settings
+
+-- Language tab switching (translation editing):
+--   Flag emoji buttons in metadata bar for canonical + each translation
+--   Clicking a flag loads that language's draft content into editor
+--   Each flag shows status (draft/published) via CSS class
+--   Active flag highlighted
+
+-- LinkedMediaPanel (right column of metadata):
+--   Shows media items linked to this post
+--   Actions:
+--     Import & Link: native file dialog, runs full import + link chain
+--     Link Existing: opens media picker modal (search + grid)
+--     Unlink: removes media-post link from sidecar (no confirmation)
+--     Reorder: drag handle on each item
+--     Click: opens media item in its own tab (preview intent)
+--   Import & Link triggers: import -> thumbnail -> link -> optional AI analysis

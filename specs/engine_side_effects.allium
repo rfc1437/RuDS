@@ -1,0 +1,314 @@
+-- allium: 1
+-- bDS Engine-Level Save Side-Effects
+-- Scope: cross-cutting (all waves)
+-- Distilled from: PostEngine.ts, MediaEngine.ts, TemplateEngine.ts,
+--   ScriptEngine.ts, MetaEngine.ts, TagEngine.ts
+
+-- When an entity is saved/published/deleted in the engine layer, a chain
+-- of automatic side-effects fires. These are NOT UI-level concerns —
+-- they happen in the backend regardless of which UI triggered them.
+
+use "./post.allium" as post
+use "./media.allium" as media
+
+-- ─── External surfaces ──────────────────────────────────────
+
+-- Engine-level events emitted after backend operations complete.
+-- These are NOT direct user actions — they fire as side-effects
+-- of user operations processed by the engine layer.
+
+surface Engine {
+    provides: PostCreated(post)
+    provides: PostUpdated(post, changes)
+    provides: PostPublished(post)
+    provides: PostDeleted(post)
+    provides: PostChangesDiscarded(post)
+    provides: MediaImported(media)
+    provides: MediaUpdated(media, changes)
+    provides: MediaFileReplaced(media, new_file)
+    provides: MediaDeleted(media)
+    provides: TemplateCreated(template)
+    provides: TemplateUpdated(template, changes)
+    provides: TemplatePublished(template)
+    provides: TemplateDeleted(template, force)
+    provides: TagDeleted(tag)
+    provides: TagRenamed(old_name, new_name)
+    provides: TagsMerged(source_tags, target_tag)
+    provides: ProjectMetadataUpdated(metadata)
+    provides: CategoryAdded(name)
+    provides: CategoryRemoved(name)
+    provides: PublishingPreferencesUpdated(prefs)
+    provides: PostTranslationUpserted(translation, source_post)
+    provides: MediaTranslationUpserted(translation, media)
+    provides: MediaTranslationDeleted(media, language)
+}
+
+-- ─── Post operations ─────────────────────────────────────
+
+rule CreatePostSideEffects {
+    when: PostCreated(post)
+    ensures: FTSIndexUpdated(post)
+    ensures: EmbeddingUpdated(post)
+    -- No file written (draft lives in DB)
+}
+
+rule UpdatePostSideEffects {
+    when: PostUpdated(post, changes)
+    -- If post is published and content/metadata changes:
+    --   auto-transition status back to draft
+    -- If slug changed and file exists: rename .md file
+    -- If templateSlug changed on published post: rewrite .md frontmatter
+    ensures: FTSIndexUpdated(post)
+    if changes.content:
+        ensures: PostLinksUpdated(post)
+        -- Parses markdown/HTML links, resolves slugs to post IDs,
+        --   replaces outgoing link rows
+    ensures: EmbeddingUpdated(post)
+}
+
+rule PublishPostSideEffects {
+    when: PostPublished(post)
+    ensures: PostFileWritten(post)
+    -- posts/YYYY/MM/{slug}.md with YAML frontmatter
+    if old_file_path != new_file_path:
+        ensures: OldPostFileDeleted(old_file_path)
+    ensures: post.content = null
+    -- Content cleared from DB; lives in filesystem only
+    ensures: FTSIndexUpdated(post)
+    ensures: PostLinksUpdated(post)
+    -- Also publishes all translations:
+    for t in post.translations:
+        ensures: TranslationFileWritten(t)
+        ensures: t.content = null
+    ensures: EmbeddingUpdated(post)
+}
+
+rule DeletePostSideEffects {
+    when: PostDeleted(post)
+    if post.file_path != "":
+        ensures: PostFileDeleted(post.file_path)
+    ensures: PostLinksDeleted(post)
+    -- Deletes both source and target link rows
+    for media_link in post.linked_media:
+        ensures: MediaSidecarUpdated(media_link.media_id)
+        -- Removes post from media sidecar's linkedPostIds
+    ensures: FTSIndexDeleted(post)
+    ensures: EmbeddingRemoved(post)
+}
+
+rule DiscardPostChangesSideEffects {
+    when: PostChangesDiscarded(post)
+    -- Reads published version from file, restores DB metadata,
+    --   sets content=null, status=published
+    ensures: FTSIndexUpdated(post)
+}
+
+-- ─── Media operations ────────────────────────────────────
+
+rule ImportMediaSideEffects {
+    when: MediaImported(media)
+    ensures: MediaFileWritten(media)
+    -- media/YYYY/MM/{uuid}.{ext}
+    ensures: SidecarFileWritten(media)
+    -- {path}.meta with YAML-like metadata
+    if media.is_image:
+        ensures: ThumbnailsGenerated(media)
+        -- small=150px, medium=400px, large=800px, ai=448x448
+        -- Asynchronous, emits thumbnailsGenerated on completion
+    ensures: FTSIndexUpdated(media)
+}
+
+rule UpdateMediaSideEffects {
+    when: MediaUpdated(media, changes)
+    ensures: SidecarFileRewritten(media)
+    -- Preserves fields caller didn't set (linkedPostIds, author)
+    ensures: FTSIndexUpdated(media)
+}
+
+rule ReplaceMediaFileSideEffects {
+    when: MediaFileReplaced(media, new_file)
+    -- Copies new file over existing path
+    if media.is_image:
+        ensures: ThumbnailsRegenerated(media)
+        -- Synchronous (awaited), not fire-and-forget
+}
+
+rule DeleteMediaSideEffects {
+    when: MediaDeleted(media)
+    ensures: MediaFileDeleted(media)
+    ensures: SidecarFileDeleted(media)
+    ensures: ThumbnailsDeleted(media)
+    ensures: PostMediaLinksDeleted(media)
+    ensures: MediaTranslationsDeleted(media)
+    -- Also deletes all translated sidecar files: {path}.{lang}.meta
+    ensures: FTSIndexDeleted(media)
+}
+
+-- ─── Template operations ─────────────────────────────────
+
+rule CreateTemplateSideEffects {
+    when: TemplateCreated(template)
+    ensures: TemplateFileWritten(template)
+    -- templates/{slug}.liquid with YAML frontmatter
+}
+
+rule UpdateTemplateSideEffects {
+    when: TemplateUpdated(template, changes)
+    ensures: template.version = template.version + 1
+    -- DB-first update, then filesystem; rollback DB on filesystem failure
+    if changes.slug:
+        ensures: TemplateFileRenamed(template)
+        ensures: CascadeSlugUpdate(template)
+        -- Updates posts.templateSlug and tags.postTemplateSlug
+    ensures: TemplateFileRewritten(template)
+}
+
+rule PublishTemplateSideEffects {
+    when: TemplatePublished(template)
+    ensures: TemplateFileWritten(template)
+    ensures: template.content = null
+    -- Content cleared from DB
+}
+
+rule DeleteTemplateSideEffects {
+    when: TemplateDeleted(template, force)
+    if has_references and not force:
+        -- Return without deleting, report reference counts
+        ensures: nothing
+    if force:
+        ensures: ReferencingPostsCleared(template)
+        ensures: ReferencingTagsCleared(template)
+        -- Nulls out templateSlug on posts, postTemplateSlug on tags
+    ensures: TemplateFileDeleted(template)
+}
+
+-- ─── Script operations ───────────────────────────────────
+
+-- Same pattern as templates:
+--   Create: write .lua file, insert DB
+--   Update: bump version, rewrite file, update DB
+--   Publish: write file, clear DB content
+--   Delete: delete file, delete DB row
+
+-- ─── Tag operations ──────────────────────────────────────
+
+rule DeleteTagSideEffects {
+    when: TagDeleted(tag)
+    -- Background task:
+    -- For each post containing this tag:
+    --   Remove tag from post's tags array in DB
+    --   If published: rewrite .md file (syncPublishedPostFile)
+    ensures: TagsJsonWritten()
+    -- meta/tags.json updated
+}
+
+rule RenameTagSideEffects {
+    when: TagRenamed(old_name, new_name)
+    -- Background task:
+    -- For each post containing old_name:
+    --   Replace old_name with new_name in tags array
+    --   If published: rewrite .md file
+    ensures: TagsJsonWritten()
+}
+
+rule MergeTagsSideEffects {
+    when: TagsMerged(source_tags, target_tag)
+    -- Background task:
+    -- For each source tag, for each post containing it:
+    --   Replace source with target (dedup), update DB
+    --   If published: rewrite .md file
+    -- Delete all source tag rows
+    ensures: TagsJsonWritten()
+}
+
+-- ─── Settings/Metadata operations ────────────────────────
+
+rule UpdateProjectMetadataSideEffects {
+    when: ProjectMetadataUpdated(metadata)
+    ensures: ProjectJsonWritten()
+    -- meta/project.json (atomic write)
+    ensures: CategoryMetaJsonWritten()
+    -- meta/category-meta.json (atomic write)
+}
+
+rule AddCategorySideEffects {
+    when: CategoryAdded(name)
+    ensures: ProjectJsonWritten()
+    ensures: CategoryMetaJsonWritten()
+    ensures: CategoriesJsonWritten()
+    -- meta/categories.json
+}
+
+rule RemoveCategorySideEffects {
+    when: CategoryRemoved(name)
+    ensures: ProjectJsonWritten()
+    ensures: CategoryMetaJsonWritten()
+    ensures: CategoriesJsonWritten()
+}
+
+rule UpdatePublishingPreferencesSideEffects {
+    when: PublishingPreferencesUpdated(prefs)
+    ensures: PublishingJsonWritten()
+    -- meta/publishing.json (atomic write)
+}
+
+-- ─── Translation operations ──────────────────────────────
+
+rule UpsertPostTranslationSideEffects {
+    when: PostTranslationUpserted(translation, source_post)
+    -- If source is published and this is a manual edit (not auto-publish):
+    --   transition source post to draft (copies content from file to DB)
+    if source_post.status = published and translation.is_manual_edit:
+        ensures: source_post.status = draft
+        ensures: source_post.content = read_file(source_post.file_path)
+    -- If both translation and source are published:
+    --   write translation file, clear translation content from DB
+    if translation.status = published and source_post.status = published:
+        ensures: TranslationFileWritten(translation)
+        ensures: translation.content = null
+    ensures: FTSIndexUpdated(source_post)
+    -- FTS includes all translation content for the source post
+}
+
+rule UpsertMediaTranslationSideEffects {
+    when: MediaTranslationUpserted(translation, media)
+    ensures: TranslatedSidecarWritten(media, translation.language)
+    -- {path}.{lang}.meta
+}
+
+rule DeleteMediaTranslationSideEffects {
+    when: MediaTranslationDeleted(media, language)
+    ensures: TranslatedSidecarDeleted(media, language)
+}
+
+-- ─── CLI/MCP notification sync ───────────────────────────
+
+-- When MCP CLI makes mutations, it writes to db_notifications table.
+-- NotificationWatcher polls DB file (chokidar, 100ms debounce):
+--   Reads unseen CLI notifications
+--   Calls engine.invalidate(entityId) if needed
+--   Sends entity:changed IPC event to renderer
+--   Marks rows as seen
+--   Prunes: >1h processed, >24h unprocessed
+
+-- ─── Side-effect summary table ───────────────────────────
+
+-- Operation          | File Write   | FTS  | Links | Thumbs | Sidecar | Embed | JSON Meta
+-- -------------------|--------------|------|-------|--------|---------|-------|----------
+-- createPost         | no (draft)   | yes  | no    | no     | no      | yes   | no
+-- updatePost         | rename only* | yes  | if Δ  | no     | no      | yes   | no
+-- publishPost        | .md + trans  | yes  | yes   | no     | no      | yes   | no
+-- deletePost         | delete .md   | del  | del   | no     | Δ media | del   | no
+-- importMedia        | copy file    | yes  | no    | async  | write   | no    | no
+-- updateMedia        | no           | yes  | no    | no     | rewrite | no    | no
+-- replaceMediaFile   | overwrite    | no   | no    | regen  | no      | no    | no
+-- deleteMedia        | delete all   | del  | no    | del    | del all | no    | no
+-- createTemplate     | .liquid      | no   | no    | no     | no      | no    | no
+-- updateTemplate     | rewrite      | no   | no    | no     | no      | no    | no
+-- deleteTemplate     | delete+casc  | no   | no    | no     | no      | no    | no
+-- deleteTag          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- renameTag          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- mergeTags          | sync posts   | no   | no    | no     | no      | no    | tags.json
+-- updateMetadata     | no           | no   | no    | no     | no      | no    | *.json
+-- addCategory        | no           | no   | no    | no     | no      | no    | *.json
+-- * updatePost rewrites file only when templateSlug changes on published post

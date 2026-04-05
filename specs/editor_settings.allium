@@ -1,0 +1,138 @@
+-- allium: 1
+-- bDS Settings and Style Views
+-- Scope: UI content area — settings + style editing surfaces
+-- Distilled from: SettingsView.tsx, StyleView.tsx
+
+-- Describes the layout and behaviour of the settings and style views.
+
+-- ─── External surfaces ──────────────────────────────────────
+
+surface User {
+    provides: StyleThemeSelected(theme_name)
+    provides: StyleApplyRequested(theme_name)
+}
+
+-- ─── Settings view ────────────────────────────────────────────
+
+-- VS Code-style settings page with header + search bar + scrollable sections.
+-- Search filters sections by keyword match. "No results" with clear button.
+
+-- 8 sections (style is a separate tab, not a settings section):
+
+-- 1. Project Settings:
+--   Project Name (text), Project Description (textarea 3 rows),
+--   Data Path (text + Browse + Reset), Public URL (url),
+--   Main Language (select), Blog Languages (checkboxes, main disabled),
+--   Default Author (text), Max Posts Per Page (number 1-500 default 50),
+--   Blogmark Category (select), Blogmark Bookmarklet (copy button), Save
+
+-- 2. Editor Settings:
+--   Default Editor Mode (select: WYSIWYG/Markdown/Preview),
+--   Diff View Style (select: Inline/Side-by-side),
+--   Wrap Long Lines (checkbox), Hide Unchanged Regions (checkbox)
+
+-- 3. Content Settings (Categories):
+--   Table: Category | Title | Render in Lists | Show Titles | Post Template | List Template | Remove
+--   Protected categories: article, aside, page, picture (cannot be deleted)
+--   Add Category: text input + Add button. Reset to Defaults button
+
+-- 4. AI Assistant Settings:
+--   API keys: OpenCode, Mistral (masked display + Change, or password input + Save)
+--   Local providers: Ollama enable checkbox + capabilities table,
+--     LM Studio enable checkbox + capabilities table
+--   Offline mode: enable checkbox (disabled if no local providers),
+--     selectors for chat/title/image models (local only)
+--   Default Model (select with optgroup by provider + refresh),
+--     shows: max output tokens, context window, pricing
+--   Title Model (select), Image Analysis Model (vision-capable only)
+--   System Prompt (textarea 12 rows + Save + Reset to Default)
+
+-- 5. Technology Settings:
+--   Python Runtime Mode (select: Web Worker/Main Thread)
+--   Semantic Similarity (checkbox)
+
+-- 6. Publishing Settings (SSH):
+--   Info: SSH key auth only
+--   SSH Mode (select: scp/rsync), SSH Host, SSH Username, SSH Remote Path
+--   Save + Clear buttons
+
+-- 7. Data Maintenance:
+--   Rebuild buttons (6): Posts from Files, Media from Files, Scripts from Files,
+--     Templates from Files, Links, Regenerate Missing Thumbnails
+--   Open Data Folder button
+
+-- 8. MCP Server Settings:
+--   Status badge (port or "Not running")
+--   Per-agent rows: Claude Code, Claude Desktop, GitHub Copilot, Gemini CLI,
+--     OpenCode, Mistral Vibe, OpenAI Codex — each with Add/Remove toggle
+
+-- ─── Settings view actions ──────────────────────────────────
+
+-- API key validation:
+--   On Save: test API call to provider endpoint before persisting
+--   On validation failure: toast error message, key not saved
+--   On success: key saved, masked display shown
+
+-- Local provider enable/disable:
+--   Enabling Ollama/LM Studio: fetches model list, shows capabilities table
+--   Capabilities table columns: model name, chat, title, image (checkmarks)
+--   Models auto-fetched on enable; manual refresh via Refresh Models button
+
+-- Model catalog refresh:
+--   Refresh button next to Default Model selector
+--   Fetches available models from all enabled providers
+--   Updates optgroup dropdown with provider groupings
+--   Per-model info: max output tokens, context window, pricing
+
+-- Rebuild operations (Data Maintenance section):
+--   6 buttons, each executes immediately (no confirmation dialog)
+--   Runs as background task with progress visible in Tasks panel
+--   On completion: wholesale replaces store data for that entity type
+--   Sidebar and editors re-render with fresh data
+
+-- Category management (Content Settings):
+--   Protected categories: article, aside, page, picture (Remove button disabled)
+--   Add Category: text input + Add button, validates non-empty and unique
+--   Per-category settings: editable inline in table row
+--   "Reset to Defaults" restores default categories set
+
+-- MCP per-agent config:
+--   Add/Remove toggle per agent row
+--   Status badge: shows port number when running, "Not running" otherwise
+
+-- Bookmarklet (Project Settings):
+--   Copy button copies bookmarklet JavaScript to clipboard
+--   Bookmarklet uses project's publicUrl to construct POST endpoint
+
+-- ─── Style view ───────────────────────────────────────────────
+
+-- Simple vertical layout: header, theme picker, controls row, preview.
+
+-- Theme Picker: grid of theme buttons (one per Pico CSS theme).
+--   Each button: swatch with 3 colour tones (accent, light bg, dark bg), theme name.
+--   Selected theme: highlighted with aria-pressed.
+
+-- Controls row: Preview Mode dropdown (Auto/Light/Dark), Apply Theme button.
+
+-- Preview: iframe of style preview page at 127.0.0.1:4123/__style-preview
+--   with theme and mode query params. Updates live on selection change.
+
+-- Apply Theme persists to project metadata.
+
+-- ─── Style view actions ─────────────────────────────────────
+
+rule StyleThemeSelect {
+    when: StyleThemeSelected(theme_name)
+    -- Updates iframe preview immediately (query param change)
+    -- Does NOT persist until Apply is clicked
+}
+
+rule StyleApplyTheme {
+    when: StyleApplyRequested(theme_name)
+    -- Persists picoTheme to project metadata (meta/project.json)
+    -- See engine_side_effects.allium UpdateProjectMetadataSideEffects
+}
+
+-- Preview mode dropdown (Auto/Light/Dark):
+--   Controls iframe query param, live update on change
+--   Does not persist — local UI state only
