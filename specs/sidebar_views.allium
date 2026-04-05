@@ -177,9 +177,10 @@ value MediaView {
 
 value MediaGridItem {
     media_id: String
-    has_thumbnail: Boolean              -- image uses bds-thumb://{id} protocol; non-image uses file icon SVG
+    thumbnail_path: String?             -- small (150px) thumbnail on disk when image; null for non-image
     name: String                        -- title truncated to config.media_title_max_length + "..."; fallback originalName (no truncation)
     file_size: String                   -- formatted (B / KB / MB)
+    dimensions: String?                 -- "WxH" when width and height known; null otherwise
     tooltip: String                     -- caption ?? originalName
     active: Boolean                     -- true when activeTabId = media.id
 }
@@ -188,9 +189,10 @@ surface MediaGridItemEntry {
     context item: MediaGridItem
 
     exposes:
-        item.has_thumbnail
+        item.thumbnail_path when item.thumbnail_path != null
         item.name
         item.file_size
+        item.dimensions when item.dimensions != null
         item.tooltip
         item.active
 
@@ -200,10 +202,12 @@ surface MediaGridItemEntry {
 
     @guarantee CellLayout
         -- Grid cell, row layout.
-        -- Left: 40x40 thumbnail (rounded, object-fit cover) when has_thumbnail is true;
-        --   otherwise generic file SVG icon of same dimensions.
+        -- Left: 40x40 thumbnail (rounded, object-fit cover) loaded from
+        --   thumbnail_path (small 150px WebP) when present;
+        --   otherwise generic file icon of same dimensions.
         -- Right column, line 1: name (truncated with ellipsis).
-        -- Right column, line 2: file_size (smaller, muted).
+        -- Right column, line 2: file_size (smaller, muted) followed by
+        --   dimensions when present, separated by " · ".
 
     @guarantee NameTruncation
         -- Title is hard-truncated at config.media_title_max_length characters

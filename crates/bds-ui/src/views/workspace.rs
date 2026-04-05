@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
 use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
@@ -77,6 +79,8 @@ pub fn view(
     toasts: &[Toast],
     // Modal
     active_modal: Option<&modal::ModalState>,
+    // Data directory (for thumbnail paths)
+    data_dir: Option<&Path>,
 ) -> Element<'static, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
@@ -114,7 +118,7 @@ pub fn view(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_width, active_tab, locale));
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_width, active_tab, locale, data_dir));
 
         // Resize drag handle: 4px wide strip between sidebar and content
         let handle = container(Space::new(0, 0))

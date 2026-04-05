@@ -912,6 +912,7 @@ impl BdsApp {
             self.ui_locale,
             &self.toasts,
             self.active_modal.as_ref(),
+            self.data_dir.as_deref(),
         )
     }
 

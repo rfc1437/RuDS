@@ -1,6 +1,10 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use std::path::{Path, PathBuf};
+
+use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Space};
 use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
+
+use bds_core::util::paths::thumbnail_path;
 
 use bds_core::i18n::UiLocale;
 use bds_core::model::{Media, Post, Script, Template};
@@ -47,6 +51,18 @@ fn item_active_style(_theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// 40×40 thumbnail container: rounded corners, dark background.
+fn thumbnail_container_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.14, 0.14, 0.17))),
+        border: Border {
+            radius: 4.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 /// Get the appropriate empty-state message key for each sidebar view.
 fn placeholder_key(view: SidebarView) -> &'static str {
     match view {
@@ -83,6 +99,29 @@ fn truncate_to_fit(s: &str, available_px: f32) -> String {
         let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
         format!("{truncated}\u{2026}")
     }
+}
+
+/// Format a file size in bytes to a human-readable string (B / KB / MB).
+fn format_file_size(size: i64) -> String {
+    if size < 1024 {
+        format!("{size} B")
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Resolve the small thumbnail path for a media item on disk.
+/// Returns Some(path) if the media is an image and the thumbnail file exists.
+fn resolve_thumbnail_path(data_dir: Option<&Path>, media: &Media) -> Option<PathBuf> {
+    let data_dir = data_dir?;
+    if !media.mime_type.starts_with("image/") {
+        return None;
+    }
+    let rel = thumbnail_path(&media.id, "small", "webp");
+    let full = data_dir.join(&rel);
+    if full.exists() { Some(full) } else { None }
 }
 
 /// Truncate a media title to the max length, appending "..." if over limit.
@@ -482,6 +521,7 @@ pub fn view(
     width: f32,
     active_tab: Option<&str>,
     locale: UiLocale,
+    data_dir: Option<&Path>,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
@@ -702,16 +742,60 @@ pub fn view(
                             Some(title) => truncate_media_title(title),
                             None => m.original_name.clone(),
                         };
-                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 16.0;
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 48.0;
                         let display_name = truncate_to_fit(&display_name, text_px);
-                        let label = format!("\u{1F5BC} {display_name}");
-                        let label_text = text(label)
+                        let style_fn = if is_active { item_active_style } else { item_style };
+
+                        // Left: 40x40 thumbnail or file icon
+                        let thumb_path = resolve_thumbnail_path(data_dir, m);
+                        let left: Element<'static, Message> = if let Some(path) = thumb_path {
+                            container(
+                                image(path.to_string_lossy().to_string())
+                                    .width(Length::Fixed(40.0))
+                                    .height(Length::Fixed(40.0))
+                                    .content_fit(iced::ContentFit::Cover)
+                            )
+                                .width(Length::Fixed(40.0))
+                                .height(Length::Fixed(40.0))
+                                .clip(true)
+                                .style(thumbnail_container_style)
+                                .into()
+                        } else {
+                            container(
+                                text("\u{1F4C4}") // 📄 generic file icon
+                                    .size(20)
+                                    .shaping(Shaping::Advanced)
+                            )
+                                .width(Length::Fixed(40.0))
+                                .height(Length::Fixed(40.0))
+                                .align_x(iced::alignment::Horizontal::Center)
+                                .align_y(iced::alignment::Vertical::Center)
+                                .style(thumbnail_container_style)
+                                .into()
+                        };
+
+                        // Right column: name + metadata line
+                        let name_text = text(display_name.clone())
                             .size(12)
                             .shaping(Shaping::Advanced)
                             .wrapping(iced::widget::text::Wrapping::None);
-                        let style_fn = if is_active { item_active_style } else { item_style };
+
+                        let file_size = format_file_size(m.size);
+                        let meta_label = match (m.width, m.height) {
+                            (Some(w), Some(h)) => format!("{file_size} · {w}×{h}"),
+                            _ => file_size,
+                        };
+                        let meta_text = text(meta_label)
+                            .size(10)
+                            .shaping(Shaping::Advanced)
+                            .color(Color::from_rgb(0.50, 0.50, 0.55));
+
+                        let right = column![name_text, meta_text].spacing(1);
+
+                        let content = row![left, right].spacing(8).align_y(iced::Alignment::Center);
+
                         button(
-                            container(label_text)
+                            container(content)
                                 .width(Length::Fill)
                                 .clip(true)
                         )
@@ -722,7 +806,7 @@ pub fn view(
                                 is_transient: true,
                                 is_dirty: false,
                             }))
-                            .padding([3, 6])
+                            .padding([4, 6])
                             .width(Length::Fill)
                             .style(style_fn)
                             .into()
@@ -970,5 +1054,25 @@ mod tests {
         let result = truncate_to_fit(&"a".repeat(20), 10.0);
         assert!(result.ends_with('\u{2026}'));
         assert!(result.chars().count() >= 2);
+    }
+
+    #[test]
+    fn format_file_size_bytes() {
+        assert_eq!(format_file_size(0), "0 B");
+        assert_eq!(format_file_size(512), "512 B");
+        assert_eq!(format_file_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_file_size_kilobytes() {
+        assert_eq!(format_file_size(1024), "1.0 KB");
+        assert_eq!(format_file_size(1536), "1.5 KB");
+        assert_eq!(format_file_size(1024 * 1024 - 1), "1024.0 KB");
+    }
+
+    #[test]
+    fn format_file_size_megabytes() {
+        assert_eq!(format_file_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_file_size(5 * 1024 * 1024), "5.0 MB");
     }
 }
