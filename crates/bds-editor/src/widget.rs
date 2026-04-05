@@ -18,12 +18,19 @@ use crate::highlight::Highlighter;
 #[derive(Debug, Clone)]
 pub enum EditorMessage {
     ContentChanged(String),
+    SaveRequested,
 }
 
 /// Persistent widget state across frames.
 #[derive(Default)]
 struct EditorState {
     is_focused: bool,
+    /// Track drag state for click-and-drag selection
+    is_dragging: bool,
+    /// Last click time for double-click detection (ms)
+    last_click_time: Option<std::time::Instant>,
+    last_click_line: usize,
+    last_click_col: usize,
 }
 
 /// Font metrics measured via cosmic-text, cached globally.
@@ -60,7 +67,10 @@ pub fn mono_metrics() -> &'static MonoMetrics {
             break;
         }
 
-        MonoMetrics { char_width, line_height }
+        MonoMetrics {
+            char_width,
+            line_height,
+        }
     })
 }
 
@@ -72,11 +82,19 @@ const TEXT_COLOR: Color = Color::from_rgb(0.85, 0.85, 0.85);
 const GUTTER_TEXT: Color = Color::from_rgb(0.45, 0.48, 0.55);
 const CURSOR_COLOR: Color = Color::from_rgb(0.9, 0.9, 0.2);
 const ACTIVE_LINE_NUM: Color = Color::from_rgb(0.75, 0.78, 0.85);
+const SELECTION_BG: Color = Color::from_rgba(0.26, 0.54, 0.79, 0.40);
+
+/// Convert syntect RGBA color to Iced Color.
+fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
+    Color::from_rgba(
+        c.r as f32 / 255.0,
+        c.g as f32 / 255.0,
+        c.b as f32 / 255.0,
+        c.a as f32 / 255.0,
+    )
+}
 
 /// A syntax-highlighting code editor widget for Iced.
-///
-/// M0 PoC: renders highlighted text with line numbers, handles keyboard
-/// input for basic editing, supports cursor movement and vertical scrolling.
 pub struct CodeEditor<'a, Message> {
     buffer: &'a mut EditorBuffer,
     highlighter: &'a Highlighter,
@@ -142,7 +160,7 @@ where
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let _state = tree.state.downcast_ref::<EditorState>();
+        let state = tree.state.downcast_ref::<EditorState>();
 
         // Background
         renderer.fill_quad(
@@ -172,6 +190,12 @@ where
         let (cursor_line, cursor_col) = self.buffer.cursor();
         let scroll = self.buffer.scroll_offset();
         let visible_lines = (bounds.height / metrics.line_height) as usize + 1;
+        let selection = self.buffer.selection();
+
+        // Pre-compute highlighted lines for visible range
+        let syntax = self.highlighter.syntax_for_extension(self.extension);
+        let full_text = self.buffer.text();
+        let highlighted = self.highlighter.highlight_lines(&full_text, syntax);
 
         let font = iced::Font::MONOSPACE;
 
@@ -187,6 +211,54 @@ where
                 continue;
             }
 
+            let text_x = bounds.x + GUTTER_WIDTH + 8.0;
+
+            // Draw selection highlight for this line
+            if let Some(sel) = selection {
+                if !sel.is_empty() {
+                    let (start, end) = sel.ordered();
+                    let line_len = self
+                        .buffer
+                        .line(line_idx)
+                        .map(|l| {
+                            let len = l.len_chars();
+                            if len > 0 && l.char(len - 1) == '\n' {
+                                len - 1
+                            } else {
+                                len
+                            }
+                        })
+                        .unwrap_or(0);
+
+                    if line_idx >= start.0 && line_idx <= end.0 {
+                        let sel_start_col = if line_idx == start.0 { start.1 } else { 0 };
+                        let sel_end_col = if line_idx == end.0 {
+                            end.1
+                        } else {
+                            line_len + 1
+                        };
+                        let sel_x = text_x + sel_start_col as f32 * metrics.char_width;
+                        let sel_w =
+                            (sel_end_col - sel_start_col) as f32 * metrics.char_width;
+                        if sel_w > 0.0 {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: sel_x,
+                                        y,
+                                        width: sel_w,
+                                        height: metrics.line_height,
+                                    },
+                                    border: iced::Border::default(),
+                                    shadow: iced::Shadow::default(),
+                                },
+                                SELECTION_BG,
+                            );
+                        }
+                    }
+                }
+            }
+
             // Line number
             let line_num = format!("{:>4}", line_idx + 1);
             let num_color = if line_idx == cursor_line {
@@ -199,7 +271,9 @@ where
                     content: line_num,
                     bounds: Size::new(GUTTER_WIDTH - 8.0, metrics.line_height),
                     size: Pixels(FONT_SIZE),
-                    line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                    line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                        metrics.line_height,
+                    )),
                     font,
                     horizontal_alignment: iced::alignment::Horizontal::Right,
                     vertical_alignment: iced::alignment::Vertical::Top,
@@ -211,21 +285,57 @@ where
                 bounds,
             );
 
-            // Line content
-            if let Some(line) = self.buffer.line(line_idx) {
+            // Line content with syntax highlighting
+            if line_idx < highlighted.len() {
+                let spans = &highlighted[line_idx];
+                let mut x_off = text_x;
+                for (style, span_text) in spans {
+                    let mut display_text = span_text.clone();
+                    if display_text.ends_with('\n') {
+                        display_text.pop();
+                    }
+                    if display_text.is_empty() {
+                        continue;
+                    }
+                    let color = syntect_to_iced(style.foreground);
+                    let span_width = display_text.len() as f32 * metrics.char_width;
+                    renderer.fill_text(
+                        text::Text {
+                            content: display_text,
+                            bounds: Size::new(span_width + metrics.char_width, metrics.line_height),
+                            size: Pixels(FONT_SIZE),
+                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                                metrics.line_height,
+                            )),
+                            font,
+                            horizontal_alignment: iced::alignment::Horizontal::Left,
+                            vertical_alignment: iced::alignment::Vertical::Top,
+                            shaping: iced::widget::text::Shaping::Advanced,
+                            wrapping: iced::widget::text::Wrapping::None,
+                        },
+                        Point::new(x_off, y),
+                        color,
+                        bounds,
+                    );
+                    x_off += span_width;
+                }
+            } else if let Some(line) = self.buffer.line(line_idx) {
+                // Fallback: plain text rendering
                 let mut line_text: String = line.chars().collect();
-                // Strip trailing newline for display
                 if line_text.ends_with('\n') {
                     line_text.pop();
                 }
-
-                let text_x = bounds.x + GUTTER_WIDTH + 8.0;
                 renderer.fill_text(
                     text::Text {
                         content: line_text,
-                        bounds: Size::new(bounds.width - GUTTER_WIDTH - 8.0, metrics.line_height),
+                        bounds: Size::new(
+                            bounds.width - GUTTER_WIDTH - 8.0,
+                            metrics.line_height,
+                        ),
                         size: Pixels(FONT_SIZE),
-                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                            metrics.line_height,
+                        )),
                         font,
                         horizontal_alignment: iced::alignment::Horizontal::Left,
                         vertical_alignment: iced::alignment::Vertical::Top,
@@ -236,24 +346,24 @@ where
                     TEXT_COLOR,
                     bounds,
                 );
+            }
 
-                // Draw cursor on current line
-                if line_idx == cursor_line {
-                    let cursor_x = text_x + cursor_col as f32 * metrics.char_width;
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: Rectangle {
-                                x: cursor_x,
-                                y,
-                                width: 2.0,
-                                height: metrics.line_height,
-                            },
-                            border: iced::Border::default(),
-                            shadow: iced::Shadow::default(),
+            // Draw cursor on current line
+            if line_idx == cursor_line && state.is_focused {
+                let cursor_x = text_x + cursor_col as f32 * metrics.char_width;
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: cursor_x,
+                            y,
+                            width: 2.0,
+                            height: metrics.line_height,
                         },
-                        CURSOR_COLOR,
-                    );
-                }
+                        border: iced::Border::default(),
+                        shadow: iced::Shadow::default(),
+                    },
+                    CURSOR_COLOR,
+                );
             }
         }
     }
@@ -265,8 +375,8 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
-        _shell: &mut Shell<'_, Message>,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) -> Status {
         let state = tree.state.downcast_mut::<EditorState>();
@@ -277,60 +387,250 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
                     state.is_focused = true;
-                    // Place cursor at click position
+                    state.is_dragging = true;
+
                     if let Some(pos) = cursor.position_in(bounds) {
-                        let line = (pos.y / metrics.line_height) as usize + self.buffer.scroll_offset();
-                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
-                        self.buffer.set_cursor(line, col);
+                        let line = (pos.y / metrics.line_height) as usize
+                            + self.buffer.scroll_offset();
+                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
+                            as usize;
+
+                        // Double-click detection
+                        let now = std::time::Instant::now();
+                        let is_double_click = state
+                            .last_click_time
+                            .map(|t| now.duration_since(t).as_millis() < 400)
+                            .unwrap_or(false)
+                            && state.last_click_line == line
+                            && (state.last_click_col as isize - col as isize).unsigned_abs() < 3;
+
+                        if is_double_click {
+                            self.buffer.select_word_at(line, col);
+                            state.last_click_time = None; // reset
+                        } else {
+                            self.buffer.clear_selection();
+                            self.buffer.set_cursor(line, col);
+                            state.last_click_time = Some(now);
+                            state.last_click_line = line;
+                            state.last_click_col = col;
+                        }
                     }
                     return Status::Captured;
                 } else {
                     state.is_focused = false;
                 }
             }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                state.is_dragging = false;
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.is_dragging && state.is_focused {
+                    if let Some(pos) = cursor.position_in(bounds) {
+                        let line = (pos.y / metrics.line_height) as usize
+                            + self.buffer.scroll_offset();
+                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width)
+                            as usize;
+                        // Extend selection by simulating shift+movement
+                        let clamped_line = line.min(self.buffer.line_count().saturating_sub(1));
+                        let clamped_col = if clamped_line < self.buffer.line_count() {
+                            col.min(
+                                self.buffer
+                                    .line(clamped_line)
+                                    .map(|l| {
+                                        let len = l.len_chars();
+                                        if len > 0 && l.char(len - 1) == '\n' {
+                                            len - 1
+                                        } else {
+                                            len
+                                        }
+                                    })
+                                    .unwrap_or(0),
+                            )
+                        } else {
+                            0
+                        };
+                        self.buffer
+                            .set_selection(
+                                self.buffer
+                                    .selection()
+                                    .map(|s| s.anchor_line)
+                                    .unwrap_or(self.buffer.cursor().0),
+                                self.buffer
+                                    .selection()
+                                    .map(|s| s.anchor_col)
+                                    .unwrap_or(self.buffer.cursor().1),
+                                clamped_line,
+                                clamped_col,
+                            );
+                        self.buffer.set_cursor(clamped_line, clamped_col);
+                    }
+                    return Status::Captured;
+                }
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 let lines = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -(y * 3.0) as isize,
-                    mouse::ScrollDelta::Pixels { y, .. } => -(y / metrics.line_height) as isize,
+                    mouse::ScrollDelta::Pixels { y, .. } => {
+                        -(y / metrics.line_height) as isize
+                    }
                 };
                 self.buffer.scroll_by(lines);
                 return Status::Captured;
             }
-            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) if state.is_focused => {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key, modifiers, ..
+            }) if state.is_focused => {
+                let vis = (bounds.height / metrics.line_height) as usize;
+                let is_cmd = modifiers.command();
+                let is_shift = modifiers.shift();
+                let is_alt = modifiers.alt();
+
                 match key {
+                    // Cmd+Z = undo, Cmd+Shift+Z = redo
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "z" => {
+                        if is_shift {
+                            self.buffer.redo();
+                        } else {
+                            self.buffer.undo();
+                        }
+                        self.emit_change(shell);
+                    }
+                    // Cmd+Y = redo (Windows convention)
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "y" => {
+                        self.buffer.redo();
+                        self.emit_change(shell);
+                    }
+                    // Cmd+A = select all
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "a" => {
+                        self.buffer.select_all();
+                    }
+                    // Cmd+C = copy
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "c" => {
+                        let text = self.buffer.selected_text();
+                        if !text.is_empty() {
+                            clipboard.write(iced::advanced::clipboard::Kind::Standard, text);
+                        }
+                    }
+                    // Cmd+X = cut
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "x" => {
+                        let text = self.buffer.selected_text();
+                        if !text.is_empty() {
+                            clipboard.write(iced::advanced::clipboard::Kind::Standard, text);
+                            self.buffer.delete_selection();
+                            self.emit_change(shell);
+                        }
+                    }
+                    // Cmd+V = paste
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "v" => {
+                        if let Some(text) =
+                            clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                        {
+                            self.buffer.insert(&text);
+                            self.emit_change(shell);
+                        }
+                    }
+                    // Cmd+S = save
+                    keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "s" => {
+                        if let Some(ref on_change) = self.on_change {
+                            shell.publish((on_change)(EditorMessage::SaveRequested));
+                        }
+                    }
+                    // Arrow keys with modifiers
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                        self.buffer.move_up();
-                        let vis = (bounds.height / metrics.line_height) as usize;
+                        if is_shift {
+                            self.buffer.select_up();
+                        } else {
+                            self.buffer.move_up();
+                        }
                         self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                        self.buffer.move_down();
-                        let vis = (bounds.height / metrics.line_height) as usize;
+                        if is_shift {
+                            self.buffer.select_down();
+                        } else {
+                            self.buffer.move_down();
+                        }
                         self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
-                        self.buffer.move_left();
+                        if is_shift && is_alt {
+                            self.buffer.select_word_left();
+                        } else if is_shift {
+                            self.buffer.select_left();
+                        } else if is_alt {
+                            self.buffer.move_word_left();
+                        } else {
+                            self.buffer.move_left();
+                        }
+                        self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
-                        self.buffer.move_right();
+                        if is_shift && is_alt {
+                            self.buffer.select_word_right();
+                        } else if is_shift {
+                            self.buffer.select_right();
+                        } else if is_alt {
+                            self.buffer.move_word_right();
+                        } else {
+                            self.buffer.move_right();
+                        }
+                        self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Home) => {
-                        self.buffer.move_home();
+                        if is_shift {
+                            self.buffer.select_home();
+                        } else {
+                            self.buffer.move_home();
+                        }
                     }
                     keyboard::Key::Named(keyboard::key::Named::End) => {
-                        self.buffer.move_end();
+                        if is_shift {
+                            self.buffer.select_end();
+                        } else {
+                            self.buffer.move_end();
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::PageUp) => {
+                        if is_shift {
+                            self.buffer.select_page_up(vis);
+                        } else {
+                            self.buffer.move_page_up(vis);
+                        }
+                        self.buffer.ensure_cursor_visible(vis);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::PageDown) => {
+                        if is_shift {
+                            self.buffer.select_page_down(vis);
+                        } else {
+                            self.buffer.move_page_down(vis);
+                        }
+                        self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
-                        self.buffer.backspace();
+                        if is_alt {
+                            // Option+Backspace = delete word left
+                            self.buffer.select_word_left();
+                            self.buffer.delete_selection();
+                        } else {
+                            self.buffer.backspace();
+                        }
+                        self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Delete) => {
                         self.buffer.delete_forward();
+                        self.emit_change(shell);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
                         self.buffer.insert("\n");
+                        self.emit_change(shell);
                     }
-                    keyboard::Key::Character(ref c) => {
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        self.buffer.insert("    ");
+                        self.emit_change(shell);
+                    }
+                    keyboard::Key::Character(ref c) if !is_cmd => {
                         self.buffer.insert(c);
+                        self.emit_change(shell);
                     }
                     _ => return Status::Ignored,
                 }
@@ -339,6 +639,15 @@ where
             _ => {}
         }
         Status::Ignored
+    }
+}
+
+impl<'a, Message> CodeEditor<'a, Message> {
+    fn emit_change(&self, shell: &mut Shell<'_, Message>) {
+        if let Some(ref on_change) = self.on_change {
+            let text = self.buffer.text();
+            shell.publish((on_change)(EditorMessage::ContentChanged(text)));
+        }
     }
 }
 

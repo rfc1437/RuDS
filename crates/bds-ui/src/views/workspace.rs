@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
@@ -12,7 +13,16 @@ use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot}
 use crate::state::sidebar_filter::{PostFilter, MediaFilter};
 use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
-use crate::views::{activity_bar, modal, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
+use crate::views::{
+    activity_bar, modal, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome,
+    post_editor::{self, PostEditorState},
+    media_editor::{self, MediaEditorState},
+    template_editor::{self, TemplateEditorState},
+    script_editor::{self, ScriptEditorState},
+    tags_view::{self, TagsViewState},
+    settings_view::{self, SettingsViewState},
+    dashboard::DashboardState,
+};
 
 /// Main content area background.
 fn content_bg(_theme: &Theme) -> container::Style {
@@ -31,7 +41,7 @@ fn drag_handle_style(_theme: &Theme) -> container::Style {
 }
 
 /// Horizontal line separator (full width).
-fn separator_h() -> iced::widget::Container<'static, Message> {
+fn separator_h<'a>() -> Element<'a, Message> {
     container(Space::new(0, 0))
         .width(Length::Fill)
         .height(Length::Fixed(1.0))
@@ -39,57 +49,70 @@ fn separator_h() -> iced::widget::Container<'static, Message> {
             background: Some(Background::Color(Color::from_rgb(0.25, 0.25, 0.30))),
             ..container::Style::default()
         })
+        .into()
 }
 
 /// Compose the full workspace layout.
-pub fn view(
+pub fn view<'a>(
     // Navigation
     sidebar_view: SidebarView,
     sidebar_visible: bool,
     sidebar_width: f32,
     // Tabs
-    tabs: &[Tab],
-    active_tab: Option<&str>,
+    tabs: &'a [Tab],
+    active_tab: Option<&'a str>,
     // Panel
     panel_visible: bool,
     panel_tab: PanelTab,
-    task_snapshots: &[TaskSnapshot],
-    output_entries: &[OutputEntry],
+    task_snapshots: &'a [TaskSnapshot],
+    output_entries: &'a [OutputEntry],
     // Sidebar data
-    sidebar_posts: &[Post],
-    sidebar_media: &[Media],
-    sidebar_scripts: &[Script],
-    sidebar_templates: &[Template],
+    sidebar_posts: &'a [Post],
+    sidebar_media: &'a [Media],
+    sidebar_scripts: &'a [Script],
+    sidebar_templates: &'a [Template],
     // Sidebar filters
-    post_filter: &PostFilter,
-    media_filter: &MediaFilter,
+    post_filter: &'a PostFilter,
+    media_filter: &'a MediaFilter,
     // Status bar
-    active_project_name: Option<&str>,
-    projects: &[Project],
-    active_project_id: Option<&str>,
+    active_project_name: Option<&'a str>,
+    projects: &'a [Project],
+    active_project_id: Option<&'a str>,
     post_count: usize,
     media_count: usize,
     offline_mode: bool,
     locale_dropdown_open: bool,
     project_dropdown_open: bool,
-    theme_badge: &str,
+    theme_badge: &'a str,
     // i18n
     locale: UiLocale,
     // Toasts
-    toasts: &[Toast],
+    toasts: &'a [Toast],
     // Modal
-    active_modal: Option<&modal::ModalState>,
+    active_modal: Option<&'a modal::ModalState>,
     // Data directory (for thumbnail paths)
-    data_dir: Option<&Path>,
-) -> Element<'static, Message> {
+    data_dir: Option<&'a Path>,
+    // Editor states
+    post_editors: &'a HashMap<String, PostEditorState>,
+    media_editors: &'a HashMap<String, MediaEditorState>,
+    template_editors: &'a HashMap<String, TemplateEditorState>,
+    script_editors: &'a HashMap<String, ScriptEditorState>,
+    tags_view_state: Option<&'a TagsViewState>,
+    settings_state: Option<&'a SettingsViewState>,
+    dashboard_state: Option<&'a DashboardState>,
+) -> Element<'a, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
 
     // Tab bar
     let tabs_el = tab_bar::view(tabs, active_tab, locale);
 
-    // Content area
-    let content_area = welcome::view(locale);
+    // Content area — route based on active tab type
+    let content_area = route_content_area(
+        tabs, active_tab, locale, data_dir,
+        post_editors, media_editors, template_editors, script_editors,
+        tags_view_state, settings_state, dashboard_state,
+    );
 
     // Right column: tab bar + content + panel
     let mut right_col = column![tabs_el, content_area];
@@ -163,14 +186,14 @@ pub fn view(
         active_post_status.as_deref(),
     );
 
-    let base_layout: Element<'static, Message> = column![main_row, separator_h(), status]
+    let base_layout: Element<'a, Message> = column![main_row, separator_h(), status]
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
 
     // Overlay: either locale dropdown or project dropdown (mutually exclusive)
-    let overlay: Option<Element<'static, Message>> = if locale_dropdown_open {
-        let items: Vec<Element<'static, Message>> = UiLocale::all()
+    let overlay: Option<Element<'a, Message>> = if locale_dropdown_open {
+        let items: Vec<Element<'a, Message>> = UiLocale::all()
             .iter()
             .map(|&l| {
                 let flag_text = text(l.flag_emoji())
@@ -236,7 +259,7 @@ pub fn view(
     };
 
     // Collect overlays: dropdowns and toasts
-    let mut overlays: Vec<Element<'static, Message>> = Vec::new();
+    let mut overlays: Vec<Element<'a, Message>> = Vec::new();
 
     if let Some(toast_overlay) = toast::view(toasts) {
         overlays.push(toast_overlay);
@@ -261,4 +284,84 @@ pub fn view(
             .height(Length::Fill)
             .into()
     }
+}
+
+/// Route the content area based on the active tab type.
+fn route_content_area<'a>(
+    tabs: &'a [Tab],
+    active_tab: Option<&'a str>,
+    locale: UiLocale,
+    data_dir: Option<&'a Path>,
+    post_editors: &'a HashMap<String, PostEditorState>,
+    media_editors: &'a HashMap<String, MediaEditorState>,
+    template_editors: &'a HashMap<String, TemplateEditorState>,
+    script_editors: &'a HashMap<String, ScriptEditorState>,
+    tags_view_state: Option<&'a TagsViewState>,
+    settings_state: Option<&'a SettingsViewState>,
+    _dashboard_state: Option<&'a DashboardState>,
+) -> Element<'a, Message> {
+    let Some(tab_id) = active_tab else {
+        return welcome::view(locale);
+    };
+    let Some(tab) = tabs.iter().find(|t| t.id == tab_id) else {
+        return welcome::view(locale);
+    };
+
+    match tab.tab_type {
+        TabType::Post => {
+            if let Some(state) = post_editors.get(tab_id) {
+                post_editor::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        TabType::Media => {
+            if let Some(state) = media_editors.get(tab_id) {
+                media_editor::view(state, locale, data_dir)
+            } else {
+                loading_view(locale)
+            }
+        }
+        TabType::Templates => {
+            if let Some(state) = template_editors.get(tab_id) {
+                template_editor::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        TabType::Scripts => {
+            if let Some(state) = script_editors.get(tab_id) {
+                script_editor::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        TabType::Tags => {
+            if let Some(state) = tags_view_state {
+                tags_view::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        TabType::Settings => {
+            if let Some(state) = settings_state {
+                settings_view::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        _ => welcome::view(locale),
+    }
+}
+
+fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
+    use crate::i18n::t;
+    container(
+        text(t(locale, "tabBar.loading")).size(14).color(Color::from_rgb(0.5, 0.5, 0.5)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .into()
 }
