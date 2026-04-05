@@ -114,10 +114,11 @@ pub fn view(
             .height(Length::Fill)
             .style(drag_handle_style);
 
+        // Only on_press here; move/release are captured by a global
+        // subscription so dragging works even when the cursor leaves
+        // the narrow 4px handle strip.
         let handle_hover = mouse_area(handle)
             .on_press(Message::SidebarResizeStart)
-            .on_release(Message::SidebarResizeEnd)
-            .on_move(|point| Message::SidebarResizeMove(point.x))
             .interaction(iced::mouse::Interaction::ResizingHorizontally);
 
         main_row = main_row.push(handle_hover);

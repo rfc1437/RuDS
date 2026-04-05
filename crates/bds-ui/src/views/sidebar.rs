@@ -65,6 +65,28 @@ fn placeholder_key(view: SidebarView) -> &'static str {
 /// sidebar_views.allium media_title_max_length = 60
 const MEDIA_TITLE_MAX_LEN: usize = 60;
 
+/// Approximate average character width at font size 12 for proportional fonts.
+/// Used to estimate how many characters fit in a given pixel width.
+const AVG_CHAR_WIDTH_PX: f32 = 6.8;
+
+/// Sidebar padding on each side (12px) plus item padding (6px each side).
+const SIDEBAR_TEXT_OVERHEAD_PX: f32 = 36.0;
+
+/// Extra space used by the post status indicator prefix ("○ " etc.).
+const STATUS_INDICATOR_CHARS: usize = 2;
+
+/// Truncate a string to fit approximately within `available_px` pixels,
+/// appending "…" if truncation occurs.
+fn truncate_to_fit(s: &str, available_px: f32) -> String {
+    let max_chars = ((available_px / AVG_CHAR_WIDTH_PX) as usize).max(6);
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{truncated}\u{2026}")
+    }
+}
+
 /// Truncate a media title to the max length, appending "..." if over limit.
 /// Per sidebar_views.allium: JS hard limit of 60 chars on title (substring + "...").
 fn truncate_media_title(title: &str) -> String {
@@ -116,7 +138,12 @@ pub fn view(
                         bds_core::model::PostStatus::Published => "\u{25CF} ",
                         bds_core::model::PostStatus::Archived => "\u{25A1} ",
                     };
-                    let label = format!("{status_indicator}{}", p.title);
+                    // Truncate title to fit sidebar width, accounting for
+                    // padding and the status indicator prefix.
+                    let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX
+                        - (STATUS_INDICATOR_CHARS as f32 * AVG_CHAR_WIDTH_PX);
+                    let display_title = truncate_to_fit(&p.title, text_px);
+                    let label = format!("{status_indicator}{display_title}");
                     let label_text = text(label)
                         .size(12)
                         .shaping(Shaping::Advanced)
@@ -190,10 +217,14 @@ pub fn view(
                         let is_active = active_tab == Some(m.id.as_str());
                         // Per sidebar_views.allium MediaGridItem: title truncated to 60 chars + "..."
                         // if over limit; fallback originalName (no truncation).
+                        // Additionally truncate to fit sidebar width.
                         let display_name = match m.title.as_deref() {
                             Some(title) => truncate_media_title(title),
                             None => m.original_name.clone(),
                         };
+                        // Emoji prefix "🖼 " is ~2 chars wide
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 16.0;
+                        let display_name = truncate_to_fit(&display_name, text_px);
                         let label = format!("\u{1F5BC} {display_name}");
                         let label_text = text(label)
                             .size(12)
@@ -276,5 +307,27 @@ mod tests {
         let title: String = "\u{00FC}".repeat(61); // ü × 61
         let expected = format!("{}...", "\u{00FC}".repeat(60));
         assert_eq!(truncate_media_title(&title), expected);
+    }
+
+    #[test]
+    fn truncate_to_fit_short() {
+        // 100px at ~6.8px/char ≈ 14 chars; "Hello" fits.
+        assert_eq!(truncate_to_fit("Hello", 100.0), "Hello");
+    }
+
+    #[test]
+    fn truncate_to_fit_long() {
+        // 50px at ~6.8px/char ≈ 7 chars; 20-char string truncated.
+        let result = truncate_to_fit(&"a".repeat(20), 50.0);
+        assert!(result.ends_with('\u{2026}'));
+        assert!(result.chars().count() <= 8);
+    }
+
+    #[test]
+    fn truncate_to_fit_narrow() {
+        // Very narrow (10px): minimum 6 chars enforced.
+        let result = truncate_to_fit(&"a".repeat(20), 10.0);
+        assert!(result.ends_with('\u{2026}'));
+        assert!(result.chars().count() >= 2);
     }
 }

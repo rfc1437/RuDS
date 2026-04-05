@@ -15,6 +15,11 @@ use crate::state::tabs::Tab;
 const TAB_WIDTH: f32 = 160.0;
 const CHAT_TITLE_MAX_LEN: usize = 18;
 
+/// Maximum characters for tab titles.
+/// TAB_WIDTH (160) minus padding (16) minus close button + spacing (~28)
+/// leaves ~116px.  At ~6.8px per char (12px proportional font) ≈ 17 chars.
+const TAB_TITLE_MAX_LEN: usize = 17;
+
 /// Tab bar background.
 fn bar_style(_theme: &Theme) -> container::Style {
     container::Style {
@@ -97,6 +102,17 @@ fn truncate_chat_title(title: &str) -> String {
     }
 }
 
+/// Truncate a tab title to fit within the tab's available text area.
+/// Uses "…" (Unicode ellipsis) as the truncation indicator.
+fn truncate_tab_title(title: &str) -> String {
+    if title.chars().count() > TAB_TITLE_MAX_LEN {
+        let truncated: String = title.chars().take(TAB_TITLE_MAX_LEN.saturating_sub(1)).collect();
+        format!("{truncated}\u{2026}")
+    } else {
+        title.to_string()
+    }
+}
+
 /// Build tooltip text per tabs.allium:
 /// Base: tab title. If transient: append " (Preview)". If dirty: append " * Modified".
 fn build_tooltip_text(tab: &Tab, locale: UiLocale) -> String {
@@ -131,10 +147,11 @@ pub fn view(
             let close_id = tab.id.clone();
 
             // Per tabs.allium: chat titles are JS-truncated to 18 chars + "..."
+            // All other titles are truncated to fit the tab's text area.
             let display_title = if tab.tab_type == crate::state::tabs::TabType::Chat {
                 truncate_chat_title(&tab.title)
             } else {
-                tab.title.clone()
+                truncate_tab_title(&tab.title)
             };
 
             // Per tabs.allium: transient tabs show italic title
@@ -239,5 +256,23 @@ mod tests {
         let title: String = "a".repeat(25);
         let expected = format!("{}...", "a".repeat(18));
         assert_eq!(truncate_chat_title(&title), expected);
+    }
+
+    #[test]
+    fn truncate_tab_title_short() {
+        assert_eq!(truncate_tab_title("Settings"), "Settings");
+    }
+
+    #[test]
+    fn truncate_tab_title_exact_limit() {
+        let title: String = "a".repeat(TAB_TITLE_MAX_LEN);
+        assert_eq!(truncate_tab_title(&title), title);
+    }
+
+    #[test]
+    fn truncate_tab_title_over_limit() {
+        let title: String = "a".repeat(30);
+        let expected = format!("{}\u{2026}", "a".repeat(TAB_TITLE_MAX_LEN - 1));
+        assert_eq!(truncate_tab_title(&title), expected);
     }
 }

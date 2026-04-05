@@ -690,7 +690,25 @@ impl BdsApp {
             Subscription::none()
         };
 
-        Subscription::batch([menu_sub, task_tick, toast_tick])
+        // Global mouse tracking for sidebar resize dragging.
+        // The 4px drag handle mouse_area only fires on_press; move/release
+        // are captured here so dragging works even when the cursor leaves
+        // the narrow handle strip.
+        let drag_sub = if self.sidebar_dragging {
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::SidebarResizeMove(position.x))
+                }
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::SidebarResizeEnd),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([menu_sub, task_tick, toast_tick, drag_sub])
     }
 
     // ── Private helpers ──
@@ -845,7 +863,7 @@ impl BdsApp {
         if let Some(t) = self.tabs.get(idx) {
             self.active_tab = Some(t.id.clone());
         }
-        self.enforce_panel_tab_availability();
+        self.enforce_panel_tab_fallback();
     }
 
     fn refresh_task_snapshots(&mut self) {
