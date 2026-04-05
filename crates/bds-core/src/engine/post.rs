@@ -580,6 +580,63 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     Ok(report)
 }
 
+/// Rebuild the inter-post link graph for all published posts in a project.
+/// Reads each published post's content from the filesystem, parses links,
+/// and recreates post_links records.
+pub fn rebuild_all_links(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<usize> {
+    let posts = qp::list_posts_by_project(conn, project_id)?;
+    let now = now_unix_ms();
+    let mut link_count = 0;
+
+    for post in &posts {
+        // Delete existing links from this post
+        ql::delete_links_by_source(conn, &post.id)?;
+
+        // Get post content: from DB or filesystem
+        let content = if let Some(ref c) = post.content {
+            c.clone()
+        } else if !post.file_path.is_empty() {
+            let abs_path = data_dir.join(&post.file_path);
+            if abs_path.exists() {
+                if let Ok(raw) = fs::read_to_string(&abs_path) {
+                    if let Ok((_fm, body)) = read_post_file(&raw) {
+                        body
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+
+        let parsed = parse_post_links(&content);
+        for (target_slug, link_text) in &parsed {
+            if let Ok(target) = qp::get_post_by_project_and_slug(conn, project_id, target_slug) {
+                let link = PostLink {
+                    id: Uuid::new_v4().to_string(),
+                    source_post_id: post.id.clone(),
+                    target_post_id: target.id.clone(),
+                    link_text: Some(link_text.clone()),
+                    created_at: now,
+                };
+                let _ = ql::insert_post_link(conn, &link);
+                link_count += 1;
+            }
+        }
+    }
+
+    Ok(link_count)
+}
+
 // --- Internal helpers ---
 
 /// Parse inter-post links from markdown content.

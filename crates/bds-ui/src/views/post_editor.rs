@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
 use iced::widget::text::{Shaping, Wrapping};
 use iced::{Color, Element, Length, Theme};
 
@@ -30,6 +30,13 @@ pub struct TranslationDraft {
     pub content: String,
     pub status: PostStatus,
     pub is_dirty: bool,
+}
+
+/// Resolved post link for display in metadata.
+#[derive(Debug, Clone)]
+pub struct ResolvedPostLink {
+    pub post_id: String,
+    pub title: String,
 }
 
 /// State for an open post editor.
@@ -65,6 +72,10 @@ pub struct PostEditorState {
     pub saved_canonical: Option<TranslationDraft>,
     /// Translation drafts keyed by language code.
     pub translation_drafts: HashMap<String, TranslationDraft>,
+    /// Outgoing links from this post to other posts.
+    pub outlinks: Vec<ResolvedPostLink>,
+    /// Incoming links from other posts to this post.
+    pub backlinks: Vec<ResolvedPostLink>,
 }
 
 impl std::fmt::Debug for PostEditorState {
@@ -105,6 +116,8 @@ impl Clone for PostEditorState {
             blog_languages: self.blog_languages.clone(),
             saved_canonical: self.saved_canonical.clone(),
             translation_drafts: self.translation_drafts.clone(),
+            outlinks: self.outlinks.clone(),
+            backlinks: self.backlinks.clone(),
         }
     }
 }
@@ -114,6 +127,8 @@ impl PostEditorState {
         post: &Post,
         blog_languages: &[String],
         translations: &[PostTranslation],
+        outlinks: Vec<ResolvedPostLink>,
+        backlinks: Vec<ResolvedPostLink>,
     ) -> Self {
         let title = post.title.clone();
         let content = post.content.clone().unwrap_or_default();
@@ -155,6 +170,8 @@ impl PostEditorState {
             blog_languages: blog_languages.to_vec(),
             saved_canonical: None,
             translation_drafts,
+            outlinks,
+            backlinks,
             title,
         }
     }
@@ -218,13 +235,14 @@ impl PostEditorState {
     }
 
     /// Build the translation flags list for the view.
+    /// Flags are driven by the post's actual translations, not blog-level languages.
     pub fn translation_flags(&self) -> Vec<TranslationFlag> {
-        if self.blog_languages.len() <= 1 {
+        if self.translation_drafts.is_empty() {
             return Vec::new();
         }
         let mut flags = Vec::new();
 
-        // Canonical language first
+        // Canonical language first (always shown when translations exist)
         let canon = &self.canonical_language;
         let canon_locale = i18n::normalize_language(canon);
         flags.push(TranslationFlag {
@@ -234,23 +252,20 @@ impl PostEditorState {
             is_active: self.active_language == *canon,
         });
 
-        // Each other blog language
-        for lang in &self.blog_languages {
-            if lang == canon {
-                continue;
-            }
+        // Each existing translation for this post
+        let mut langs: Vec<&String> = self.translation_drafts.keys().collect();
+        langs.sort();
+        for lang in langs {
             let locale = i18n::normalize_language(lang);
-            let status = self.translation_drafts.get(lang)
-                .map(|d| match d.status {
-                    PostStatus::Published => "published",
-                    _ => "draft",
-                })
-                .unwrap_or("missing");
+            let status = match self.translation_drafts[lang].status {
+                PostStatus::Published => "published",
+                _ => "draft",
+            };
             flags.push(TranslationFlag {
                 language: lang.clone(),
                 flag_emoji: locale.flag_emoji().to_string(),
                 status: status.to_string(),
-                is_active: self.active_language == *lang,
+                is_active: self.active_language == **lang,
             });
         }
 
@@ -427,7 +442,44 @@ pub fn view<'a>(
             |cat| Message::PostEditor(PostEditorMsg::RemoveCategory(cat)),
         );
 
-        column![meta_row1, meta_row2, tags_section, categories_section]
+        // Post links sections
+        let outlinks_section: Element<'a, Message> = if state.outlinks.is_empty() {
+            Space::new(0, 0).into()
+        } else {
+            let mut items: Vec<Element<'a, Message>> = vec![
+                text(t(locale, "editor.outlinks")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced).into(),
+            ];
+            for link in &state.outlinks {
+                items.push(
+                    text(format!("\u{2192} {}", link.title))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.55, 0.70, 0.90))
+                        .into()
+                );
+            }
+            Column::with_children(items).spacing(2).into()
+        };
+
+        let backlinks_section: Element<'a, Message> = if state.backlinks.is_empty() {
+            Space::new(0, 0).into()
+        } else {
+            let mut items: Vec<Element<'a, Message>> = vec![
+                text(t(locale, "editor.backlinks")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced).into(),
+            ];
+            for link in &state.backlinks {
+                items.push(
+                    text(format!("\u{2190} {}", link.title))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.55, 0.70, 0.90))
+                        .into()
+                );
+            }
+            Column::with_children(items).spacing(2).into()
+        };
+
+        column![meta_row1, meta_row2, tags_section, categories_section, outlinks_section, backlinks_section]
             .spacing(8)
             .width(Length::Fill)
             .into()

@@ -16,6 +16,7 @@ pub struct ScriptEditorState {
     pub script_id: String,
     pub title: String,
     pub slug: String,
+    pub file_path: String,
     pub kind: ScriptKind,
     pub entrypoint: String,
     pub enabled: bool,
@@ -45,6 +46,7 @@ impl Clone for ScriptEditorState {
             script_id: self.script_id.clone(),
             title: self.title.clone(),
             slug: self.slug.clone(),
+            file_path: self.file_path.clone(),
             kind: self.kind.clone(),
             entrypoint: self.entrypoint.clone(),
             enabled: self.enabled,
@@ -69,6 +71,7 @@ impl ScriptEditorState {
             script_id: script.id.clone(),
             title: script.title.clone(),
             slug: script.slug.clone(),
+            file_path: script.file_path.clone(),
             kind: script.kind.clone(),
             entrypoint: script.entrypoint.clone(),
             enabled: script.enabled,
@@ -192,14 +195,15 @@ pub fn view<'a>(
         .spacing(16)
         .width(Length::Fill);
 
-    // Content editor (CodeEditor with Lua syntax highlighting)
+    // Content editor (CodeEditor with syntax highlighting based on file extension)
+    let syntax_ext = if state.file_path.ends_with(".py") { "py" } else { "lua" };
     let content_section: Element<'a, Message> = column![
         inputs::section_header(&t(locale, "editor.content")),
         Element::from(
             CodeEditor::new(
                 &state.editor_buffer,
                 highlighter(),
-                "lua",
+                syntax_ext,
             )
             .on_change(|msg| match msg {
                 EditorMessage::ContentChanged(s) => Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s)),
@@ -209,6 +213,7 @@ pub fn view<'a>(
     ]
     .spacing(8)
     .width(Length::Fill)
+    .height(Length::Fill)
     .into();
 
     // Validation error

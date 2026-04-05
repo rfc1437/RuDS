@@ -187,6 +187,7 @@ pub fn view<'a>(
     ]
     .spacing(8)
     .width(Length::Fill)
+    .height(Length::Fill)
     .into();
 
     // Validation error

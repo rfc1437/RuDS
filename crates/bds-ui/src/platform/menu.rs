@@ -249,28 +249,28 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = view_menu.append(&PredefinedMenuItem::separator());
     let _ = view_menu.append(&PredefinedMenuItem::fullscreen(None));
 
-    // -- Window --
-    let window_menu = Submenu::new(translate(locale, "menu.group.window"), true);
-    let _ = window_menu.append(&item(&mut reg, MenuAction::PublishSelected, locale,
+    // -- Blog --
+    let blog_menu = Submenu::new(translate(locale, "menu.group.blog"), true);
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::PublishSelected, locale,
         Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyP))));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::PreviewPost, locale,
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::PreviewPost, locale,
         Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyV))));
-    let _ = window_menu.append(&PredefinedMenuItem::separator());
-    let _ = window_menu.append(&item(&mut reg, MenuAction::EditMenu, locale, None));
-    let _ = window_menu.append(&PredefinedMenuItem::separator());
-    let _ = window_menu.append(&item(&mut reg, MenuAction::RebuildDatabase, locale, None));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::ReindexText, locale, None));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::MetadataDiff, locale, None));
-    let _ = window_menu.append(&PredefinedMenuItem::separator());
-    let _ = window_menu.append(&item(&mut reg, MenuAction::RegenerateCalendar, locale, None));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::ValidateTranslations, locale, None));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::FillMissingTranslations, locale, None));
-    let _ = window_menu.append(&PredefinedMenuItem::separator());
-    let _ = window_menu.append(&item(&mut reg, MenuAction::GenerateSitemap, locale,
+    let _ = blog_menu.append(&PredefinedMenuItem::separator());
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::EditMenu, locale, None));
+    let _ = blog_menu.append(&PredefinedMenuItem::separator());
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::RebuildDatabase, locale, None));
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::ReindexText, locale, None));
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::MetadataDiff, locale, None));
+    let _ = blog_menu.append(&PredefinedMenuItem::separator());
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::RegenerateCalendar, locale, None));
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::ValidateTranslations, locale, None));
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::FillMissingTranslations, locale, None));
+    let _ = blog_menu.append(&PredefinedMenuItem::separator());
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::GenerateSitemap, locale,
         Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyR))));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::ValidateSite, locale,
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::ValidateSite, locale,
         Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyL))));
-    let _ = window_menu.append(&item(&mut reg, MenuAction::UploadSite, locale,
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::UploadSite, locale,
         Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyU))));
 
     // -- Help --
@@ -286,7 +286,7 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = menu.append(&file_menu);
     let _ = menu.append(&edit_menu);
     let _ = menu.append(&view_menu);
-    let _ = menu.append(&window_menu);
+    let _ = menu.append(&blog_menu);
     let _ = menu.append(&help_menu);
 
     (menu, reg)

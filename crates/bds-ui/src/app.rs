@@ -22,7 +22,7 @@ use crate::state::tabs::{self, Tab, TabType};
 use crate::state::toast::{Toast, ToastLevel};
 use crate::views::{
     modal, workspace,
-    post_editor::{PostEditorState, PostEditorMsg},
+    post_editor::{PostEditorState, PostEditorMsg, ResolvedPostLink},
     media_editor::{MediaEditorState, MediaEditorMsg},
     template_editor::{TemplateEditorState, TemplateEditorMsg},
     script_editor::{ScriptEditorState, ScriptEditorMsg},
@@ -1139,7 +1139,8 @@ impl BdsApp {
                                 db.conn(), &post.id,
                             ).ok())
                             .unwrap_or_default();
-                        let state = PostEditorState::from_post(&post, &self.blog_languages, &translations);
+                        let (outlinks, backlinks) = self.load_post_links(&post.id);
+                        let state = PostEditorState::from_post(&post, &self.blog_languages, &translations, outlinks, backlinks);
                         self.post_editors.insert(post.id.clone(), state);
                     }
                     Err(e) => self.notify(ToastLevel::Error, &e),
@@ -1933,7 +1934,9 @@ impl BdsApp {
             let mut state = SettingsViewState::default();
             if let Some(ref project) = self.active_project {
                 state.project_name = project.name.clone();
-                state.project_description = project.description.clone().unwrap_or_default();
+                state.project_description = iced::widget::text_editor::Content::with_text(
+                    &project.description.clone().unwrap_or_default(),
+                );
                 state.data_path = project.data_path.clone().unwrap_or_default();
             }
             if let Some(ref data_dir) = self.data_dir {
@@ -1963,7 +1966,9 @@ impl BdsApp {
                 }
             }
             SettingsMsg::ProjectNameChanged(s) => { state.project_name = s; }
-            SettingsMsg::ProjectDescriptionChanged(s) => { state.project_description = s; }
+            SettingsMsg::ProjectDescriptionAction(action) => {
+                state.project_description.perform(action);
+            }
             SettingsMsg::DataPathChanged(s) => { state.data_path = s; }
             SettingsMsg::BrowseDataPath => {
                 return crate::platform::dialog::pick_folder(t(self.ui_locale, "dialog.selectFolder"));
@@ -1996,14 +2001,39 @@ impl BdsApp {
                 state.offline_mode = b;
                 return Task::done(Message::SetOfflineMode(b));
             }
-            SettingsMsg::SystemPromptChanged(s) => { state.system_prompt = s; }
+            SettingsMsg::SystemPromptAction(action) => {
+                state.system_prompt.perform(action);
+            }
             SettingsMsg::SaveSystemPrompt => { /* System prompt save will be wired */ }
-            SettingsMsg::ResetSystemPrompt => { state.system_prompt.clear(); }
+            SettingsMsg::ResetSystemPrompt => {
+                state.system_prompt = iced::widget::text_editor::Content::new();
+            }
             SettingsMsg::RebuildPosts => { return Task::done(Message::RebuildDatabase); }
             SettingsMsg::RebuildMedia => { return Task::done(Message::RebuildDatabase); }
             SettingsMsg::RebuildScripts => { return Task::done(Message::RebuildDatabase); }
             SettingsMsg::RebuildTemplates => { return Task::done(Message::RebuildDatabase); }
-            SettingsMsg::RebuildLinks => { return Task::done(Message::ReindexText); }
+            SettingsMsg::RebuildLinks => {
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
+                {
+                    match bds_core::engine::post::rebuild_all_links(
+                        db.conn(), data_dir, &project.id,
+                    ) {
+                        Ok(count) => {
+                            self.notify(
+                                ToastLevel::Info,
+                                &format!("Rebuilt {} links", count),
+                            );
+                        }
+                        Err(e) => {
+                            self.notify(
+                                ToastLevel::Error,
+                                &format!("Failed to rebuild links: {e}"),
+                            );
+                        }
+                    }
+                }
+            }
             SettingsMsg::RegenerateThumbnails => {
                 self.notify(ToastLevel::Info, &t(self.ui_locale, "settings.regeneratingThumbnails"));
             }
@@ -2014,6 +2044,38 @@ impl BdsApp {
             }
         }
         Task::none()
+    }
+
+    /// Load outlinks and backlinks for a post, resolving target post titles.
+    fn load_post_links(&self, post_id: &str) -> (Vec<ResolvedPostLink>, Vec<ResolvedPostLink>) {
+        let Some(ref db) = self.db else {
+            return (Vec::new(), Vec::new());
+        };
+        let outlinks = bds_core::db::queries::post_link::list_links_by_source(db.conn(), post_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|link| {
+                bds_core::db::queries::post::get_post_by_id(db.conn(), &link.target_post_id)
+                    .ok()
+                    .map(|p| ResolvedPostLink {
+                        post_id: p.id,
+                        title: p.title,
+                    })
+            })
+            .collect();
+        let backlinks = bds_core::db::queries::post_link::list_links_by_target(db.conn(), post_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|link| {
+                bds_core::db::queries::post::get_post_by_id(db.conn(), &link.source_post_id)
+                    .ok()
+                    .map(|p| ResolvedPostLink {
+                        post_id: p.id,
+                        title: p.title,
+                    })
+            })
+            .collect();
+        (outlinks, backlinks)
     }
 
     /// Load editor state when a tab is opened for an entity.
@@ -2045,9 +2107,10 @@ impl BdsApp {
                             let translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
                                 db.conn(), &post.id,
                             ).unwrap_or_default();
+                            let (outlinks, backlinks) = self.load_post_links(&post.id);
                             self.post_editors.insert(
                                 post.id.clone(),
-                                PostEditorState::from_post(&post, &self.blog_languages, &translations),
+                                PostEditorState::from_post(&post, &self.blog_languages, &translations, outlinks, backlinks),
                             );
                         }
                         Err(e) => {
@@ -2072,13 +2135,17 @@ impl BdsApp {
                 if !self.template_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::template::get_template_by_id(db.conn(), &tab.id) {
                         Ok(mut template) => {
-                            // Published templates: read content from file
+                            // Published templates: read content from file, strip frontmatter
                             if template.content.is_none() {
                                 if let Some(ref data_dir) = self.data_dir {
                                     let rel = bds_core::util::paths::template_file_path(&template.slug);
                                     let path = data_dir.join(&rel);
-                                    if let Ok(body) = std::fs::read_to_string(&path) {
-                                        template.content = Some(body);
+                                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                                        if let Ok((_fm, body)) =
+                                            bds_core::util::frontmatter::read_template_file(&raw)
+                                        {
+                                            template.content = Some(body);
+                                        }
                                     }
                                 }
                             }
@@ -2094,13 +2161,16 @@ impl BdsApp {
                 if !self.script_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::script::get_script_by_id(db.conn(), &tab.id) {
                         Ok(mut script) => {
-                            // Published scripts: read content from file
+                            // Published scripts: read content from file using actual file_path
                             if script.content.is_none() {
                                 if let Some(ref data_dir) = self.data_dir {
-                                    let rel = bds_core::util::paths::script_file_path(&script.slug);
-                                    let path = data_dir.join(&rel);
-                                    if let Ok(body) = std::fs::read_to_string(&path) {
-                                        script.content = Some(body);
+                                    let path = data_dir.join(&script.file_path);
+                                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                                        if let Ok((_fm, body)) =
+                                            bds_core::util::frontmatter::read_script_file(&raw)
+                                        {
+                                            script.content = Some(body);
+                                        }
                                     }
                                 }
                             }
@@ -2114,9 +2184,16 @@ impl BdsApp {
             }
             TabType::Tags => {
                 if self.tags_view_state.is_none() {
+                    let project_id = self.active_project.as_ref().map(|p| p.id.as_str()).unwrap_or("");
+                    // Sync tags from posts first to ensure tags table is populated
+                    if let Some(ref data_dir) = self.data_dir {
+                        let _ = bds_core::engine::tag::sync_tags_from_posts(
+                            db.conn(), data_dir, project_id,
+                        );
+                    }
                     let tags = bds_core::db::queries::tag::list_tags_by_project(
                         db.conn(),
-                        self.active_project.as_ref().map(|p| p.id.as_str()).unwrap_or(""),
+                        project_id,
                     ).unwrap_or_default();
                     self.tags_view_state = Some(TagsViewState::new(tags));
                 }
@@ -2126,7 +2203,9 @@ impl BdsApp {
                     let mut state = SettingsViewState::default();
                     if let Some(ref project) = self.active_project {
                         state.project_name = project.name.clone();
-                        state.project_description = project.description.clone().unwrap_or_default();
+                        state.project_description = iced::widget::text_editor::Content::with_text(
+                            &project.description.clone().unwrap_or_default(),
+                        );
                         state.data_path = project.data_path.clone().unwrap_or_default();
                     }
                     if let Some(ref data_dir) = self.data_dir {

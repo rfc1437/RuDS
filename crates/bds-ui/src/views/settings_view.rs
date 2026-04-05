@@ -1,4 +1,5 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
+use iced::widget::text::Shaping;
 use iced::{Alignment, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -49,13 +50,12 @@ impl SettingsSection {
 }
 
 /// State for the settings view.
-#[derive(Debug, Clone)]
 pub struct SettingsViewState {
     pub search_query: String,
     pub collapsed: Vec<SettingsSection>,
     // Project
     pub project_name: String,
-    pub project_description: String,
+    pub project_description: text_editor::Content,
     pub data_path: String,
     pub public_url: String,
     pub default_author: String,
@@ -72,7 +72,40 @@ pub struct SettingsViewState {
     pub ssh_remote_path: String,
     // AI
     pub offline_mode: bool,
-    pub system_prompt: String,
+    pub system_prompt: text_editor::Content,
+}
+
+impl std::fmt::Debug for SettingsViewState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsViewState")
+            .field("project_name", &self.project_name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for SettingsViewState {
+    fn clone(&self) -> Self {
+        Self {
+            search_query: self.search_query.clone(),
+            collapsed: self.collapsed.clone(),
+            project_name: self.project_name.clone(),
+            project_description: text_editor::Content::with_text(&self.project_description.text()),
+            data_path: self.data_path.clone(),
+            public_url: self.public_url.clone(),
+            default_author: self.default_author.clone(),
+            max_posts_per_page: self.max_posts_per_page.clone(),
+            default_mode: self.default_mode.clone(),
+            diff_view_style: self.diff_view_style.clone(),
+            wrap_long_lines: self.wrap_long_lines,
+            hide_unchanged_regions: self.hide_unchanged_regions,
+            ssh_mode: self.ssh_mode.clone(),
+            ssh_host: self.ssh_host.clone(),
+            ssh_username: self.ssh_username.clone(),
+            ssh_remote_path: self.ssh_remote_path.clone(),
+            offline_mode: self.offline_mode,
+            system_prompt: text_editor::Content::with_text(&self.system_prompt.text()),
+        }
+    }
 }
 
 impl Default for SettingsViewState {
@@ -81,7 +114,7 @@ impl Default for SettingsViewState {
             search_query: String::new(),
             collapsed: Vec::new(),
             project_name: String::new(),
-            project_description: String::new(),
+            project_description: text_editor::Content::new(),
             data_path: String::new(),
             public_url: String::new(),
             default_author: String::new(),
@@ -95,7 +128,7 @@ impl Default for SettingsViewState {
             ssh_username: String::new(),
             ssh_remote_path: String::new(),
             offline_mode: false,
-            system_prompt: String::new(),
+            system_prompt: text_editor::Content::new(),
         }
     }
 }
@@ -107,7 +140,7 @@ pub enum SettingsMsg {
     ToggleSection(SettingsSection),
     // Project
     ProjectNameChanged(String),
-    ProjectDescriptionChanged(String),
+    ProjectDescriptionAction(text_editor::Action),
     DataPathChanged(String),
     BrowseDataPath,
     ResetDataPath,
@@ -130,7 +163,7 @@ pub enum SettingsMsg {
     ClearPublishing,
     // AI
     OfflineModeChanged(bool),
-    SystemPromptChanged(String),
+    SystemPromptAction(text_editor::Action),
     SaveSystemPrompt,
     ResetSystemPrompt,
     // Data maintenance
@@ -228,12 +261,14 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         &state.project_name,
         |s| Message::Settings(SettingsMsg::ProjectNameChanged(s)),
     );
-    let desc = inputs::labeled_input(
-        &t(locale, "settings.projectDescription"),
-        "",
-        &state.project_description,
-        |s| Message::Settings(SettingsMsg::ProjectDescriptionChanged(s)),
-    );
+    let desc = column![
+        text(t(locale, "settings.projectDescription")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
+        text_editor(&state.project_description)
+            .on_action(|a| Message::Settings(SettingsMsg::ProjectDescriptionAction(a)))
+            .height(Length::Fixed(80.0))
+            .size(14),
+    ]
+    .spacing(4);
     let data_path = row![
         inputs::labeled_input(
             &t(locale, "settings.dataPath"),
@@ -316,12 +351,14 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
         state.offline_mode,
         |b| Message::Settings(SettingsMsg::OfflineModeChanged(b)),
     );
-    let prompt = inputs::labeled_input(
-        &t(locale, "settings.systemPrompt"),
-        "",
-        &state.system_prompt,
-        |s| Message::Settings(SettingsMsg::SystemPromptChanged(s)),
-    );
+    let prompt = column![
+        text(t(locale, "settings.systemPrompt")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
+        text_editor(&state.system_prompt)
+            .on_action(|a| Message::Settings(SettingsMsg::SystemPromptAction(a)))
+            .height(Length::Fixed(200.0))
+            .size(14),
+    ]
+    .spacing(4);
     let btns = row![
         button(text(t(locale, "common.save")).size(13))
             .on_press(Message::Settings(SettingsMsg::SaveSystemPrompt))
