@@ -3,35 +3,97 @@
 -- Scope: extension (Bucket D — Embeddings + Duplicate Detection)
 -- Distilled from: src/main/engine/EmbeddingEngine.ts
 
+-- Local embedding model for semantic similarity. Runs entirely on-device,
+-- independent of AI endpoints. Gated by semanticSimilarityEnabled project setting.
+
 use "./post.allium" as post
 use "./tag.allium" as tag
 
+-- ─── Model ──────────────────────────────────────────────────
+
+value EmbeddingModel {
+    -- multilingual-e5-small: 384-dimensional sentence embeddings
+    -- Loaded via ONNX runtime (ort crate), model files from Hugging Face Hub
+    -- Downloaded on first use, cached in app data directory
+    -- Lazy-loaded: pipeline created on first embedding request, not at startup
+    -- Text preprocessing: prefix all input with "query: " (e5 convention)
+    -- Pooling: mean pooling + L2 normalization
+    model_id: String                    -- "Xenova/multilingual-e5-small"
+    dimensions: Integer                 -- 384
+}
+
 value EmbeddingVector {
-    dimensions: Integer             -- 384 (multilingual-e5-small)
+    dimensions: Integer                 -- 384 (multilingual-e5-small)
     values: List<Decimal>
 }
 
+-- ─── Entities ───────────────────────────────────────────────
+
 entity EmbeddingKey {
-    label: Integer                  -- HNSW label for USearch
+    label: Integer                      -- HNSW label for USearch
     post: post/Post
-    content_hash: String            -- Skip re-embedding unchanged posts
+    content_hash: String                -- SHA-256 of "{title}\n\n{content}"
     vector: EmbeddingVector
 }
 
 entity DismissedDuplicatePair {
     post_a: post/Post
     post_b: post/Post
+    -- IDs stored in canonical order (sorted) for dedup
 }
 
+-- ─── USearch HNSW Index ─────────────────────────────────────
+
 config {
-    model: String = "multilingual-e5-small"
+    model_id: String = "Xenova/multilingual-e5-small"
     embedding_dimensions: Integer = 384
+    hnsw_metric: String = "cosine"
+    hnsw_connectivity: Integer = 16     -- M parameter
+    hnsw_expansion_add: Integer = 128   -- efConstruction
+    hnsw_expansion_search: Integer = 64 -- efSearch
     debounce_persist: Duration = 5.seconds
+    -- Index file: {userData}/projects/{projectId}/embeddings.usearch
+    -- Key mapping in SQLite embedding_keys table (label, post_id, content_hash, vector BLOB)
 }
+
+-- ─── Gating ─────────────────────────────────────────────────
+
+invariant SemanticSimilarityGate {
+    -- All embedding operations are gated by semanticSimilarityEnabled in project metadata.
+    -- When disabled: no posts are indexed, queries return empty results.
+    -- When toggled on: triggers IndexUnindexed to backfill all posts.
+    -- When toggled off: index remains on disk but is not queried.
+}
+
+-- ─── Event-driven indexing ──────────────────────────────────
+
+-- Post lifecycle events trigger embedding updates automatically.
+-- See engine_side_effects.allium for the trigger points.
+
+rule EmbedPost {
+    when: PostCreated(post) or PostUpdated(post)
+    requires: semantic_similarity_enabled
+    let hash = sha256(format("{title}\n\n{content}", title: post.title, content: post.content))
+    let existing = EmbeddingKey{post: post}
+    if not exists existing or existing.content_hash != hash:
+        -- Compute embedding vector via local model
+        -- Upsert into USearch index + embedding_keys DB table
+        -- Debounced index save (5s)
+        ensures: EmbeddingKeyUpdated(post)
+}
+
+rule RemovePostEmbedding {
+    when: PostDeleted(post)
+    requires: semantic_similarity_enabled
+    ensures: EmbeddingKeyRemoved(post)
+}
+
+-- ─── Batch indexing ─────────────────────────────────────────
 
 rule ReindexAll {
     when: ReindexAllRequested(project)
-    -- Re-embeds all posts, rebuilds HNSW index
+    requires: semantic_similarity_enabled
+    -- Re-embeds all posts, rebuilds HNSW index from scratch
     for p in project.posts:
         ensures: EmbeddingKeyUpdated(p)
     ensures: HnswIndexRebuilt(project)
@@ -39,32 +101,57 @@ rule ReindexAll {
 
 rule IndexUnindexed {
     when: IndexUnindexedRequested(project)
+    requires: semantic_similarity_enabled
+    -- Triggered at app startup (if enabled) and when setting toggled on
     -- Only embeds posts without existing embeddings or with changed content_hash
+    -- Runs as background task with progress reporting
     for p in project.posts:
         let existing = EmbeddingKey{post: p}
         if not exists existing or existing.content_hash != p.checksum:
             ensures: EmbeddingKeyUpdated(p)
 }
 
+-- ─── Query operations ───────────────────────────────────────
+
 rule FindSimilar {
     when: FindSimilarRequested(post, limit)
-    -- HNSW vector search via USearch
-    -- Returns ranked list of similar posts with similarity scores
+    requires: semantic_similarity_enabled
+    -- HNSW approximate nearest neighbor search via USearch
+    -- Searches index for (limit + 1) neighbors, excludes self
+    -- Converts USearch cosine distance to similarity: max(0, 1 - distance)
+    -- Returns ranked list sorted by descending similarity
     ensures: SimilarPostsResult(post, ranked_matches)
 }
 
+rule ComputeSimilarities {
+    when: ComputeSimilaritiesRequested(source_post, target_post_ids)
+    requires: semantic_similarity_enabled
+    -- Exact pairwise cosine similarity between source vector and each target vector
+    -- Uses in-memory vector cache, NOT USearch search
+    -- Returns map of post_id -> similarity score
+    -- Used by InsertPostLinkModal to rank FTS search results
+    ensures: SimilarityScoresResult(source_post, scores)
+}
+
 rule SuggestTags {
-    when: SuggestTagsRequested(post)
-    -- Uses semantic similarity to find related posts,
-    -- then aggregates their tags as suggestions
+    when: SuggestTagsRequested(post, input_text)
+    requires: semantic_similarity_enabled
+    -- 1. Find 10 most similar posts via HNSW search
+    -- 2. Collect all tags from those posts
+    -- 3. Weight tags by similarity score of the post they came from
+    -- 4. Return top 5 tags by weighted score
+    -- Used by tag input component for autocomplete suggestions
     ensures: TagSuggestionResult(post, suggested_tags)
 }
 
 rule FindDuplicates {
     when: FindDuplicatesRequested(project)
+    requires: semantic_similarity_enabled
     -- Finds near-duplicate post pairs above similarity threshold
-    -- Includes exact-match detection
-    -- Excludes dismissed pairs
+    -- For each indexed post: search 21 nearest neighbors
+    -- Pairs above 0.92 threshold kept, dismissed pairs excluded
+    -- At 100% embedding similarity: loads post bodies for exact match check
+    -- Results sorted: exact matches first, then descending similarity
     let all_pairs = compute_all_similarities(project)
     let above_threshold = filter_above_threshold(all_pairs)
     let pairs = exclude_dismissed(above_threshold, DismissedDuplicatePairs)
@@ -73,8 +160,11 @@ rule FindDuplicates {
 
 rule DismissDuplicatePair {
     when: DismissDuplicatePairRequested(post_a, post_b)
+    -- Stores with canonical ID ordering for consistent dedup
     ensures: DismissedDuplicatePair.created(post_a: post_a, post_b: post_b)
 }
+
+-- ─── Invariants ─────────────────────────────────────────────
 
 invariant ContentHashSkipsUnchanged {
     -- If a post's content_hash matches the stored embedding's content_hash,
@@ -84,10 +174,23 @@ invariant ContentHashSkipsUnchanged {
 invariant DebouncedPersistence {
     -- USearch index persistence is debounced at 5 seconds
     -- Prevents excessive disk I/O during bulk operations
+    -- Index also force-saved on project switch and app shutdown
 }
 
 invariant VectorCacheInDb {
     -- Vector cache persisted as BLOB in embedding_keys table
-    -- Float32Array, 384 dimensions per vector
+    -- Float32Array, 384 dimensions per vector (1536 bytes)
     -- Enables instant reload without re-embedding
+}
+
+invariant ModelCaching {
+    -- Model files (~100 MB) downloaded from Hugging Face Hub on first use
+    -- Cached in app data directory, persists across sessions
+    -- Model pipeline stays loaded across project switches (one model, many indexes)
+}
+
+invariant ProjectIsolation {
+    -- Each project has its own USearch index file and embedding_keys rows
+    -- On project switch: save current index, load new project's index
+    -- Model pipeline shared across projects (not reloaded)
 }

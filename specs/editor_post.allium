@@ -41,10 +41,18 @@ surface User {
 -- Collapsible Metadata section (starts expanded when title is empty):
 --   Two-column layout. Left column: metadata fields. Right column: linked media panel.
 --   Left column fields:
---     Title (text input), Tags (autocomplete chip input), Author (text input),
+--     Title (text input), Tags (autocomplete chip input with embedding suggestions),
+--     Author (text input),
 --     Language (select + AI detect button), Do Not Translate (checkbox),
 --     Slug (read-only), Categories (chip input), Template (select, if templates exist),
 --     PostLinks (backlinks and outlinks)
+--
+--   Tag autocomplete:
+--     Standard: matches existing tags by name prefix (case-insensitive)
+--     If semanticSimilarityEnabled: also suggests tags from similar posts
+--       via SuggestTags (see embedding.allium). Finds 10 similar posts,
+--       collects their tags, weights by similarity, returns top 5.
+--     Suggestions merged: prefix matches first, then embedding suggestions
 --   Right column:
 --     LinkedMediaPanel (media items linked to this post)
 

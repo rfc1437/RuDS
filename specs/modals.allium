@@ -38,9 +38,20 @@ value AISuggestionField {
 value InsertPostLinkModal {
     -- Two-tab modal opened by Ctrl/Cmd+K in post editor (markdown mode).
     -- Tab 1 - Internal:
-    --   Search input (debounced 300ms, queries post titles)
-    --   Results list: post title + status badge (draft/published/archived)
-    --   If semantic similarity enabled: results ranked by vector similarity
+    --   Search input (debounced 300ms, queries post titles via FTS)
+    --
+    --   Empty query state (search_query < 2 chars):
+    --     If semanticSimilarityEnabled: shows up to 5 related posts via
+    --       FindSimilar(current_post, 5) ranked by embedding similarity
+    --     Else: shows nothing (empty results)
+    --
+    --   Active query state (search_query >= 2 chars):
+    --     Results from FTS title search
+    --     If semanticSimilarityEnabled: each result augmented with similarity
+    --       score from ComputeSimilarities(current_post, result_post_ids)
+    --       Scores displayed as visual indicator per result row
+    --     Results list: post title + status badge + optional similarity score
+    --
     --   Click result: inserts [title](/YYYY/MM/DD/slug) at cursor, closes modal
     --   "Create Post" row at bottom of results:
     --     Creates new post with search query as title, inserts link to it
@@ -51,6 +62,7 @@ value InsertPostLinkModal {
     active_tab: String                   -- internal | external
     search_query: String
     results: List<InsertLinkResult>
+    related_posts: List<InsertLinkResult> -- similarity-based, shown when query empty
 }
 
 value InsertLinkResult {
@@ -58,6 +70,7 @@ value InsertLinkResult {
     title: String
     status: String                       -- draft | published | archived
     canonical_url: String                -- /YYYY/MM/DD/slug
+    similarity_score: Decimal?           -- 0.0-1.0, present when embeddings enabled
 }
 
 -- ─── Insert Media Modal ──────────────────────────────────────
