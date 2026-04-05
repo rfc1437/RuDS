@@ -200,6 +200,8 @@ pub struct BdsApp {
     /// Content/render language — the blog's main_language from project.json.
     /// Separate from ui_locale per i18n.allium TwoLocaleAxes.
     content_language: String,
+    /// All blog languages from project.json (for translation flags).
+    blog_languages: Vec<String>,
 
     // Flags
     offline_mode: bool,
@@ -330,6 +332,7 @@ impl BdsApp {
                 menu_registry: registry,
                 ui_locale: locale,
                 content_language: "en".to_string(),
+                blog_languages: Vec::new(),
                 offline_mode: false,
                 locale_dropdown_open: false,
                 project_dropdown_open: false,
@@ -462,6 +465,7 @@ impl BdsApp {
                     // Extract content language from project metadata
                     if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
                         self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                        self.blog_languages = meta.blog_languages;
                     }
                 }
                 self.refresh_counts();
@@ -484,6 +488,7 @@ impl BdsApp {
                                 let _ = engine::meta::startup_sync(&data_dir);
                                 if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
                                     self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                                    self.blog_languages = meta.blog_languages;
                                 }
                             }
                             let name = self.active_project.as_ref().map(|p| p.name.clone()).unwrap_or_default();
@@ -936,6 +941,7 @@ impl BdsApp {
                             PostEditorMsg::ToggleDoNotTranslate(b) => { state.do_not_translate = b; state.is_dirty = true; }
                             PostEditorMsg::ToggleMetadata => { state.metadata_expanded = !state.metadata_expanded; }
                             PostEditorMsg::ToggleExcerpt => { state.excerpt_expanded = !state.excerpt_expanded; }
+                            PostEditorMsg::SwitchLanguage(lang) => { state.switch_language(&lang); }
                             PostEditorMsg::TagsInputChanged(s) => { state.tags_input = s; }
                             PostEditorMsg::TagsInputSubmit => {
                                 let tag = state.tags_input.trim().to_string();
@@ -1122,7 +1128,12 @@ impl BdsApp {
             Message::PostLoaded(result) => {
                 match result {
                     Ok(post) => {
-                        let state = PostEditorState::from_post(&post);
+                        let translations = self.db.as_ref()
+                            .and_then(|db| bds_core::db::queries::post_translation::list_post_translations_by_post(
+                                db.conn(), &post.id,
+                            ).ok())
+                            .unwrap_or_default();
+                        let state = PostEditorState::from_post(&post, &self.blog_languages, &translations);
                         self.post_editors.insert(post.id.clone(), state);
                     }
                     Err(e) => self.notify(ToastLevel::Error, &e),
@@ -2024,7 +2035,14 @@ impl BdsApp {
                                     }
                                 }
                             }
-                            self.post_editors.insert(post.id.clone(), PostEditorState::from_post(&post));
+                            // Load translations for translation flags bar
+                            let translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
+                                db.conn(), &post.id,
+                            ).unwrap_or_default();
+                            self.post_editors.insert(
+                                post.id.clone(),
+                                PostEditorState::from_post(&post, &self.blog_languages, &translations),
+                            );
                         }
                         Err(e) => {
                             self.notify(ToastLevel::Error, &format!("Failed to load post: {e}"));

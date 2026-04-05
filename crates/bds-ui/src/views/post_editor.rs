@@ -1,13 +1,34 @@
+use std::collections::HashMap;
+
 use iced::widget::{button, column, container, row, scrollable, text, text_input, text_editor, Space};
 use iced::widget::text::{Shaping, Wrapping};
 use iced::{Color, Element, Length, Theme};
 
-use bds_core::i18n::UiLocale;
-use bds_core::model::{Post, PostStatus};
+use bds_core::i18n::{self, UiLocale};
+use bds_core::model::{Post, PostStatus, PostTranslation};
 
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::t;
+
+/// Per editor_post.allium TranslationFlag value.
+#[derive(Debug, Clone)]
+pub struct TranslationFlag {
+    pub language: String,
+    pub flag_emoji: String,
+    pub status: String, // "draft" | "published" | "missing"
+    pub is_active: bool,
+}
+
+/// Saved draft content for a single translation language.
+#[derive(Debug, Clone)]
+pub struct TranslationDraft {
+    pub title: String,
+    pub excerpt: String,
+    pub content: String,
+    pub status: PostStatus,
+    pub is_dirty: bool,
+}
 
 /// State for an open post editor.
 pub struct PostEditorState {
@@ -31,6 +52,17 @@ pub struct PostEditorState {
     pub excerpt_expanded: bool,
     pub tags_input: String,
     pub categories_input: String,
+    // ── Translation flags ──
+    /// Currently-displayed language (canonical or translation).
+    pub active_language: String,
+    /// The post's own language (canonical).
+    pub canonical_language: String,
+    /// All blog languages from project metadata.
+    pub blog_languages: Vec<String>,
+    /// Saved canonical title/excerpt/content when viewing a translation.
+    pub saved_canonical: Option<TranslationDraft>,
+    /// Translation drafts keyed by language code.
+    pub translation_drafts: HashMap<String, TranslationDraft>,
 }
 
 impl std::fmt::Debug for PostEditorState {
@@ -38,6 +70,7 @@ impl std::fmt::Debug for PostEditorState {
         f.debug_struct("PostEditorState")
             .field("post_id", &self.post_id)
             .field("title", &self.title)
+            .field("active_language", &self.active_language)
             .finish_non_exhaustive()
     }
 }
@@ -65,14 +98,36 @@ impl Clone for PostEditorState {
             excerpt_expanded: self.excerpt_expanded,
             tags_input: self.tags_input.clone(),
             categories_input: self.categories_input.clone(),
+            active_language: self.active_language.clone(),
+            canonical_language: self.canonical_language.clone(),
+            blog_languages: self.blog_languages.clone(),
+            saved_canonical: self.saved_canonical.clone(),
+            translation_drafts: self.translation_drafts.clone(),
         }
     }
 }
 
 impl PostEditorState {
-    pub fn from_post(post: &Post) -> Self {
+    pub fn from_post(
+        post: &Post,
+        blog_languages: &[String],
+        translations: &[PostTranslation],
+    ) -> Self {
         let title = post.title.clone();
         let content = post.content.clone().unwrap_or_default();
+        let canonical_lang = post.language.clone().unwrap_or_else(|| "en".to_string());
+
+        let mut translation_drafts = HashMap::new();
+        for tr in translations {
+            translation_drafts.insert(tr.language.clone(), TranslationDraft {
+                title: tr.title.clone(),
+                excerpt: tr.excerpt.clone().unwrap_or_default(),
+                content: tr.content.clone().unwrap_or_default(),
+                status: tr.status.clone(),
+                is_dirty: false,
+            });
+        }
+
         Self {
             post_id: post.id.clone(),
             slug: post.slug.clone(),
@@ -82,7 +137,7 @@ impl PostEditorState {
             tags: post.tags.clone(),
             categories: post.categories.clone(),
             author: post.author.clone().unwrap_or_default(),
-            language: post.language.clone().unwrap_or_default(),
+            language: canonical_lang.clone(),
             template_slug: post.template_slug.clone().unwrap_or_default(),
             do_not_translate: post.do_not_translate,
             status: post.status.clone(),
@@ -93,8 +148,111 @@ impl PostEditorState {
             excerpt_expanded: false,
             tags_input: String::new(),
             categories_input: String::new(),
+            active_language: canonical_lang.clone(),
+            canonical_language: canonical_lang,
+            blog_languages: blog_languages.to_vec(),
+            saved_canonical: None,
+            translation_drafts,
             title,
         }
+    }
+
+    /// Switch the editor to display a different language.
+    /// Saves current fields and loads the target language's draft.
+    pub fn switch_language(&mut self, target_lang: &str) {
+        if target_lang == self.active_language {
+            return;
+        }
+
+        // Save current fields
+        if self.active_language == self.canonical_language {
+            // Switching away from canonical — stash canonical fields
+            self.saved_canonical = Some(TranslationDraft {
+                title: self.title.clone(),
+                excerpt: self.excerpt.clone(),
+                content: self.content.clone(),
+                status: self.status.clone(),
+                is_dirty: self.is_dirty,
+            });
+        } else {
+            // Switching away from a translation — save to drafts
+            self.translation_drafts.insert(self.active_language.clone(), TranslationDraft {
+                title: self.title.clone(),
+                excerpt: self.excerpt.clone(),
+                content: self.content.clone(),
+                status: PostStatus::Draft,
+                is_dirty: self.is_dirty,
+            });
+        }
+
+        // Load target fields
+        if target_lang == self.canonical_language {
+            // Restore canonical
+            if let Some(saved) = self.saved_canonical.take() {
+                self.title = saved.title;
+                self.excerpt = saved.excerpt;
+                self.content = saved.content.clone();
+                self.editor_content = text_editor::Content::with_text(&saved.content);
+                self.status = saved.status;
+                self.is_dirty = saved.is_dirty;
+            }
+        } else if let Some(draft) = self.translation_drafts.get(target_lang) {
+            // Load existing translation
+            self.title = draft.title.clone();
+            self.excerpt = draft.excerpt.clone();
+            self.content = draft.content.clone();
+            self.editor_content = text_editor::Content::with_text(&draft.content);
+            self.is_dirty = draft.is_dirty;
+        } else {
+            // No translation yet — blank fields
+            self.title = String::new();
+            self.excerpt = String::new();
+            self.content = String::new();
+            self.editor_content = text_editor::Content::with_text("");
+            self.is_dirty = false;
+        }
+
+        self.active_language = target_lang.to_string();
+    }
+
+    /// Build the translation flags list for the view.
+    pub fn translation_flags(&self) -> Vec<TranslationFlag> {
+        if self.blog_languages.len() <= 1 {
+            return Vec::new();
+        }
+        let mut flags = Vec::new();
+
+        // Canonical language first
+        let canon = &self.canonical_language;
+        let canon_locale = i18n::normalize_language(canon);
+        flags.push(TranslationFlag {
+            language: canon.clone(),
+            flag_emoji: canon_locale.flag_emoji().to_string(),
+            status: "canonical".to_string(),
+            is_active: self.active_language == *canon,
+        });
+
+        // Each other blog language
+        for lang in &self.blog_languages {
+            if lang == canon {
+                continue;
+            }
+            let locale = i18n::normalize_language(lang);
+            let status = self.translation_drafts.get(lang)
+                .map(|d| match d.status {
+                    PostStatus::Published => "published",
+                    _ => "draft",
+                })
+                .unwrap_or("missing");
+            flags.push(TranslationFlag {
+                language: lang.clone(),
+                flag_emoji: locale.flag_emoji().to_string(),
+                status: status.to_string(),
+                is_active: self.active_language == *lang,
+            });
+        }
+
+        flags
     }
 }
 
@@ -110,6 +268,7 @@ pub enum PostEditorMsg {
     ToggleDoNotTranslate(bool),
     ToggleMetadata,
     ToggleExcerpt,
+    SwitchLanguage(String),
     TagsInputChanged(String),
     TagsInputSubmit,
     RemoveTag(String),
@@ -182,7 +341,31 @@ pub fn view<'a>(
         ..button::Style::default()
     });
 
-    let metadata_section: Element<'a, Message> = if state.metadata_expanded {
+    // ── Translation Flags Bar (inline with metadata toggle) ──
+    let flags = state.translation_flags();
+    let on_translation = state.active_language != state.canonical_language;
+    let meta_toggle_row: Element<'a, Message> = if flags.is_empty() {
+        meta_toggle.into()
+    } else {
+        let mut flag_row = row![].spacing(2);
+        for flag in &flags {
+            let lang = flag.language.clone();
+            let label = format!("{}", flag.flag_emoji);
+            let btn = button(
+                text(label).size(14).shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::SwitchLanguage(lang)))
+            .padding([2, 4])
+            .style(if flag.is_active { flag_active_style } else { flag_inactive_style });
+            flag_row = flag_row.push(btn);
+        }
+        row![meta_toggle, Space::with_width(Length::Fill), flag_row]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .into()
+    };
+
+    let metadata_section: Element<'a, Message> = if state.metadata_expanded && !on_translation {
         let title_input = inputs::labeled_input(
             &t(locale, "editor.title"),
             &t(locale, "editor.titlePlaceholder"),
@@ -298,7 +481,7 @@ pub fn view<'a>(
     let top_pane = scrollable(
         column![
             header,
-            meta_toggle,
+            meta_toggle_row,
             metadata_section,
             excerpt_toggle,
             excerpt_section,
@@ -425,4 +608,35 @@ fn status_badge<'a>(status: &PostStatus) -> Element<'a, Message> {
         ..container::Style::default()
     })
     .into()
+}
+
+/// Active translation flag button style (highlighted).
+fn flag_active_style(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(Color::from_rgb(0.20, 0.35, 0.60))),
+        text_color: Color::WHITE,
+        border: iced::Border {
+            radius: 4.0.into(),
+            width: 1.0,
+            color: Color::from_rgb(0.30, 0.50, 0.80),
+        },
+        ..button::Style::default()
+    }
+}
+
+/// Inactive translation flag button style.
+fn flag_inactive_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(0.22, 0.24, 0.30),
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(iced::Background::Color(bg)),
+        text_color: Color::from_rgb(0.70, 0.72, 0.78),
+        border: iced::Border {
+            radius: 4.0.into(),
+            ..iced::Border::default()
+        },
+        ..button::Style::default()
+    }
 }
