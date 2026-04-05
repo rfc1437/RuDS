@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use iced::widget::text_editor;
 use iced::{Element, Subscription, Task};
 
 use bds_core::db::Database;
@@ -365,13 +366,13 @@ impl BdsApp {
                 let old_view = self.sidebar_view;
                 self.sidebar_view = new_view;
                 self.sidebar_visible = new_visible;
-                // When switching between Posts/Pages, re-query with correct filter
-                let switched_post_scope = matches!(
-                    (old_view, new_view),
-                    (SidebarView::Posts, SidebarView::Pages)
-                    | (SidebarView::Pages, SidebarView::Posts)
-                );
-                if switched_post_scope {
+                // When switching to/from Posts/Pages, re-query with correct filter
+                let needs_post_refresh = old_view != new_view
+                    && matches!(
+                        new_view,
+                        SidebarView::Posts | SidebarView::Pages
+                    );
+                if needs_post_refresh {
                     self.refresh_sidebar_posts();
                 }
                 Task::none()
@@ -922,10 +923,45 @@ impl BdsApp {
                             PostEditorMsg::TitleChanged(s) => { state.title = s; state.is_dirty = true; }
                             PostEditorMsg::SlugChanged(s) => { state.slug = s; state.is_dirty = true; }
                             PostEditorMsg::ExcerptChanged(s) => { state.excerpt = s; state.is_dirty = true; }
-                            PostEditorMsg::ContentChanged(s) => { state.content = s; state.is_dirty = true; }
+                            PostEditorMsg::ContentAction(action) => {
+                                let is_edit = matches!(action, text_editor::Action::Edit(_));
+                                state.editor_content.perform(action);
+                                if is_edit {
+                                    state.content = state.editor_content.text();
+                                    state.is_dirty = true;
+                                }
+                            }
                             PostEditorMsg::AuthorChanged(s) => { state.author = s; state.is_dirty = true; }
                             PostEditorMsg::TemplateSlugChanged(s) => { state.template_slug = s; state.is_dirty = true; }
                             PostEditorMsg::ToggleDoNotTranslate(b) => { state.do_not_translate = b; state.is_dirty = true; }
+                            PostEditorMsg::ToggleMetadata => { state.metadata_expanded = !state.metadata_expanded; }
+                            PostEditorMsg::ToggleExcerpt => { state.excerpt_expanded = !state.excerpt_expanded; }
+                            PostEditorMsg::TagsInputChanged(s) => { state.tags_input = s; }
+                            PostEditorMsg::TagsInputSubmit => {
+                                let tag = state.tags_input.trim().to_string();
+                                if !tag.is_empty() && !state.tags.contains(&tag) {
+                                    state.tags.push(tag);
+                                    state.is_dirty = true;
+                                }
+                                state.tags_input.clear();
+                            }
+                            PostEditorMsg::RemoveTag(tag) => {
+                                state.tags.retain(|t| t != &tag);
+                                state.is_dirty = true;
+                            }
+                            PostEditorMsg::CategoriesInputChanged(s) => { state.categories_input = s; }
+                            PostEditorMsg::CategoriesInputSubmit => {
+                                let cat = state.categories_input.trim().to_string();
+                                if !cat.is_empty() && !state.categories.contains(&cat) {
+                                    state.categories.push(cat);
+                                    state.is_dirty = true;
+                                }
+                                state.categories_input.clear();
+                            }
+                            PostEditorMsg::RemoveCategory(cat) => {
+                                state.categories.retain(|c| c != &cat);
+                                state.is_dirty = true;
+                            }
                             PostEditorMsg::Save => {
                                 return self.save_post_editor(&tab_id);
                             }
@@ -1970,7 +2006,24 @@ impl BdsApp {
             TabType::Post => {
                 if !self.post_editors.contains_key(&tab.id) {
                     match bds_core::db::queries::post::get_post_by_id(db.conn(), &tab.id) {
-                        Ok(post) => {
+                        Ok(mut post) => {
+                            // Published posts don't store body in DB — read from file
+                            if post.content.is_none() {
+                                if let Some(ref data_dir) = self.data_dir {
+                                    let rel = bds_core::util::paths::post_file_path(
+                                        post.created_at,
+                                        &post.slug,
+                                    );
+                                    let path = data_dir.join(&rel);
+                                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                                        if let Ok((_fm, body)) =
+                                            bds_core::util::frontmatter::read_post_file(&raw)
+                                        {
+                                            post.content = Some(body);
+                                        }
+                                    }
+                                }
+                            }
                             self.post_editors.insert(post.id.clone(), PostEditorState::from_post(&post));
                         }
                         Err(e) => {

@@ -1,10 +1,11 @@
 use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
+use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
 /// Standard form field label color.
-const LABEL_COLOR: Color = Color::from_rgb(0.65, 0.68, 0.75);
+pub const LABEL_COLOR: Color = Color::from_rgb(0.65, 0.68, 0.75);
 const _FIELD_BG: Color = Color::from_rgb(0.15, 0.16, 0.20);
-const SECTION_COLOR: Color = Color::from_rgb(0.50, 0.52, 0.58);
+pub const SECTION_COLOR: Color = Color::from_rgb(0.50, 0.52, 0.58);
 const DANGER_BG: Color = Color::from_rgb(0.60, 0.15, 0.15);
 const DANGER_HOVER: Color = Color::from_rgb(0.70, 0.20, 0.20);
 const PRIMARY_BG: Color = Color::from_rgb(0.20, 0.40, 0.70);
@@ -18,7 +19,7 @@ pub fn labeled_input<'a, Message: Clone + 'a>(
     on_change: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message> {
     column![
-        text(label.to_string()).size(12).color(LABEL_COLOR),
+        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
         text_input(placeholder, value).on_input(on_change).size(14),
     ]
     .spacing(4)
@@ -38,7 +39,7 @@ where
 {
     let list: Vec<T> = options.to_vec();
     column![
-        text(label.to_string()).size(12).color(LABEL_COLOR),
+        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
         pick_list(list, selected.cloned(), on_select),
     ]
     .spacing(4)
@@ -63,7 +64,8 @@ pub fn section_header<'a, Message: 'a>(label: &str) -> Element<'a, Message> {
     column![
         text(label.to_string())
             .size(11)
-            .color(SECTION_COLOR),
+            .color(SECTION_COLOR)
+            .shaping(Shaping::Advanced),
         container(Space::new(0, 0))
             .width(Length::Fill)
             .height(Length::Fixed(1.0))
@@ -131,15 +133,21 @@ pub fn toolbar<'a, Message: 'a>(
     left: Vec<Element<'a, Message>>,
     right: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let left_row = iced::widget::Row::with_children(left)
-        .spacing(8)
-        .align_y(Alignment::Center);
+    let left_row = container(
+        iced::widget::Row::with_children(left)
+            .spacing(8)
+            .align_y(Alignment::Center),
+    )
+    .clip(true)
+    .width(Length::Fill);
     let right_row = iced::widget::Row::with_children(right)
         .spacing(8)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Center)
+        .wrap();
 
-    row![left_row, Space::with_width(Length::Fill), right_row]
+    row![left_row, right_row]
         .padding(8)
+        .spacing(8)
         .align_y(Alignment::Center)
         .width(Length::Fill)
         .into()
@@ -149,8 +157,8 @@ pub fn toolbar<'a, Message: 'a>(
 pub fn date_label<'a, Message: 'a>(label: &str, timestamp_ms: i64) -> Element<'a, Message> {
     let date_str = format_timestamp(timestamp_ms);
     row![
-        text(label.to_string()).size(12).color(LABEL_COLOR),
-        text(date_str).size(12).color(Color::from_rgb(0.55, 0.58, 0.65)),
+        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
+        text(date_str).size(12).color(Color::from_rgb(0.55, 0.58, 0.65)).shaping(Shaping::Advanced),
     ]
     .spacing(8)
     .into()
