@@ -2,15 +2,26 @@ use rust_stemmers::{Algorithm, Stemmer};
 use rusqlite::Connection;
 
 /// Create FTS5 virtual tables at runtime (not in migrations per spec).
+///
+/// Schema follows specs/schema.allium: multi-column FTS5 with separate fields
+/// for weighted search. Not content-sync — we manually manage stemmed content.
 pub fn ensure_fts_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
             post_id UNINDEXED,
-            content
+            title,
+            excerpt,
+            content,
+            tags,
+            categories
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
             media_id UNINDEXED,
-            content
+            title,
+            alt,
+            caption,
+            original_name,
+            tags
         );"
     )?;
     Ok(())
@@ -52,8 +63,9 @@ pub fn stem_text(text: &str, language: &str) -> String {
         .join(" ")
 }
 
-/// Index a post in the FTS table. Concatenates title, excerpt, content, tags,
-/// categories, and all translation text. Pre-stems before inserting.
+/// Index a post in the FTS table with separate columns per spec.
+///
+/// Concatenates translation text into the content column (stemmed per-language).
 pub fn index_post(
     conn: &Connection,
     post_id: &str,
@@ -68,35 +80,30 @@ pub fn index_post(
     // Remove existing entry
     remove_post_from_index(conn, post_id)?;
 
-    let mut parts: Vec<&str> = vec![title];
-    if let Some(exc) = excerpt {
-        parts.push(exc);
-    }
+    let stemmed_title = stem_text(title, language);
+    let stemmed_excerpt = stem_text(excerpt.unwrap_or(""), language);
+
+    // Content column: post content + all translation texts
+    let mut content_parts = Vec::new();
     if let Some(cnt) = content {
-        parts.push(cnt);
+        content_parts.push(stem_text(cnt, language));
     }
-    let tags_str = tags.join(" ");
-    parts.push(&tags_str);
-    let cats_str = categories.join(" ");
-    parts.push(&cats_str);
-
-    let combined = parts.join(" ");
-    let mut full_text = stem_text(&combined, language);
-
-    // Add translation texts stemmed with their own language
     for (text, trans_lang) in translations {
-        full_text.push(' ');
-        full_text.push_str(&stem_text(text, trans_lang));
+        content_parts.push(stem_text(text, trans_lang));
     }
+    let stemmed_content = content_parts.join(" ");
+
+    let stemmed_tags = stem_text(&tags.join(" "), language);
+    let stemmed_categories = stem_text(&categories.join(" "), language);
 
     conn.execute(
-        "INSERT INTO posts_fts (post_id, content) VALUES (?1, ?2)",
-        rusqlite::params![post_id, full_text],
+        "INSERT INTO posts_fts (post_id, title, excerpt, content, tags, categories) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![post_id, stemmed_title, stemmed_excerpt, stemmed_content, stemmed_tags, stemmed_categories],
     )?;
     Ok(())
 }
 
-/// Index a media item in the FTS table.
+/// Index a media item in the FTS table with separate columns per spec.
 pub fn index_media(
     conn: &Connection,
     media_id: &str,
@@ -110,31 +117,25 @@ pub fn index_media(
 ) -> rusqlite::Result<()> {
     remove_media_from_index(conn, media_id)?;
 
-    let mut parts: Vec<&str> = Vec::new();
-    if let Some(t) = title {
-        parts.push(t);
-    }
-    if let Some(a) = alt {
-        parts.push(a);
-    }
+    let stemmed_title = stem_text(title.unwrap_or(""), language);
+    let stemmed_alt = stem_text(alt.unwrap_or(""), language);
+
+    // Caption column: media caption + all translation texts
+    let mut caption_parts = Vec::new();
     if let Some(c) = caption {
-        parts.push(c);
+        caption_parts.push(stem_text(c, language));
     }
-    parts.push(original_name);
-    let tags_str = tags.join(" ");
-    parts.push(&tags_str);
-
-    let combined = parts.join(" ");
-    let mut full_text = stem_text(&combined, language);
-
     for (text, trans_lang) in translations {
-        full_text.push(' ');
-        full_text.push_str(&stem_text(text, trans_lang));
+        caption_parts.push(stem_text(text, trans_lang));
     }
+    let stemmed_caption = caption_parts.join(" ");
+
+    let stemmed_name = stem_text(original_name, language);
+    let stemmed_tags = stem_text(&tags.join(" "), language);
 
     conn.execute(
-        "INSERT INTO media_fts (media_id, content) VALUES (?1, ?2)",
-        rusqlite::params![media_id, full_text],
+        "INSERT INTO media_fts (media_id, title, alt, caption, original_name, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![media_id, stemmed_title, stemmed_alt, stemmed_caption, stemmed_name, stemmed_tags],
     )?;
     Ok(())
 }
@@ -219,6 +220,18 @@ pub fn search_posts_filtered(
         param_idx += 2;
     }
 
+    if let Some(month) = filters.month {
+        if let Some(year) = filters.year {
+            let (end_year, end_month) = if month == 12 { (year + 1, 1) } else { (year, month as i32 + 1) };
+            let start = chrono::NaiveDate::from_ymd_opt(year, month, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+            let end = chrono::NaiveDate::from_ymd_opt(end_year, end_month as u32, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+            sql.push_str(&format!("AND created_at >= ?{param_idx} AND created_at < ?{} ", param_idx + 1));
+            params.push(Box::new(start));
+            params.push(Box::new(end));
+            param_idx += 2;
+        }
+    }
+
     let _ = param_idx; // suppress unused warning
 
     sql.push_str("ORDER BY created_at DESC ");
@@ -256,8 +269,8 @@ mod tests {
     use crate::db::Database;
 
     fn setup() -> Database {
-        let db = Database::open_in_memory().unwrap();
-        db.migrate();
+        let mut db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         db
     }
@@ -282,9 +295,23 @@ mod tests {
     }
 
     #[test]
+    fn fts_multi_column_schema() {
+        let db = setup();
+        // Verify posts_fts has the expected columns by inserting into each
+        db.conn().execute(
+            "INSERT INTO posts_fts (post_id, title, excerpt, content, tags, categories) VALUES ('p1', 'T', 'E', 'C', 'tg', 'ct')",
+            [],
+        ).unwrap();
+        // Verify media_fts has the expected columns
+        db.conn().execute(
+            "INSERT INTO media_fts (media_id, title, alt, caption, original_name, tags) VALUES ('m1', 'T', 'A', 'C', 'N', 'tg')",
+            [],
+        ).unwrap();
+    }
+
+    #[test]
     fn stem_german() {
         let stemmed = stem_text("Programmierung Entwicklung", "de");
-        // German stemmer should reduce these words
         assert!(!stemmed.is_empty());
         assert_ne!(stemmed, "Programmierung Entwicklung");
     }
@@ -294,6 +321,70 @@ mod tests {
         let stemmed = stem_text("running jumps", "en");
         assert!(stemmed.contains("run"));
         assert!(stemmed.contains("jump"));
+    }
+
+    #[test]
+    fn stem_french() {
+        let stemmed = stem_text("programmation développement", "fr");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programmation développement");
+    }
+
+    #[test]
+    fn stem_spanish() {
+        let stemmed = stem_text("programación desarrollo", "es");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programación desarrollo");
+    }
+
+    #[test]
+    fn stem_italian() {
+        let stemmed = stem_text("programmazione sviluppo", "it");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programmazione sviluppo");
+    }
+
+    #[test]
+    fn stem_portuguese() {
+        let stemmed = stem_text("programação desenvolvimento", "pt");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programação desenvolvimento");
+    }
+
+    #[test]
+    fn stem_russian() {
+        let stemmed = stem_text("программирование разработка", "ru");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "программирование разработка");
+    }
+
+    #[test]
+    fn stem_swedish() {
+        let stemmed = stem_text("utvecklingen datorerna", "sv");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "utvecklingen datorerna");
+    }
+
+    #[test]
+    fn stem_dutch() {
+        let stemmed = stem_text("programmering ontwikkeling", "nl");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programmering ontwikkeling");
+    }
+
+    #[test]
+    fn stem_turkish() {
+        let stemmed = stem_text("programlama geliştirilmesi", "tr");
+        assert!(!stemmed.is_empty());
+        assert_ne!(stemmed, "programlama geliştirilmesi");
+    }
+
+    #[test]
+    fn stem_fallback_uses_english() {
+        // Unknown language falls back to English stemmer
+        let stemmed_unknown = stem_text("running", "xx");
+        let stemmed_english = stem_text("running", "en");
+        assert_eq!(stemmed_unknown, stemmed_english);
     }
 
     #[test]
@@ -378,5 +469,120 @@ mod tests {
         // Search with English stemming should find via English translation
         let results = search_posts(db.conn(), "develop", "en").unwrap();
         assert_eq!(results, vec!["p1"]);
+    }
+
+    #[test]
+    fn search_by_title_field() {
+        let db = setup();
+        index_post(db.conn(), "p1", "Unique Title Here", None, Some("body text"), &[], &[], &[], "en").unwrap();
+
+        // Search for title content
+        let results = search_posts(db.conn(), "unique", "en").unwrap();
+        assert_eq!(results, vec!["p1"]);
+    }
+
+    #[test]
+    fn search_by_tags() {
+        let db = setup();
+        index_post(db.conn(), "p1", "Post", None, None, &["photography".into()], &[], &[], "en").unwrap();
+
+        let results = search_posts(db.conn(), "photography", "en").unwrap();
+        assert_eq!(results, vec!["p1"]);
+    }
+
+    #[test]
+    fn search_by_categories() {
+        let db = setup();
+        index_post(db.conn(), "p1", "Post", None, None, &[], &["article".into()], &[], "en").unwrap();
+
+        let results = search_posts(db.conn(), "article", "en").unwrap();
+        assert_eq!(results, vec!["p1"]);
+    }
+
+    #[test]
+    fn search_filtered_by_status() {
+        let db = setup();
+        // Insert a post in the posts table (needed for the filter query to join)
+        use crate::db::queries::project::{insert_project, make_test_project};
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        db.conn().execute(
+            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
+             VALUES ('post1', 'p1', 'Test Post', 'test', 'published', 1700000000000, 1700000000000)",
+            [],
+        ).unwrap();
+        db.conn().execute(
+            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
+             VALUES ('post2', 'p1', 'Draft Post', 'draft-post', 'draft', 1700000000000, 1700000000000)",
+            [],
+        ).unwrap();
+
+        index_post(db.conn(), "post1", "Test Post", None, None, &[], &[], &[], "en").unwrap();
+        index_post(db.conn(), "post2", "Draft Post", None, None, &[], &[], &[], "en").unwrap();
+
+        let filters = PostSearchFilters {
+            status: Some("published"),
+            ..Default::default()
+        };
+        let results = search_posts_filtered(db.conn(), "post", "en", &filters).unwrap();
+        assert_eq!(results, vec!["post1"]);
+    }
+
+    #[test]
+    fn search_filtered_by_year() {
+        let db = setup();
+        use crate::db::queries::project::{insert_project, make_test_project};
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+
+        // 2024-06-15 in unix ms
+        let ts_2024: i64 = 1718409600000;
+        // 2023-06-15 in unix ms
+        let ts_2023: i64 = 1686873600000;
+
+        db.conn().execute(
+            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
+             VALUES ('p2024', 'p1', 'Year 2024', 'y2024', 'draft', ?1, ?1)",
+            rusqlite::params![ts_2024],
+        ).unwrap();
+        db.conn().execute(
+            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
+             VALUES ('p2023', 'p1', 'Year 2023', 'y2023', 'draft', ?1, ?1)",
+            rusqlite::params![ts_2023],
+        ).unwrap();
+
+        index_post(db.conn(), "p2024", "Year 2024", None, None, &[], &[], &[], "en").unwrap();
+        index_post(db.conn(), "p2023", "Year 2023", None, None, &[], &[], &[], "en").unwrap();
+
+        let filters = PostSearchFilters {
+            year: Some(2024),
+            ..Default::default()
+        };
+        let results = search_posts_filtered(db.conn(), "year", "en", &filters).unwrap();
+        assert_eq!(results, vec!["p2024"]);
+    }
+
+    #[test]
+    fn search_filtered_with_limit_and_offset() {
+        let db = setup();
+        use crate::db::queries::project::{insert_project, make_test_project};
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+
+        for i in 0..5 {
+            let id = format!("p{i}");
+            let slug = format!("post-{i}");
+            db.conn().execute(
+                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
+                 VALUES (?1, 'p1', 'Searchable', ?2, 'draft', ?3, ?3)",
+                rusqlite::params![id, slug, 1700000000000i64 - i as i64 * 1000],
+            ).unwrap();
+            index_post(db.conn(), &id, "Searchable", None, None, &[], &[], &[], "en").unwrap();
+        }
+
+        let filters = PostSearchFilters {
+            limit: Some(2),
+            offset: Some(1),
+            ..Default::default()
+        };
+        let results = search_posts_filtered(db.conn(), "searchable", "en", &filters).unwrap();
+        assert_eq!(results.len(), 2);
     }
 }

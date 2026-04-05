@@ -122,5 +122,8 @@
   "engine.uploadMissingCredentials": "Publishing credentials incomplete. Configure in project settings.",
   "engine.uploadOffline": "Cannot upload: airplane mode is active",
   "engine.generateSiteStarted": "Generating site...",
-  "engine.generateSiteNoProject": "No active project"
+  "engine.generateSiteNoProject": "No active project",
+  "dialog.selectFolder": "Select Folder",
+  "dialog.importMedia": "Import Media",
+  "dialog.imageFilter": "Images"
 }

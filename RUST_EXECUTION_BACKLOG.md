@@ -16,7 +16,7 @@ Rules:
 
 - ~~create workspace and crate boundaries (bds-core, bds-editor, bds-ui, bds-cli)~~ **DONE**
 - ~~add SQLite connection management via `rusqlite` (bundled, vtab features)~~ **DONE**
-- ~~add migration loader via `refinery`~~ **DONE** (inline migrations for M0; refinery switch in M1)
+- ~~add migration loader via `refinery`~~ **DONE** (refinery `embed_migrations!` with V1__initial_schema.sql)
 - ~~define initial shared model modules with `serde` derives~~ **DONE**
 - ~~add checksum (`sha2`) and slug (`deunicode`) utilities~~ **DONE**
 - ~~establish error handling conventions: `thiserror` for bds-core, `anyhow` for bds-ui/bds-cli~~ **DONE**
@@ -27,7 +27,7 @@ Rules:
 - ~~create crate with ropey, syntect, cosmic-text dependencies~~ **DONE**
 - ~~implement basic rope buffer wrapper with edit operations~~ **DONE**
 - ~~implement syntect integration for markdown highlighting~~ **DONE**
-- ~~implement cosmic-text layout for rendering highlighted text~~ **DONE** (Iced text rendering via cosmic-text backend)
+- ~~implement cosmic-text layout for rendering highlighted text~~ **DONE** (measured monospace font metrics via cosmic-text FontSystem/Buffer; OnceLock-cached MonoMetrics replaces hardcoded constants)
 - ~~implement basic cursor model (position, move, place by click)~~ **DONE** (up/down/left/right/home/end + click placement)
 - ~~implement basic text insertion and deletion~~ **DONE** (insert, backspace, delete forward, enter)
 - ~~implement Iced custom widget that composes buffer + highlight + layout + cursor~~ **DONE** (CodeEditor widget with gutter, text, cursor rendering + keyboard/mouse events)
@@ -65,7 +65,7 @@ Rules:
 ### `bds-core/db`
 
 - ~~verify schema compatibility against existing projects~~ **DONE**
-- ~~add FTS5 virtual tables (`posts_fts`, `media_fts`) for in-app full-text search~~ **DONE**
+- ~~add FTS5 virtual tables (`posts_fts`, `media_fts`) for in-app full-text search~~ **DONE** (multi-column schema: title/excerpt/content/tags/categories with per-language snowball stemming, 24 languages)
 - ~~verify `mediaTranslations` table read/write~~ **DONE**
 - ~~verify `postLinks` table read/write~~ **DONE**
 
@@ -100,33 +100,36 @@ Rules:
 
 ### `bds-ui/platform`
 
-- muda menu bar: full menu tree with accelerators
-- menu enable/disable validation synced to app state
-- menu event routing as `Message` variants
-- rfd integration for file/folder open and save dialogs
-- macOS lifecycle shim: file-open and URL-open events forwarded as `Message` variants
+- ~~muda menu bar: full menu tree with accelerators~~ **DONE** (platform/menu.rs with muda MenuBar, menu_subscription, accelerators)
+- ~~menu enable/disable validation synced to app state~~ **DONE** (sync_menu_state() evaluates has_project/has_tab/offline_mode after every state change)
+- ~~menu event routing as `Message` variants~~ **DONE** (MenuEvent → Message mapping in app.rs subscription)
+- ~~rfd integration for file/folder open and save dialogs~~ **DONE** (platform/dialog.rs with i18n-aware pick_folder/pick_media_files)
+- ~~macOS lifecycle shim: file-open and URL-open events forwarded as `Message` variants~~ **DONE** (objc2 BdsAppDelegate with application:openFile: and application:openURLs: → mpsc channel → Message::FileOpenRequested/UrlOpenRequested)
 
 ### `bds-ui/app`
 
-- root `Message` enum and `update()` dispatcher
-- app state model
-- task surface model
+- ~~root `Message` enum and `update()` dispatcher~~ **DONE** (Message enum with menu, lifecycle, sidebar, tab, editor variants + update dispatcher)
+- ~~app state model~~ **DONE** (AppState with project, sidebar, editor, output panel state; sidebar post list with 500-post limit)
+- ~~task surface model~~ **DONE** (engine/task.rs TaskManager with concurrency limit, FIFO queue, progress reporting, cancel support)
 
 ### `bds-ui/views`
 
-- workspace layout
-- sidebar
-- activity bar
-- tab bar
-- status bar
-- project selector
+- ~~workspace layout~~ **DONE** (three-panel layout: sidebar + editor + optional right panel)
+- ~~sidebar~~ **DONE** (post list with search, status filter, category/tag counts)
+- ~~activity bar~~ **DONE** (VS Code-style 50px bar with SVG icons for Posts/Pages/Media/Scripts/Templates/Tags/Chat/Import/Git/Settings)
+- ~~tab bar~~ **DONE** (editor tab bar with open/close/switch)
+- ~~status bar~~ **DONE** (bottom bar with project name, task progress)
+- ~~project selector~~ **DONE** (project open dialog and recent projects)
+- ~~toast notifications~~ **DONE** (overlay toast stack with auto-dismiss, 4 severity levels, i18n messages; replaces output-only notifications)
 
 ### Validation
 
-- menu event → `Message` routing integration tests
-- keyboard shortcut integration tests
-- rfd dialog invocation tests
-- fixture project open flow test
+- ~~menu event → `Message` routing integration tests~~ **DONE** (tests/menu_routing.rs — 4 tests: i18n key prefix, all-locale coverage, action count, no duplicates)
+- ~~keyboard shortcut integration tests~~ **DONE** (tests/m2_validation.rs — 15 accelerator-bound actions verified)
+- ~~rfd dialog invocation tests~~ **DONE** (tests/m2_validation.rs — dialog i18n keys in all 5 locales)
+- ~~fixture project open flow test~~ **DONE** (tests/project_flow.rs — 6 tests: create, switch, delete, directory, meta files)
+- ~~toast notification tests~~ **DONE** (tests/m2_validation.rs — toast id monotonicity, levels, expiry, message preservation, i18n keys)
+- ~~menu enable/disable rule tests~~ **DONE** (tests/m2_validation.rs — project-gated 11 items, tab-gated 4 items, offline-gated 2 items)
 
 ## Milestone M3: Authoring
 
@@ -166,7 +169,6 @@ Rules:
 
 - inputs
 - modals
-- toast/error surfaces
 - reusable list rows and panels
 
 ### Validation

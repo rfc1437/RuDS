@@ -4,4 +4,4 @@ mod widget;
 
 pub use buffer::EditorBuffer;
 pub use highlight::Highlighter;
-pub use widget::CodeEditor;
+pub use widget::{CodeEditor, mono_metrics};

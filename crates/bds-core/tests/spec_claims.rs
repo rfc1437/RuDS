@@ -12,9 +12,9 @@ fn fixture_db() -> Connection {
 }
 
 fn memory_db() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
+    let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-    bds_core::db::run_migrations(&conn).unwrap();
+    bds_core::db::run_migrations(&mut conn).unwrap();
     conn
 }
 

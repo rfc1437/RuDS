@@ -39,7 +39,7 @@ mod tests {
     use crate::db::Database;
 
     fn setup() -> Database {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         db
     }

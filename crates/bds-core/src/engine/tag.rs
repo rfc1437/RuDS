@@ -305,7 +305,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();

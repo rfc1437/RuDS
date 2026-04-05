@@ -122,5 +122,8 @@
   "engine.uploadMissingCredentials": "Identifiants de publication incomplets. Configurez-les dans les paramètres du projet.",
   "engine.uploadOffline": "Impossible de publier : le mode avion est actif",
   "engine.generateSiteStarted": "Génération du site...",
-  "engine.generateSiteNoProject": "Aucun projet actif"
+  "engine.generateSiteNoProject": "Aucun projet actif",
+  "dialog.selectFolder": "Sélectionner un dossier",
+  "dialog.importMedia": "Importer des médias",
+  "dialog.imageFilter": "Images"
 }

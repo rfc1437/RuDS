@@ -650,7 +650,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();

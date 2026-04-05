@@ -122,5 +122,8 @@
   "engine.uploadMissingCredentials": "Veröffentlichungsdaten unvollständig. In Projekteinstellungen konfigurieren.",
   "engine.uploadOffline": "Hochladen nicht möglich: Flugmodus ist aktiv",
   "engine.generateSiteStarted": "Seite wird generiert...",
-  "engine.generateSiteNoProject": "Kein aktives Projekt"
+  "engine.generateSiteNoProject": "Kein aktives Projekt",
+  "dialog.selectFolder": "Ordner auswählen",
+  "dialog.importMedia": "Medien importieren",
+  "dialog.imageFilter": "Bilder"
 }

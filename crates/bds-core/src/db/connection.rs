@@ -27,9 +27,9 @@ impl Database {
         &self.conn
     }
 
-    /// Run all pending migrations.
-    pub fn migrate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        migrations::run_migrations(&self.conn)
+    /// Run all pending migrations via refinery.
+    pub fn migrate(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        migrations::run_migrations(&mut self.conn)
     }
 }
 

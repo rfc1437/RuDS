@@ -130,7 +130,7 @@ mod tests {
     use crate::engine;
 
     fn setup() -> (Database, String) {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         let _ = db.migrate();
         ensure_fts_tables(db.conn()).unwrap();
 

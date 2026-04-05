@@ -1,3 +1,6 @@
+use std::sync::OnceLock;
+
+use cosmic_text::{Attrs, Buffer as CosmicBuffer, Family, FontSystem, Metrics, Shaping};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::text;
@@ -23,8 +26,44 @@ struct EditorState {
     is_focused: bool,
 }
 
-const LINE_HEIGHT: f32 = 20.0;
-const CHAR_WIDTH: f32 = 8.4;
+/// Font metrics measured via cosmic-text, cached globally.
+pub struct MonoMetrics {
+    pub char_width: f32,
+    pub line_height: f32,
+}
+
+static MONO_METRICS: OnceLock<MonoMetrics> = OnceLock::new();
+
+/// Measure the monospace font metrics using cosmic-text.
+pub fn mono_metrics() -> &'static MonoMetrics {
+    MONO_METRICS.get_or_init(|| {
+        let mut font_system = FontSystem::new();
+        let metrics = Metrics::new(FONT_SIZE, (FONT_SIZE * 1.43).ceil());
+        let mut buffer = CosmicBuffer::new(&mut font_system, metrics);
+        buffer.set_size(&mut font_system, Some(500.0), Some(100.0));
+        buffer.set_text(
+            &mut font_system,
+            "M",
+            Attrs::new().family(Family::Monospace),
+            Shaping::Advanced,
+        );
+        buffer.shape_until_scroll(&mut font_system, false);
+
+        let mut char_width = FONT_SIZE * 0.6; // fallback
+        let mut line_height = (FONT_SIZE * 1.43).ceil(); // fallback
+
+        for run in buffer.layout_runs() {
+            if let Some(glyph) = run.glyphs.first() {
+                char_width = glyph.w;
+            }
+            line_height = run.line_height;
+            break;
+        }
+
+        MonoMetrics { char_width, line_height }
+    })
+}
+
 const GUTTER_WIDTH: f32 = 50.0;
 const FONT_SIZE: f32 = 14.0;
 const BG_COLOR: Color = Color::from_rgb(0.18, 0.20, 0.25);
@@ -129,9 +168,10 @@ where
             GUTTER_BG,
         );
 
+        let metrics = mono_metrics();
         let (cursor_line, cursor_col) = self.buffer.cursor();
         let scroll = self.buffer.scroll_offset();
-        let visible_lines = (bounds.height / LINE_HEIGHT) as usize + 1;
+        let visible_lines = (bounds.height / metrics.line_height) as usize + 1;
 
         let font = iced::Font::MONOSPACE;
 
@@ -142,8 +182,8 @@ where
                 break;
             }
 
-            let y = bounds.y + vis_idx as f32 * LINE_HEIGHT;
-            if y + LINE_HEIGHT < bounds.y || y > bounds.y + bounds.height {
+            let y = bounds.y + vis_idx as f32 * metrics.line_height;
+            if y + metrics.line_height < bounds.y || y > bounds.y + bounds.height {
                 continue;
             }
 
@@ -157,9 +197,9 @@ where
             renderer.fill_text(
                 text::Text {
                     content: line_num,
-                    bounds: Size::new(GUTTER_WIDTH - 8.0, LINE_HEIGHT),
+                    bounds: Size::new(GUTTER_WIDTH - 8.0, metrics.line_height),
                     size: Pixels(FONT_SIZE),
-                    line_height: iced::widget::text::LineHeight::Absolute(Pixels(LINE_HEIGHT)),
+                    line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
                     font,
                     horizontal_alignment: iced::alignment::Horizontal::Right,
                     vertical_alignment: iced::alignment::Vertical::Top,
@@ -183,9 +223,9 @@ where
                 renderer.fill_text(
                     text::Text {
                         content: line_text,
-                        bounds: Size::new(bounds.width - GUTTER_WIDTH - 8.0, LINE_HEIGHT),
+                        bounds: Size::new(bounds.width - GUTTER_WIDTH - 8.0, metrics.line_height),
                         size: Pixels(FONT_SIZE),
-                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(LINE_HEIGHT)),
+                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
                         font,
                         horizontal_alignment: iced::alignment::Horizontal::Left,
                         vertical_alignment: iced::alignment::Vertical::Top,
@@ -199,14 +239,14 @@ where
 
                 // Draw cursor on current line
                 if line_idx == cursor_line {
-                    let cursor_x = text_x + cursor_col as f32 * CHAR_WIDTH;
+                    let cursor_x = text_x + cursor_col as f32 * metrics.char_width;
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
                                 x: cursor_x,
                                 y,
                                 width: 2.0,
-                                height: LINE_HEIGHT,
+                                height: metrics.line_height,
                             },
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
@@ -231,6 +271,7 @@ where
     ) -> Status {
         let state = tree.state.downcast_mut::<EditorState>();
         let bounds = layout.bounds();
+        let metrics = mono_metrics();
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -238,8 +279,8 @@ where
                     state.is_focused = true;
                     // Place cursor at click position
                     if let Some(pos) = cursor.position_in(bounds) {
-                        let line = (pos.y / LINE_HEIGHT) as usize + self.buffer.scroll_offset();
-                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / CHAR_WIDTH) as usize;
+                        let line = (pos.y / metrics.line_height) as usize + self.buffer.scroll_offset();
+                        let col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
                         self.buffer.set_cursor(line, col);
                     }
                     return Status::Captured;
@@ -250,7 +291,7 @@ where
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 let lines = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -(y * 3.0) as isize,
-                    mouse::ScrollDelta::Pixels { y, .. } => -(y / LINE_HEIGHT) as isize,
+                    mouse::ScrollDelta::Pixels { y, .. } => -(y / metrics.line_height) as isize,
                 };
                 self.buffer.scroll_by(lines);
                 return Status::Captured;
@@ -259,12 +300,12 @@ where
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                         self.buffer.move_up();
-                        let vis = (bounds.height / LINE_HEIGHT) as usize;
+                        let vis = (bounds.height / metrics.line_height) as usize;
                         self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
                         self.buffer.move_down();
-                        let vis = (bounds.height / LINE_HEIGHT) as usize;
+                        let vis = (bounds.height / metrics.line_height) as usize;
                         self.buffer.ensure_cursor_visible(vis);
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {

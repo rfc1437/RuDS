@@ -99,7 +99,7 @@ mod tests {
     use crate::model::{ScriptKind, ScriptStatus};
 
     fn setup() -> Database {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

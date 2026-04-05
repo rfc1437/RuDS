@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn calendar_empty_project() {
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         let _ = db.migrate();
 
         let tmp = tempfile::tempdir().unwrap();

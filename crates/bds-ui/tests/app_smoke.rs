@@ -13,6 +13,7 @@ use bds_core::i18n::UiLocale;
 use bds_ui::app::Message;
 use bds_ui::state::navigation::{PanelTab, SidebarView};
 use bds_ui::state::tabs::{Tab, TabType};
+use bds_ui::state::toast::ToastLevel;
 
 // ── Smoke: Message enum is well-formed ──
 
@@ -87,6 +88,11 @@ fn new_message_variants_constructable() {
         label: "test".into(),
         result: Ok("ok".into()),
     };
+
+    // Toast
+    let _show = Message::ShowToast(ToastLevel::Info, "hello".into());
+    let _dismiss = Message::DismissToast(1);
+    let _expire = Message::ExpireToasts;
 }
 
 // ── Smoke: BdsApp type is accessible from integration tests ──

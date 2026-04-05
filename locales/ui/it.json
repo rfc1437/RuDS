@@ -122,5 +122,8 @@
   "engine.uploadMissingCredentials": "Credenziali di pubblicazione incomplete. Configurale nelle impostazioni del progetto.",
   "engine.uploadOffline": "Impossibile caricare: la modalità aereo è attiva",
   "engine.generateSiteStarted": "Generazione del sito...",
-  "engine.generateSiteNoProject": "Nessun progetto attivo"
+  "engine.generateSiteNoProject": "Nessun progetto attivo",
+  "dialog.selectFolder": "Seleziona cartella",
+  "dialog.importMedia": "Importa media",
+  "dialog.imageFilter": "Immagini"
 }

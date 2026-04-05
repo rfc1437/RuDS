@@ -15,6 +15,7 @@ use crate::state::navigation::{
     handle_activity_click, OutputEntry, PanelTab, SidebarView, TaskSnapshot,
 };
 use crate::state::tabs::{self, Tab, TabType};
+use crate::state::toast::{Toast, ToastLevel};
 use crate::views::workspace;
 
 // ───────────────────────────────────────────────────────────
@@ -66,6 +67,11 @@ pub enum Message {
     SetUiLocale(UiLocale),
     ToggleLocaleDropdown,
     ToggleProjectDropdown,
+
+    // Toast
+    ShowToast(ToastLevel, String),
+    DismissToast(u64),
+    ExpireToasts,
 
     // Blog actions (dispatched to engine)
     RebuildDatabase,
@@ -131,9 +137,14 @@ pub struct BdsApp {
     locale_dropdown_open: bool,
     project_dropdown_open: bool,
 
-    // macOS lifecycle receiver
+    // Toasts
+    toasts: Vec<Toast>,
+
+    // macOS lifecycle receiver and retained delegate
     #[cfg(target_os = "macos")]
     _lifecycle_rx: std::sync::mpsc::Receiver<crate::platform::macos::LifecycleEvent>,
+    #[cfg(target_os = "macos")]
+    _lifecycle_delegate: Option<objc2::rc::Retained<crate::platform::macos::BdsAppDelegate>>,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -156,8 +167,8 @@ impl BdsApp {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let db = Database::open(&db_path).ok();
-        if let Some(ref db) = db {
+        let mut db = Database::open(&db_path).ok();
+        if let Some(ref mut db) = db {
             let _ = db.migrate();
         }
 
@@ -215,6 +226,8 @@ impl BdsApp {
 
         #[cfg(target_os = "macos")]
         let (_lifecycle_tx, _lifecycle_rx) = crate::platform::macos::lifecycle_channel();
+        #[cfg(target_os = "macos")]
+        let _lifecycle_delegate = crate::platform::macos::install_delegate(_lifecycle_tx);
 
         (
             Self {
@@ -242,8 +255,11 @@ impl BdsApp {
                 offline_mode: false,
                 locale_dropdown_open: false,
                 project_dropdown_open: false,
+                toasts: Vec::new(),
                 #[cfg(target_os = "macos")]
                 _lifecycle_rx,
+                #[cfg(target_os = "macos")]
+                _lifecycle_delegate,
             },
             init_task,
         )
@@ -282,6 +298,7 @@ impl BdsApp {
                 if let Some(t) = self.tabs.get(idx) {
                     self.active_tab = Some(t.id.clone());
                 }
+                self.sync_menu_state();
                 Task::none()
             }
             Message::CloseTab(id) => {
@@ -290,6 +307,7 @@ impl BdsApp {
                 } else {
                     self.active_tab = None;
                 }
+                self.sync_menu_state();
                 Task::none()
             }
             Message::SelectTab(id) => {
@@ -306,7 +324,6 @@ impl BdsApp {
             // ── Project management ──
             Message::ProjectsLoaded(projects) => {
                 self.projects = projects;
-                // Re-resolve active
                 if let Some(ref db) = self.db {
                     self.active_project = engine::project::get_active_project(db.conn())
                         .ok()
@@ -318,6 +335,7 @@ impl BdsApp {
                         .map(PathBuf::from);
                 }
                 self.refresh_counts();
+                self.sync_menu_state();
                 Task::none()
             }
             Message::SwitchProject(project_id) => {
@@ -332,24 +350,25 @@ impl BdsApp {
                                 .and_then(|p| p.data_path.as_ref())
                                 .map(PathBuf::from);
                             let name = self.active_project.as_ref().map(|p| p.name.clone()).unwrap_or_default();
-                            self.add_output(&tw(self.ui_locale, "projectSelector.toast.switched", &[("name", &name)]));
+                            self.notify(ToastLevel::Success, &tw(self.ui_locale, "projectSelector.toast.switched", &[("name", &name)]));
                         }
                         Err(_) => {
-                            self.add_output(&t(self.ui_locale, "projectSelector.toast.switchFailed"));
+                            self.notify(ToastLevel::Error, &t(self.ui_locale, "projectSelector.toast.switchFailed"));
                         }
                     }
                 }
+                self.sync_menu_state();
                 Task::none()
             }
             Message::ProjectSwitched(result) => {
                 match result {
-                    Ok(name) => self.add_output(&tw(self.ui_locale, "projectSelector.toast.switched", &[("name", &name)])),
-                    Err(msg) => self.add_output(&msg),
+                    Ok(name) => self.notify(ToastLevel::Success, &tw(self.ui_locale, "projectSelector.toast.switched", &[("name", &name)])),
+                    Err(msg) => self.notify(ToastLevel::Error, &msg),
                 }
                 Task::none()
             }
             Message::RequestCreateProject => {
-                crate::platform::dialog::pick_folder()
+                crate::platform::dialog::pick_folder(t(self.ui_locale, "dialog.selectFolder"))
             }
             Message::CreateProject { name, data_path } => {
                 if let Some(ref db) = self.db {
@@ -365,10 +384,10 @@ impl BdsApp {
                             self.active_project = Some(project.clone());
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
                             let msg = tw(self.ui_locale, "projectSelector.toast.created", &[("name", &project.name)]);
-                            self.add_output(&msg);
+                            self.notify(ToastLevel::Success, &msg);
                         }
                         Err(_) => {
-                            self.add_output(&t(self.ui_locale, "projectSelector.toast.createFailed"));
+                            self.notify(ToastLevel::Error, &t(self.ui_locale, "projectSelector.toast.createFailed"));
                         }
                     }
                 }
@@ -376,8 +395,8 @@ impl BdsApp {
             }
             Message::ProjectCreated(result) => {
                 match result {
-                    Ok(name) => self.add_output(&tw(self.ui_locale, "projectSelector.toast.created", &[("name", &name)])),
-                    Err(msg) => self.add_output(&msg),
+                    Ok(name) => self.notify(ToastLevel::Success, &tw(self.ui_locale, "projectSelector.toast.created", &[("name", &name)])),
+                    Err(msg) => self.notify(ToastLevel::Error, &msg),
                 }
                 Task::none()
             }
@@ -392,7 +411,7 @@ impl BdsApp {
                             self.projects.retain(|p| p.id != project_id);
                         }
                         Err(_) => {
-                            self.add_output(&t(self.ui_locale, "projectSelector.toast.deleteFailed"));
+                            self.notify(ToastLevel::Error, &t(self.ui_locale, "projectSelector.toast.deleteFailed"));
                         }
                     }
                 }
@@ -400,7 +419,7 @@ impl BdsApp {
             }
             Message::ProjectDeleted(result) => {
                 if let Err(msg) = result {
-                    self.add_output(&msg);
+                    self.notify(ToastLevel::Error, &msg);
                 }
                 Task::none()
             }
@@ -449,6 +468,7 @@ impl BdsApp {
             // ── Settings ──
             Message::SetOfflineMode(mode) => {
                 self.offline_mode = mode;
+                self.sync_menu_state();
                 Task::none()
             }
             Message::SetUiLocale(locale) => {
@@ -564,15 +584,29 @@ impl BdsApp {
                 match &result {
                     Ok(detail) => {
                         self.task_manager.complete(task_id);
-                        self.add_output(&format!("{label}: {detail}"));
+                        self.notify(ToastLevel::Success, &format!("{label}: {detail}"));
                     }
                     Err(err) => {
                         self.task_manager.fail(task_id, err.clone());
-                        self.add_output(&format!("{label} failed: {err}"));
+                        self.notify(ToastLevel::Error, &format!("{label} failed: {err}"));
                     }
                 }
                 self.refresh_counts();
                 self.refresh_task_snapshots();
+                Task::none()
+            }
+
+            // ── Toast ──
+            Message::ShowToast(level, msg) => {
+                self.toasts.push(Toast::new(level, msg));
+                Task::none()
+            }
+            Message::DismissToast(id) => {
+                self.toasts.retain(|t| t.id != id);
+                Task::none()
+            }
+            Message::ExpireToasts => {
+                self.toasts.retain(|t| !t.is_expired());
                 Task::none()
             }
 
@@ -608,6 +642,7 @@ impl BdsApp {
             self.locale_dropdown_open,
             self.project_dropdown_open,
             self.ui_locale,
+            &self.toasts,
         )
     }
 
@@ -617,7 +652,14 @@ impl BdsApp {
         let task_tick = iced::time::every(std::time::Duration::from_millis(500))
             .map(|_| Message::TaskTick);
 
-        Subscription::batch([menu_sub, task_tick])
+        let toast_tick = if !self.toasts.is_empty() {
+            iced::time::every(std::time::Duration::from_millis(250))
+                .map(|_| Message::ExpireToasts)
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([menu_sub, task_tick, toast_tick])
     }
 
     // ── Private helpers ──
@@ -661,7 +703,10 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            MenuAction::ImportMedia => crate::platform::dialog::pick_media_files(),
+            MenuAction::ImportMedia => crate::platform::dialog::pick_media_files(
+                t(self.ui_locale, "dialog.importMedia"),
+                t(self.ui_locale, "dialog.imageFilter"),
+            ),
             MenuAction::Save => Task::none(), // Disabled in M2
             MenuAction::OpenInBrowser => Task::none(),
             MenuAction::OpenDataFolder => {
@@ -704,10 +749,9 @@ impl BdsApp {
             MenuAction::ValidateTranslations => Task::done(Message::ValidateTranslations),
             MenuAction::FillMissingTranslations => {
                 if self.offline_mode {
-                    self.add_output(&t(self.ui_locale, "engine.fillMissingTranslationsOffline"));
+                    self.notify(ToastLevel::Warning, &t(self.ui_locale, "engine.fillMissingTranslationsOffline"));
                 } else {
-                    // AI translation not yet available — inform user
-                    self.add_output(&t(self.ui_locale, "engine.fillMissingTranslationsNoAi"));
+                    self.notify(ToastLevel::Warning, &t(self.ui_locale, "engine.fillMissingTranslationsNoAi"));
                 }
                 Task::none()
             }
@@ -718,9 +762,8 @@ impl BdsApp {
             }
             MenuAction::UploadSite => {
                 if self.offline_mode {
-                    self.add_output(&t(self.ui_locale, "engine.uploadOffline"));
+                    self.notify(ToastLevel::Warning, &t(self.ui_locale, "engine.uploadOffline"));
                 } else if let Some(data_dir) = &self.data_dir {
-                    // Check publishing credentials
                     let pub_prefs = engine::meta::read_publishing_json(data_dir).ok();
                     let has_creds = pub_prefs
                         .as_ref()
@@ -730,10 +773,9 @@ impl BdsApp {
                         })
                         .unwrap_or(false);
                     if !has_creds {
-                        self.add_output(&t(self.ui_locale, "engine.uploadMissingCredentials"));
+                        self.notify(ToastLevel::Warning, &t(self.ui_locale, "engine.uploadMissingCredentials"));
                     } else {
-                        self.add_output(&t(self.ui_locale, "engine.uploadStarted"));
-                        // SSH upload requires async SSH library (deferred to publishing milestone)
+                        self.notify(ToastLevel::Info, &t(self.ui_locale, "engine.uploadStarted"));
                     }
                 }
                 Task::none()
@@ -800,6 +842,12 @@ impl BdsApp {
             timestamp: chrono::Utc::now().timestamp(),
             text: text.to_string(),
         });
+    }
+
+    /// Show a toast notification AND log to output panel.
+    fn notify(&mut self, level: ToastLevel, text: &str) {
+        self.toasts.push(Toast::new(level, text.to_string()));
+        self.add_output(text);
     }
 
     /// Spawn a blocking engine operation on a background thread via TaskManager.
@@ -878,5 +926,39 @@ impl BdsApp {
             )
             .unwrap_or_default();
         }
+    }
+
+    /// Synchronise menu enabled/disabled state with current app state.
+    ///
+    /// Called after state-changing operations (project switch, tab open/close,
+    /// offline toggle) so that menu items reflect what's actually possible.
+    fn sync_menu_state(&self) {
+        let has_project = self.active_project.is_some();
+        let has_tab = self.active_tab.is_some();
+
+        // File group: need active project for most, need open tab for Save
+        self.menu_registry.set_enabled(MenuAction::NewPost, has_project);
+        self.menu_registry.set_enabled(MenuAction::ImportMedia, has_project);
+        self.menu_registry.set_enabled(MenuAction::Save, has_tab);
+        self.menu_registry.set_enabled(MenuAction::OpenInBrowser, has_tab);
+        self.menu_registry.set_enabled(MenuAction::OpenDataFolder, has_project);
+
+        // Edit: Find/Replace need an open tab
+        self.menu_registry.set_enabled(MenuAction::Find, has_tab);
+        self.menu_registry.set_enabled(MenuAction::Replace, has_tab);
+
+        // Blog group: need active project
+        self.menu_registry.set_enabled(MenuAction::PublishSelected, has_project && has_tab);
+        self.menu_registry.set_enabled(MenuAction::PreviewPost, has_project && has_tab);
+        self.menu_registry.set_enabled(MenuAction::EditMenu, has_project);
+        self.menu_registry.set_enabled(MenuAction::RebuildDatabase, has_project);
+        self.menu_registry.set_enabled(MenuAction::ReindexText, has_project);
+        self.menu_registry.set_enabled(MenuAction::MetadataDiff, has_project);
+        self.menu_registry.set_enabled(MenuAction::RegenerateCalendar, has_project);
+        self.menu_registry.set_enabled(MenuAction::ValidateTranslations, has_project);
+        self.menu_registry.set_enabled(MenuAction::FillMissingTranslations, has_project && !self.offline_mode);
+        self.menu_registry.set_enabled(MenuAction::GenerateSitemap, has_project);
+        self.menu_registry.set_enabled(MenuAction::ValidateSite, has_project);
+        self.menu_registry.set_enabled(MenuAction::UploadSite, has_project && !self.offline_mode);
     }
 }

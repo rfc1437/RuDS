@@ -8,7 +8,8 @@ use bds_core::model::{Media, Post, Project};
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
 use crate::state::tabs::Tab;
-use crate::views::{activity_bar, panel, project_selector, sidebar, status_bar, tab_bar, welcome};
+use crate::state::toast::Toast;
+use crate::views::{activity_bar, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
 
 /// Main content area background.
 fn content_bg(_theme: &Theme) -> container::Style {
@@ -67,6 +68,8 @@ pub fn view(
     project_dropdown_open: bool,
     // i18n
     locale: UiLocale,
+    // Toasts
+    toasts: &[Toast],
 ) -> Element<'static, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, locale);
@@ -181,12 +184,25 @@ pub fn view(
         None
     };
 
+    // Collect overlays: dropdowns and toasts
+    let mut overlays: Vec<Element<'static, Message>> = Vec::new();
+
+    if let Some(toast_overlay) = toast::view(toasts) {
+        overlays.push(toast_overlay);
+    }
+
     if let Some(overlay) = overlay {
-        stack![base_layout, overlay]
+        overlays.push(overlay);
+    }
+
+    if overlays.is_empty() {
+        base_layout
+    } else {
+        let mut layers = vec![base_layout];
+        layers.extend(overlays);
+        stack(layers)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
-    } else {
-        base_layout
     }
 }
