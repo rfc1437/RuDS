@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="{{ language }}" data-language-prefix="{{ language_prefix }}"{% if html_theme_attribute %} {{ html_theme_attribute }}{% endif %}>
+  {% render 'partials/head', page_title: page_title, pico_stylesheet_href: pico_stylesheet_href %}
+  <body>
+    <main>
+      <section class="not-found" data-template="not-found">
+        <article>
+          <h1>404</h1>
+          {% assign default_not_found_message = 'render.notFound.message' | i18n: language %}
+          {% assign default_not_found_back = 'render.notFound.back' | i18n: language %}
+          <p>{{ not_found_message | default: default_not_found_message }}</p>
+          <p><a href="/" role="button">{{ not_found_back_label | default: default_not_found_back }}</a></p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

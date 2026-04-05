@@ -7,3 +7,4 @@ pub mod panel;
 pub mod project_selector;
 pub mod toast;
 pub mod welcome;
+pub mod modal;

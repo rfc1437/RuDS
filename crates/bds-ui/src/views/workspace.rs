@@ -3,13 +3,13 @@ use iced::widget::text::Shaping;
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::{Media, Post, Project};
+use bds_core::model::{Media, Post, Project, Script, Template};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
 use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
-use crate::views::{activity_bar, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
+use crate::views::{activity_bar, modal, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome};
 
 /// Main content area background.
 fn content_bg(_theme: &Theme) -> container::Style {
@@ -55,6 +55,8 @@ pub fn view(
     // Sidebar data
     sidebar_posts: &[Post],
     sidebar_media: &[Media],
+    sidebar_scripts: &[Script],
+    sidebar_templates: &[Template],
     // Status bar
     active_project_name: Option<&str>,
     projects: &[Project],
@@ -69,6 +71,8 @@ pub fn view(
     locale: UiLocale,
     // Toasts
     toasts: &[Toast],
+    // Modal
+    active_modal: Option<&modal::ModalState>,
 ) -> Element<'static, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
@@ -106,7 +110,7 @@ pub fn view(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_width, active_tab, locale));
+        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, sidebar_width, active_tab, locale));
 
         // Resize drag handle: 4px wide strip between sidebar and content
         let handle = container(Space::new(0, 0))
@@ -232,6 +236,11 @@ pub fn view(
 
     if let Some(overlay) = overlay {
         overlays.push(overlay);
+    }
+
+    // Modal overlay (highest z-index)
+    if let Some(modal_state) = active_modal {
+        overlays.push(modal::view(modal_state, locale));
     }
 
     if overlays.is_empty() {

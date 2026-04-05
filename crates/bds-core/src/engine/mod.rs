@@ -14,6 +14,9 @@ pub mod rebuild;
 pub mod search;
 pub mod calendar;
 pub mod validate_translations;
+pub mod validate_media;
+pub mod validate_content;
+pub mod menu;
 
 pub use error::{EngineError, EngineResult};
 pub use context::EngineContext;

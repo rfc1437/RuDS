@@ -149,6 +149,123 @@ pub fn remove_category(data_dir: &Path, category: &str) -> EngineResult<()> {
     Ok(())
 }
 
+// ── update helpers ──────────────────────────────────────────────────
+
+/// Update the blog_languages list in project.json.
+/// Per metadata.allium UpdateProjectMetadata: writes ProjectJsonWritten.
+pub fn update_blog_languages(data_dir: &Path, languages: Vec<String>) -> EngineResult<()> {
+    let mut meta = read_project_json(data_dir)?;
+    meta.blog_languages = languages;
+    write_project_json(data_dir, &meta)?;
+    Ok(())
+}
+
+/// Update arbitrary fields of project metadata.
+/// Per metadata.allium UpdateProjectMetadata rule.
+pub fn update_project_metadata(
+    data_dir: &Path,
+    changes: &serde_json::Value,
+) -> EngineResult<()> {
+    let mut meta = read_project_json(data_dir)?;
+    if let Some(name) = changes.get("name").and_then(|v| v.as_str()) {
+        meta.name = name.to_string();
+    }
+    if let Some(desc) = changes.get("description") {
+        meta.description = desc.as_str().map(|s| s.to_string());
+    }
+    if let Some(url) = changes.get("publicUrl") {
+        meta.public_url = url.as_str().map(|s| s.to_string());
+    }
+    if let Some(lang) = changes.get("mainLanguage") {
+        meta.main_language = lang.as_str().map(|s| s.to_string());
+    }
+    if let Some(author) = changes.get("defaultAuthor") {
+        meta.default_author = author.as_str().map(|s| s.to_string());
+    }
+    if let Some(max) = changes.get("maxPostsPerPage").and_then(|v| v.as_i64()) {
+        meta.max_posts_per_page = max as i32;
+    }
+    if let Some(cat) = changes.get("blogmarkCategory") {
+        meta.blogmark_category = cat.as_str().map(|s| s.to_string());
+    }
+    if let Some(theme) = changes.get("picoTheme") {
+        meta.pico_theme = theme.as_str().map(|s| s.to_string());
+    }
+    if let Some(enabled) = changes.get("semanticSimilarityEnabled").and_then(|v| v.as_bool()) {
+        meta.semantic_similarity_enabled = enabled;
+    }
+    if let Some(langs) = changes.get("blogLanguages").and_then(|v| v.as_array()) {
+        meta.blog_languages = langs
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+    }
+    meta.validate().map_err(|e| crate::engine::EngineError::Validation(e))?;
+    write_project_json(data_dir, &meta)?;
+    Ok(())
+}
+
+// ── startup sync ────────────────────────────────────────────────────
+
+/// Per metadata.allium StartupSync: loads metadata from filesystem, creating
+/// default files if missing.  Called on project activation.
+pub fn startup_sync(data_dir: &Path) -> EngineResult<()> {
+    let meta_dir = data_dir.join("meta");
+    fs::create_dir_all(&meta_dir)?;
+
+    // Ensure project.json exists
+    if !meta_dir.join("project.json").exists() {
+        let default_meta = ProjectMetadata {
+            name: "My Blog".to_string(),
+            description: None,
+            public_url: None,
+            main_language: None,
+            default_author: None,
+            max_posts_per_page: 50,
+            blogmark_category: None,
+            pico_theme: None,
+            semantic_similarity_enabled: false,
+            blog_languages: Vec::new(),
+        };
+        write_project_json(data_dir, &default_meta)?;
+    }
+
+    // Ensure categories.json exists with defaults
+    if !meta_dir.join("categories.json").exists() {
+        let defaults = vec![
+            "article".to_string(),
+            "aside".to_string(),
+            "page".to_string(),
+            "picture".to_string(),
+        ];
+        write_categories_json(data_dir, &defaults)?;
+    }
+
+    // Ensure category-meta.json exists
+    if !meta_dir.join("category-meta.json").exists() {
+        let empty: HashMap<String, CategorySettings> = HashMap::new();
+        write_category_meta_json(data_dir, &empty)?;
+    }
+
+    // Ensure publishing.json exists
+    if !meta_dir.join("publishing.json").exists() {
+        atomic_write_str(&meta_dir.join("publishing.json"), "{}")?;
+    }
+
+    // Ensure tags.json exists
+    if !meta_dir.join("tags.json").exists() {
+        write_tags_json(data_dir, &[])?;
+    }
+
+    // Ensure menu.opml exists
+    if !meta_dir.join("menu.opml").exists() {
+        let opml = crate::engine::menu::default_menu_opml();
+        atomic_write_str(&meta_dir.join("menu.opml"), &opml)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

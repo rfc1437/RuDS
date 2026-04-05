@@ -7,7 +7,7 @@ use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::{Media, Post, Project};
+use bds_core::model::{Media, Post, Project, Script, Template};
 
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -16,7 +16,7 @@ use crate::state::navigation::{
 };
 use crate::state::tabs::{self, Tab, TabType};
 use crate::state::toast::{Toast, ToastLevel};
-use crate::views::workspace;
+use crate::views::{modal, workspace};
 
 // ───────────────────────────────────────────────────────────
 // Message
@@ -79,11 +79,17 @@ pub enum Message {
     DismissToast(u64),
     ExpireToasts,
 
+    // Modal
+    ShowModal(modal::ModalState),
+    DismissModal,
+    ConfirmModal(modal::ConfirmAction),
+
     // Blog actions (dispatched to engine)
     RebuildDatabase,
     ReindexText,
     RegenerateCalendar,
     ValidateTranslations,
+    ValidateMedia,
     GenerateSite,
     RunMetadataDiff,
     EngineTaskDone { task_id: TaskId, label: String, result: Result<String, String> },
@@ -113,6 +119,8 @@ pub struct BdsApp {
     // Sidebar data
     sidebar_posts: Vec<Post>,
     sidebar_media: Vec<Media>,
+    sidebar_scripts: Vec<Script>,
+    sidebar_templates: Vec<Template>,
 
     // Navigation
     sidebar_view: SidebarView,
@@ -139,6 +147,9 @@ pub struct BdsApp {
 
     // i18n
     ui_locale: UiLocale,
+    /// Content/render language — the blog's main_language from project.json.
+    /// Separate from ui_locale per i18n.allium TwoLocaleAxes.
+    content_language: String,
 
     // Flags
     offline_mode: bool,
@@ -148,6 +159,9 @@ pub struct BdsApp {
 
     // Toasts
     toasts: Vec<Toast>,
+
+    // Modal
+    active_modal: Option<modal::ModalState>,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -236,6 +250,8 @@ impl BdsApp {
                 media_count: 0,
                 sidebar_posts: Vec::new(),
                 sidebar_media: Vec::new(),
+                sidebar_scripts: Vec::new(),
+                sidebar_templates: Vec::new(),
                 sidebar_view: SidebarView::Posts,
                 sidebar_visible: true,
                 sidebar_width: 280.0,
@@ -250,11 +266,13 @@ impl BdsApp {
                 _menu_bar: menu_bar,
                 menu_registry: registry,
                 ui_locale: locale,
+                content_language: "en".to_string(),
                 offline_mode: false,
                 locale_dropdown_open: false,
                 project_dropdown_open: false,
                 theme_badge: String::from("pico"),
                 toasts: Vec::new(),
+                active_modal: None,
             },
             init_task,
         )
@@ -353,6 +371,16 @@ impl BdsApp {
                         .and_then(|p| p.data_path.as_ref())
                         .map(PathBuf::from);
                 }
+                // Per metadata.allium StartupSync: sync metadata from filesystem
+                if let Some(data_dir) = self.data_dir.clone() {
+                    if let Err(e) = engine::meta::startup_sync(&data_dir) {
+                        self.add_output(&format!("Metadata sync failed: {e}"));
+                    }
+                    // Extract content language from project metadata
+                    if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
+                        self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                    }
+                }
                 self.refresh_counts();
                 self.sync_menu_state();
                 Task::none()
@@ -368,6 +396,13 @@ impl BdsApp {
                                 .as_ref()
                                 .and_then(|p| p.data_path.as_ref())
                                 .map(PathBuf::from);
+                            // Per metadata.allium StartupSync
+                            if let Some(data_dir) = self.data_dir.clone() {
+                                let _ = engine::meta::startup_sync(&data_dir);
+                                if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
+                                    self.content_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+                                }
+                            }
                             let name = self.active_project.as_ref().map(|p| p.name.clone()).unwrap_or_default();
                             self.notify(ToastLevel::Success, &tw(self.ui_locale, "projectSelector.toast.switched", &[("name", &name)]));
                         }
@@ -592,6 +627,23 @@ impl BdsApp {
                     },
                 )
             }
+            Message::ValidateMedia => {
+                self.spawn_engine_task(
+                    "engine.validateMediaStarted",
+                    |db_path, project_id, _data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let on_item: engine::validate_media::ProgressFn = Box::new(move |current, total, name| {
+                            let pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+                            let msg = format!("Checking: {current}/{total} \u{2014} {name}");
+                            tm.report_progress(tid, Some(pct), Some(msg));
+                        });
+                        let report = engine::validate_media::validate_media(
+                            db.conn(), &_data_dir, &project_id, Some(on_item),
+                        ).map_err(|e| e.to_string())?;
+                        Ok(format!("checked={}, issues={}", report.total_checked, report.issues.len()))
+                    },
+                )
+            }
             Message::GenerateSite => {
                 self.spawn_engine_task(
                     "engine.generateSiteStarted",
@@ -639,6 +691,40 @@ impl BdsApp {
                 Task::none()
             }
 
+            // ── Modal ──
+            Message::ShowModal(state) => {
+                self.active_modal = Some(state);
+                Task::none()
+            }
+            Message::DismissModal => {
+                self.active_modal = None;
+                Task::none()
+            }
+            Message::ConfirmModal(action) => {
+                self.active_modal = None;
+                match action {
+                    modal::ConfirmAction::DeleteProject(id) => {
+                        Task::done(Message::DeleteProject(id))
+                    }
+                    modal::ConfirmAction::DeletePost(_id) => {
+                        // Post deletion will be implemented in M3 editors
+                        Task::none()
+                    }
+                    modal::ConfirmAction::DeleteMedia(_id) => {
+                        Task::none()
+                    }
+                    modal::ConfirmAction::DeleteScript(_id) => {
+                        Task::none()
+                    }
+                    modal::ConfirmAction::DeleteTemplate(_id) => {
+                        Task::none()
+                    }
+                    modal::ConfirmAction::MergeTags { .. } => {
+                        Task::none()
+                    }
+                }
+            }
+
             Message::Noop => Task::none(),
             Message::InitMenuBar => {
                 #[cfg(target_os = "macos")]
@@ -663,6 +749,8 @@ impl BdsApp {
             &self.output_entries,
             &self.sidebar_posts,
             &self.sidebar_media,
+            &self.sidebar_scripts,
+            &self.sidebar_templates,
             active_name,
             &self.projects,
             self.active_project.as_ref().map(|p| p.id.as_str()),
@@ -674,6 +762,7 @@ impl BdsApp {
             &self.theme_badge,
             self.ui_locale,
             &self.toasts,
+            self.active_modal.as_ref(),
         )
     }
 
@@ -976,6 +1065,16 @@ impl BdsApp {
                 &project.id,
                 500,
                 0,
+            )
+            .unwrap_or_default();
+            self.sidebar_scripts = bds_core::db::queries::script::list_scripts_by_project(
+                db.conn(),
+                &project.id,
+            )
+            .unwrap_or_default();
+            self.sidebar_templates = bds_core::db::queries::template::list_templates_by_project(
+                db.conn(),
+                &project.id,
             )
             .unwrap_or_default();
             // Read pico theme from project metadata for status bar badge

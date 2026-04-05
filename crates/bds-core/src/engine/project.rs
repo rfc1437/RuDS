@@ -194,6 +194,48 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
     // tags.json — empty array
     atomic_write_str(&meta_dir.join("tags.json"), "[]")?;
 
+    // menu.opml — default empty menu per menu.allium HomeAlwaysPresent
+    let default_opml = crate::engine::menu::default_menu_opml();
+    atomic_write_str(&meta_dir.join("menu.opml"), &default_opml)?;
+
+    // Starter templates — per project.allium StarterTemplatesCopied
+    copy_starter_templates(data_dir)?;
+
+    Ok(())
+}
+
+/// Copy bundled starter templates into the project templates directory.
+/// Per project.allium: "Bundled starter templates are copied into the new project."
+fn copy_starter_templates(data_dir: &Path) -> EngineResult<()> {
+    let templates_dir = data_dir.join("templates");
+    let partials_dir = templates_dir.join("partials");
+    fs::create_dir_all(&partials_dir)?;
+
+    // Starter templates embedded at compile time from assets/starter-templates/
+    let templates: &[(&str, &str)] = &[
+        ("single-post.liquid", include_str!("../../../../assets/starter-templates/single-post.liquid")),
+        ("post-list.liquid", include_str!("../../../../assets/starter-templates/post-list.liquid")),
+        ("not-found.liquid", include_str!("../../../../assets/starter-templates/not-found.liquid")),
+    ];
+    let partials: &[(&str, &str)] = &[
+        ("head.liquid", include_str!("../../../../assets/starter-templates/partials/head.liquid")),
+        ("menu.liquid", include_str!("../../../../assets/starter-templates/partials/menu.liquid")),
+        ("menu-items.liquid", include_str!("../../../../assets/starter-templates/partials/menu-items.liquid")),
+        ("language-switcher.liquid", include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid")),
+    ];
+
+    for (name, content) in templates {
+        let path = templates_dir.join(name);
+        if !path.exists() {
+            atomic_write_str(&path, content)?;
+        }
+    }
+    for (name, content) in partials {
+        let path = partials_dir.join(name);
+        if !path.exists() {
+            atomic_write_str(&path, content)?;
+        }
+    }
     Ok(())
 }
 

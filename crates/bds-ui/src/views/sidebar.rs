@@ -3,7 +3,7 @@ use iced::widget::text::Shaping;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::{Media, Post};
+use bds_core::model::{Media, Post, Script, Template};
 
 use crate::app::Message;
 use crate::i18n::t;
@@ -72,9 +72,6 @@ const AVG_CHAR_WIDTH_PX: f32 = 6.8;
 /// Sidebar padding on each side (12px) plus item padding (6px each side).
 const SIDEBAR_TEXT_OVERHEAD_PX: f32 = 36.0;
 
-/// Extra space used by the post status indicator prefix ("○ " etc.).
-const STATUS_INDICATOR_CHARS: usize = 2;
-
 /// Truncate a string to fit approximately within `available_px` pixels,
 /// appending "…" if truncation occurs.
 fn truncate_to_fit(s: &str, available_px: f32) -> String {
@@ -98,10 +95,35 @@ fn truncate_media_title(title: &str) -> String {
     }
 }
 
+/// Per sidebar_views.allium PostTypeIcon: map first category to emoji.
+fn post_type_icon(categories: &[String]) -> &'static str {
+    for cat in categories {
+        match cat.to_lowercase().as_str() {
+            "picture" => return "\u{1F4F7}",       // 📷 camera
+            "article" => return "\u{1F5D2}",        // 🗒 notepad
+            "aside" | "blogmark" => return "\u{1F517}", // 🔗 link
+            "video" => return "\u{1F3AC}",          // 🎬 film
+            "podcast" => return "\u{1F4AC}",        // 💬 speech bubble
+            _ => {}
+        }
+    }
+    "\u{1F4C4}" // 📄 document (default)
+}
+
+/// Per sidebar_views.allium PostDateFormat: "Feb 10, 2026".
+fn format_post_date(unix_ms: i64) -> String {
+    let secs = unix_ms / 1000;
+    let dt = chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+    dt.format("%b %d, %Y").to_string()
+}
+
 pub fn view(
     sidebar_view: SidebarView,
     posts: &[Post],
     media: &[Media],
+    scripts: &[Script],
+    templates: &[Template],
     width: f32,
     active_tab: Option<&str>,
     locale: UiLocale,
@@ -133,24 +155,33 @@ pub fn view(
 
                 let make_post_item = |p: &Post| -> Element<'static, Message> {
                     let is_active = active_tab == Some(p.id.as_str());
+                    // Per sidebar_views.allium PostTypeIcon
+                    let icon = post_type_icon(&p.categories);
                     let status_indicator = match p.status {
-                        bds_core::model::PostStatus::Draft => "\u{25CB} ",
-                        bds_core::model::PostStatus::Published => "\u{25CF} ",
-                        bds_core::model::PostStatus::Archived => "\u{25A1} ",
+                        bds_core::model::PostStatus::Draft => "\u{25CB}",
+                        bds_core::model::PostStatus::Published => "\u{25CF}",
+                        bds_core::model::PostStatus::Archived => "\u{25A1}",
                     };
+                    // Per sidebar_views.allium PostDateFormat
+                    let date = format_post_date(p.created_at);
                     // Truncate title to fit sidebar width, accounting for
-                    // padding and the status indicator prefix.
+                    // padding and the status/icon prefix.
+                    let prefix_chars: usize = 5; // icon + space + status + space
                     let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX
-                        - (STATUS_INDICATOR_CHARS as f32 * AVG_CHAR_WIDTH_PX);
+                        - (prefix_chars as f32 * AVG_CHAR_WIDTH_PX);
                     let display_title = truncate_to_fit(&p.title, text_px);
-                    let label = format!("{status_indicator}{display_title}");
+                    let label = format!("{icon} {status_indicator} {display_title}");
                     let label_text = text(label)
                         .size(12)
                         .shaping(Shaping::Advanced)
                         .wrapping(iced::widget::text::Wrapping::None);
+                    let date_text = text(date)
+                        .size(10)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.50, 0.50, 0.55));
                     let style_fn = if is_active { item_active_style } else { item_style };
                     button(
-                        container(label_text)
+                        container(column![label_text, date_text].spacing(1))
                             .width(Length::Fill)
                             .clip(true)
                     )
@@ -253,6 +284,166 @@ pub fn view(
                     .spacing(1)
                     .into()
             }
+        }
+        SidebarView::Scripts => {
+            if scripts.is_empty() {
+                text(t(locale, placeholder_key(sidebar_view)))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted)
+                    .into()
+            } else {
+                let items: Vec<Element<'static, Message>> = scripts
+                    .iter()
+                    .map(|s| {
+                        let is_active = active_tab == Some(s.id.as_str());
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX;
+                        let display_title = truncate_to_fit(&s.title, text_px);
+                        let label_text = text(display_title.clone())
+                            .size(12)
+                            .shaping(Shaping::Advanced)
+                            .wrapping(iced::widget::text::Wrapping::None);
+                        let style_fn = if is_active { item_active_style } else { item_style };
+                        button(
+                            container(label_text)
+                                .width(Length::Fill)
+                                .clip(true)
+                        )
+                            .on_press(Message::OpenTab(Tab {
+                                id: s.id.clone(),
+                                tab_type: TabType::Scripts,
+                                title: display_title,
+                                is_transient: true,
+                                is_dirty: false,
+                            }))
+                            .padding([3, 6])
+                            .width(Length::Fill)
+                            .style(style_fn)
+                            .into()
+                    })
+                    .collect();
+                iced::widget::Column::with_children(items)
+                    .spacing(1)
+                    .into()
+            }
+        }
+        SidebarView::Templates => {
+            if templates.is_empty() {
+                text(t(locale, placeholder_key(sidebar_view)))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted)
+                    .into()
+            } else {
+                let items: Vec<Element<'static, Message>> = templates
+                    .iter()
+                    .map(|tmpl| {
+                        let is_active = active_tab == Some(tmpl.id.as_str());
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX;
+                        let display_title = truncate_to_fit(&tmpl.title, text_px);
+                        let label_text = text(display_title.clone())
+                            .size(12)
+                            .shaping(Shaping::Advanced)
+                            .wrapping(iced::widget::text::Wrapping::None);
+                        let style_fn = if is_active { item_active_style } else { item_style };
+                        button(
+                            container(label_text)
+                                .width(Length::Fill)
+                                .clip(true)
+                        )
+                            .on_press(Message::OpenTab(Tab {
+                                id: tmpl.id.clone(),
+                                tab_type: TabType::Templates,
+                                title: display_title,
+                                is_transient: true,
+                                is_dirty: false,
+                            }))
+                            .padding([3, 6])
+                            .width(Length::Fill)
+                            .style(style_fn)
+                            .into()
+                    })
+                    .collect();
+                iced::widget::Column::with_children(items)
+                    .spacing(1)
+                    .into()
+            }
+        }
+        SidebarView::Settings => {
+            // Per sidebar_views.allium SettingsNav: 9 fixed-order sections
+            let sections = [
+                "settings.nav.project",
+                "settings.nav.editor",
+                "settings.nav.content",
+                "settings.nav.ai",
+                "settings.nav.technology",
+                "settings.nav.publishing",
+                "settings.nav.data",
+                "settings.nav.mcp",
+                "settings.nav.style",
+            ];
+            let items: Vec<Element<'static, Message>> = sections
+                .iter()
+                .map(|key| {
+                    let label = t(locale, key);
+                    let label_text = text(label)
+                        .size(12)
+                        .shaping(Shaping::Advanced);
+                    button(
+                        container(label_text)
+                            .width(Length::Fill)
+                    )
+                        .on_press(Message::OpenTab(Tab {
+                            id: "settings".to_string(),
+                            tab_type: TabType::Settings,
+                            title: t(locale, "common.settings"),
+                            is_transient: false,
+                            is_dirty: false,
+                        }))
+                        .padding([3, 6])
+                        .width(Length::Fill)
+                        .style(item_style)
+                        .into()
+                })
+                .collect();
+            iced::widget::Column::with_children(items)
+                .spacing(1)
+                .into()
+        }
+        SidebarView::Tags => {
+            // Per sidebar_views.allium TagsNav: 3 fixed-order sections
+            let sections = [
+                "tags.nav.cloud",
+                "tags.nav.manage",
+                "tags.nav.merge",
+            ];
+            let items: Vec<Element<'static, Message>> = sections
+                .iter()
+                .map(|key| {
+                    let label = t(locale, key);
+                    let label_text = text(label)
+                        .size(12)
+                        .shaping(Shaping::Advanced);
+                    button(
+                        container(label_text)
+                            .width(Length::Fill)
+                    )
+                        .on_press(Message::OpenTab(Tab {
+                            id: "tags".to_string(),
+                            tab_type: TabType::Tags,
+                            title: t(locale, "tabBar.tags"),
+                            is_transient: false,
+                            is_dirty: false,
+                        }))
+                        .padding([3, 6])
+                        .width(Length::Fill)
+                        .style(item_style)
+                        .into()
+                })
+                .collect();
+            iced::widget::Column::with_children(items)
+                .spacing(1)
+                .into()
         }
         _ => {
             text(t(locale, placeholder_key(sidebar_view)))

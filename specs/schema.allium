@@ -224,15 +224,53 @@ entity ChatMessage {
     created_at: Timestamp
 }
 
-entity AiCachedModel {
-    -- Cached model list fetched from endpoint /v1/models API.
-    -- Keyed by endpoint kind so online and airplane caches are separate.
-    endpoint_kind: String   -- "online" | "airplane"
-    model_id: String
-    name: String            -- Display name
-    context_window: Integer?
-    max_output_tokens: Integer?
+entity AiProvider {
+    -- Provider catalog, populated from upstream model registry.
+    -- Read-only in Rust core; TypeScript app manages inserts.
+    id: String              -- PRIMARY KEY
+    name: String
+    env: String?            -- Environment variable for API key
+    npm: String?            -- NPM package reference (legacy)
+    api: String?            -- Base API URL
+    doc: String?            -- Documentation URL
     updated_at: Timestamp
+}
+
+entity AiModel {
+    -- Full model catalog with capability metadata.
+    -- Composite primary key: (provider, model_id).
+    provider: AiProvider
+    model_id: String
+    name: String
+    family: String?
+    attachment: Boolean     -- supports file attachments
+    reasoning: Boolean      -- supports chain-of-thought
+    tool_call: Boolean      -- supports tool/function calling
+    structured_output: Boolean
+    temperature: Boolean    -- supports temperature parameter
+    knowledge: String?      -- training data cutoff
+    release_date: String?
+    last_updated_date: String?
+    open_weights: Boolean
+    input_price: Integer?   -- price per million input tokens
+    output_price: Integer?  -- price per million output tokens
+    cache_read_price: Integer?
+    cache_write_price: Integer?
+    context_window: Integer
+    max_input_tokens: Integer
+    max_output_tokens: Integer
+    interleaved: String?    -- interleaved capability descriptor
+    status: String?         -- active | deprecated | preview
+    provider_npm: String?   -- provider-specific NPM reference (legacy)
+    updated_at: Timestamp
+}
+
+entity AiModelModality {
+    -- Input/output modality declarations per model.
+    provider: AiProvider
+    model_id: String
+    direction: String       -- "input" | "output"
+    modality: String        -- "text" | "image" | "audio" | "video"
 }
 
 entity AiCatalogMeta {
