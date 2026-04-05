@@ -112,8 +112,8 @@ rule CreatePost {
         status: draft,
         author: author,
         language: language,
-        tags: tags ?? [],
-        categories: categories ?? [],
+        tags: tags ?? {},
+        categories: categories ?? {},
         template_slug: template_slug,
         do_not_translate: false,
         file_path: ""

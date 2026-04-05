@@ -3,7 +3,7 @@
 This is the Rust rewrite of an existing project bDS written in Typescript and living in ../bDS - if
 in doubt about behaviour, look at the original code to verify.
 
-This project has an allium spec in the folder spec/ - use it to verify behaviour against expected behaviour. It is based on the typescript implementation.
+This project has an allium spec in the folder spec/ - use it to verify behaviour against expected behaviour. It is based on the typescript implementation. The command line utility is installed.
 
 Invariants and behaviours in the allium spec should be covered by unit tests of the application code, to make sure the spec is followed.
 
@@ -43,4 +43,5 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - do not embedd CSS/JavaScript into HTML, always reference .css and .js files in the project assets
 - always make sure you follow proper i18n best practices. no untranslated string constants.
 - when creating rust source code, always follow what the allium spec is saying for that part
+- when tending the allium spec, make sure you validate the spec with the installed command line utility
 

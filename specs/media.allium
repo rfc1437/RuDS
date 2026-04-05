@@ -85,7 +85,7 @@ rule ImportMedia {
         width: detect_width(source_file),
         height: detect_height(source_file),
         file_path: dest,
-        tags: []
+        tags: {}
     )
     ensures: FileCopied(source_file, dest)
     ensures: SidecarWritten(media)

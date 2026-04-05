@@ -91,6 +91,30 @@ static CATALOG_IT: LazyLock<Catalog> =
 static CATALOG_ES: LazyLock<Catalog> =
     LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/es.json")));
 
+// ── Render catalogs (content/template locale, independent of UI locale) ──
+
+static RENDER_EN: LazyLock<Catalog> =
+    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/en.json")));
+static RENDER_DE: LazyLock<Catalog> =
+    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/de.json")));
+static RENDER_FR: LazyLock<Catalog> =
+    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/fr.json")));
+static RENDER_IT: LazyLock<Catalog> =
+    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/it.json")));
+static RENDER_ES: LazyLock<Catalog> =
+    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/es.json")));
+
+fn render_catalog_for(code: &str) -> &'static Catalog {
+    let base = code.split(['-', '_']).next().unwrap_or("en").to_lowercase();
+    match base.as_str() {
+        "de" => &RENDER_DE,
+        "fr" => &RENDER_FR,
+        "it" => &RENDER_IT,
+        "es" => &RENDER_ES,
+        _ => &RENDER_EN,
+    }
+}
+
 fn catalog_for(locale: UiLocale) -> &'static Catalog {
     match locale {
         UiLocale::En => &CATALOG_EN,
@@ -127,6 +151,31 @@ pub fn translate_with(locale: UiLocale, key: &str, params: &[(&str, &str)]) -> S
         result = result.replace(&placeholder, value);
     }
     result
+}
+
+/// Look up a render/template translation key by content language code.
+///
+/// This is independent of the UI locale — it uses the project's content language.
+/// Fallback chain: requested language → English → key itself.
+/// Implements the RenderTranslations invariant from i18n.allium.
+pub fn translate_render(language: &str, key: &str) -> String {
+    let catalog = render_catalog_for(language);
+    if let Some(val) = catalog.get(key) {
+        return val.clone();
+    }
+    if !language.starts_with("en") {
+        if let Some(val) = RENDER_EN.get(key) {
+            return val.clone();
+        }
+    }
+    key.to_string()
+}
+
+/// Return the entire render translation map for a language.
+///
+/// Used to inject as `translations` into the Liquid template context.
+pub fn get_render_translations(language: &str) -> &'static HashMap<String, String> {
+    render_catalog_for(language)
 }
 
 #[cfg(test)]
@@ -231,5 +280,44 @@ mod tests {
     #[test]
     fn detect_os_locale_does_not_panic() {
         let _ = detect_os_locale();
+    }
+
+    // RenderTranslations invariant: separate catalog for content/template locale
+    #[test]
+    fn translate_render_english() {
+        assert_eq!(translate_render("en", "render.archive"), "Archive");
+        assert_eq!(translate_render("en", "render.month.1"), "January");
+    }
+
+    #[test]
+    fn translate_render_german() {
+        assert_eq!(translate_render("de", "render.archive"), "Archiv");
+        assert_eq!(translate_render("de", "render.month.1"), "Januar");
+    }
+
+    #[test]
+    fn translate_render_falls_back_to_english() {
+        assert_eq!(translate_render("ja", "render.archive"), "Archive");
+    }
+
+    #[test]
+    fn translate_render_missing_key_returns_key() {
+        assert_eq!(translate_render("en", "render.nonexistent"), "render.nonexistent");
+    }
+
+    #[test]
+    fn get_render_translations_not_empty() {
+        let map = get_render_translations("en");
+        assert!(map.contains_key("render.archive"));
+        assert!(map.contains_key("render.month.12"));
+        assert!(map.len() >= 34);
+    }
+
+    #[test]
+    fn all_render_locales_have_archive_key() {
+        for code in &["en", "de", "fr", "it", "es"] {
+            let val = translate_render(code, "render.archive");
+            assert_ne!(val, "render.archive", "missing render.archive for {code}");
+        }
     }
 }

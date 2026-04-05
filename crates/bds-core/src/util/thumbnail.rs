@@ -29,11 +29,12 @@ pub enum ThumbnailFit {
     Contain,
 }
 
-/// Standard thumbnail sizes matching TypeScript implementation.
+/// Standard thumbnail sizes matching spec: small/medium/large are
+/// width-constrained aspect-preserving; AI is letterboxed on black.
 pub const THUMBNAIL_SIZES: &[ThumbnailSize] = &[
-    ThumbnailSize { name: "small", width: 150, height: 150, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
-    ThumbnailSize { name: "medium", width: 400, height: 400, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
-    ThumbnailSize { name: "large", width: 800, height: 800, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Cover },
+    ThumbnailSize { name: "small", width: 150, height: 150, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "medium", width: 400, height: 400, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
+    ThumbnailSize { name: "large", width: 800, height: 800, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
     ThumbnailSize { name: "ai", width: 448, height: 448, format: ThumbnailFormat::Jpeg, fit: ThumbnailFit::Contain },
 ];
 
@@ -108,17 +109,6 @@ pub fn generate_all_thumbnails(
 ) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
     let prefix = &media_id[..2.min(media_id.len())];
-
-    // Save thumbnail source for regeneration
-    let source_ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
-    let source_dest = thumbnails_dir
-        .join(prefix)
-        .join(format!("{media_id}_source.{source_ext}"));
-    if let Some(parent) = source_dest.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
-    }
-    fs::copy(source, &source_dest).map_err(|e| format!("save thumbnail source: {e}"))?;
-    paths.push(source_dest.to_string_lossy().to_string());
 
     for size in THUMBNAIL_SIZES {
         let ext = match size.format {
@@ -286,13 +276,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let source = create_test_png(dir.path());
         let dest = dir.path().join("thumb.webp");
-        let size = &THUMBNAIL_SIZES[0]; // small: 150x150 Cover
+        let size = &THUMBNAIL_SIZES[0]; // small: 150 Inside
         generate_thumbnail(&source, &dest, size, 80).unwrap();
         assert!(dest.exists());
         let (w, h) = image_dimensions(&dest).unwrap();
-        // 100x80 resized to fill 150x150 (Cover fit)
-        assert_eq!(w, 150);
-        assert_eq!(h, 150);
+        // 100x80 fits inside 150x150 without enlargement
+        assert_eq!(w, 100);
+        assert_eq!(h, 80);
     }
 
     #[test]
@@ -314,7 +304,7 @@ mod tests {
         let source = create_test_png(dir.path());
         let thumb_dir = dir.path().join("thumbnails");
         let paths = generate_all_thumbnails(&source, &thumb_dir, "ab123456-test-uuid").unwrap();
-        assert_eq!(paths.len(), 5); // 1 source + 4 thumbnails
+        assert_eq!(paths.len(), 4); // 4 thumbnails (no source copy)
         for p in &paths {
             assert!(Path::new(p).exists(), "thumbnail missing: {p}");
         }

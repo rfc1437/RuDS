@@ -381,21 +381,23 @@ invariant UniqueDismissedDuplicatePair {
 
 value Fts5PostSchema {
     -- CREATE VIRTUAL TABLE posts_fts USING fts5(
-    --   title, excerpt, content, tags, categories,
-    --   content='posts',
-    --   content_rowid='rowid'
+    --   post_id UNINDEXED,
+    --   title, excerpt, content, tags, categories
     -- );
-    fields: Set<String>     -- {title, excerpt, content, tags, categories}
+    -- Standalone table (no content-sync) because text is pre-stemmed
+    -- via Snowball before insertion; content-sync would read un-stemmed
+    -- base-table text at query time instead.
+    fields: Set<String>     -- {post_id UNINDEXED, title, excerpt, content, tags, categories}
     stemmer_languages: Integer = 24
 }
 
 value Fts5MediaSchema {
     -- CREATE VIRTUAL TABLE media_fts USING fts5(
-    --   title, alt, caption, original_name, tags,
-    --   content='media',
-    --   content_rowid='rowid'
+    --   media_id UNINDEXED,
+    --   title, alt, caption, original_name, tags
     -- );
-    fields: Set<String>     -- {title, alt, caption, original_name, tags}
+    -- Standalone table (no content-sync) — same rationale as posts_fts.
+    fields: Set<String>     -- {media_id UNINDEXED, title, alt, caption, original_name, tags}
     stemmer_languages: Integer = 24
 }
 

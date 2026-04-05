@@ -41,7 +41,7 @@ invariant ThumbnailPathBucketing {
     -- Thumbnails are bucketed by first 2 chars of media ID
     -- This avoids filesystem slowdowns from too many files in one directory
     for m in Media:
-        let prefix = m.id[0:2]
+        let prefix = substring(m.id, 0, 2)
         m.thumbnails.small = format("thumbnails/{prefix}/{id}-small.webp",
             prefix: prefix, id: m.id)
         m.thumbnails.medium = format("thumbnails/{prefix}/{id}-medium.webp",
@@ -62,8 +62,7 @@ config {
     thumbnail_medium_width: Integer = 400
     thumbnail_large_width: Integer = 800
     thumbnail_ai_size: Integer = 448       -- 448x448 square crop, JPEG
-    thumbnail_quality: Integer = 80        -- WebP quality, hardcoded
-    thumbnail_format: String = "webp"      -- All sizes except AI
+    thumbnail_format: String = "webp"      -- All sizes except AI (encoder default quality)
     thumbnail_ai_format: String = "jpeg"   -- AI thumbnail only
 }
 
@@ -75,21 +74,18 @@ rule GenerateThumbnails {
         source: media.file_path,
         destination: media.thumbnails.small,
         width: config.thumbnail_small_width,
-        quality: config.thumbnail_quality,
         format: config.thumbnail_format
     )
     ensures: ThumbnailGenerated(
         source: media.file_path,
         destination: media.thumbnails.medium,
         width: config.thumbnail_medium_width,
-        quality: config.thumbnail_quality,
         format: config.thumbnail_format
     )
     ensures: ThumbnailGenerated(
         source: media.file_path,
         destination: media.thumbnails.large,
         width: config.thumbnail_large_width,
-        quality: config.thumbnail_quality,
         format: config.thumbnail_format
     )
     ensures: ThumbnailGenerated(
@@ -103,10 +99,10 @@ rule GenerateThumbnails {
 -- Thumbnail generation algorithm
 value ThumbnailGeneration {
     -- 1. Load source image
-    -- 2. Read raw image dimensions from header (not EXIF-orientation-aware)
+    -- 2. Apply EXIF orientation correction (rotation, flip) so thumbnails display correctly
     -- 3. Resize: small/medium/large preserve aspect ratio (width-constrained)
-    --    AI thumbnail is a 448x448 center crop
-    -- 4. Encode as WebP (quality 80) for small/medium/large
+    --    AI thumbnail is a 448x448 center crop (letterboxed on black background)
+    -- 4. Encode as WebP (encoder default quality) for small/medium/large
     --    Encode as JPEG for AI thumbnail
     -- 5. Write to bucketed thumbnail path: thumbnails/{id[0:2]}/{id}-{size}.{ext}
     --
@@ -114,12 +110,9 @@ value ThumbnailGeneration {
 }
 
 invariant ThumbnailExifHandling {
-    -- TypeScript app reads raw image header dimensions
-    -- It does NOT apply EXIF orientation correction during thumbnail generation
-    -- Width/height stored in DB are the raw header values
-    @guidance
-        -- The Rust implementation should match this: raw header dimensions
-        -- EXIF auto-rotation can be added later as an enhancement
+    -- EXIF orientation IS applied during thumbnail generation so that
+    -- thumbnails always appear right-side-up regardless of camera metadata.
+    -- Width/height stored in DB are the raw header values (pre-rotation).
 }
 
 -- ============================================================================
@@ -141,7 +134,7 @@ value ImageProcessing {
     }
 
     -- Processing rules:
-    -- 1. All thumbnails (except AI) are encoded as WebP quality 80
+    -- 1. All thumbnails (except AI) are encoded as WebP (encoder default quality)
     -- 2. AI thumbnail is encoded as JPEG (for vision model compatibility)
     -- 3. Original format is preserved for full-size assets (no conversion)
     -- 4. EXIF data is not stripped (thumbnails are re-encoded, so EXIF is naturally absent)

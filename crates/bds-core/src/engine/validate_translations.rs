@@ -39,6 +39,8 @@ pub enum TranslationIssueKind {
     SameLanguageAsCanonical,
     DoNotTranslateHasTranslations,
     ContentInDatabase,
+    /// Published post is missing a translation for a configured blog language.
+    MissingTranslation,
 }
 
 /// Result of translation validation.
@@ -58,8 +60,10 @@ pub fn validate_translations(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
+    blog_languages: &[String],
+    main_language: &str,
 ) -> EngineResult<TranslationValidationReport> {
-    validate_translations_with_progress(conn, data_dir, project_id, None)
+    validate_translations_with_progress(conn, data_dir, project_id, blog_languages, main_language, None)
 }
 
 /// Like `validate_translations` but with optional per-item progress.
@@ -67,6 +71,8 @@ pub fn validate_translations_with_progress(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
+    blog_languages: &[String],
+    main_language: &str,
     on_item: Option<ItemProgressFn>,
 ) -> EngineResult<TranslationValidationReport> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
@@ -120,6 +126,33 @@ pub fn validate_translations_with_progress(
                     language: t.language.clone(),
                     kind: TranslationIssueKind::ContentInDatabase,
                 });
+            }
+        }
+
+        // Check: published, translatable posts must have translations
+        // for each configured blog language (spec: ValidateTranslations rule)
+        if post.status == PostStatus::Published && !post.do_not_translate {
+            let available: std::collections::HashSet<String> = translations
+                .iter()
+                .map(|t| norm_lang(&t.language))
+                .collect();
+            let post_lang = norm_lang(post.language.as_deref().unwrap_or(main_language));
+            let main_norm = norm_lang(main_language);
+
+            for lang in blog_languages {
+                let lang_norm = norm_lang(lang);
+                if lang_norm == main_norm || lang_norm == post_lang {
+                    continue;
+                }
+                if !available.contains(&lang_norm) {
+                    db_issues.push(TranslationIssue {
+                        post_id: post.id.clone(),
+                        translation_id: None,
+                        file_path: None,
+                        language: lang.clone(),
+                        kind: TranslationIssueKind::MissingTranslation,
+                    });
+                }
             }
         }
     }

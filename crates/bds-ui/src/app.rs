@@ -550,6 +550,10 @@ impl BdsApp {
                     "engine.validateTranslationsStarted",
                     |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let meta = engine::meta::read_project_json(&data_dir)
+                            .map_err(|e| e.to_string())?;
+                        let main_lang = meta.main_language.as_deref().unwrap_or("en");
+                        let blog_langs = meta.blog_languages.clone();
                         let tm2 = Arc::clone(&tm);
                         let on_item: engine::validate_translations::ItemProgressFn = Box::new(move |current, total, name| {
                             let pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
@@ -557,7 +561,7 @@ impl BdsApp {
                             tm2.report_progress(tid, Some(pct), Some(msg));
                         });
                         let report = engine::validate_translations::validate_translations_with_progress(
-                            db.conn(), &data_dir, &project_id, Some(on_item),
+                            db.conn(), &data_dir, &project_id, &blog_langs, main_lang, Some(on_item),
                         ).map_err(|e| e.to_string())?;
                         Ok(format!("db_issues={}, fs_issues={}", report.db_issues.len(), report.fs_issues.len()))
                     },

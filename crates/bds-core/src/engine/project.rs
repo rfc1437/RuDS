@@ -11,6 +11,9 @@ use crate::model::Project;
 use crate::model::metadata::ProjectMetadata;
 use crate::util::{atomic_write_str, now_unix_ms, slugify, ensure_unique};
 
+/// The well-known ID of the default project (spec: DefaultProjectExists).
+pub const DEFAULT_PROJECT_ID: &str = "default";
+
 /// Create a new project: insert into DB, create directory structure, write default meta files.
 pub fn create_project(
     conn: &Connection,
@@ -51,6 +54,41 @@ pub fn create_project(
     Ok(project)
 }
 
+/// Ensure the default project (id="default") exists.
+/// Creates it on first launch if missing, per the DefaultProjectExists invariant.
+/// Returns the project (existing or newly created).
+pub fn ensure_default_project(
+    conn: &Connection,
+    default_data_dir: Option<&Path>,
+) -> EngineResult<Project> {
+    match q::get_project_by_id(conn, DEFAULT_PROJECT_ID) {
+        Ok(p) => Ok(p),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            let now = now_unix_ms();
+            let project = Project {
+                id: DEFAULT_PROJECT_ID.to_string(),
+                name: "My Blog".to_string(),
+                slug: "my-blog".to_string(),
+                description: None,
+                data_path: default_data_dir.map(|p| p.to_string_lossy().to_string()),
+                is_active: true,
+                created_at: now,
+                updated_at: now,
+            };
+            q::insert_project(conn, &project)?;
+
+            let data_dir = match default_data_dir {
+                Some(p) => p.to_path_buf(),
+                None => std::path::PathBuf::from("projects").join(DEFAULT_PROJECT_ID),
+            };
+            create_directory_structure(&data_dir)?;
+            write_default_meta_files(&data_dir, "My Blog")?;
+            Ok(project)
+        }
+        Err(e) => Err(EngineError::Db(e)),
+    }
+}
+
 /// Get the currently active project, if any.
 pub fn get_active_project(conn: &Connection) -> EngineResult<Option<Project>> {
     match q::get_active_project(conn) {
@@ -72,9 +110,16 @@ pub fn list_projects(conn: &Connection) -> EngineResult<Vec<Project>> {
 }
 
 /// Delete a project row (cascading handled by queries).
-/// Rejects deletion of the currently active project.
+/// Rejects deletion of the default project and the currently active project.
 /// Optionally cleans up the project data directory.
 pub fn delete_project(conn: &Connection, project_id: &str, data_dir: Option<&Path>) -> EngineResult<()> {
+    // Cannot delete the default project
+    if project_id == DEFAULT_PROJECT_ID {
+        return Err(EngineError::Validation(
+            "cannot delete the default project".to_string(),
+        ));
+    }
+
     // Check if this is the active project (don't delete active)
     if let Ok(active) = q::get_active_project(conn) {
         if active.id == project_id {
@@ -260,6 +305,36 @@ mod tests {
         let p = create_project(db.conn(), "P", Some(p_path.to_str().unwrap())).unwrap();
         set_active_project(db.conn(), &p.id).unwrap();
         let result = delete_project(db.conn(), &p.id, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ensure_default_project_creates_on_first_call() {
+        let (db, dir) = setup();
+        let data_path = dir.path().join("default-data");
+        let p = ensure_default_project(db.conn(), Some(&data_path)).unwrap();
+        assert_eq!(p.id, DEFAULT_PROJECT_ID);
+        assert_eq!(p.name, "My Blog");
+        assert!(p.is_active);
+        assert!(data_path.join("posts").is_dir());
+        assert!(data_path.join("meta/project.json").exists());
+    }
+
+    #[test]
+    fn ensure_default_project_idempotent() {
+        let (db, dir) = setup();
+        let data_path = dir.path().join("default-data");
+        let p1 = ensure_default_project(db.conn(), Some(&data_path)).unwrap();
+        let p2 = ensure_default_project(db.conn(), Some(&data_path)).unwrap();
+        assert_eq!(p1.id, p2.id);
+    }
+
+    #[test]
+    fn delete_default_project_rejected() {
+        let (db, dir) = setup();
+        let data_path = dir.path().join("default-data");
+        ensure_default_project(db.conn(), Some(&data_path)).unwrap();
+        let result = delete_project(db.conn(), DEFAULT_PROJECT_ID, None);
         assert!(result.is_err());
     }
 }
