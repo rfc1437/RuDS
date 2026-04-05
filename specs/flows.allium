@@ -17,6 +17,59 @@ use "./post.allium" as post
 use "./media.allium" as media
 use "./search.allium" as search
 
+-- ─── External surfaces ──────────────────────────────────────
+
+-- User-initiated navigation and entity management actions.
+-- These triggers originate from sidebar clicks, tab operations,
+-- dashboard interactions, and save/delete actions in editors.
+
+surface UserNavigation {
+    provides: SidebarItemClicked(entity_type, entity_id, click_type)
+    provides: SidebarCreateRequested(entity_type)
+    provides: SidebarDeleteRequested(entity_type, entity_id)
+    provides: DashboardPostClicked(post_id, click_type)
+    provides: PostSaved(post_id, updated_post)
+    provides: PostStatusTransitioned(post_id, old_status, new_status)
+    provides: PostDeletedFromEditor(post_id)
+    provides: MediaSavedFromEditor(media_id, updated_media)
+    provides: MediaDeletedFromEditor(media_id)
+    provides: SettingsRebuildCompleted(entity_type, new_data)
+    provides: TransientTabBeingReplaced(old_tab, new_tab)
+    provides: TabClosed(tab)
+    provides: AISuggestionRequested(entity_type, entity_id)
+    provides: PostAutoTranslateCompleted(post_id, language)
+}
+
+-- Engine-level events emitted after backend operations complete.
+-- These are NOT direct user actions — they fire as side-effects
+-- of user operations processed by the engine layer.
+
+surface Engine {
+    provides: PostCreated(post)
+    provides: PostUpdated(post, changes)
+    provides: PostPublished(post)
+    provides: PostDeleted(post)
+    provides: PostChangesDiscarded(post)
+    provides: MediaImported(media)
+    provides: MediaUpdated(media, changes)
+    provides: MediaFileReplaced(media, new_file)
+    provides: MediaDeleted(media)
+    provides: TemplateCreated(template)
+    provides: TemplateUpdated(template, changes)
+    provides: TemplatePublished(template)
+    provides: TemplateDeleted(template, force)
+    provides: TagDeleted(tag)
+    provides: TagRenamed(old_name, new_name)
+    provides: TagsMerged(source_tags, target_tag)
+    provides: ProjectMetadataUpdated(metadata)
+    provides: CategoryAdded(name)
+    provides: CategoryRemoved(name)
+    provides: PublishingPreferencesUpdated(prefs)
+    provides: PostTranslationUpserted(translation, source_post)
+    provides: MediaTranslationUpserted(translation, media)
+    provides: MediaTranslationDeleted(media, language)
+}
+
 -- ═══════════════════════════════════════════════════════════════
 -- PART 1: UI DATA FLOW MODEL
 -- ═══════════════════════════════════════════════════════════════

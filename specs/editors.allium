@@ -15,6 +15,44 @@ use "./post.allium" as post
 use "./media.allium" as media
 use "./i18n.allium" as i18n
 
+-- ─── External surfaces ──────────────────────────────────────
+
+-- The user is the external actor who initiates all editor interactions
+-- via clicks, keyboard shortcuts, and drag-and-drop. This surface
+-- provides the triggers that editor action rules listen for.
+
+surface User {
+    provides: PostAIAnalysisRequested(post_id)
+    provides: PostTranslateRequested(post_id, target_language)
+    provides: PostSaved(post_id)
+    provides: PostPublishRequested(post_id)
+    provides: PostDiscardRequested(post_id)
+    provides: PostDeleteRequested(post_id)
+    provides: PostInsertLinkRequested(post_id)
+    provides: PostInsertMediaRequested(post_id)
+    provides: PostGalleryRequested(post_id)
+    provides: ImageDroppedOnEditor(post_id, file_path)
+    provides: PostLanguageDetectRequested(post_id)
+    provides: MediaAIImageAnalysisRequested(media_id)
+    provides: MediaDetectLanguageRequested(media_id)
+    provides: MediaTranslateMetadataRequested(media_id, target_language)
+    provides: MediaReplaceFileRequested(media_id)
+    provides: MediaDeleteRequested(media_id)
+    provides: MediaLinkToPostRequested(media_id)
+    provides: MediaTranslationEditClicked(media_id, language)
+    provides: MediaTranslationRefreshClicked(media_id, language)
+    provides: MediaTranslationDeleteClicked(media_id, language)
+    provides: StyleThemeSelected(theme_name)
+    provides: StyleApplyRequested(theme_name)
+    provides: ScriptSaveRequested(script_id)
+    provides: ScriptRunRequested(script_id)
+    provides: ScriptDeleteRequested(script_id)
+    provides: TemplateSaveRequested(template_id)
+    provides: TemplateDeleteRequested(template_id)
+    provides: ImportAnalyzeRequested(definition_id, file_path)
+    provides: ImportExecuteRequested(definition_id)
+}
+
 -- ─── Dashboard (no tab active) ───────────────────────────────
 
 -- Shown as default/welcome view when no entity tab is active.
@@ -188,7 +226,13 @@ invariant PostDirtyTracking {
 -- Used by PostAIAnalysis and MediaAIImageAnalysis.
 value AISuggestionsModal {
     fields: List<AISuggestionField>
-    -- Confirm applies only accepted fields; Cancel discards all
+    -- Layout: title bar ("AI Suggestions"), scrollable field list, button row
+    -- Each field rendered as a row:
+    --   Left: checkbox (accept/reject), label
+    --   Center: current value (read-only, muted), arrow, suggested value (highlighted)
+    -- Special: slug field checkbox disabled if post was ever published
+    -- Buttons: Cancel (secondary), Apply Selected (primary)
+    -- Cancel discards all; Apply writes only accepted fields to entity
 }
 
 value AISuggestionField {
@@ -196,6 +240,187 @@ value AISuggestionField {
     current_value: String
     suggested_value: String
     accepted: Boolean                   -- checkbox, default true
+    locked: Boolean                     -- if true, checkbox disabled (e.g. published slug)
+}
+
+-- ─── Modals and overlays ────────────────────────────────────
+
+-- All modals rendered as centered overlay with backdrop dimming.
+-- ESC key or backdrop click closes modal (cancel semantics).
+-- Overlays (PostPicker, ColourPicker) are positioned inline near trigger.
+
+value InsertPostLinkModal {
+    -- Two-tab modal opened by Ctrl/Cmd+K in post editor (markdown mode).
+    -- Tab 1 - Internal:
+    --   Search input (debounced 300ms, queries post titles)
+    --   Results list: post title + status badge (draft/published/archived)
+    --   If semantic similarity enabled: results ranked by vector similarity
+    --   Click result: inserts [title](/YYYY/MM/DD/slug) at cursor, closes modal
+    --   "Create Post" row at bottom of results:
+    --     Creates new post with search query as title, inserts link to it
+    -- Tab 2 - External:
+    --   URL input field (required)
+    --   Display text input field (optional)
+    --   Insert button: inserts [text](url) or bare url if no text, closes modal
+    active_tab: String                   -- internal | external
+    search_query: String
+    results: List<InsertLinkResult>
+}
+
+value InsertLinkResult {
+    post_id: String
+    title: String
+    status: String                       -- draft | published | archived
+    canonical_url: String                -- /YYYY/MM/DD/slug
+}
+
+value InsertMediaModal {
+    -- Grid modal for inserting media references into post content.
+    -- Search input filtering by media title and original filename.
+    -- Grid of media items: bds-thumb:// thumbnail (medium 400px), title below.
+    -- Click item:
+    --   Images: inserts ![alt](bds-media://id) at cursor
+    --   Non-images: inserts [originalName](bds-media://id) at cursor
+    -- Closes modal after insertion.
+    search_query: String
+    results: List<InsertMediaResult>
+}
+
+value InsertMediaResult {
+    media_id: String
+    title: String
+    original_name: String
+    is_image: Boolean
+    thumbnail_url: String?               -- bds-thumb:// for images, null for others
+}
+
+value LanguagePickerModal {
+    -- Shown for Translate Post and Translate Media Metadata actions.
+    -- Lists all configured blogLanguages except source language.
+    -- Each row: flag emoji, language name, status badge if translation exists.
+    --   Existing translations show "(draft)" or "(published)" badge.
+    -- Click selects target language and initiates translation flow.
+    -- Cancel closes without action.
+    source_language: String
+    available_targets: List<LanguageTarget>
+}
+
+value LanguageTarget {
+    code: String
+    name: String
+    flag_emoji: String
+    has_existing_translation: Boolean
+    existing_status: String?             -- draft | published, if translation exists
+}
+
+value ConfirmDeleteModal {
+    -- Custom styled modal for destructive operations with reference info.
+    -- Used by: MediaDelete (shows linked posts), TagDelete (shows post count).
+    -- Layout: warning icon, title, entity name, reference section, buttons.
+    -- Reference section: "This item is referenced by:" + bulleted list.
+    -- Buttons: Cancel (secondary), Delete (destructive red).
+    entity_name: String
+    entity_type: String                  -- media | tag
+    reference_count: Integer
+    reference_list: List<String>         -- titles of referencing entities
+}
+
+value ConfirmDialog {
+    -- Custom styled modal for non-delete confirmations.
+    -- Used by: TagMerge ("Merge N tags into {target}? Cannot be undone.").
+    -- Layout: title, descriptive message, buttons.
+    -- Buttons: Cancel (secondary), Confirm (primary).
+    title: String
+    message: String
+}
+
+-- Native confirm dialogs (via rfd crate) are NOT modelled as values.
+-- They are simple yes/no system dialogs with a message string.
+-- Used by: PostDelete, PostDiscard, TemplateDelete (with references).
+
+value GalleryOverlay {
+    -- Full-screen overlay showing all media linked to a post.
+    -- Opened from Gallery button in post editor toolbar (markdown mode).
+    -- Image grid: bds-thumb:// thumbnails (medium 400px), 3-4 columns.
+    -- Click image: opens LightboxView for that image.
+    -- Close: X button or ESC key.
+    post_id: String
+    images: List<GalleryImage>
+}
+
+value GalleryImage {
+    media_id: String
+    thumbnail_url: String                -- bds-thumb://media_id
+    alt_text: String?
+}
+
+value LightboxView {
+    -- Full-screen image viewer, sub-view of GalleryOverlay.
+    -- Shows single image at full resolution via bds-media:// protocol.
+    -- Navigation: left/right arrow buttons, keyboard left/right arrow keys.
+    -- Close: X button, ESC key, or click outside image area.
+    -- Header: image title or filename, index counter "3 of 12".
+    current_index: Integer
+    total_count: Integer
+    media_id: String
+    image_url: String                    -- bds-media://media_id
+    alt_text: String?
+}
+
+value ColourPickerPopover {
+    -- Inline popover positioned below tag colour field (tags view manage).
+    -- Not a modal — does not dim backdrop, no ESC/backdrop close.
+    -- Closes when clicking outside popover or selecting a colour.
+    -- Grid of 17 preset colour swatches (4x4 + 1).
+    -- Below grid: custom hex input field (#RRGGBB).
+    -- Selection is immediate — no confirm/cancel buttons.
+    -- Choosing a colour updates the tag form's colour field live.
+    presets: List<String>                -- 17 hex colour values
+    custom_hex: String?
+    selected: String?
+}
+
+config {
+    colour_picker_preset_count: Integer = 17
+}
+
+value PostPickerOverlay {
+    -- Inline overlay positioned near "Link to Post" button (media editor).
+    -- Not a modal — positioned as dropdown below trigger button.
+    -- Search input filtering posts by title (only unlinked posts shown).
+    -- Up to 10 results displayed. "and N more" text if total exceeds 10.
+    -- Click result: links media to selected post, closes overlay.
+    search_query: String
+    results: List<PostPickerResult>
+    overflow_count: Integer?             -- shown as "and N more" if > 0
+}
+
+value PostPickerResult {
+    post_id: String
+    title: String
+}
+
+value ModelSelectorDropdown {
+    -- Dropdown in chat panel header for per-conversation model override.
+    -- Groups models by provider using section headers.
+    -- Each entry: model display name.
+    -- Expandable details per model: context window, max output tokens, pricing.
+    -- Selected model persisted with conversation record.
+    -- Changing model mid-conversation applies to subsequent messages only.
+    groups: List<ModelProviderGroup>
+    selected_model_id: String?
+}
+
+value ModelProviderGroup {
+    provider_name: String                -- e.g. "OpenAI", "Ollama", "LM Studio"
+    models: List<ModelEntry>
+}
+
+value ModelEntry {
+    model_id: String
+    display_name: String
+    context_window: Integer
+    max_output_tokens: Integer
 }
 
 rule PostAIAnalysis {
