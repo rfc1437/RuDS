@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iced::{Element, Subscription, Task};
@@ -152,6 +152,350 @@ pub enum Message {
 
     Noop,
     InitMenuBar,
+}
+
+enum PersistedPostState {
+    Canonical(Post),
+    Translation(bds_core::model::PostTranslation),
+}
+
+fn persist_post_editor_state_impl(
+    db: &Database,
+    data_dir: &Path,
+    state: &PostEditorState,
+) -> Result<PersistedPostState, String> {
+    if state.active_language != state.canonical_language {
+        let translation = engine::post::upsert_translation(
+            db.conn(),
+            data_dir,
+            &state.post_id,
+            &state.active_language,
+            &state.title,
+            if state.excerpt.is_empty() { None } else { Some(state.excerpt.as_str()) },
+            Some(&state.content),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(PersistedPostState::Translation(translation))
+    } else {
+        let post = engine::post::update_post(
+            db.conn(),
+            data_dir,
+            &state.post_id,
+            Some(&state.title),
+            Some(&state.slug),
+            Some(if state.excerpt.is_empty() { None } else { Some(state.excerpt.as_str()) }),
+            Some(&state.content),
+            Some(state.tags.clone()),
+            Some(state.categories.clone()),
+            Some(if state.author.is_empty() { None } else { Some(state.author.as_str()) }),
+            Some(if state.language.is_empty() { None } else { Some(state.language.as_str()) }),
+            Some(if state.template_slug.is_empty() { None } else { Some(state.template_slug.as_str()) }),
+            Some(state.do_not_translate),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(PersistedPostState::Canonical(post))
+    }
+}
+
+enum PersistedMediaState {
+    Canonical { media: Media, tags: Vec<String> },
+    Translation,
+}
+
+fn persist_media_editor_state_impl(
+    db: &Database,
+    data_dir: &Path,
+    state: &MediaEditorState,
+) -> Result<PersistedMediaState, String> {
+    if state.active_language != state.canonical_language {
+        engine::media::upsert_media_translation(
+            db.conn(),
+            data_dir,
+            &state.media_id,
+            &state.active_language,
+            if state.title.is_empty() { None } else { Some(state.title.as_str()) },
+            if state.alt.is_empty() { None } else { Some(state.alt.as_str()) },
+            if state.caption.is_empty() { None } else { Some(state.caption.as_str()) },
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(PersistedMediaState::Translation)
+    } else {
+        let tags = state
+            .tags_input
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(|tag| tag.to_string())
+            .collect::<Vec<_>>();
+        let media = engine::media::update_media(
+            db.conn(),
+            data_dir,
+            &state.media_id,
+            Some(if state.title.is_empty() { None } else { Some(state.title.as_str()) }),
+            Some(if state.alt.is_empty() { None } else { Some(state.alt.as_str()) }),
+            Some(if state.caption.is_empty() { None } else { Some(state.caption.as_str()) }),
+            Some(if state.author.is_empty() { None } else { Some(state.author.as_str()) }),
+            Some(if state.language.is_empty() { None } else { Some(state.language.as_str()) }),
+            Some(tags.clone()),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(PersistedMediaState::Canonical { media, tags })
+    }
+}
+
+fn save_template_editor_state_impl(
+    db: &Database,
+    project_id: &str,
+    state: &TemplateEditorState,
+) -> Result<Template, String> {
+    engine::template::update_template(
+        db.conn(),
+        &state.template_id,
+        project_id,
+        Some(&state.title),
+        Some(&state.slug),
+        Some(state.kind.clone()),
+        Some(state.enabled),
+        Some(&state.content),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn save_script_editor_state_impl(
+    db: &Database,
+    project_id: &str,
+    state: &ScriptEditorState,
+) -> Result<Script, String> {
+    engine::script::update_script(
+        db.conn(),
+        &state.script_id,
+        project_id,
+        Some(&state.title),
+        Some(&state.slug),
+        Some(state.kind.clone()),
+        Some(&state.entrypoint),
+        Some(state.enabled),
+        Some(&state.content),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn save_editor_settings_state_impl(
+    db: &Database,
+    state: &SettingsViewState,
+) -> Result<(), String> {
+    let now = bds_core::util::now_unix_ms();
+    [
+        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.default_mode", &state.default_mode, now),
+        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.diff_view_style", &state.diff_view_style, now),
+        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.wrap_long_lines", if state.wrap_long_lines { "true" } else { "false" }, now),
+        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.hide_unchanged_regions", if state.hide_unchanged_regions { "true" } else { "false" }, now),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, PersistedMediaState, PersistedPostState};
+    use crate::views::media_editor::MediaEditorState;
+    use crate::views::post_editor::PostEditorState;
+    use crate::views::script_editor::ScriptEditorState;
+    use crate::views::settings_view::SettingsViewState;
+    use crate::views::template_editor::TemplateEditorState;
+    use bds_core::db::fts::ensure_fts_tables;
+    use bds_core::db::queries::project::insert_project;
+    use bds_core::db::Database;
+    use bds_core::engine::{media, post, script, template};
+    use bds_core::model::{Project, ScriptKind, TemplateKind};
+    use tempfile::TempDir;
+
+    fn make_project() -> Project {
+        Project {
+            id: "p1".to_string(),
+            name: "Test Project".to_string(),
+            slug: "test-project".to_string(),
+            description: Some("desc".to_string()),
+            data_path: None,
+            is_active: true,
+            created_at: 1000,
+            updated_at: 1000,
+        }
+    }
+
+    fn tiny_png_bytes() -> &'static [u8] {
+        &[
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R',
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+            0x89, 0x00, 0x00, 0x00, 0x0D, b'I', b'D', b'A',
+            b'T', 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0,
+            0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99,
+            0x3D, 0x1D, 0x00, 0x00, 0x00, 0x00, b'I', b'E',
+            b'N', b'D', 0xAE, 0x42, 0x60, 0x82,
+        ]
+    }
+
+    fn setup() -> (Database, Project, TempDir) {
+        let mut db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        let project = make_project();
+        insert_project(db.conn(), &project).unwrap();
+        let tempdir = TempDir::new().unwrap();
+        std::fs::create_dir_all(tempdir.path().join("meta")).unwrap();
+        std::fs::write(tempdir.path().join("meta/project.json"), "{}\n").unwrap();
+        std::fs::write(tempdir.path().join("meta/publishing.json"), "{}\n").unwrap();
+        (db, project, tempdir)
+    }
+
+    #[test]
+    fn post_editor_save_flow_persists_changes() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Original",
+            Some("Body"),
+            vec!["rust".to_string()],
+            vec!["article".to_string()],
+            Some("Alice"),
+            Some("en"),
+            None,
+        ).unwrap();
+
+        let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        let mut editor = PostEditorState::from_post(&editor_post, &["en".to_string(), "de".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
+        editor.title = "Updated Post".to_string();
+        editor.content = "Updated body".to_string();
+        editor.tags = vec!["rust".to_string(), "lua".to_string()];
+
+        let result = persist_post_editor_state_impl(&db, tmp.path(), &editor).unwrap();
+        match result {
+            PersistedPostState::Canonical(post) => assert_eq!(post.title, "Updated Post"),
+            PersistedPostState::Translation(_) => panic!("expected canonical post save"),
+        }
+
+        let saved = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        assert_eq!(saved.title, "Updated Post");
+        assert_eq!(saved.content.as_deref(), Some("Updated body"));
+        assert_eq!(saved.tags, vec!["rust".to_string(), "lua".to_string()]);
+    }
+
+    #[test]
+    fn media_editor_save_flow_persists_changes() {
+        let (db, project, tmp) = setup();
+        let source = tmp.path().join("tiny.png");
+        std::fs::write(&source, tiny_png_bytes()).unwrap();
+        let imported = media::import_media(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            &source,
+            "tiny.png",
+            Some("Tiny"),
+            Some("Alt"),
+            None,
+            None,
+            Some("en"),
+            vec!["photo".to_string()],
+        ).unwrap();
+
+        let media_record = bds_core::db::queries::media::get_media_by_id(db.conn(), &imported.id).unwrap();
+        let mut editor = MediaEditorState::from_media(&media_record, &["en".to_string()], &[]);
+        editor.title = "Tiny Updated".to_string();
+        editor.tags_input = "photo, lua".to_string();
+
+        let result = persist_media_editor_state_impl(&db, tmp.path(), &editor).unwrap();
+        match result {
+            PersistedMediaState::Canonical { media, tags } => {
+                assert_eq!(media.title.as_deref(), Some("Tiny Updated"));
+                assert_eq!(tags, vec!["photo".to_string(), "lua".to_string()]);
+            }
+            PersistedMediaState::Translation => panic!("expected canonical media save"),
+        }
+
+        let saved = bds_core::db::queries::media::get_media_by_id(db.conn(), &imported.id).unwrap();
+        assert_eq!(saved.title.as_deref(), Some("Tiny Updated"));
+        assert_eq!(saved.tags, vec!["photo".to_string(), "lua".to_string()]);
+        assert!(tmp.path().join(saved.sidecar_path).exists());
+    }
+
+    #[test]
+    fn template_editor_save_flow_persists_changes() {
+        let (db, project, _tmp) = setup();
+        let created = template::create_template(
+            db.conn(),
+            &project.id,
+            "Post Template",
+            TemplateKind::Post,
+            "<article>{{ title }}</article>",
+        ).unwrap();
+
+        let template_record = bds_core::db::queries::template::get_template_by_id(db.conn(), &created.id).unwrap();
+        let mut editor = TemplateEditorState::from_template(&template_record);
+        editor.title = "Updated Template".to_string();
+        editor.content = "<main>{{ title }}</main>".to_string();
+
+        let saved_template = save_template_editor_state_impl(&db, &project.id, &editor).unwrap();
+        assert_eq!(saved_template.title, "Updated Template");
+
+        let saved = bds_core::db::queries::template::get_template_by_id(db.conn(), &created.id).unwrap();
+        assert_eq!(saved.title, "Updated Template");
+        assert_eq!(saved.content.as_deref(), Some("<main>{{ title }}</main>"));
+    }
+
+    #[test]
+    fn script_editor_save_flow_persists_changes() {
+        let (db, project, _tmp) = setup();
+        let created = script::create_script(
+            db.conn(),
+            &project.id,
+            "Utility Script",
+            ScriptKind::Utility,
+            "function main()\n  return 'ok'\nend",
+            Some("main"),
+        ).unwrap();
+
+        let script_record = bds_core::db::queries::script::get_script_by_id(db.conn(), &created.id).unwrap();
+        let mut editor = ScriptEditorState::from_script(&script_record);
+        editor.title = "Updated Script".to_string();
+        editor.content = "function main()\n  return 'lua'\nend".to_string();
+        editor.entrypoint = "main".to_string();
+
+        let saved_script = save_script_editor_state_impl(&db, &project.id, &editor).unwrap();
+        assert_eq!(saved_script.title, "Updated Script");
+
+        let saved = bds_core::db::queries::script::get_script_by_id(db.conn(), &created.id).unwrap();
+        assert_eq!(saved.title, "Updated Script");
+        assert_eq!(saved.content.as_deref(), Some("function main()\n  return 'lua'\nend"));
+    }
+
+    #[test]
+    fn settings_editor_save_flow_persists_values() {
+        let (db, _project, _tmp) = setup();
+        let settings = SettingsViewState {
+            default_mode: "markdown".to_string(),
+            diff_view_style: "side-by-side".to_string(),
+            wrap_long_lines: false,
+            hide_unchanged_regions: true,
+            ..SettingsViewState::default()
+        };
+
+        save_editor_settings_state_impl(&db, &settings).unwrap();
+
+        let wrap = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.wrap_long_lines").unwrap();
+        let hide = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.hide_unchanged_regions").unwrap();
+        let diff = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.diff_view_style").unwrap();
+
+        assert_eq!(wrap.value, "false");
+        assert_eq!(hide.value, "true");
+        assert_eq!(diff.value, "side-by-side");
+    }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -2469,16 +2813,7 @@ impl BdsApp {
         let Some(ref db) = self.db else { return Task::none() };
         let Some(ref project) = self.active_project else { return Task::none() };
 
-        match engine::template::update_template(
-            db.conn(),
-            &state.template_id,
-            &project.id,
-            Some(&state.title),
-            Some(&state.slug),
-            Some(state.kind.clone()),
-            Some(state.enabled),
-            Some(&state.content),
-        ) {
+        match save_template_editor_state_impl(db, &project.id, state) {
             Ok(tmpl) => {
                 let s = self.template_editors.get_mut(template_id).unwrap();
                 s.is_dirty = false;
@@ -2501,17 +2836,7 @@ impl BdsApp {
         let Some(ref db) = self.db else { return Task::none() };
         let Some(ref project) = self.active_project else { return Task::none() };
 
-        match engine::script::update_script(
-            db.conn(),
-            &state.script_id,
-            &project.id,
-            Some(&state.title),
-            Some(&state.slug),
-            Some(state.kind.clone()),
-            Some(&state.entrypoint),
-            Some(state.enabled),
-            Some(&state.content),
-        ) {
+        match save_script_editor_state_impl(db, &project.id, state) {
             Ok(script) => {
                 let s = self.script_editors.get_mut(script_id).unwrap();
                 s.is_dirty = false;
@@ -2541,88 +2866,43 @@ impl BdsApp {
             .as_ref()
             .ok_or_else(|| "project data directory unavailable".to_string())?;
 
-        if state.active_language != state.canonical_language {
-            let translation = engine::post::upsert_translation(
-                db.conn(),
-                data_dir,
-                &state.post_id,
-                &state.active_language,
-                &state.title,
-                if state.excerpt.is_empty() {
-                    None
-                } else {
-                    Some(state.excerpt.as_str())
-                },
-                Some(&state.content),
-            )
-            .map_err(|e| e.to_string())?;
-
-            if let Some(editor) = self.post_editors.get_mut(post_id) {
-                editor.is_dirty = false;
-                if let Some(draft) = editor.translation_drafts.get_mut(&state.active_language) {
-                    draft.title = translation.title.clone();
-                    draft.excerpt = translation.excerpt.clone().unwrap_or_default();
-                    draft.content = translation.content.clone().unwrap_or_default();
-                    draft.status = translation.status.clone();
-                    draft.is_dirty = false;
+        match persist_post_editor_state_impl(db, data_dir, &state)? {
+            PersistedPostState::Translation(translation) => {
+                if let Some(editor) = self.post_editors.get_mut(post_id) {
+                    editor.is_dirty = false;
+                    if let Some(draft) = editor.translation_drafts.get_mut(&state.active_language) {
+                        draft.title = translation.title.clone();
+                        draft.excerpt = translation.excerpt.clone().unwrap_or_default();
+                        draft.content = translation.content.clone().unwrap_or_default();
+                        draft.status = translation.status.clone();
+                        draft.is_dirty = false;
+                    }
                 }
             }
-        } else {
-            let post = engine::post::update_post(
-                db.conn(),
-                data_dir,
-                &state.post_id,
-                Some(&state.title),
-                Some(&state.slug),
-                Some(if state.excerpt.is_empty() {
-                    None
-                } else {
-                    Some(state.excerpt.as_str())
-                }),
-                Some(&state.content),
-                Some(state.tags.clone()),
-                Some(state.categories.clone()),
-                Some(if state.author.is_empty() {
-                    None
-                } else {
-                    Some(state.author.as_str())
-                }),
-                Some(if state.language.is_empty() {
-                    None
-                } else {
-                    Some(state.language.as_str())
-                }),
-                Some(if state.template_slug.is_empty() {
-                    None
-                } else {
-                    Some(state.template_slug.as_str())
-                }),
-                Some(state.do_not_translate),
-            )
-            .map_err(|e| e.to_string())?;
-
-            if let Some(editor) = self.post_editors.get_mut(post_id) {
-                editor.title = post.title.clone();
-                editor.slug = post.slug.clone();
-                editor.excerpt = post.excerpt.clone().unwrap_or_default();
-                editor.author = post.author.clone().unwrap_or_default();
-                editor.language = post.language.clone().unwrap_or_default();
-                editor.template_slug = post.template_slug.clone().unwrap_or_default();
-                editor.do_not_translate = post.do_not_translate;
-                editor.tags = post.tags.clone();
-                editor.categories = post.categories.clone();
-                editor.status = post.status.clone();
-                editor.updated_at = post.updated_at;
-                editor.published_at = post.published_at;
-                editor.is_dirty = false;
-            }
-            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post.id) {
-                tab.is_dirty = false;
-                if !post.title.is_empty() {
-                    tab.title = post.title.clone();
+            PersistedPostState::Canonical(post) => {
+                if let Some(editor) = self.post_editors.get_mut(post_id) {
+                    editor.title = post.title.clone();
+                    editor.slug = post.slug.clone();
+                    editor.excerpt = post.excerpt.clone().unwrap_or_default();
+                    editor.author = post.author.clone().unwrap_or_default();
+                    editor.language = post.language.clone().unwrap_or_default();
+                    editor.template_slug = post.template_slug.clone().unwrap_or_default();
+                    editor.do_not_translate = post.do_not_translate;
+                    editor.tags = post.tags.clone();
+                    editor.categories = post.categories.clone();
+                    editor.status = post.status.clone();
+                    editor.updated_at = post.updated_at;
+                    editor.published_at = post.published_at;
+                    editor.is_dirty = false;
                 }
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post.id) {
+                    tab.is_dirty = false;
+                    if !post.title.is_empty() {
+                        tab.title = post.title.clone();
+                    }
+                }
+                self.refresh_post_relationships(post_id);
             }
-            self.refresh_post_relationships(post_id);
         }
 
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
@@ -2643,83 +2923,24 @@ impl BdsApp {
             .as_ref()
             .ok_or_else(|| "project data directory unavailable".to_string())?;
 
-        if state.active_language != state.canonical_language {
-            engine::media::upsert_media_translation(
-                db.conn(),
-                data_dir,
-                &state.media_id,
-                &state.active_language,
-                if state.title.is_empty() {
-                    None
-                } else {
-                    Some(state.title.as_str())
-                },
-                if state.alt.is_empty() {
-                    None
-                } else {
-                    Some(state.alt.as_str())
-                },
-                if state.caption.is_empty() {
-                    None
-                } else {
-                    Some(state.caption.as_str())
-                },
-            )
-            .map_err(|e| e.to_string())?;
-            if let Some(editor) = self.media_editors.get_mut(media_id) {
-                editor.is_dirty = false;
+        match persist_media_editor_state_impl(db, data_dir, &state)? {
+            PersistedMediaState::Translation => {
+                if let Some(editor) = self.media_editors.get_mut(media_id) {
+                    editor.is_dirty = false;
+                }
             }
-        } else {
-            let tags = state
-                .tags_input
-                .split(',')
-                .map(str::trim)
-                .filter(|tag| !tag.is_empty())
-                .map(|tag| tag.to_string())
-                .collect::<Vec<_>>();
-            let media = engine::media::update_media(
-                db.conn(),
-                data_dir,
-                &state.media_id,
-                Some(if state.title.is_empty() {
-                    None
-                } else {
-                    Some(state.title.as_str())
-                }),
-                Some(if state.alt.is_empty() {
-                    None
-                } else {
-                    Some(state.alt.as_str())
-                }),
-                Some(if state.caption.is_empty() {
-                    None
-                } else {
-                    Some(state.caption.as_str())
-                }),
-                Some(if state.author.is_empty() {
-                    None
-                } else {
-                    Some(state.author.as_str())
-                }),
-                Some(if state.language.is_empty() {
-                    None
-                } else {
-                    Some(state.language.as_str())
-                }),
-                Some(tags.clone()),
-            )
-            .map_err(|e| e.to_string())?;
-
-            if let Some(editor) = self.media_editors.get_mut(media_id) {
-                editor.title = media.title.clone().unwrap_or_default();
-                editor.alt = media.alt.clone().unwrap_or_default();
-                editor.caption = media.caption.clone().unwrap_or_default();
-                editor.author = media.author.clone().unwrap_or_default();
-                editor.language = media.language.clone().unwrap_or_default();
-                editor.tags = tags;
-                editor.tags_input = editor.tags.join(", ");
-                editor.updated_at = media.updated_at;
-                editor.is_dirty = false;
+            PersistedMediaState::Canonical { media, tags } => {
+                if let Some(editor) = self.media_editors.get_mut(media_id) {
+                    editor.title = media.title.clone().unwrap_or_default();
+                    editor.alt = media.alt.clone().unwrap_or_default();
+                    editor.caption = media.caption.clone().unwrap_or_default();
+                    editor.author = media.author.clone().unwrap_or_default();
+                    editor.language = media.language.clone().unwrap_or_default();
+                    editor.tags = tags;
+                    editor.tags_input = editor.tags.join(", ");
+                    editor.updated_at = media.updated_at;
+                    editor.is_dirty = false;
+                }
             }
         }
 
@@ -3155,16 +3376,7 @@ impl BdsApp {
             SettingsMsg::HideUnchangedRegionsChanged(b) => { state.hide_unchanged_regions = b; }
             SettingsMsg::SaveEditor => {
                 if let Some(db) = &self.db {
-                    let now = bds_core::util::now_unix_ms();
-                    let result = [
-                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.default_mode", &state.default_mode, now),
-                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.diff_view_style", &state.diff_view_style, now),
-                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.wrap_long_lines", if state.wrap_long_lines { "true" } else { "false" }, now),
-                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.hide_unchanged_regions", if state.hide_unchanged_regions { "true" } else { "false" }, now),
-                    ]
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>();
-                    match result {
+                    match save_editor_settings_state_impl(db, state) {
                         Ok(_) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
                         Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
                     }

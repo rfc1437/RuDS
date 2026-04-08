@@ -12,6 +12,12 @@ use "./i18n.allium" as i18n
 value SettingsView {
     search_query: String?               -- filters sections by keyword match
     active_sections: List<String>       -- visible sections after search filter
+    project_section: SettingsProjectSection?
+    editor_section: SettingsEditorSection?
+    categories: List<SettingsCategoryRow>
+    ai_section: SettingsAISection?
+    publishing_section: SettingsPublishingSection?
+    mcp_section: SettingsMCPSection?
 }
 
 value SettingsProjectSection {

@@ -343,17 +343,23 @@ fn route_content_area<'a>(
     script_editors: &'a HashMap<String, ScriptEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
-    _dashboard_state: Option<&'a DashboardState>,
+    dashboard_state: Option<&'a DashboardState>,
 ) -> Element<'a, Message> {
-    let Some(tab_id) = active_tab else {
-        return welcome::view(locale);
-    };
-    let Some(tab) = tabs.iter().find(|t| t.id == tab_id) else {
-        return welcome::view(locale);
-    };
-
-    match tab.tab_type {
-        TabType::Post => {
+    match route_kind(
+        tabs,
+        active_tab,
+        post_editors,
+        media_editors,
+        template_editors,
+        script_editors,
+        tags_view_state,
+        settings_state,
+        dashboard_state,
+    ) {
+        ContentRoute::Dashboard(state) => crate::views::dashboard::view(state, locale),
+        ContentRoute::Welcome => welcome::view(locale),
+        ContentRoute::Loading => loading_view(locale),
+        ContentRoute::Post(tab_id) => {
             if let Some(state) = post_editors.get(tab_id) {
                 let wrap = settings_state.map(|s| s.wrap_long_lines).unwrap_or(true);
                 post_editor::view(state, locale, wrap)
@@ -361,42 +367,187 @@ fn route_content_area<'a>(
                 loading_view(locale)
             }
         }
-        TabType::Media => {
+        ContentRoute::Media(tab_id) => {
             if let Some(state) = media_editors.get(tab_id) {
                 media_editor::view(state, locale, data_dir)
             } else {
                 loading_view(locale)
             }
         }
-        TabType::Templates => {
+        ContentRoute::Templates(tab_id) => {
             if let Some(state) = template_editors.get(tab_id) {
                 template_editor::view(state, locale)
             } else {
                 loading_view(locale)
             }
         }
-        TabType::Scripts => {
+        ContentRoute::Scripts(tab_id) => {
             if let Some(state) = script_editors.get(tab_id) {
                 script_editor::view(state, locale)
             } else {
                 loading_view(locale)
             }
         }
-        TabType::Tags => {
+        ContentRoute::Tags => {
             if let Some(state) = tags_view_state {
                 tags_view::view(state, locale)
             } else {
                 loading_view(locale)
             }
         }
-        TabType::Settings => {
+        ContentRoute::Settings => {
             if let Some(state) = settings_state {
                 settings_view::view(state, locale)
             } else {
                 loading_view(locale)
             }
         }
-        _ => welcome::view(locale),
+        ContentRoute::Placeholder(title) => welcome::tab_placeholder(title, None),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ContentRoute<'a> {
+    Dashboard(&'a DashboardState),
+    Welcome,
+    Loading,
+    Post(&'a str),
+    Media(&'a str),
+    Templates(&'a str),
+    Scripts(&'a str),
+    Tags,
+    Settings,
+    Placeholder(&'a str),
+}
+
+fn route_kind<'a>(
+    tabs: &'a [Tab],
+    active_tab: Option<&'a str>,
+    post_editors: &'a HashMap<String, PostEditorState>,
+    media_editors: &'a HashMap<String, MediaEditorState>,
+    template_editors: &'a HashMap<String, TemplateEditorState>,
+    script_editors: &'a HashMap<String, ScriptEditorState>,
+    tags_view_state: Option<&'a TagsViewState>,
+    settings_state: Option<&'a SettingsViewState>,
+    dashboard_state: Option<&'a DashboardState>,
+) -> ContentRoute<'a> {
+    let Some(tab_id) = active_tab else {
+        return dashboard_state.map(ContentRoute::Dashboard).unwrap_or(ContentRoute::Welcome);
+    };
+    let Some(tab) = tabs.iter().find(|t| t.id == tab_id) else {
+        return dashboard_state.map(ContentRoute::Dashboard).unwrap_or(ContentRoute::Welcome);
+    };
+
+    match tab.tab_type {
+        TabType::Post => {
+            if post_editors.contains_key(tab_id) { ContentRoute::Post(tab_id) } else { ContentRoute::Loading }
+        }
+        TabType::Media => {
+            if media_editors.contains_key(tab_id) { ContentRoute::Media(tab_id) } else { ContentRoute::Loading }
+        }
+        TabType::Templates => {
+            if template_editors.contains_key(tab_id) { ContentRoute::Templates(tab_id) } else { ContentRoute::Loading }
+        }
+        TabType::Scripts => {
+            if script_editors.contains_key(tab_id) { ContentRoute::Scripts(tab_id) } else { ContentRoute::Loading }
+        }
+        TabType::Tags => {
+            if tags_view_state.is_some() { ContentRoute::Tags } else { ContentRoute::Loading }
+        }
+        TabType::Settings => {
+            if settings_state.is_some() { ContentRoute::Settings } else { ContentRoute::Loading }
+        }
+        TabType::Style
+        | TabType::Chat
+        | TabType::Import
+        | TabType::MenuEditor
+        | TabType::MetadataDiff
+        | TabType::GitDiff
+        | TabType::Documentation
+        | TabType::ApiDocumentation
+        | TabType::SiteValidation
+        | TabType::TranslationValidation
+        | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tabs::{Tab, TabType};
+
+    fn tab(id: &str, tab_type: TabType, title: &str) -> Tab {
+        Tab {
+            id: id.to_string(),
+            tab_type,
+            title: title.to_string(),
+            is_transient: false,
+            is_dirty: false,
+        }
+    }
+
+    #[test]
+    fn unsupported_tool_tabs_do_not_fall_back_to_welcome_route() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let unsupported = [
+            TabType::Style,
+            TabType::Chat,
+            TabType::Import,
+            TabType::MenuEditor,
+            TabType::MetadataDiff,
+            TabType::GitDiff,
+            TabType::Documentation,
+            TabType::ApiDocumentation,
+            TabType::SiteValidation,
+            TabType::TranslationValidation,
+            TabType::FindDuplicates,
+        ];
+
+        for tab_type in unsupported {
+            let tabs = vec![tab("tool", tab_type.clone(), "Tool")];
+            let route = route_kind(
+                &tabs,
+                Some("tool"),
+                &empty_posts,
+                &empty_media,
+                &empty_templates,
+                &empty_scripts,
+                None,
+                None,
+                None,
+            );
+            match route {
+                ContentRoute::Placeholder(title) => assert_eq!(title, "Tool"),
+                _ => panic!("expected placeholder route for {tab_type:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn dashboard_is_used_when_available_and_no_tab_is_active() {
+        let dashboard = DashboardState::new("Test Project".to_string());
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let route = route_kind(
+            &[],
+            None,
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            None,
+            None,
+            Some(&dashboard),
+        );
+        match route {
+            ContentRoute::Dashboard(state) => assert_eq!(state.project_name, "Test Project"),
+            _ => panic!("expected dashboard route"),
+        }
     }
 }
 
