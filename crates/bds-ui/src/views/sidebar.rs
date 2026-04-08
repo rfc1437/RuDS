@@ -930,7 +930,7 @@ pub fn view(
         }
         SidebarView::Settings => {
             // Per sidebar_views.allium SettingsNav: 9 fixed-order sections
-            use crate::views::settings_view::{SettingsSection, SettingsMsg};
+            use crate::views::settings_view::SettingsSection;
             let sections: &[(&str, Option<SettingsSection>)] = &[
                 ("settings.nav.project", Some(SettingsSection::Project)),
                 ("settings.nav.editor", Some(SettingsSection::Editor)),
@@ -950,12 +950,12 @@ pub fn view(
                         .size(12)
                         .shaping(Shaping::Advanced);
                     let msg = if let Some(section) = section_opt {
-                        Message::Settings(SettingsMsg::FocusSection(section.clone()))
+                        Message::OpenSettingsSection(section.clone())
                     } else {
                         Message::OpenTab(Tab {
-                            id: "settings".to_string(),
-                            tab_type: TabType::Settings,
-                            title: t(locale, "common.settings"),
+                            id: "style".to_string(),
+                            tab_type: TabType::Style,
+                            title: t(locale, "tabBar.style"),
                             is_transient: false,
                             is_dirty: false,
                         })

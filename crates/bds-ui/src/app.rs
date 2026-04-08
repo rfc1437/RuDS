@@ -44,6 +44,7 @@ pub enum Message {
     SetActiveView(SidebarView),
     ToggleSidebar,
     TogglePanel,
+    OpenSettingsSection(crate::views::settings_view::SettingsSection),
 
     // Sidebar resize
     SidebarResizeStart,
@@ -746,6 +747,19 @@ impl BdsApp {
             }
             Message::TogglePanel => {
                 self.panel_visible = !self.panel_visible;
+                Task::none()
+            }
+            Message::OpenSettingsSection(section) => {
+                self.sidebar_view = SidebarView::Settings;
+                self.sidebar_visible = true;
+                self.open_singleton_tab(TabType::Settings, "common.settings");
+                if self.settings_state.is_none() {
+                    self.settings_state = Some(self.hydrate_settings_state());
+                }
+                if let Some(state) = self.settings_state.as_mut() {
+                    state.focus_section(section);
+                }
+                self.sync_menu_state();
                 Task::none()
             }
             Message::SidebarResizeStart => {
@@ -3463,16 +3477,7 @@ impl BdsApp {
                 }
             }
             SettingsMsg::FocusSection(section) => {
-                // Expand the target section, collapse all others
-                use crate::views::settings_view::SettingsSection;
-                let all_others: Vec<SettingsSection> = SettingsSection::all()
-                    .iter()
-                    .filter(|s| **s != section)
-                    .cloned()
-                    .collect();
-                state.collapsed = all_others;
-                // Clear search filter to ensure section is visible
-                state.search_query.clear();
+                state.focus_section(section);
             }
         }
         Task::none()

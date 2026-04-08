@@ -53,6 +53,7 @@ impl SettingsSection {
 pub struct SettingsViewState {
     pub search_query: String,
     pub collapsed: Vec<SettingsSection>,
+    pub active_section: Option<SettingsSection>,
     // Project
     pub project_name: String,
     pub project_description: text_editor::Content,
@@ -88,6 +89,7 @@ impl Clone for SettingsViewState {
         Self {
             search_query: self.search_query.clone(),
             collapsed: self.collapsed.clone(),
+            active_section: self.active_section.clone(),
             project_name: self.project_name.clone(),
             project_description: text_editor::Content::with_text(&self.project_description.text()),
             data_path: self.data_path.clone(),
@@ -113,6 +115,7 @@ impl Default for SettingsViewState {
         Self {
             search_query: String::new(),
             collapsed: Vec::new(),
+            active_section: None,
             project_name: String::new(),
             project_description: text_editor::Content::new(),
             data_path: String::new(),
@@ -130,6 +133,29 @@ impl Default for SettingsViewState {
             offline_mode: false,
             system_prompt: text_editor::Content::new(),
         }
+    }
+}
+
+impl SettingsViewState {
+    pub fn focus_section(&mut self, section: SettingsSection) {
+        self.collapsed = SettingsSection::all()
+            .iter()
+            .filter(|candidate| **candidate != section)
+            .cloned()
+            .collect();
+        self.search_query.clear();
+        self.active_section = Some(section);
+    }
+
+    fn ordered_sections(&self) -> Vec<SettingsSection> {
+        let mut sections = SettingsSection::all().to_vec();
+        if let Some(active) = &self.active_section {
+            if let Some(index) = sections.iter().position(|section| section == active) {
+                let focused = sections.remove(index);
+                sections.insert(0, focused);
+            }
+        }
+        sections
     }
 }
 
@@ -190,13 +216,13 @@ pub fn view<'a>(
     let query_lower = state.search_query.to_lowercase();
 
     let mut sections = column![].spacing(12).width(Length::Fill);
-    for section in SettingsSection::all() {
+    for section in state.ordered_sections() {
         let label = t(locale, section.i18n_key());
         if !query_lower.is_empty() && !label.to_lowercase().contains(&query_lower) {
             continue;
         }
-        let collapsed = state.collapsed.contains(section);
-        let section_el = render_section(state, section, &label, collapsed, locale);
+        let collapsed = state.collapsed.contains(&section);
+        let section_el = render_section(state, &section, &label, collapsed, locale);
         sections = sections.push(section_el);
     }
 
@@ -213,6 +239,38 @@ pub fn view<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsSection, SettingsViewState};
+
+    #[test]
+    fn focus_section_collapses_other_sections_and_clears_search() {
+        let mut state = SettingsViewState {
+            search_query: "publish".to_string(),
+            ..SettingsViewState::default()
+        };
+
+        state.focus_section(SettingsSection::Publishing);
+
+        assert_eq!(state.active_section, Some(SettingsSection::Publishing));
+        assert!(state.search_query.is_empty());
+        assert!(!state.collapsed.contains(&SettingsSection::Publishing));
+        assert!(state.collapsed.contains(&SettingsSection::Project));
+        assert!(state.collapsed.contains(&SettingsSection::MCP));
+    }
+
+    #[test]
+    fn focused_section_is_rendered_first() {
+        let mut state = SettingsViewState::default();
+        state.focus_section(SettingsSection::Technology);
+
+        let ordered = state.ordered_sections();
+
+        assert_eq!(ordered.first(), Some(&SettingsSection::Technology));
+        assert_eq!(ordered.len(), SettingsSection::all().len());
+    }
 }
 
 fn render_section<'a>(
