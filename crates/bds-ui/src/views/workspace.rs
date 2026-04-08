@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -10,18 +10,22 @@ use bds_core::model::{Media, Post, Project, Script, Template};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
-use crate::state::sidebar_filter::{PostFilter, MediaFilter};
+use crate::state::sidebar_filter::{MediaFilter, PostFilter};
 use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
 use crate::views::{
-    activity_bar, modal, panel, project_selector, sidebar, status_bar, tab_bar, toast, welcome,
-    post_editor::{self, PostEditorState},
-    media_editor::{self, MediaEditorState},
-    template_editor::{self, TemplateEditorState},
-    script_editor::{self, ScriptEditorState},
-    tags_view::{self, TagsViewState},
-    settings_view::{self, SettingsViewState},
+    activity_bar,
     dashboard::DashboardState,
+    media_editor::{self, MediaEditorState},
+    modal, panel,
+    post_editor::{self, PostEditorState},
+    project_selector,
+    script_editor::{self, ScriptEditorState},
+    settings_view::{self, SettingsViewState},
+    sidebar, status_bar, tab_bar,
+    tags_view::{self, TagsViewState},
+    template_editor::{self, TemplateEditorState},
+    toast, welcome,
 };
 
 /// Main content area background.
@@ -94,7 +98,7 @@ pub fn view<'a>(
     // Toasts
     toasts: &'a [Toast],
     // Modal
-    active_modal: Option<&'a modal::ModalState>,
+    active_modal: Option<modal::ModalState>,
     // Data directory (for thumbnail paths)
     data_dir: Option<&'a Path>,
     // Editor states
@@ -114,18 +118,29 @@ pub fn view<'a>(
 
     // Content area — route based on active tab type
     let content_area = route_content_area(
-        tabs, active_tab, locale, data_dir,
-        post_editors, media_editors, template_editors, script_editors,
-        tags_view_state, settings_state, dashboard_state,
+        tabs,
+        active_tab,
+        locale,
+        data_dir,
+        post_editors,
+        media_editors,
+        template_editors,
+        script_editors,
+        tags_view_state,
+        settings_state,
+        dashboard_state,
     );
 
     // Right column: tab bar + content + panel
     let mut right_col = column![tabs_el, content_area];
     if panel_visible {
         // Determine active tab type for panel tab availability (per layout.allium PanelTabAvailability)
-        let active_tab_type = active_tab.and_then(|id| tabs.iter().find(|t| t.id == id)).map(|t| &t.tab_type);
+        let active_tab_type = active_tab
+            .and_then(|id| tabs.iter().find(|t| t.id == id))
+            .map(|t| &t.tab_type);
         let active_tab_is_post = active_tab_type == Some(&TabType::Post);
-        let active_tab_is_post_or_media = active_tab_is_post || active_tab_type == Some(&TabType::Media);
+        let active_tab_is_post_or_media =
+            active_tab_is_post || active_tab_type == Some(&TabType::Media);
 
         right_col = right_col.push(separator_h());
         right_col = right_col.push(panel::view(
@@ -146,7 +161,22 @@ pub fn view<'a>(
     let mut main_row = row![activity];
 
     if sidebar_visible {
-        main_row = main_row.push(sidebar::view(sidebar_view, sidebar_posts, sidebar_media, sidebar_scripts, sidebar_templates, post_filter, media_filter, sidebar_media_thumbs, sidebar_posts_has_more, sidebar_media_has_more, sidebar_width, active_tab, locale, data_dir));
+        main_row = main_row.push(sidebar::view(
+            sidebar_view,
+            sidebar_posts,
+            sidebar_media,
+            sidebar_scripts,
+            sidebar_templates,
+            post_filter,
+            media_filter,
+            sidebar_media_thumbs,
+            sidebar_posts_has_more,
+            sidebar_media_has_more,
+            sidebar_width,
+            active_tab,
+            locale,
+            data_dir,
+        ));
 
         // Resize drag handle: 4px wide strip between sidebar and content
         let handle = container(Space::new(0, 0))
@@ -168,17 +198,21 @@ pub fn view<'a>(
     let main_row = main_row.height(Length::Fill);
 
     // Status bar at bottom — determine active post status for status dot
-    let active_post_status: Option<String> = active_tab.and_then(|id| {
-        tabs.iter().find(|t| t.id == id && t.tab_type == TabType::Post)
-    }).and_then(|tab| {
-        sidebar_posts.iter().find(|p| p.id == tab.id).map(|p| {
-            match p.status {
-                bds_core::model::PostStatus::Draft => "draft".to_string(),
-                bds_core::model::PostStatus::Published => "published".to_string(),
-                bds_core::model::PostStatus::Archived => "archived".to_string(),
-            }
+    let active_post_status: Option<String> = active_tab
+        .and_then(|id| {
+            tabs.iter()
+                .find(|t| t.id == id && t.tab_type == TabType::Post)
         })
-    });
+        .and_then(|tab| {
+            sidebar_posts
+                .iter()
+                .find(|p| p.id == tab.id)
+                .map(|p| match p.status {
+                    bds_core::model::PostStatus::Draft => "draft".to_string(),
+                    bds_core::model::PostStatus::Published => "published".to_string(),
+                    bds_core::model::PostStatus::Archived => "archived".to_string(),
+                })
+        });
 
     let status = status_bar::view(
         active_project_name,
@@ -201,9 +235,7 @@ pub fn view<'a>(
         let items: Vec<Element<'a, Message>> = UiLocale::all()
             .iter()
             .map(|&l| {
-                let flag_text = text(l.flag_emoji())
-                    .size(16)
-                    .shaping(Shaping::Advanced);
+                let flag_text = text(l.flag_emoji()).size(16).shaping(Shaping::Advanced);
 
                 button(flag_text)
                     .on_press(Message::SetUiLocale(l))
@@ -214,28 +246,33 @@ pub fn view<'a>(
             .collect();
 
         let dropdown_menu = container(
-            iced::widget::Column::with_children(items).spacing(2).padding(4),
+            iced::widget::Column::with_children(items)
+                .spacing(2)
+                .padding(4),
         )
         .style(status_bar::dropdown_bg);
 
         // Position at bottom-right, above status bar
         Some(
             container(
-                container(
-                    row![
-                        Space::with_width(Length::Fill),
-                        dropdown_menu,
-                        Space::with_width(Length::Fixed(40.0)),
-                    ]
-                )
+                container(row![
+                    Space::with_width(Length::Fill),
+                    dropdown_menu,
+                    Space::with_width(Length::Fixed(40.0)),
+                ])
                 .width(Length::Fill)
                 .align_y(Alignment::End)
-                .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 })
+                .padding(Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 25.0,
+                    left: 0.0,
+                }),
             )
             .width(Length::Fill)
             .height(Length::Fill)
             .align_y(Alignment::End)
-            .into()
+            .into(),
         )
     } else if project_dropdown_open {
         let dropdown = project_selector::view(projects, active_project_id, locale);
@@ -243,21 +280,24 @@ pub fn view<'a>(
         // Position at bottom-left, above status bar
         Some(
             container(
-                container(
-                    row![
-                        Space::with_width(Length::Fixed(8.0)),
-                        dropdown,
-                        Space::with_width(Length::Fill),
-                    ]
-                )
+                container(row![
+                    Space::with_width(Length::Fixed(8.0)),
+                    dropdown,
+                    Space::with_width(Length::Fill),
+                ])
                 .width(Length::Fill)
                 .align_y(Alignment::End)
-                .padding(Padding { top: 0.0, right: 0.0, bottom: 25.0, left: 0.0 })
+                .padding(Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 25.0,
+                    left: 0.0,
+                }),
             )
             .width(Length::Fill)
             .height(Length::Fill)
             .align_y(Alignment::End)
-            .into()
+            .into(),
         )
     } else {
         None
@@ -276,7 +316,7 @@ pub fn view<'a>(
 
     // Modal overlay (highest z-index)
     if let Some(modal_state) = active_modal {
-        overlays.push(modal::view(modal_state, locale));
+        overlays.push(modal::view(modal_state, locale, data_dir));
     }
 
     if overlays.is_empty() {
@@ -363,7 +403,9 @@ fn route_content_area<'a>(
 fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
     use crate::i18n::t;
     container(
-        text(t(locale, "tabBar.loading")).size(14).color(Color::from_rgb(0.5, 0.5, 0.5)),
+        text(t(locale, "tabBar.loading"))
+            .size(14)
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
     )
     .width(Length::Fill)
     .height(Length::Fill)

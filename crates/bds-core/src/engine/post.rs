@@ -182,11 +182,7 @@ pub fn update_post(
 }
 
 /// Publish a post: write file, clear content, set published_at.
-pub fn publish_post(
-    conn: &Connection,
-    data_dir: &Path,
-    post_id: &str,
-) -> EngineResult<Post> {
+pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
     let mut post = qp::get_post_by_id(conn, post_id)?;
 
     // Require Draft or Archived status
@@ -211,8 +207,7 @@ pub fn publish_post(
         c.clone()
     } else if abs_path.exists() {
         let file_content = fs::read_to_string(&abs_path)?;
-        let (_fm, body) = read_post_file(&file_content)
-            .map_err(|e| EngineError::Parse(e))?;
+        let (_fm, body) = read_post_file(&file_content).map_err(|e| EngineError::Parse(e))?;
         body
     } else {
         String::new()
@@ -235,8 +230,7 @@ pub fn publish_post(
 
     // Set published snapshot fields
     let tags_json = serde_json::to_string(&post.tags).unwrap_or_else(|_| "[]".into());
-    let cats_json =
-        serde_json::to_string(&post.categories).unwrap_or_else(|_| "[]".into());
+    let cats_json = serde_json::to_string(&post.categories).unwrap_or_else(|_| "[]".into());
     post.published_title = Some(post.title.clone());
     post.published_content = Some(body.clone());
     post.published_tags = Some(tags_json.clone());
@@ -313,7 +307,8 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
         ));
     }
     // Reload content from filesystem if transitioning from published (content is NULL)
-    if post.status == PostStatus::Published && post.content.is_none() && !post.file_path.is_empty() {
+    if post.status == PostStatus::Published && post.content.is_none() && !post.file_path.is_empty()
+    {
         let abs_path = data_dir.join(&post.file_path);
         if abs_path.exists() {
             if let Ok(file_content) = fs::read_to_string(&abs_path) {
@@ -329,12 +324,156 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     Ok(())
 }
 
-/// Delete a post and all related data.
-pub fn delete_post(
+/// Discard unpublished draft changes and restore the published version.
+pub fn discard_post_draft(
     conn: &Connection,
     data_dir: &Path,
     post_id: &str,
-) -> EngineResult<()> {
+) -> EngineResult<Post> {
+    let mut post = qp::get_post_by_id(conn, post_id)?;
+    if post.published_at.is_none() {
+        return Err(EngineError::Conflict(
+            "cannot discard changes for a post that was never published".to_string(),
+        ));
+    }
+
+    let (title, slug, excerpt, author, language, template_slug, do_not_translate, tags, categories, checksum) =
+        if !post.file_path.is_empty() {
+            let abs_path = data_dir.join(&post.file_path);
+            if abs_path.exists() {
+                let raw = fs::read_to_string(&abs_path)?;
+                let (fm, _body) = read_post_file(&raw).map_err(EngineError::Parse)?;
+                (
+                    fm.title,
+                    fm.slug,
+                    fm.excerpt,
+                    fm.author,
+                    fm.language,
+                    fm.template_slug,
+                    fm.do_not_translate,
+                    fm.tags,
+                    fm.categories,
+                    Some(content_hash(raw.as_bytes())),
+                )
+            } else {
+                (
+                    post.published_title.clone().unwrap_or_else(|| post.title.clone()),
+                    post.slug.clone(),
+                    post.published_excerpt.clone().or_else(|| post.excerpt.clone()),
+                    post.author.clone(),
+                    post.language.clone(),
+                    post.template_slug.clone(),
+                    post.do_not_translate,
+                    post.published_tags
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                        .unwrap_or_else(|| post.tags.clone()),
+                    post.published_categories
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                        .unwrap_or_else(|| post.categories.clone()),
+                    post.checksum.clone(),
+                )
+            }
+        } else {
+            (
+                post.published_title.clone().unwrap_or_else(|| post.title.clone()),
+                post.slug.clone(),
+                post.published_excerpt.clone().or_else(|| post.excerpt.clone()),
+                post.author.clone(),
+                post.language.clone(),
+                post.template_slug.clone(),
+                post.do_not_translate,
+                post.published_tags
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    .unwrap_or_else(|| post.tags.clone()),
+                post.published_categories
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    .unwrap_or_else(|| post.categories.clone()),
+                post.checksum.clone(),
+            )
+        };
+
+    post.title = title;
+    post.slug = slug;
+    post.excerpt = excerpt;
+    post.author = author;
+    post.language = language;
+    post.template_slug = template_slug;
+    post.do_not_translate = do_not_translate;
+    post.tags = tags;
+    post.categories = categories;
+    post.content = None;
+    post.status = PostStatus::Published;
+    post.checksum = checksum;
+    post.updated_at = now_unix_ms();
+    qp::update_post(conn, &post)?;
+    fts_index_post(conn, &post)?;
+    Ok(post)
+}
+
+/// Create a new draft post by duplicating an existing post.
+pub fn duplicate_post(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+) -> EngineResult<Post> {
+    let source = qp::get_post_by_id(conn, post_id)?;
+    let body = if let Some(ref content) = source.content {
+        content.clone()
+    } else if !source.file_path.is_empty() {
+        let abs_path = data_dir.join(&source.file_path);
+        if abs_path.exists() {
+            let raw = fs::read_to_string(&abs_path)?;
+            let (_fm, body) = read_post_file(&raw).map_err(EngineError::Parse)?;
+            body
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let duplicate_title = if source.title.is_empty() {
+        "Untitled Copy".to_string()
+    } else {
+        format!("{} Copy", source.title)
+    };
+
+    let duplicated = create_post(
+        conn,
+        data_dir,
+        &source.project_id,
+        &duplicate_title,
+        Some(&body),
+        source.tags.clone(),
+        source.categories.clone(),
+        source.author.as_deref(),
+        source.language.as_deref(),
+        source.template_slug.as_deref(),
+    )?;
+
+    update_post(
+        conn,
+        data_dir,
+        &duplicated.id,
+        None,
+        None,
+        Some(source.excerpt.as_deref()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(source.do_not_translate),
+    )
+}
+
+/// Delete a post and all related data.
+pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<()> {
     let post = qp::get_post_by_id(conn, post_id)?;
 
     // Delete .md file if exists
@@ -507,10 +646,7 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     let mut canonical_files = Vec::new();
     let mut translation_files = Vec::new();
 
-    for entry in WalkDir::new(&posts_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&posts_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -659,10 +795,14 @@ fn parse_post_links(content: &str) -> Vec<(String, String)> {
                         let url = &line[url_start..url_start + paren_end];
                         // Check if URL matches /YYYY/MM/DD/slug pattern
                         let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
-                        if parts.len() == 5 && parts[0].is_empty()
-                            && parts[1].len() == 4 && parts[1].chars().all(|c| c.is_ascii_digit())
-                            && parts[2].len() == 2 && parts[2].chars().all(|c| c.is_ascii_digit())
-                            && parts[3].len() == 2 && parts[3].chars().all(|c| c.is_ascii_digit())
+                        if parts.len() == 5
+                            && parts[0].is_empty()
+                            && parts[1].len() == 4
+                            && parts[1].chars().all(|c| c.is_ascii_digit())
+                            && parts[2].len() == 2
+                            && parts[2].chars().all(|c| c.is_ascii_digit())
+                            && parts[3].len() == 2
+                            && parts[3].chars().all(|c| c.is_ascii_digit())
                         {
                             links.push((parts[4].to_string(), link_text.to_string()));
                         }
@@ -862,8 +1002,7 @@ fn rebuild_translation(
     path: &Path,
 ) -> EngineResult<bool> {
     let content = fs::read_to_string(path)?;
-    let (fm, body) =
-        read_translation_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, body) = read_translation_file(&content).map_err(|e| EngineError::Parse(e))?;
 
     let rel_path = path
         .strip_prefix(data_dir)
@@ -938,6 +1077,44 @@ fn rebuild_translation(
             Ok(true)
         }
     }
+}
+
+// ───────────────────────────────────────────────────────────
+// M3: Editor Actions
+// ───────────────────────────────────────────────────────────
+
+/// Insert a link to another post in the editor buffer.
+/// Returns the Markdown link syntax.
+pub fn post_insert_link(slug: &str) -> String {
+    format!("[title](/YYYY/MM/DD/{slug})")
+}
+
+/// Insert a media reference in the editor buffer.
+/// Returns the Markdown syntax: ![alt](bds-media://id) or [name](bds-media://id)
+pub fn post_insert_media(media_id: &str, is_image: bool, original_name: &str) -> String {
+    if is_image {
+        format!(
+            "![]({bds_media_url})",
+            bds_media_url = format!("bds-media://{media_id}")
+        )
+    } else {
+        format!(
+            "[{original_name}]({bds_media_url})",
+            bds_media_url = format!("bds-media://{media_id}")
+        )
+    }
+}
+
+/// Get posts linked from a given post (outlinks).
+pub fn list_post_outlinks(conn: &Connection, post_id: &str) -> EngineResult<Vec<String>> {
+    let links = ql::list_links_by_source(conn, post_id)?;
+    Ok(links.into_iter().map(|l| l.target_post_id).collect())
+}
+
+/// Get posts linking to a given post (backlinks).
+pub fn list_post_backlinks(conn: &Connection, post_id: &str) -> EngineResult<Vec<String>> {
+    let links = ql::list_links_by_target(conn, post_id)?;
+    Ok(links.into_iter().map(|l| l.source_post_id).collect())
 }
 
 #[cfg(test)]
@@ -1182,6 +1359,103 @@ mod tests {
     }
 
     #[test]
+    fn discard_post_draft_restores_published_state() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Discard Me",
+            Some("published body"),
+            vec!["one".into()],
+            vec!["cat".into()],
+            Some("Alice"),
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Changed Title"),
+            None,
+            Some(Some("changed excerpt")),
+            Some("draft body"),
+            Some(vec!["two".into()]),
+            Some(vec!["other".into()]),
+            Some(Some("Bob")),
+            Some(Some("de")),
+            None,
+            Some(true),
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Draft);
+        assert_eq!(updated.content.as_deref(), Some("draft body"));
+
+        let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
+        assert_eq!(discarded.status, PostStatus::Published);
+        assert_eq!(discarded.title, published.title);
+        assert_eq!(discarded.excerpt, published.published_excerpt);
+        assert_eq!(discarded.tags, vec!["one"]);
+        assert_eq!(discarded.categories, vec!["cat"]);
+        assert_eq!(discarded.content, None);
+        assert_eq!(discarded.language.as_deref(), Some("en"));
+        assert!(!discarded.do_not_translate);
+    }
+
+    #[test]
+    fn duplicate_post_creates_new_draft_copy() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Original",
+            Some("body text"),
+            vec!["rust".into()],
+            vec!["guide".into()],
+            Some("Alice"),
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let source = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            None,
+            None,
+            Some(Some("excerpt")),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        )
+        .unwrap();
+
+        let duplicate = duplicate_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_ne!(duplicate.id, source.id);
+        assert_eq!(duplicate.status, PostStatus::Draft);
+        assert_eq!(duplicate.title, "Original Copy");
+        assert_eq!(duplicate.content.as_deref(), Some("body text"));
+        assert_eq!(duplicate.tags, source.tags);
+        assert_eq!(duplicate.categories, source.categories);
+        assert_eq!(duplicate.author, source.author);
+        assert_eq!(duplicate.language, source.language);
+        assert_eq!(duplicate.excerpt, source.excerpt);
+        assert!(duplicate.do_not_translate);
+        assert!(duplicate.slug.starts_with("original-copy"));
+    }
+
+    #[test]
     fn publish_preserves_published_at_on_republish() {
         let (db, dir) = setup();
         let post = create_post(
@@ -1388,8 +1662,7 @@ mod tests {
         fs::write(posts_dir.join("rebuilt-post.de.md"), trans_content).unwrap();
 
         // Run rebuild
-        let report =
-            rebuild_posts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_posts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.posts_created, 1);
         assert_eq!(report.translations_created, 1);
@@ -1402,17 +1675,13 @@ mod tests {
         assert_eq!(post.tags, vec!["test"]);
 
         // Verify translation in DB
-        let trans = qt::get_post_translation_by_post_and_language(
-            db.conn(),
-            "rebuild-post-1",
-            "de",
-        )
-        .unwrap();
+        let trans =
+            qt::get_post_translation_by_post_and_language(db.conn(), "rebuild-post-1", "de")
+                .unwrap();
         assert_eq!(trans.title, "Wiederhergestellter Beitrag");
 
         // Run rebuild again - should update, not create
-        let report2 =
-            rebuild_posts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report2 = rebuild_posts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
         assert_eq!(report2.posts_created, 0);
         assert_eq!(report2.posts_updated, 1);
         assert_eq!(report2.translations_created, 0);
@@ -1436,17 +1705,44 @@ mod tests {
     fn do_not_translate_guard_rejects_translation() {
         let (db, dir) = setup();
         let post = create_post(
-            db.conn(), dir.path(), "p1", "No Translate", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "No Translate",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         // Set do_not_translate
         update_post(
-            db.conn(), dir.path(), &post.id,
-            None, None, None, None, None, None, None, None, None, Some(true),
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            &post.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        )
+        .unwrap();
 
         let result = upsert_translation(
-            db.conn(), dir.path(), &post.id, "de", "German", None, Some("Inhalt"),
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "German",
+            None,
+            Some("Inhalt"),
         );
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1459,17 +1755,46 @@ mod tests {
     fn update_post_slug_uniqueness_enforced() {
         let (db, dir) = setup();
         create_post(
-            db.conn(), dir.path(), "p1", "First", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "First",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let second = create_post(
-            db.conn(), dir.path(), "p1", "Second", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Second",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let result = update_post(
-            db.conn(), dir.path(), &second.id,
-            None, Some("first"), None, None, None, None, None, None, None, None,
+            db.conn(),
+            dir.path(),
+            &second.id,
+            None,
+            Some("first"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -1478,9 +1803,18 @@ mod tests {
     fn update_published_post_transitions_to_draft() {
         let (db, dir) = setup();
         let post = create_post(
-            db.conn(), dir.path(), "p1", "Published", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Published",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
         // Archive then update to test auto-draft
@@ -1490,9 +1824,21 @@ mod tests {
 
         // Now update the published post
         let updated = update_post(
-            db.conn(), dir.path(), &post.id,
-            Some("New Title"), None, None, Some("new body"), None, None, None, None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("New Title"),
+            None,
+            None,
+            Some("new body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(updated.status, PostStatus::Draft);
     }
 
@@ -1507,9 +1853,18 @@ mod tests {
     fn publish_post_already_published_rejected() {
         let (db, dir) = setup();
         let post = create_post(
-            db.conn(), dir.path(), "p1", "Double Pub", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Double Pub",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
         let result = publish_post(db.conn(), dir.path(), &post.id);
@@ -1525,18 +1880,36 @@ mod tests {
         let (db, dir) = setup();
         // Create target post first
         let target = create_post(
-            db.conn(), dir.path(), "p1", "Target Post", Some("target body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Target Post",
+            Some("target body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         publish_post(db.conn(), dir.path(), &target.id).unwrap();
 
         // Create source post with a link to target
         let target_url = canonical_url(target.created_at, &target.slug);
         let body = format!("Check out [this post]({target_url}) for more.");
         let source = create_post(
-            db.conn(), dir.path(), "p1", "Source Post", Some(&body),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Source Post",
+            Some(&body),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         publish_post(db.conn(), dir.path(), &source.id).unwrap();
 
         // Verify link was created
@@ -1549,9 +1922,18 @@ mod tests {
     fn archive_from_published_status() {
         let (db, dir) = setup();
         let post = create_post(
-            db.conn(), dir.path(), "p1", "To Archive", Some("body"),
-            vec![], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "To Archive",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
         archive_post(db.conn(), dir.path(), &post.id).unwrap();
 

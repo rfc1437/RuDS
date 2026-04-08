@@ -92,6 +92,19 @@ const SCROLLBAR_THUMB: Color = Color::from_rgba(0.50, 0.53, 0.60, 0.7);
 const SCROLLBAR_THUMB_HOVER: Color = Color::from_rgba(0.60, 0.63, 0.70, 0.9);
 const MIN_THUMB_HEIGHT: f32 = 20.0;
 
+fn committed_text_input<'a>(text: Option<&'a str>, is_command_shortcut: bool) -> Option<&'a str> {
+    if is_command_shortcut {
+        return None;
+    }
+
+    let text = text?;
+    if text.is_empty() || !text.chars().any(|character| !character.is_control()) {
+        return None;
+    }
+
+    Some(text)
+}
+
 /// Convert syntect RGBA color to Iced Color.
 fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
     Color::from_rgba(
@@ -761,12 +774,13 @@ where
                 return Status::Captured;
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
-                key, modifiers, ..
+                key, modifiers, text, ..
             }) if state.is_focused => {
                 let vis = (bounds.height / metrics.line_height) as usize;
                 let is_cmd = modifiers.command();
                 let is_shift = modifiers.shift();
                 let is_alt = modifiers.alt();
+                let committed_text = committed_text_input(text.as_deref(), is_cmd);
 
                 // Helper: ensure cursor visible accounting for word wrap.
                 // Must be called while buf is still borrowed mutably.
@@ -953,10 +967,10 @@ where
                         }
                         self.emit_change(shell);
                     }
-                    keyboard::Key::Character(ref c) if !is_cmd => {
+                    _ if committed_text.is_some() => {
                         {
                             let mut buf = self.buffer.borrow_mut();
-                            buf.insert(c);
+                            buf.insert(committed_text.expect("committed text already checked"));
                             ensure_vis!(buf);
                         }
                         self.emit_change(shell);
@@ -977,6 +991,26 @@ impl<'a, Message> CodeEditor<'a, Message> {
             let text = self.buffer.borrow().text();
             shell.publish((on_change)(EditorMessage::ContentChanged(text)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::committed_text_input;
+
+    #[test]
+    fn committed_text_input_accepts_regular_and_ime_text() {
+        assert_eq!(committed_text_input(Some("a"), false), Some("a"));
+        assert_eq!(committed_text_input(Some("é"), false), Some("é"));
+        assert_eq!(committed_text_input(Some("にほん"), false), Some("にほん"));
+    }
+
+    #[test]
+    fn committed_text_input_ignores_shortcuts_and_control_only_text() {
+        assert_eq!(committed_text_input(Some("s"), true), None);
+        assert_eq!(committed_text_input(Some("\n"), false), None);
+        assert_eq!(committed_text_input(Some("\u{7f}"), false), None);
+        assert_eq!(committed_text_input(None, false), None);
     }
 }
 

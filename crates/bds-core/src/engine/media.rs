@@ -11,10 +11,12 @@ use crate::db::queries::media_translation as qmt;
 use crate::db::queries::post_media as qpm;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Media, MediaTranslation};
-use crate::util::sidecar::{MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar};
+use crate::util::sidecar::{
+    read_sidecar, read_translation_sidecar, MediaSidecar, MediaTranslationSidecar,
+};
 use crate::util::thumbnail::{
-    generate_all_thumbnails, image_dimensions, mime_from_extension,
-    ThumbnailFormat, THUMBNAIL_SIZES,
+    generate_all_thumbnails, image_dimensions, mime_from_extension, ThumbnailFormat,
+    THUMBNAIL_SIZES,
 };
 use crate::util::{
     atomic_write_str, content_hash, media_dir_path, media_sidecar_path,
@@ -33,9 +35,14 @@ pub struct MediaRebuildReport {
 
 /// Supported image MIME types for import (per media_processing.allium).
 const SUPPORTED_IMAGE_TYPES: &[&str] = &[
-    "image/jpeg", "image/png", "image/gif",
-    "image/webp", "image/tiff", "image/bmp",
-    "image/heic", "image/heif",
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/tiff",
+    "image/bmp",
+    "image/heic",
+    "image/heif",
 ];
 
 /// Import a media file (image, etc.) into the project.
@@ -184,11 +191,7 @@ pub fn update_media(
 }
 
 /// Delete a media item and all related artifacts.
-pub fn delete_media(
-    conn: &Connection,
-    data_dir: &Path,
-    media_id: &str,
-) -> EngineResult<()> {
+pub fn delete_media(conn: &Connection, data_dir: &Path, media_id: &str) -> EngineResult<()> {
     let media = qm::get_media_by_id(conn, media_id)?;
 
     // Delete binary file
@@ -363,10 +366,7 @@ pub fn rebuild_media_from_filesystem_with_progress(
     let mut canonical_sidecars = Vec::new();
     let mut translation_sidecars = Vec::new();
 
-    for entry in WalkDir::new(&media_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&media_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -931,7 +931,10 @@ mod tests {
         delete_media_translation(db.conn(), dir.path(), &media.id, "de").unwrap();
 
         // Sidecar should be gone
-        assert!(!abs_sidecar.exists(), "translation sidecar should be removed");
+        assert!(
+            !abs_sidecar.exists(),
+            "translation sidecar should be removed"
+        );
 
         // DB entry should be gone
         assert!(
@@ -964,7 +967,11 @@ createdAt: 2024-01-15T12:00:00.000Z
 updatedAt: 2024-01-15T12:00:00.000Z
 tags: [\"test\"]
 ---";
-        fs::write(media_subdir.join("abcdef12-test-uuid.png.meta"), sidecar_content).unwrap();
+        fs::write(
+            media_subdir.join("abcdef12-test-uuid.png.meta"),
+            sidecar_content,
+        )
+        .unwrap();
 
         // Write a translation sidecar
         let trans_sidecar_content = "\

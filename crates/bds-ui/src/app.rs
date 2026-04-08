@@ -8,7 +8,7 @@ use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::{Media, Post, Project, Script, Template};
+use bds_core::model::{Media, Post, Project, PublishingPreferences, Script, SshMode, Template};
 
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -22,14 +22,13 @@ use crate::state::tabs::{self, Tab, TabType};
 use crate::state::toast::{Toast, ToastLevel};
 use crate::views::{
     modal, workspace,
-    post_editor::{PostEditorState, PostEditorMsg, ResolvedPostLink},
+    post_editor::{LinkedMediaItem, PostEditorMsg, PostEditorState, ResolvedPostLink},
     media_editor::{MediaEditorState, MediaEditorMsg},
     template_editor::{TemplateEditorState, TemplateEditorMsg},
     script_editor::{ScriptEditorState, ScriptEditorMsg},
     tags_view::{self, TagsViewState, TagsMsg},
     settings_view::{SettingsViewState, SettingsMsg},
     dashboard::DashboardState,
-    translation_editor::{TranslationEditorState, TranslationEditorMsg},
 };
 
 // ───────────────────────────────────────────────────────────
@@ -130,7 +129,6 @@ pub enum Message {
     ScriptEditor(ScriptEditorMsg),
     Tags(TagsMsg),
     Settings(SettingsMsg),
-    TranslationEditor(TranslationEditorMsg),
 
     // Editor data loading
     PostLoaded(Result<Post, String>),
@@ -236,7 +234,6 @@ pub struct BdsApp {
     media_editors: HashMap<String, MediaEditorState>,
     template_editors: HashMap<String, TemplateEditorState>,
     script_editors: HashMap<String, ScriptEditorState>,
-    translation_editors: HashMap<String, TranslationEditorState>,
     tags_view_state: Option<TagsViewState>,
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
@@ -362,7 +359,6 @@ impl BdsApp {
                 media_editors: HashMap::new(),
                 template_editors: HashMap::new(),
                 script_editors: HashMap::new(),
-                translation_editors: HashMap::new(),
                 tags_view_state: None,
                 settings_state: None,
                 dashboard_state: None,
@@ -952,27 +948,47 @@ impl BdsApp {
                     modal::ConfirmAction::DeleteProject(id) => {
                         Task::done(Message::DeleteProject(id))
                     }
-                    modal::ConfirmAction::DeletePost(_id) => {
-                        // Post deletion will be implemented in M3 editors
-                        Task::none()
-                    }
-                    modal::ConfirmAction::DeleteMedia(_id) => {
-                        Task::none()
-                    }
-                    modal::ConfirmAction::DeleteScript(_id) => {
-                        Task::none()
-                    }
-                    modal::ConfirmAction::DeleteTemplate(_id) => {
-                        Task::none()
-                    }
-                    modal::ConfirmAction::MergeTags { .. } => {
-                        Task::none()
+                    modal::ConfirmAction::DeletePost(id) => self.delete_post_editor(&id),
+                    modal::ConfirmAction::DeleteMedia(id) => self.delete_media_editor(&id),
+                    modal::ConfirmAction::DeleteScript(id) => self.delete_script_editor(&id),
+                    modal::ConfirmAction::DeleteTemplate(id) => self.delete_template_editor(&id),
+                    modal::ConfirmAction::DeleteTag(id) => self.delete_tag(&id),
+                    modal::ConfirmAction::MergeTags { source, target } => {
+                        self.merge_tags(&source, &target)
                     }
                 }
             }
 
             // ── Editor view messages ──
             Message::PostEditor(msg) => {
+                enum DeferredPostAction {
+                    None,
+                    Save(String),
+                    Publish(String),
+                    Duplicate(String),
+                    Discard(String),
+                    ShowDelete { tab_id: String, name: String },
+                    OpenInsertLink(String),
+                    OpenInsertMedia { post_id: String, link_only: bool },
+                    OpenGallery(String),
+                    OpenLinkedMedia(String),
+                    UnlinkLinkedMedia { post_id: String, media_id: String },
+                    InsertSelectedLink { post_id: String, linked_post_id: String },
+                    CreateLinkedPost(String),
+                    InsertSelectedMedia { post_id: String, media_id: String },
+                    SetLinkTab(modal::PostInsertLinkTab),
+                    SetLinkSearch(String),
+                    SetExternalUrl(String),
+                    SetExternalText(String),
+                    InsertExternalLink,
+                    SetMediaSearch(String),
+                    SelectGalleryImage(usize),
+                    GalleryPrevious,
+                    GalleryNext,
+                    GalleryCloseLightbox,
+                }
+
+                let mut deferred = DeferredPostAction::None;
                 if let Some(tab_id) = self.active_tab.clone() {
                     if let Some(state) = self.post_editors.get_mut(&tab_id) {
                         match msg {
@@ -984,6 +1000,7 @@ impl BdsApp {
                                 state.is_dirty = true;
                             }
                             PostEditorMsg::AuthorChanged(s) => { state.author = s; state.is_dirty = true; }
+                            PostEditorMsg::LanguageChanged(s) => { state.language = s; state.is_dirty = true; }
                             PostEditorMsg::TemplateSlugChanged(s) => { state.template_slug = s; state.is_dirty = true; }
                             PostEditorMsg::ToggleDoNotTranslate(b) => { state.do_not_translate = b; state.is_dirty = true; }
                             PostEditorMsg::ToggleMetadata => { state.metadata_expanded = !state.metadata_expanded; }
@@ -1016,27 +1033,216 @@ impl BdsApp {
                                 state.is_dirty = true;
                             }
                             PostEditorMsg::Save => {
-                                return self.save_post_editor(&tab_id);
+                                deferred = DeferredPostAction::Save(tab_id.clone());
                             }
                             PostEditorMsg::Publish => {
-                                return self.publish_post_editor(&tab_id);
+                                deferred = DeferredPostAction::Publish(tab_id.clone());
+                            }
+                            PostEditorMsg::Duplicate => {
+                                deferred = DeferredPostAction::Duplicate(tab_id.clone());
+                            }
+                            PostEditorMsg::Discard => {
+                                deferred = DeferredPostAction::Discard(tab_id.clone());
                             }
                             PostEditorMsg::Delete => {
-                                let name = state.title.clone();
-                                return Task::done(Message::ShowModal(modal::ModalState::ConfirmDelete {
-                                    entity_name: name,
-                                    references: Vec::new(),
-                                    on_confirm: modal::ConfirmAction::DeletePost(tab_id),
-                                }));
+                                deferred = DeferredPostAction::ShowDelete {
+                                    tab_id: tab_id.clone(),
+                                    name: state.title.clone(),
+                                };
                             }
-                        }
-                        // Mark tab dirty
-                        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == *state.post_id.as_str()) {
+                            PostEditorMsg::InsertLink => {
+                                deferred = DeferredPostAction::OpenInsertLink(state.post_id.clone());
+                            }
+                            PostEditorMsg::InsertMedia => {
+                                deferred = DeferredPostAction::OpenInsertMedia {
+                                    post_id: state.post_id.clone(),
+                                    link_only: false,
+                                };
+                            }
+                            PostEditorMsg::Gallery => {
+                                deferred = DeferredPostAction::OpenGallery(state.post_id.clone());
+                            }
+                            PostEditorMsg::LinkExistingMedia => {
+                                deferred = DeferredPostAction::OpenInsertMedia {
+                                    post_id: state.post_id.clone(),
+                                    link_only: true,
+                                };
+                            }
+                            PostEditorMsg::OpenLinkedMedia(media_id) => {
+                                deferred = DeferredPostAction::OpenLinkedMedia(media_id);
+                            }
+                            PostEditorMsg::UnlinkLinkedMedia(media_id) => {
+                                deferred = DeferredPostAction::UnlinkLinkedMedia {
+                                    post_id: state.post_id.clone(),
+                                    media_id,
+                                };
+                            }
+                            PostEditorMsg::PostInsertLinkSelected(linked_post_id) => {
+                                deferred = DeferredPostAction::InsertSelectedLink {
+                                    post_id: state.post_id.clone(),
+                                    linked_post_id,
+                                };
+                            }
+                            PostEditorMsg::PostInsertLinkCreate => {
+                                deferred = DeferredPostAction::CreateLinkedPost(state.post_id.clone());
+                            }
+                            PostEditorMsg::PostInsertMediaSelected(media_id) => {
+                                deferred = DeferredPostAction::InsertSelectedMedia {
+                                    post_id: state.post_id.clone(),
+                                    media_id,
+                                };
+                            }
+                            PostEditorMsg::PostGalleryImageSelected(index) => {
+                                deferred = DeferredPostAction::SelectGalleryImage(index);
+                            }
+                            PostEditorMsg::PostInsertLinkTabSwitch(tab) => {
+                                deferred = DeferredPostAction::SetLinkTab(tab);
+                            }
+                            PostEditorMsg::PostInsertLinkSearch(query) => {
+                                deferred = DeferredPostAction::SetLinkSearch(query);
+                            }
+                            PostEditorMsg::PostInsertLinkUrlChanged(url) => {
+                                deferred = DeferredPostAction::SetExternalUrl(url);
+                            }
+                            PostEditorMsg::PostInsertLinkTextChanged(text) => {
+                                deferred = DeferredPostAction::SetExternalText(text);
+                            }
+                            PostEditorMsg::PostInsertLinkExternalInsert => {
+                                deferred = DeferredPostAction::InsertExternalLink;
+                            }
+                            PostEditorMsg::PostInsertMediaSearch(query) => {
+                                deferred = DeferredPostAction::SetMediaSearch(query);
+                            }
+                            PostEditorMsg::PostGalleryPrevious => {
+                                deferred = DeferredPostAction::GalleryPrevious;
+                            }
+                            PostEditorMsg::PostGalleryNext => {
+                                deferred = DeferredPostAction::GalleryNext;
+                            }
+                            PostEditorMsg::PostGalleryCloseLightbox => {
+                                deferred = DeferredPostAction::GalleryCloseLightbox;
+                            }
+                            }
+
+                        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == state.post_id) {
                             tab.is_dirty = state.is_dirty;
                         }
                     }
                 }
-                Task::none()
+
+                match deferred {
+                    DeferredPostAction::None => Task::none(),
+                    DeferredPostAction::Save(tab_id) => self.save_post_editor(&tab_id),
+                    DeferredPostAction::Publish(tab_id) => self.publish_post_editor(&tab_id),
+                    DeferredPostAction::Duplicate(tab_id) => self.duplicate_post_editor(&tab_id),
+                    DeferredPostAction::Discard(tab_id) => self.discard_post_editor(&tab_id),
+                    DeferredPostAction::ShowDelete { tab_id, name } => Task::done(Message::ShowModal(
+                        modal::ModalState::ConfirmDelete {
+                            entity_name: name,
+                            references: Vec::new(),
+                            on_confirm: modal::ConfirmAction::DeletePost(tab_id),
+                        },
+                    )),
+                    DeferredPostAction::OpenInsertLink(post_id) => self.insert_link_modal(&post_id),
+                    DeferredPostAction::OpenInsertMedia { post_id, link_only } => {
+                        self.insert_media_modal(&post_id, link_only)
+                    }
+                    DeferredPostAction::OpenGallery(post_id) => self.post_gallery(&post_id),
+                    DeferredPostAction::OpenLinkedMedia(media_id) => {
+                        let title = self
+                            .db
+                            .as_ref()
+                            .and_then(|db| {
+                                bds_core::db::queries::media::get_media_by_id(db.conn(), &media_id)
+                                    .ok()
+                                    .map(|media| media.title.unwrap_or(media.original_name))
+                            })
+                            .unwrap_or_else(|| media_id.clone());
+                        Task::done(Message::OpenTab(Tab {
+                            id: media_id,
+                            tab_type: TabType::Media,
+                            title,
+                            is_transient: false,
+                            is_dirty: false,
+                        }))
+                    }
+                    DeferredPostAction::UnlinkLinkedMedia { post_id, media_id } => {
+                        if let (Some(db), Some(data_dir)) = (&self.db, &self.data_dir) {
+                            if let Err(err) = engine::post_media::unlink_media_from_post(
+                                db.conn(),
+                                data_dir,
+                                &post_id,
+                                &media_id,
+                            ) {
+                                self.notify(ToastLevel::Error, &format!("Failed to unlink media: {err}"));
+                                return Task::none();
+                            }
+                            self.refresh_post_relationships(&post_id);
+                        }
+                        Task::none()
+                    }
+                    DeferredPostAction::InsertSelectedLink { post_id, linked_post_id } => {
+                        self.insert_selected_post_link(&post_id, &linked_post_id)
+                    }
+                    DeferredPostAction::CreateLinkedPost(post_id) => self.insert_created_post_link(&post_id),
+                    DeferredPostAction::InsertSelectedMedia { post_id, media_id } => {
+                        self.insert_selected_media(&post_id, &media_id)
+                    }
+                    DeferredPostAction::SetLinkTab(tab) => {
+                        self.refresh_post_insert_link_modal(Some(tab), None, None, None);
+                        Task::none()
+                    }
+                    DeferredPostAction::SetLinkSearch(query) => {
+                        self.refresh_post_insert_link_modal(None, Some(query), None, None);
+                        Task::none()
+                    }
+                    DeferredPostAction::SetExternalUrl(url) => {
+                        self.refresh_post_insert_link_modal(None, None, Some(url), None);
+                        Task::none()
+                    }
+                    DeferredPostAction::SetExternalText(text) => {
+                        self.refresh_post_insert_link_modal(None, None, None, Some(text));
+                        Task::none()
+                    }
+                    DeferredPostAction::InsertExternalLink => {
+                        if let Some(modal::ModalState::PostInsertLink {
+                            post_id,
+                            external_url,
+                            external_text,
+                            ..
+                        }) = self.active_modal.clone()
+                        {
+                            if let Some(markdown) = modal::external_link_markdown(&external_url, &external_text) {
+                                self.insert_markdown_into_post(&post_id, &markdown)
+                            } else {
+                                self.notify(ToastLevel::Error, &t(self.ui_locale, "modal.postInsertLink.urlRequired"));
+                                Task::none()
+                            }
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    DeferredPostAction::SetMediaSearch(query) => {
+                        self.refresh_insert_media_modal(query);
+                        Task::none()
+                    }
+                    DeferredPostAction::SelectGalleryImage(index) => {
+                        self.update_gallery_selection(Some(index));
+                        Task::none()
+                    }
+                    DeferredPostAction::GalleryPrevious => {
+                        self.step_gallery_selection(-1);
+                        Task::none()
+                    }
+                    DeferredPostAction::GalleryNext => {
+                        self.step_gallery_selection(1);
+                        Task::none()
+                    }
+                    DeferredPostAction::GalleryCloseLightbox => {
+                        self.update_gallery_selection(None);
+                        Task::none()
+                    }
+                }
             }
             Message::MediaEditor(msg) => {
                 if let Some(tab_id) = self.active_tab.clone() {
@@ -1046,6 +1252,8 @@ impl BdsApp {
                             MediaEditorMsg::AltChanged(s) => { state.alt = s; state.is_dirty = true; }
                             MediaEditorMsg::CaptionChanged(s) => { state.caption = s; state.is_dirty = true; }
                             MediaEditorMsg::AuthorChanged(s) => { state.author = s; state.is_dirty = true; }
+                            MediaEditorMsg::LanguageChanged(s) => { state.language = s; state.is_dirty = true; }
+                            MediaEditorMsg::TagsChanged(s) => { state.tags_input = s; state.is_dirty = true; }
                             MediaEditorMsg::SwitchLanguage(lang) => { state.switch_language(&lang); }
                             MediaEditorMsg::Save => {
                                 return self.save_media_editor(&tab_id);
@@ -1159,21 +1367,6 @@ impl BdsApp {
             Message::Settings(msg) => {
                 self.handle_settings_msg(msg)
             }
-            Message::TranslationEditor(msg) => {
-                if let Some(tab_id) = self.active_tab.clone() {
-                    if let Some(state) = self.translation_editors.get_mut(&tab_id) {
-                        match msg {
-                            TranslationEditorMsg::TitleChanged(s) => { state.title = s; state.is_dirty = true; }
-                            TranslationEditorMsg::ExcerptChanged(s) => { state.excerpt = s; state.is_dirty = true; }
-                            TranslationEditorMsg::ContentChanged(s) => { state.content = s; state.is_dirty = true; }
-                            TranslationEditorMsg::Save | TranslationEditorMsg::Publish | TranslationEditorMsg::Delete => {
-                                // Translation save/publish/delete will be wired to engine in future
-                            }
-                        }
-                    }
-                }
-                Task::none()
-            }
 
             // ── Editor data loading ──
             Message::PostLoaded(result) => {
@@ -1205,7 +1398,15 @@ impl BdsApp {
                             }
                         }
                         let (outlinks, backlinks) = self.load_post_links(&post.id);
-                        let state = PostEditorState::from_post(&post, &self.blog_languages, &translations, outlinks, backlinks);
+                        let linked_media = self.load_post_media_items(&post.id);
+                        let state = PostEditorState::from_post(
+                            &post,
+                            &self.blog_languages,
+                            &translations,
+                            outlinks,
+                            backlinks,
+                            linked_media,
+                        );
                         self.post_editors.insert(post.id.clone(), state);
                     }
                     Err(e) => self.notify(ToastLevel::Error, &e),
@@ -1294,7 +1495,7 @@ impl BdsApp {
             &self.theme_badge,
             self.ui_locale,
             &self.toasts,
-            self.active_modal.as_ref(),
+            self.active_modal.clone(),
             self.data_dir.as_deref(),
             &self.post_editors,
             &self.media_editors,
@@ -1916,49 +2117,18 @@ impl BdsApp {
     // ── Editor save/publish helpers ──
 
     fn save_post_editor(&mut self, post_id: &str) -> Task<Message> {
-        let Some(state) = self.post_editors.get(post_id) else { return Task::none() };
-        let Some(ref db) = self.db else { return Task::none() };
-        let Some(ref data_dir) = self.data_dir else { return Task::none() };
-
-        let excerpt_val = if state.excerpt.is_empty() { None } else { Some(state.excerpt.as_str()) };
-        let author_val = if state.author.is_empty() { None } else { Some(state.author.as_str()) };
-        let tmpl_val = if state.template_slug.is_empty() { None } else { Some(state.template_slug.as_str()) };
-
-        match engine::post::update_post(
-            db.conn(),
-            data_dir,
-            &state.post_id,
-            Some(&state.title),
-            Some(&state.slug),
-            Some(excerpt_val),
-            Some(&state.content),
-            None, // tags
-            None, // categories
-            Some(author_val),
-            None, // language
-            Some(tmpl_val),
-            Some(state.do_not_translate),
-        ) {
-            Ok(post) => {
-                let s = self.post_editors.get_mut(post_id).unwrap();
-                s.is_dirty = false;
-                s.updated_at = post.updated_at;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == post.id) {
-                    tab.is_dirty = false;
-                    if !post.title.is_empty() {
-                        tab.title = post.title.clone();
-                    }
-                }
-                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-            }
-            Err(e) => {
-                self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
-            }
+        match self.persist_post_editor_state(post_id) {
+            Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
         }
         Task::none()
     }
 
     fn publish_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        if let Err(e) = self.persist_post_editor_state(post_id) {
+            self.notify(ToastLevel::Error, &format!("Publish failed: {e}"));
+            return Task::none();
+        }
         let Some(ref db) = self.db else { return Task::none() };
         let Some(ref data_dir) = self.data_dir else { return Task::none() };
         match engine::post::publish_post(db.conn(), data_dir, post_id) {
@@ -1966,6 +2136,12 @@ impl BdsApp {
                 if let Some(s) = self.post_editors.get_mut(post_id) {
                     s.status = post.status.clone();
                     s.is_dirty = false;
+                    s.updated_at = post.updated_at;
+                    s.published_at = post.published_at;
+                    for draft in s.translation_drafts.values_mut() {
+                        draft.status = bds_core::model::PostStatus::Published;
+                        draft.is_dirty = false;
+                    }
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.published"));
             }
@@ -1976,45 +2152,314 @@ impl BdsApp {
         Task::none()
     }
 
-    fn save_media_editor(&mut self, media_id: &str) -> Task<Message> {
-        let Some(state) = self.media_editors.get(media_id) else { return Task::none() };
-        let Some(ref db) = self.db else { return Task::none() };
-
-        // Build a Media struct from editor state for the update call
-        let media = bds_core::model::Media {
-            id: state.media_id.clone(),
-            project_id: self.active_project.as_ref().map(|p| p.id.clone()).unwrap_or_default(),
-            filename: state.filename.clone(),
-            original_name: state.original_name.clone(),
-            mime_type: state.mime_type.clone(),
-            size: state.size,
-            width: state.width,
-            height: state.height,
-            title: Some(state.title.clone()),
-            alt: Some(state.alt.clone()),
-            caption: Some(state.caption.clone()),
-            author: Some(state.author.clone()),
-            language: if state.language.is_empty() { None } else { Some(state.language.clone()) },
-            file_path: state.file_path.clone(),
-            sidecar_path: String::new(),
-            checksum: None,
-            tags: state.tags.clone(),
-            created_at: state.created_at,
-            updated_at: state.updated_at,
+    fn insert_link_modal(&mut self, post_id: &str) -> Task<Message> {
+        let state = match self.post_editors.get(post_id) {
+            Some(s) => s.clone(),
+            None => return Task::none(),
         };
 
-        match bds_core::db::queries::media::update_media(db.conn(), &media) {
-            Ok(()) => {
-                let s = self.media_editors.get_mut(media_id).unwrap();
-                s.is_dirty = false;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == media.id) {
-                    tab.is_dirty = false;
-                }
-                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+        self.active_modal = Some(modal::ModalState::PostInsertLink {
+            post_id: post_id.to_string(),
+            title: state.title,
+            results: self.query_post_link_results(post_id, ""),
+            search_query: String::new(),
+            active_tab: modal::PostInsertLinkTab::Internal,
+            external_url: String::new(),
+            external_text: String::new(),
+        });
+        Task::none()
+    }
+
+    fn insert_media_modal(&mut self, post_id: &str, link_only: bool) -> Task<Message> {
+        let state = match self.post_editors.get(post_id) {
+            Some(s) => s.clone(),
+            None => return Task::none(),
+        };
+
+        self.active_modal = Some(modal::ModalState::InsertMedia {
+            post_id: post_id.to_string(),
+            title: state.title,
+            media_list: self.query_post_insert_media_results(""),
+            search_query: String::new(),
+            link_only,
+        });
+        Task::none()
+    }
+
+    fn post_gallery(&mut self, post_id: &str) -> Task<Message> {
+        let state = match self.post_editors.get(post_id) {
+            Some(s) => s.clone(),
+            None => return Task::none(),
+        };
+
+        let media_list = if let Some(ref db) = self.db {
+            engine::post_media::list_media_for_post(db.conn(), post_id).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        self.active_modal = Some(modal::ModalState::PostGallery {
+            post_id: post_id.to_string(),
+            title: state.title,
+            media_list,
+            selected_index: None,
+        });
+        Task::none()
+    }
+
+    fn query_post_link_results(&self, current_post_id: &str, search_query: &str) -> Vec<modal::InsertLinkResult> {
+        let (Some(db), Some(project)) = (&self.db, &self.active_project) else {
+            return Vec::new();
+        };
+        let query = search_query.trim();
+        if query.chars().count() < 2 {
+            return Vec::new();
+        }
+
+        let filters = bds_core::db::fts::PostSearchFilters {
+            limit: Some(20),
+            ..Default::default()
+        };
+
+        let ids = bds_core::db::fts::search_posts_filtered(
+            db.conn(),
+            query,
+            &self.content_language,
+            &filters,
+        )
+        .map(|results| results.post_ids)
+        .unwrap_or_default();
+
+        ids.into_iter()
+            .filter_map(|post_id| bds_core::db::queries::post::get_post_by_id(db.conn(), &post_id).ok())
+            .filter(|post| post.project_id == project.id && post.id != current_post_id)
+            .map(|post| modal::InsertLinkResult {
+                post_id: post.id,
+                title: post.title,
+                status: match post.status {
+                    bds_core::model::PostStatus::Draft => "draft".to_string(),
+                    bds_core::model::PostStatus::Published => "published".to_string(),
+                    bds_core::model::PostStatus::Archived => "archived".to_string(),
+                },
+                canonical_url: bds_core::engine::post::canonical_url(post.created_at, &post.slug),
+            })
+            .collect()
+    }
+
+    fn query_post_insert_media_results(&self, search_query: &str) -> Vec<Media> {
+        let (Some(db), Some(project)) = (&self.db, &self.active_project) else {
+            return Vec::new();
+        };
+
+        let filters = bds_core::db::queries::media::MediaFilterParams {
+            search_query: search_query.trim().to_string(),
+            ..Default::default()
+        };
+
+        bds_core::db::queries::media::list_media_filtered(db.conn(), &project.id, &filters, 24, 0)
+            .unwrap_or_default()
+    }
+
+    fn insert_markdown_into_post(&mut self, post_id: &str, markdown: &str) -> Task<Message> {
+        let Some(state) = self.post_editors.get_mut(post_id) else { return Task::none() };
+        state.insert_markdown_at_cursor(markdown);
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == post_id) {
+            tab.is_dirty = true;
+        }
+        self.active_modal = None;
+        self.save_post_editor(post_id)
+    }
+
+    fn insert_selected_post_link(&mut self, post_id: &str, linked_post_id: &str) -> Task<Message> {
+        let Some(ref db) = self.db else { return Task::none() };
+        let Ok(linked_post) = bds_core::db::queries::post::get_post_by_id(db.conn(), linked_post_id) else {
+            self.notify(ToastLevel::Error, &t(self.ui_locale, "modal.postInsertLink.loadFailed"));
+            return Task::none();
+        };
+
+        let markdown = bds_core::engine::post::post_insert_link(&linked_post.slug)
+            .replacen("title", &linked_post.title, 1);
+        self.insert_markdown_into_post(post_id, &markdown)
+    }
+
+    fn insert_created_post_link(&mut self, post_id: &str) -> Task<Message> {
+        let Some(modal::ModalState::PostInsertLink { search_query, .. }) = self.active_modal.clone() else {
+            return Task::none();
+        };
+        let title = search_query.trim();
+        if title.is_empty() {
+            self.notify(ToastLevel::Error, &t(self.ui_locale, "modal.postInsertLink.titleRequired"));
+            return Task::none();
+        }
+
+        let Some(ref db) = self.db else { return Task::none() };
+        let Some(ref data_dir) = self.data_dir else { return Task::none() };
+        let Some(ref project) = self.active_project else { return Task::none() };
+
+        match engine::post::create_post(
+            db.conn(),
+            data_dir,
+            &project.id,
+            title,
+            Some(""),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        ) {
+            Ok(post) => {
+                let markdown = bds_core::engine::post::post_insert_link(&post.slug)
+                    .replacen("title", &post.title, 1);
+                self.insert_markdown_into_post(post_id, &markdown)
             }
-            Err(e) => {
-                self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
+            Err(_) => {
+                self.notify(ToastLevel::Error, &t(self.ui_locale, "modal.postInsertLink.createFailed"));
+                Task::none()
             }
+        }
+    }
+
+    fn insert_selected_media(&mut self, post_id: &str, media_id: &str) -> Task<Message> {
+        let Some(ref db) = self.db else { return Task::none() };
+        let Ok(media) = bds_core::db::queries::media::get_media_by_id(db.conn(), media_id) else {
+            self.notify(ToastLevel::Error, &t(self.ui_locale, "modal.insertMedia.loadFailed"));
+            return Task::none();
+        };
+
+        let link_only = matches!(
+            self.active_modal,
+            Some(modal::ModalState::InsertMedia { link_only: true, .. })
+        );
+
+        if let (Some(data_dir), Some(project)) = (&self.data_dir, &self.active_project) {
+            let already_linked = engine::post_media::list_media_for_post(db.conn(), post_id)
+                .map(|items| items.into_iter().any(|item| item.id == media_id))
+                .unwrap_or(false);
+            if !already_linked {
+                let sort_order = engine::post_media::list_media_for_post(db.conn(), post_id)
+                    .map(|items| items.len() as i32)
+                    .unwrap_or(0);
+                let _ = engine::post_media::link_media_to_post(
+                    db.conn(),
+                    data_dir,
+                    &project.id,
+                    post_id,
+                    media_id,
+                    sort_order,
+                );
+            }
+        }
+
+        self.refresh_post_relationships(post_id);
+
+        if link_only {
+            self.active_modal = None;
+            return Task::none();
+        }
+
+        let markdown = bds_core::engine::post::post_insert_media(
+            &media.id,
+            media.mime_type.starts_with("image/"),
+            &media.original_name,
+        );
+        self.insert_markdown_into_post(post_id, &markdown)
+    }
+
+    fn refresh_post_insert_link_modal(
+        &mut self,
+        active_tab: Option<modal::PostInsertLinkTab>,
+        search_query: Option<String>,
+        external_url: Option<String>,
+        external_text: Option<String>,
+    ) {
+        let Some(modal::ModalState::PostInsertLink {
+            post_id,
+            title,
+            search_query: current_query,
+            active_tab: current_tab,
+            external_url: current_url,
+            external_text: current_text,
+            ..
+        }) = self.active_modal.clone() else {
+            return;
+        };
+
+        let next_query = search_query.unwrap_or(current_query);
+        let next_tab = active_tab.unwrap_or(current_tab);
+        let next_url = external_url.unwrap_or(current_url);
+        let next_text = external_text.unwrap_or(current_text);
+
+        self.active_modal = Some(modal::ModalState::PostInsertLink {
+            post_id: post_id.clone(),
+            title,
+            results: self.query_post_link_results(&post_id, &next_query),
+            search_query: next_query,
+            active_tab: next_tab,
+            external_url: next_url,
+            external_text: next_text,
+        });
+    }
+
+    fn refresh_insert_media_modal(&mut self, search_query: String) {
+        let Some(modal::ModalState::InsertMedia { post_id, title, link_only, .. }) = self.active_modal.clone() else {
+            return;
+        };
+
+        self.active_modal = Some(modal::ModalState::InsertMedia {
+            post_id,
+            title,
+            media_list: self.query_post_insert_media_results(&search_query),
+            search_query,
+            link_only,
+        });
+    }
+
+    fn update_gallery_selection(&mut self, next_index: Option<usize>) {
+        let Some(modal::ModalState::PostGallery {
+            post_id,
+            title,
+            media_list,
+            ..
+        }) = self.active_modal.clone() else {
+            return;
+        };
+
+        self.active_modal = Some(modal::ModalState::PostGallery {
+            post_id,
+            title,
+            media_list,
+            selected_index: next_index,
+        });
+    }
+
+    fn step_gallery_selection(&mut self, delta: isize) {
+        let Some(modal::ModalState::PostGallery {
+            selected_index,
+            media_list,
+            ..
+        }) = self.active_modal.clone() else {
+            return;
+        };
+
+        let image_count = media_list.iter().filter(|media| media.mime_type.starts_with("image/")).count();
+        if image_count == 0 {
+            return;
+        }
+
+        let current = selected_index.unwrap_or(0);
+        let next = if delta < 0 {
+            (current + image_count - 1) % image_count
+        } else {
+            (current + 1) % image_count
+        };
+        self.update_gallery_selection(Some(next));
+    }
+
+    fn save_media_editor(&mut self, media_id: &str) -> Task<Message> {
+        match self.persist_media_editor_state(media_id) {
+            Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
         }
         Task::none()
     }
@@ -2084,6 +2529,438 @@ impl BdsApp {
         Task::none()
     }
 
+    fn persist_post_editor_state(&mut self, post_id: &str) -> Result<(), String> {
+        let state = self
+            .post_editors
+            .get(post_id)
+            .cloned()
+            .ok_or_else(|| "missing post editor".to_string())?;
+        let db = self.db.as_ref().ok_or_else(|| "database unavailable".to_string())?;
+        let data_dir = self
+            .data_dir
+            .as_ref()
+            .ok_or_else(|| "project data directory unavailable".to_string())?;
+
+        if state.active_language != state.canonical_language {
+            let translation = engine::post::upsert_translation(
+                db.conn(),
+                data_dir,
+                &state.post_id,
+                &state.active_language,
+                &state.title,
+                if state.excerpt.is_empty() {
+                    None
+                } else {
+                    Some(state.excerpt.as_str())
+                },
+                Some(&state.content),
+            )
+            .map_err(|e| e.to_string())?;
+
+            if let Some(editor) = self.post_editors.get_mut(post_id) {
+                editor.is_dirty = false;
+                if let Some(draft) = editor.translation_drafts.get_mut(&state.active_language) {
+                    draft.title = translation.title.clone();
+                    draft.excerpt = translation.excerpt.clone().unwrap_or_default();
+                    draft.content = translation.content.clone().unwrap_or_default();
+                    draft.status = translation.status.clone();
+                    draft.is_dirty = false;
+                }
+            }
+        } else {
+            let post = engine::post::update_post(
+                db.conn(),
+                data_dir,
+                &state.post_id,
+                Some(&state.title),
+                Some(&state.slug),
+                Some(if state.excerpt.is_empty() {
+                    None
+                } else {
+                    Some(state.excerpt.as_str())
+                }),
+                Some(&state.content),
+                Some(state.tags.clone()),
+                Some(state.categories.clone()),
+                Some(if state.author.is_empty() {
+                    None
+                } else {
+                    Some(state.author.as_str())
+                }),
+                Some(if state.language.is_empty() {
+                    None
+                } else {
+                    Some(state.language.as_str())
+                }),
+                Some(if state.template_slug.is_empty() {
+                    None
+                } else {
+                    Some(state.template_slug.as_str())
+                }),
+                Some(state.do_not_translate),
+            )
+            .map_err(|e| e.to_string())?;
+
+            if let Some(editor) = self.post_editors.get_mut(post_id) {
+                editor.title = post.title.clone();
+                editor.slug = post.slug.clone();
+                editor.excerpt = post.excerpt.clone().unwrap_or_default();
+                editor.author = post.author.clone().unwrap_or_default();
+                editor.language = post.language.clone().unwrap_or_default();
+                editor.template_slug = post.template_slug.clone().unwrap_or_default();
+                editor.do_not_translate = post.do_not_translate;
+                editor.tags = post.tags.clone();
+                editor.categories = post.categories.clone();
+                editor.status = post.status.clone();
+                editor.updated_at = post.updated_at;
+                editor.published_at = post.published_at;
+                editor.is_dirty = false;
+            }
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post.id) {
+                tab.is_dirty = false;
+                if !post.title.is_empty() {
+                    tab.title = post.title.clone();
+                }
+            }
+            self.refresh_post_relationships(post_id);
+        }
+
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
+            tab.is_dirty = false;
+        }
+        Ok(())
+    }
+
+    fn persist_media_editor_state(&mut self, media_id: &str) -> Result<(), String> {
+        let state = self
+            .media_editors
+            .get(media_id)
+            .cloned()
+            .ok_or_else(|| "missing media editor".to_string())?;
+        let db = self.db.as_ref().ok_or_else(|| "database unavailable".to_string())?;
+        let data_dir = self
+            .data_dir
+            .as_ref()
+            .ok_or_else(|| "project data directory unavailable".to_string())?;
+
+        if state.active_language != state.canonical_language {
+            engine::media::upsert_media_translation(
+                db.conn(),
+                data_dir,
+                &state.media_id,
+                &state.active_language,
+                if state.title.is_empty() {
+                    None
+                } else {
+                    Some(state.title.as_str())
+                },
+                if state.alt.is_empty() {
+                    None
+                } else {
+                    Some(state.alt.as_str())
+                },
+                if state.caption.is_empty() {
+                    None
+                } else {
+                    Some(state.caption.as_str())
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            if let Some(editor) = self.media_editors.get_mut(media_id) {
+                editor.is_dirty = false;
+            }
+        } else {
+            let tags = state
+                .tags_input
+                .split(',')
+                .map(str::trim)
+                .filter(|tag| !tag.is_empty())
+                .map(|tag| tag.to_string())
+                .collect::<Vec<_>>();
+            let media = engine::media::update_media(
+                db.conn(),
+                data_dir,
+                &state.media_id,
+                Some(if state.title.is_empty() {
+                    None
+                } else {
+                    Some(state.title.as_str())
+                }),
+                Some(if state.alt.is_empty() {
+                    None
+                } else {
+                    Some(state.alt.as_str())
+                }),
+                Some(if state.caption.is_empty() {
+                    None
+                } else {
+                    Some(state.caption.as_str())
+                }),
+                Some(if state.author.is_empty() {
+                    None
+                } else {
+                    Some(state.author.as_str())
+                }),
+                Some(if state.language.is_empty() {
+                    None
+                } else {
+                    Some(state.language.as_str())
+                }),
+                Some(tags.clone()),
+            )
+            .map_err(|e| e.to_string())?;
+
+            if let Some(editor) = self.media_editors.get_mut(media_id) {
+                editor.title = media.title.clone().unwrap_or_default();
+                editor.alt = media.alt.clone().unwrap_or_default();
+                editor.caption = media.caption.clone().unwrap_or_default();
+                editor.author = media.author.clone().unwrap_or_default();
+                editor.language = media.language.clone().unwrap_or_default();
+                editor.tags = tags;
+                editor.tags_input = editor.tags.join(", ");
+                editor.updated_at = media.updated_at;
+                editor.is_dirty = false;
+            }
+        }
+
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == media_id) {
+            tab.is_dirty = false;
+        }
+        Ok(())
+    }
+
+    fn close_entity_tab(&mut self, entity_id: &str) {
+        if let Some(next_idx) = tabs::close_tab(&mut self.tabs, entity_id) {
+            self.active_tab = self.tabs.get(next_idx).map(|tab| tab.id.clone());
+        } else if self.active_tab.as_deref() == Some(entity_id) {
+            self.active_tab = None;
+        }
+        self.enforce_panel_tab_fallback();
+        self.sync_menu_state();
+    }
+
+    fn delete_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::post::delete_post(db.conn(), data_dir, post_id) {
+            Ok(()) => {
+                self.post_editors.remove(post_id);
+                self.close_entity_tab(post_id);
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn discard_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::post::discard_post_draft(db.conn(), data_dir, post_id) {
+            Ok(post) => {
+                if let Some(editor) = self.post_editors.get_mut(post_id) {
+                    editor.title = post.title.clone();
+                    editor.slug = post.slug.clone();
+                    editor.excerpt = post.excerpt.clone().unwrap_or_default();
+                    editor.content = post.content.clone().unwrap_or_default();
+                    editor.author = post.author.clone().unwrap_or_default();
+                    editor.language = post.language.clone().unwrap_or_default();
+                    editor.active_language = editor.language.clone();
+                    editor.canonical_language = editor.language.clone();
+                    editor.template_slug = post.template_slug.clone().unwrap_or_default();
+                    editor.tags = post.tags.clone();
+                    editor.categories = post.categories.clone();
+                    editor.status = post.status.clone();
+                    editor.do_not_translate = post.do_not_translate;
+                    editor.updated_at = post.updated_at;
+                    editor.published_at = post.published_at;
+                    editor.is_dirty = false;
+                    editor.translation_drafts.clear();
+                }
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post.id) {
+                    tab.is_dirty = false;
+                    tab.title = post.title.clone();
+                }
+                self.refresh_post_relationships(post_id);
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Discard failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn duplicate_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::post::duplicate_post(db.conn(), data_dir, post_id) {
+            Ok(post) => {
+                let tab = Tab {
+                    id: post.id.clone(),
+                    title: post.title.clone(),
+                    tab_type: TabType::Post,
+                    is_transient: false,
+                    is_dirty: false,
+                };
+                let idx = tabs::open_tab(&mut self.tabs, tab);
+                self.active_tab = self.tabs.get(idx).map(|tab| tab.id.clone());
+                if let Some(tab) = self.tabs.get(idx).cloned() {
+                    self.load_editor_for_tab(&tab);
+                }
+                self.enforce_panel_tab_fallback();
+                self.sync_menu_state();
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Duplicate failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn delete_media_editor(&mut self, media_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::media::delete_media(db.conn(), data_dir, media_id) {
+            Ok(()) => {
+                self.media_editors.remove(media_id);
+                self.close_entity_tab(media_id);
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn delete_template_editor(&mut self, template_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::template::delete_template(db.conn(), data_dir, template_id, false) {
+            Ok(()) => {
+                self.template_editors.remove(template_id);
+                self.close_entity_tab(template_id);
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn delete_script_editor(&mut self, script_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        match engine::script::delete_script(db.conn(), data_dir, script_id) {
+            Ok(()) => {
+                self.script_editors.remove(script_id);
+                self.close_entity_tab(script_id);
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn reload_tags_state(&mut self) {
+        let Some(db) = &self.db else { return };
+        let Some(project) = &self.active_project else { return };
+        let tags = bds_core::db::queries::tag::list_tags_by_project(db.conn(), &project.id)
+            .unwrap_or_default();
+        let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project.id)
+            .unwrap_or_default();
+        let mut counts = HashMap::new();
+        for post in &posts {
+            for tag_name in &post.tags {
+                *counts.entry(tag_name.to_lowercase()).or_insert(0usize) += 1;
+            }
+        }
+        if let Some(state) = self.tags_view_state.as_mut() {
+            state.tags = tags;
+            state.tag_post_counts = counts;
+        } else {
+            self.tags_view_state = Some(TagsViewState::new(tags, counts));
+        }
+    }
+
+    fn delete_tag(&mut self, tag_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        let Some(project) = &self.active_project else { return Task::none() };
+        match engine::tag::delete_tag(db.conn(), data_dir, &project.id, tag_id) {
+            Ok(()) => {
+                self.reload_tags_state();
+                if let Some(state) = self.tags_view_state.as_mut() {
+                    if state.editing_tag.as_ref().map(|tag| tag.id.as_str()) == Some(tag_id) {
+                        state.editing_tag = None;
+                    }
+                }
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn merge_tags(&mut self, source: &str, target: &str) -> Task<Message> {
+        let Some(db) = &self.db else { return Task::none() };
+        let Some(data_dir) = &self.data_dir else { return Task::none() };
+        let Some(project) = &self.active_project else { return Task::none() };
+        match engine::tag::merge_tags(db.conn(), data_dir, &project.id, &[source], target) {
+            Ok(()) => {
+                self.reload_tags_state();
+                if let Some(state) = self.tags_view_state.as_mut() {
+                    state.merge_source = None;
+                    state.merge_target = None;
+                }
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+            }
+            Err(e) => self.notify(ToastLevel::Error, &format!("Merge failed: {e}")),
+        }
+        Task::none()
+    }
+
+    fn hydrate_settings_state(&self) -> SettingsViewState {
+        let mut state = SettingsViewState::default();
+        if let Some(project) = &self.active_project {
+            state.project_name = project.name.clone();
+            state.project_description = iced::widget::text_editor::Content::with_text(
+                &project.description.clone().unwrap_or_default(),
+            );
+            state.data_path = project.data_path.clone().unwrap_or_default();
+        }
+        if let Some(data_dir) = &self.data_dir {
+            if let Ok(meta) = engine::meta::read_project_json(data_dir) {
+                state.public_url = meta.public_url.unwrap_or_default();
+                state.default_author = meta.default_author.unwrap_or_default();
+                state.max_posts_per_page = meta.max_posts_per_page.to_string();
+            }
+            if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
+                state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();
+                state.ssh_username = pub_prefs.ssh_user.unwrap_or_default();
+                state.ssh_remote_path = pub_prefs.ssh_remote_path.unwrap_or_default();
+                state.ssh_mode = match pub_prefs.ssh_mode {
+                    SshMode::Scp => "scp".to_string(),
+                    SshMode::Rsync => "rsync".to_string(),
+                };
+            }
+        }
+        if let Some(db) = &self.db {
+            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.default_mode") {
+                state.default_mode = setting.value;
+            }
+            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.diff_view_style") {
+                state.diff_view_style = setting.value;
+            }
+            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.wrap_long_lines") {
+                state.wrap_long_lines = setting.value == "true";
+            }
+            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.hide_unchanged_regions") {
+                state.hide_unchanged_regions = setting.value == "true";
+            }
+            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "ai.system_prompt") {
+                state.system_prompt = iced::widget::text_editor::Content::with_text(&setting.value);
+            }
+        }
+        state.offline_mode = self.offline_mode;
+        state
+    }
+
     fn handle_tags_msg(&mut self, msg: TagsMsg) -> Task<Message> {
         // Ensure tags view state exists
         if self.tags_view_state.is_none() {
@@ -2118,19 +2995,58 @@ impl BdsApp {
                     });
                 }
             }
-            TagsMsg::CreateTag(_name) => {
-                // Tag creation will dispatch to engine
+            TagsMsg::CreateTag(name) => {
+                let mut created_editing = None;
+                if let (Some(db), Some(data_dir), Some(project)) = (&self.db, &self.data_dir, &self.active_project) {
+                    match engine::tag::create_tag(db.conn(), data_dir, &project.id, &name, None) {
+                        Ok(tag) => {
+                            created_editing = Some(tags_view::EditingTag {
+                                id: tag.id,
+                                name: tag.name,
+                                color: tag.color.unwrap_or_default(),
+                                template_slug: tag.post_template_slug.unwrap_or_default(),
+                            });
+                        }
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+                if let Some(editing_tag) = created_editing {
+                    self.reload_tags_state();
+                    if let Some(state) = self.tags_view_state.as_mut() {
+                        state.editing_tag = Some(editing_tag);
+                    }
+                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                }
             }
             TagsMsg::EditTagName(s) => { if let Some(ref mut e) = state.editing_tag { e.name = s; } }
             TagsMsg::EditTagColor(s) => { if let Some(ref mut e) = state.editing_tag { e.color = s; } }
             TagsMsg::EditTagTemplate(s) => { if let Some(ref mut e) = state.editing_tag { e.template_slug = s; } }
-            TagsMsg::SaveTag => { /* will wire to engine */ }
+            TagsMsg::SaveTag => {
+                if let Some(editing) = state.editing_tag.clone() {
+                    if let (Some(db), Some(data_dir)) = (&self.db, &self.data_dir) {
+                        match engine::tag::update_tag(
+                            db.conn(),
+                            data_dir,
+                            &editing.id,
+                            Some(&editing.name),
+                            Some(&editing.color),
+                            Some(&editing.template_slug),
+                        ) {
+                            Ok(()) => {
+                                self.reload_tags_state();
+                                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                            }
+                            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        }
+                    }
+                }
+            }
             TagsMsg::DeleteTag(id) => {
                 let name = state.tags.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
                 return Task::done(Message::ShowModal(modal::ModalState::ConfirmDelete {
                     entity_name: name,
                     references: Vec::new(),
-                    on_confirm: modal::ConfirmAction::DeletePost(id), // TODO: add DeleteTag variant
+                    on_confirm: modal::ConfirmAction::DeleteTag(id),
                 }));
             }
             TagsMsg::SetMergeSource(s) => { state.merge_source = Some(s); }
@@ -2154,29 +3070,7 @@ impl BdsApp {
     fn handle_settings_msg(&mut self, msg: SettingsMsg) -> Task<Message> {
         // Ensure settings state exists
         if self.settings_state.is_none() {
-            let mut state = SettingsViewState::default();
-            if let Some(ref project) = self.active_project {
-                state.project_name = project.name.clone();
-                state.project_description = iced::widget::text_editor::Content::with_text(
-                    &project.description.clone().unwrap_or_default(),
-                );
-                state.data_path = project.data_path.clone().unwrap_or_default();
-            }
-            if let Some(ref data_dir) = self.data_dir {
-                if let Ok(meta) = engine::meta::read_project_json(data_dir) {
-                    state.public_url = meta.public_url.unwrap_or_default();
-                    state.default_author = meta.default_author.unwrap_or_default();
-                    state.max_posts_per_page = meta.max_posts_per_page.to_string();
-                }
-                if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
-                    state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();
-                    state.ssh_username = pub_prefs.ssh_user.unwrap_or_default();
-                    state.ssh_remote_path = pub_prefs.ssh_remote_path.unwrap_or_default();
-                    state.ssh_mode = format!("{:?}", pub_prefs.ssh_mode).to_lowercase();
-                }
-            }
-            state.offline_mode = self.offline_mode;
-            self.settings_state = Some(state);
+            self.settings_state = Some(self.hydrate_settings_state());
         }
         let state = self.settings_state.as_mut().unwrap();
         match msg {
@@ -2204,17 +3098,96 @@ impl BdsApp {
             SettingsMsg::PublicUrlChanged(s) => { state.public_url = s; }
             SettingsMsg::DefaultAuthorChanged(s) => { state.default_author = s; }
             SettingsMsg::MaxPostsPerPageChanged(s) => { state.max_posts_per_page = s; }
-            SettingsMsg::SaveProject => { /* Project save will be wired to engine */ }
+            SettingsMsg::SaveProject => {
+                if let (Some(db), Some(data_dir), Some(project)) = (&self.db, &self.data_dir, self.active_project.as_mut()) {
+                    let max_posts = match state.max_posts_per_page.trim().parse::<i32>() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            self.notify(ToastLevel::Error, "Invalid max posts per page");
+                            return Task::none();
+                        }
+                    };
+                    let mut meta = engine::meta::read_project_json(data_dir).unwrap_or(bds_core::model::metadata::ProjectMetadata {
+                        name: state.project_name.clone(),
+                        description: None,
+                        public_url: None,
+                        main_language: None,
+                        default_author: None,
+                        max_posts_per_page: 50,
+                        blogmark_category: None,
+                        pico_theme: None,
+                        semantic_similarity_enabled: false,
+                        blog_languages: Vec::new(),
+                    });
+                    meta.name = state.project_name.clone();
+                    meta.description = {
+                        let value = state.project_description.text();
+                        if value.trim().is_empty() { None } else { Some(value) }
+                    };
+                    meta.public_url = if state.public_url.trim().is_empty() { None } else { Some(state.public_url.clone()) };
+                    meta.default_author = if state.default_author.trim().is_empty() { None } else { Some(state.default_author.clone()) };
+                    meta.max_posts_per_page = max_posts;
+                    if let Err(e) = meta.validate() {
+                        self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
+                        return Task::none();
+                    }
+                    project.name = state.project_name.clone();
+                    project.description = meta.description.clone();
+                    project.data_path = if state.data_path.trim().is_empty() { None } else { Some(state.data_path.clone()) };
+                    project.updated_at = bds_core::util::now_unix_ms();
+                    let db_result = bds_core::db::queries::project::update_project(db.conn(), project);
+                    let file_result = engine::meta::write_project_json(data_dir, &meta);
+                    match (db_result, file_result) {
+                        (Ok(()), Ok(())) => {
+                            if let Some(listing) = self.projects.iter_mut().find(|p| p.id == project.id) {
+                                *listing = project.clone();
+                            }
+                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                        }
+                        (Err(e), _) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        (_, Err(e)) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
             SettingsMsg::DefaultModeChanged(s) => { state.default_mode = s; }
             SettingsMsg::DiffViewStyleChanged(s) => { state.diff_view_style = s; }
             SettingsMsg::WrapLongLinesChanged(b) => { state.wrap_long_lines = b; }
             SettingsMsg::HideUnchangedRegionsChanged(b) => { state.hide_unchanged_regions = b; }
-            SettingsMsg::SaveEditor => { /* Editor prefs save will be wired */ }
+            SettingsMsg::SaveEditor => {
+                if let Some(db) = &self.db {
+                    let now = bds_core::util::now_unix_ms();
+                    let result = [
+                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.default_mode", &state.default_mode, now),
+                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.diff_view_style", &state.diff_view_style, now),
+                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.wrap_long_lines", if state.wrap_long_lines { "true" } else { "false" }, now),
+                        bds_core::db::queries::setting::set_setting_value(db.conn(), "editor.hide_unchanged_regions", if state.hide_unchanged_regions { "true" } else { "false" }, now),
+                    ]
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>();
+                    match result {
+                        Ok(_) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
             SettingsMsg::SshModeChanged(s) => { state.ssh_mode = s; }
             SettingsMsg::SshHostChanged(s) => { state.ssh_host = s; }
             SettingsMsg::SshUsernameChanged(s) => { state.ssh_username = s; }
             SettingsMsg::SshRemotePathChanged(s) => { state.ssh_remote_path = s; }
-            SettingsMsg::SavePublishing => { /* Publishing save will be wired */ }
+            SettingsMsg::SavePublishing => {
+                if let Some(data_dir) = &self.data_dir {
+                    let prefs = PublishingPreferences {
+                        ssh_host: if state.ssh_host.trim().is_empty() { None } else { Some(state.ssh_host.clone()) },
+                        ssh_user: if state.ssh_username.trim().is_empty() { None } else { Some(state.ssh_username.clone()) },
+                        ssh_remote_path: if state.ssh_remote_path.trim().is_empty() { None } else { Some(state.ssh_remote_path.clone()) },
+                        ssh_mode: if state.ssh_mode.eq_ignore_ascii_case("scp") { SshMode::Scp } else { SshMode::Rsync },
+                    };
+                    match engine::meta::write_publishing_json(data_dir, &prefs) {
+                        Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
             SettingsMsg::ClearPublishing => {
                 state.ssh_host.clear();
                 state.ssh_username.clear();
@@ -2227,7 +3200,19 @@ impl BdsApp {
             SettingsMsg::SystemPromptAction(action) => {
                 state.system_prompt.perform(action);
             }
-            SettingsMsg::SaveSystemPrompt => { /* System prompt save will be wired */ }
+            SettingsMsg::SaveSystemPrompt => {
+                if let Some(db) = &self.db {
+                    match bds_core::db::queries::setting::set_setting_value(
+                        db.conn(),
+                        "ai.system_prompt",
+                        &state.system_prompt.text(),
+                        bds_core::util::now_unix_ms(),
+                    ) {
+                        Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
             SettingsMsg::ResetSystemPrompt => {
                 state.system_prompt = iced::widget::text_editor::Content::new();
             }
@@ -2313,6 +3298,37 @@ impl BdsApp {
         (outlinks, backlinks)
     }
 
+    fn load_post_media_items(&self, post_id: &str) -> Vec<LinkedMediaItem> {
+        let Some(ref db) = self.db else {
+            return Vec::new();
+        };
+
+        bds_core::db::queries::post_media::list_post_media_by_post(db.conn(), post_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|link| {
+                bds_core::db::queries::media::get_media_by_id(db.conn(), &link.media_id)
+                    .ok()
+                    .map(|media| LinkedMediaItem {
+                        media_id: media.id,
+                        name: media.title.unwrap_or(media.original_name),
+                        is_image: media.mime_type.starts_with("image/"),
+                        sort_order: link.sort_order,
+                    })
+            })
+            .collect()
+    }
+
+    fn refresh_post_relationships(&mut self, post_id: &str) {
+        let (outlinks, backlinks) = self.load_post_links(post_id);
+        let linked_media = self.load_post_media_items(post_id);
+        if let Some(state) = self.post_editors.get_mut(post_id) {
+            state.outlinks = outlinks;
+            state.backlinks = backlinks;
+            state.linked_media = linked_media;
+        }
+    }
+
     /// Load editor state when a tab is opened for an entity.
     fn load_editor_for_tab(&mut self, tab: &Tab) {
         let Some(ref db) = self.db else { return };
@@ -2363,9 +3379,17 @@ impl BdsApp {
                                 }
                             }
                             let (outlinks, backlinks) = self.load_post_links(&post.id);
+                            let linked_media = self.load_post_media_items(&post.id);
                             self.post_editors.insert(
                                 post.id.clone(),
-                                PostEditorState::from_post(&post, &self.blog_languages, &translations, outlinks, backlinks),
+                                PostEditorState::from_post(
+                                    &post,
+                                    &self.blog_languages,
+                                    &translations,
+                                    outlinks,
+                                    backlinks,
+                                    linked_media,
+                                ),
                             );
                         }
                         Err(e) => {

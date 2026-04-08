@@ -39,6 +39,7 @@ pub struct MediaEditorState {
     pub language: String,
     pub file_path: String,
     pub tags: Vec<String>,
+    pub tags_input: String,
     pub created_at: i64,
     pub updated_at: i64,
     pub is_dirty: bool,
@@ -79,6 +80,7 @@ impl MediaEditorState {
             language: canonical_lang.clone(),
             file_path: media.file_path.clone(),
             tags: media.tags.clone(),
+            tags_input: media.tags.join(", "),
             created_at: media.created_at,
             updated_at: media.updated_at,
             is_dirty: false,
@@ -169,6 +171,8 @@ pub enum MediaEditorMsg {
     AltChanged(String),
     CaptionChanged(String),
     AuthorChanged(String),
+    LanguageChanged(String),
+    TagsChanged(String),
     SwitchLanguage(String),
     Save,
     Delete,
@@ -284,7 +288,25 @@ pub fn view<'a>(
         &state.author,
         |s| Message::MediaEditor(MediaEditorMsg::AuthorChanged(s)),
     );
+    let tags_input = inputs::labeled_input(
+        &t(locale, "editor.tags"),
+        &t(locale, "editor.tagsPlaceholder"),
+        &state.tags_input,
+        |s| Message::MediaEditor(MediaEditorMsg::TagsChanged(s)),
+    );
+    let language_options = if state.blog_languages.is_empty() {
+        vec![state.language.clone()]
+    } else {
+        state.blog_languages.clone()
+    };
+    let language_input = inputs::labeled_select(
+        &t(locale, "editor.language"),
+        &language_options,
+        Some(&state.language),
+        |lang| Message::MediaEditor(MediaEditorMsg::LanguageChanged(lang)),
+    );
     let meta_row2 = row![caption_input, author_input].spacing(16).width(Length::Fill);
+    let meta_row3 = row![tags_input, language_input].spacing(16).width(Length::Fill);
 
     // Footer
     let footer = row![
@@ -303,6 +325,7 @@ pub fn view<'a>(
             inputs::section_header(&t(locale, "editor.metadata")),
             meta_row1,
             meta_row2,
+            meta_row3,
             footer,
         ]
         .spacing(12)

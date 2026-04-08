@@ -4,9 +4,10 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::db::queries::media as qm;
+use crate::db::queries::post as qp;
 use crate::db::queries::post_media as qpm;
 use crate::engine::EngineResult;
-use crate::model::PostMedia;
+use crate::model::{Media, Post, PostMedia};
 use crate::util::sidecar::MediaSidecar;
 use crate::util::{atomic_write_str, now_unix_ms};
 
@@ -57,6 +58,30 @@ pub fn reorder_post_media(
         qpm::update_sort_order(conn, post_id, media_id, i as i32)?;
     }
     Ok(())
+}
+
+/// List media items currently linked to a post.
+pub fn list_media_for_post(conn: &Connection, post_id: &str) -> EngineResult<Vec<Media>> {
+    let links = qpm::list_post_media_by_post(conn, post_id)?;
+    let mut media = Vec::with_capacity(links.len());
+    for link in links {
+        if let Ok(item) = qm::get_media_by_id(conn, &link.media_id) {
+            media.push(item);
+        }
+    }
+    Ok(media)
+}
+
+/// List posts currently linked to a media item.
+pub fn list_posts_for_media(conn: &Connection, media_id: &str) -> EngineResult<Vec<Post>> {
+    let links = qpm::list_post_media_by_media(conn, media_id)?;
+    let mut posts = Vec::with_capacity(links.len());
+    for link in links {
+        if let Ok(post) = qp::get_post_by_id(conn, &link.post_id) {
+            posts.push(post);
+        }
+    }
+    Ok(posts)
 }
 
 /// Rebuild the media sidecar file so that `linkedPostIds` reflects the current
@@ -192,5 +217,29 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&"post1".to_string()));
         assert!(ids.contains(&"post2".to_string()));
+    }
+
+    #[test]
+    fn list_media_for_post_returns_resolved_media() {
+        let (db, dir) = setup();
+        insert_test_media(&db, dir.path(), "m1");
+
+        link_media_to_post(db.conn(), dir.path(), "p1", "post1", "m1", 0).unwrap();
+
+        let media = list_media_for_post(db.conn(), "post1").unwrap();
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].id, "m1");
+    }
+
+    #[test]
+    fn list_posts_for_media_returns_resolved_posts() {
+        let (db, dir) = setup();
+        insert_test_media(&db, dir.path(), "m1");
+
+        link_media_to_post(db.conn(), dir.path(), "p1", "post1", "m1", 0).unwrap();
+
+        let posts = list_posts_for_media(db.conn(), "m1").unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].id, "post1");
     }
 }

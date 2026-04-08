@@ -1,13 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
 use iced::widget::text::{Shaping, Wrapping};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
-use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
+use bds_editor::{highlighter, CodeEditor, EditorBuffer, EditorMessage};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -39,6 +39,15 @@ pub struct ResolvedPostLink {
     pub title: String,
 }
 
+/// Linked media metadata shown in the post editor metadata panel.
+#[derive(Debug, Clone)]
+pub struct LinkedMediaItem {
+    pub media_id: String,
+    pub name: String,
+    pub is_image: bool,
+    pub sort_order: i32,
+}
+
 /// State for an open post editor.
 pub struct PostEditorState {
     pub post_id: String,
@@ -56,6 +65,7 @@ pub struct PostEditorState {
     pub status: PostStatus,
     pub created_at: i64,
     pub updated_at: i64,
+    pub published_at: Option<i64>,
     pub is_dirty: bool,
     pub metadata_expanded: bool,
     pub excerpt_expanded: bool,
@@ -76,6 +86,8 @@ pub struct PostEditorState {
     pub outlinks: Vec<ResolvedPostLink>,
     /// Incoming links from other posts to this post.
     pub backlinks: Vec<ResolvedPostLink>,
+    /// Media linked to this post.
+    pub linked_media: Vec<LinkedMediaItem>,
 }
 
 impl std::fmt::Debug for PostEditorState {
@@ -106,6 +118,7 @@ impl Clone for PostEditorState {
             status: self.status.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            published_at: self.published_at,
             is_dirty: self.is_dirty,
             metadata_expanded: self.metadata_expanded,
             excerpt_expanded: self.excerpt_expanded,
@@ -118,6 +131,7 @@ impl Clone for PostEditorState {
             translation_drafts: self.translation_drafts.clone(),
             outlinks: self.outlinks.clone(),
             backlinks: self.backlinks.clone(),
+            linked_media: self.linked_media.clone(),
         }
     }
 }
@@ -129,6 +143,7 @@ impl PostEditorState {
         translations: &[PostTranslation],
         outlinks: Vec<ResolvedPostLink>,
         backlinks: Vec<ResolvedPostLink>,
+        linked_media: Vec<LinkedMediaItem>,
     ) -> Self {
         let title = post.title.clone();
         let content = post.content.clone().unwrap_or_default();
@@ -136,13 +151,16 @@ impl PostEditorState {
 
         let mut translation_drafts = HashMap::new();
         for tr in translations {
-            translation_drafts.insert(tr.language.clone(), TranslationDraft {
-                title: tr.title.clone(),
-                excerpt: tr.excerpt.clone().unwrap_or_default(),
-                content: tr.content.clone().unwrap_or_default(),
-                status: tr.status.clone(),
-                is_dirty: false,
-            });
+            translation_drafts.insert(
+                tr.language.clone(),
+                TranslationDraft {
+                    title: tr.title.clone(),
+                    excerpt: tr.excerpt.clone().unwrap_or_default(),
+                    content: tr.content.clone().unwrap_or_default(),
+                    status: tr.status.clone(),
+                    is_dirty: false,
+                },
+            );
         }
 
         Self {
@@ -160,6 +178,7 @@ impl PostEditorState {
             status: post.status.clone(),
             created_at: post.created_at,
             updated_at: post.updated_at,
+            published_at: post.published_at,
             is_dirty: false,
             metadata_expanded: title.is_empty(),
             excerpt_expanded: false,
@@ -172,8 +191,19 @@ impl PostEditorState {
             translation_drafts,
             outlinks,
             backlinks,
+            linked_media,
             title,
         }
+    }
+
+    pub fn insert_markdown_at_cursor(&mut self, markdown: &str) {
+        let new_content = {
+            let mut buffer = self.editor_buffer.borrow_mut();
+            buffer.insert(markdown);
+            buffer.text()
+        };
+        self.content = new_content;
+        self.is_dirty = true;
     }
 
     /// Switch the editor to display a different language.
@@ -195,13 +225,16 @@ impl PostEditorState {
             });
         } else {
             // Switching away from a translation — save to drafts
-            self.translation_drafts.insert(self.active_language.clone(), TranslationDraft {
-                title: self.title.clone(),
-                excerpt: self.excerpt.clone(),
-                content: self.content.clone(),
-                status: PostStatus::Draft,
-                is_dirty: self.is_dirty,
-            });
+            self.translation_drafts.insert(
+                self.active_language.clone(),
+                TranslationDraft {
+                    title: self.title.clone(),
+                    excerpt: self.excerpt.clone(),
+                    content: self.content.clone(),
+                    status: PostStatus::Draft,
+                    is_dirty: self.is_dirty,
+                },
+            );
         }
 
         // Load target fields
@@ -281,6 +314,7 @@ pub enum PostEditorMsg {
     ExcerptChanged(String),
     ContentChanged(String),
     AuthorChanged(String),
+    LanguageChanged(String),
     TemplateSlugChanged(String),
     ToggleDoNotTranslate(bool),
     ToggleMetadata,
@@ -294,7 +328,28 @@ pub enum PostEditorMsg {
     RemoveCategory(String),
     Save,
     Publish,
+    Duplicate,
+    Discard,
     Delete,
+    InsertLink,
+    InsertMedia,
+    Gallery,
+    LinkExistingMedia,
+    OpenLinkedMedia(String),
+    UnlinkLinkedMedia(String),
+    PostInsertLinkSelected(String),
+    PostInsertLinkCreate,
+    PostInsertMediaSelected(String),
+    PostGalleryImageSelected(usize),
+    PostInsertLinkTabSwitch(crate::views::modal::PostInsertLinkTab),
+    PostInsertLinkSearch(String),
+    PostInsertLinkUrlChanged(String),
+    PostInsertLinkTextChanged(String),
+    PostInsertLinkExternalInsert,
+    PostInsertMediaSearch(String),
+    PostGalleryPrevious,
+    PostGalleryNext,
+    PostGalleryCloseLightbox,
 }
 
 /// Render the post editor view.
@@ -303,6 +358,8 @@ pub fn view<'a>(
     locale: UiLocale,
     word_wrap: bool,
 ) -> Element<'a, Message> {
+    let on_translation = state.active_language != state.canonical_language;
+
     // ── Header bar ──
     let dirty_indicator = if state.is_dirty { " \u{25CF}" } else { "" };
     let title_display = if state.title.is_empty() {
@@ -312,34 +369,68 @@ pub fn view<'a>(
     };
 
     let header = inputs::toolbar(
-        vec![
-            text(title_display)
-                .size(18)
-                .wrapping(Wrapping::None)
-                .shaping(Shaping::Advanced)
-                .into(),
-        ],
+        vec![text(title_display)
+            .size(18)
+            .wrapping(Wrapping::None)
+            .shaping(Shaping::Advanced)
+            .into()],
         vec![
             status_badge(&state.status),
-            button(text(t(locale, "common.save")).size(13).shaping(Shaping::Advanced))
-                .on_press(Message::PostEditor(PostEditorMsg::Save))
-                .style(inputs::primary_button)
+            button(
+                text(t(locale, "common.save"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::Save))
+            .style(inputs::primary_button)
+            .padding([6, 16])
+            .into(),
+            if !on_translation {
+                button(
+                    text(t(locale, "editor.duplicate"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::Duplicate))
                 .padding([6, 16])
-                .into(),
-            if state.status == PostStatus::Draft {
-                button(text(t(locale, "editor.publish")).size(13).shaping(Shaping::Advanced))
-                    .on_press(Message::PostEditor(PostEditorMsg::Publish))
-                    .style(inputs::primary_button)
-                    .padding([6, 16])
-                    .into()
+                .into()
             } else {
                 Space::new(0, 0).into()
             },
-            button(text(t(locale, "modal.confirmDelete.delete")).size(13).shaping(Shaping::Advanced))
-                .on_press(Message::PostEditor(PostEditorMsg::Delete))
-                .style(inputs::danger_button)
+            if state.status == PostStatus::Draft {
+                button(
+                    text(t(locale, "editor.publish"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::Publish))
+                .style(inputs::primary_button)
                 .padding([6, 16])
-                .into(),
+                .into()
+            } else {
+                Space::new(0, 0).into()
+            },
+            if !on_translation && state.status == PostStatus::Draft && state.published_at.is_some() {
+                button(
+                    text(t(locale, "editor.discard"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::Discard))
+                .padding([6, 16])
+                .into()
+            } else {
+                Space::new(0, 0).into()
+            },
+            button(
+                text(t(locale, "modal.confirmDelete.delete"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::Delete))
+            .style(inputs::danger_button)
+            .padding([6, 16])
+            .into(),
         ],
     );
 
@@ -350,7 +441,10 @@ pub fn view<'a>(
         format!("\u{25B6} {}", t(locale, "editor.metadata"))
     };
     let meta_toggle = button(
-        text(meta_toggle_label).size(12).color(inputs::SECTION_COLOR).shaping(Shaping::Advanced),
+        text(meta_toggle_label)
+            .size(12)
+            .color(inputs::SECTION_COLOR)
+            .shaping(Shaping::Advanced),
     )
     .on_press(Message::PostEditor(PostEditorMsg::ToggleMetadata))
     .padding([4, 0])
@@ -361,7 +455,6 @@ pub fn view<'a>(
 
     // ── Translation Flags Bar (inline with metadata toggle) ──
     let flags = state.translation_flags();
-    let on_translation = state.active_language != state.canonical_language;
     let meta_toggle_row: Element<'a, Message> = if flags.is_empty() {
         meta_toggle.into()
     } else {
@@ -369,12 +462,14 @@ pub fn view<'a>(
         for flag in &flags {
             let lang = flag.language.clone();
             let label = format!("{}", flag.flag_emoji);
-            let btn = button(
-                text(label).size(14).shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::SwitchLanguage(lang)))
-            .padding([2, 4])
-            .style(if flag.is_active { flag_active_style } else { flag_inactive_style });
+            let btn = button(text(label).size(14).shaping(Shaping::Advanced))
+                .on_press(Message::PostEditor(PostEditorMsg::SwitchLanguage(lang)))
+                .padding([2, 4])
+                .style(if flag.is_active {
+                    flag_active_style
+                } else {
+                    flag_inactive_style
+                });
             flag_row = flag_row.push(btn);
         }
         row![meta_toggle, Space::with_width(Length::Fill), flag_row]
@@ -400,11 +495,20 @@ pub fn view<'a>(
             .spacing(16)
             .width(Length::Fill);
 
-        let author_input = inputs::labeled_input(
-            &t(locale, "editor.author"),
-            "",
-            &state.author,
-            |s| Message::PostEditor(PostEditorMsg::AuthorChanged(s)),
+        let author_input =
+            inputs::labeled_input(&t(locale, "editor.author"), "", &state.author, |s| {
+                Message::PostEditor(PostEditorMsg::AuthorChanged(s))
+            });
+        let language_options = if state.blog_languages.is_empty() {
+            vec![state.language.clone()]
+        } else {
+            state.blog_languages.clone()
+        };
+        let language_input = inputs::labeled_select(
+            &t(locale, "editor.language"),
+            &language_options,
+            Some(&state.language),
+            |lang| Message::PostEditor(PostEditorMsg::LanguageChanged(lang)),
         );
         let template_input = inputs::labeled_input(
             &t(locale, "editor.templateSlug"),
@@ -417,7 +521,7 @@ pub fn view<'a>(
             state.do_not_translate,
             |b| Message::PostEditor(PostEditorMsg::ToggleDoNotTranslate(b)),
         );
-        let meta_row2 = row![author_input, template_input, dnt]
+        let meta_row2 = row![author_input, language_input, template_input, dnt]
             .spacing(16)
             .width(Length::Fill);
 
@@ -447,16 +551,18 @@ pub fn view<'a>(
         let outlinks_section: Element<'a, Message> = if state.outlinks.is_empty() {
             Space::new(0, 0).into()
         } else {
-            let mut items: Vec<Element<'a, Message>> = vec![
-                text(t(locale, "editor.outlinks")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced).into(),
-            ];
+            let mut items: Vec<Element<'a, Message>> = vec![text(t(locale, "editor.outlinks"))
+                .size(12)
+                .color(inputs::LABEL_COLOR)
+                .shaping(Shaping::Advanced)
+                .into()];
             for link in &state.outlinks {
                 items.push(
                     text(format!("\u{2192} {}", link.title))
                         .size(12)
                         .shaping(Shaping::Advanced)
                         .color(Color::from_rgb(0.55, 0.70, 0.90))
-                        .into()
+                        .into(),
                 );
             }
             Column::with_children(items).spacing(2).into()
@@ -465,25 +571,118 @@ pub fn view<'a>(
         let backlinks_section: Element<'a, Message> = if state.backlinks.is_empty() {
             Space::new(0, 0).into()
         } else {
-            let mut items: Vec<Element<'a, Message>> = vec![
-                text(t(locale, "editor.backlinks")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced).into(),
-            ];
+            let mut items: Vec<Element<'a, Message>> = vec![text(t(locale, "editor.backlinks"))
+                .size(12)
+                .color(inputs::LABEL_COLOR)
+                .shaping(Shaping::Advanced)
+                .into()];
             for link in &state.backlinks {
                 items.push(
                     text(format!("\u{2190} {}", link.title))
                         .size(12)
                         .shaping(Shaping::Advanced)
                         .color(Color::from_rgb(0.55, 0.70, 0.90))
-                        .into()
+                        .into(),
                 );
             }
             Column::with_children(items).spacing(2).into()
         };
 
-        column![meta_row1, meta_row2, tags_section, categories_section, outlinks_section, backlinks_section]
-            .spacing(8)
-            .width(Length::Fill)
+        let link_existing_button: Element<'a, Message> = button(
+            text(t(locale, "editor.linkExistingMedia"))
+                .size(11)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::PostEditor(PostEditorMsg::LinkExistingMedia))
+        .padding([4, 10])
+        .style(|_: &Theme, _| button::Style::default())
+        .into();
+
+        let linked_media_header: Element<'a, Message> = row![
+            text(t(locale, "editor.linkedMedia"))
+                .size(12)
+                .color(inputs::LABEL_COLOR)
+                .shaping(Shaping::Advanced),
+            Space::with_width(Length::Fill),
+            link_existing_button,
+        ]
+        .align_y(iced::Alignment::Center)
+        .into();
+
+        let linked_media_section: Element<'a, Message> = if state.linked_media.is_empty() {
+            column![
+                linked_media_header,
+                text(t(locale, "editor.linkedMediaEmpty"))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.55, 0.55, 0.60)),
+            ]
+            .spacing(4)
             .into()
+        } else {
+            let mut items: Vec<Element<'a, Message>> = vec![linked_media_header];
+            for media in &state.linked_media {
+                let media_id = media.media_id.clone();
+                let open_id = media.media_id.clone();
+                let kind_label = if media.is_image {
+                    t(locale, "editor.linkedMediaKindImage")
+                } else {
+                    t(locale, "editor.linkedMediaKindFile")
+                };
+                items.push(
+                    container(
+                        row![
+                            column![
+                                text(media.name.clone())
+                                    .size(12)
+                                    .shaping(Shaping::Advanced)
+                                    .color(Color::WHITE),
+                                text(format!("{} {}", kind_label, media.sort_order + 1))
+                                    .size(10)
+                                    .shaping(Shaping::Advanced)
+                                    .color(Color::from_rgb(0.55, 0.55, 0.60)),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill),
+                            button(text(t(locale, "common.open")).size(11).shaping(Shaping::Advanced))
+                                .on_press(Message::PostEditor(PostEditorMsg::OpenLinkedMedia(open_id)))
+                                .padding([4, 10]),
+                            button(text(t(locale, "editor.unlinkMedia")).size(11).shaping(Shaping::Advanced))
+                                .on_press(Message::PostEditor(PostEditorMsg::UnlinkLinkedMedia(media_id)))
+                                .padding([4, 10])
+                                .style(inputs::danger_button),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .padding(8)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
+                        border: iced::Border {
+                            color: Color::from_rgb(0.28, 0.28, 0.32),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..container::Style::default()
+                    })
+                    .into(),
+                );
+            }
+            Column::with_children(items).spacing(6).into()
+        };
+
+        column![
+            meta_row1,
+            meta_row2,
+            tags_section,
+            categories_section,
+            outlinks_section,
+            backlinks_section,
+            linked_media_section,
+        ]
+        .spacing(8)
+        .width(Length::Fill)
+        .into()
     } else {
         Space::new(0, 0).into()
     };
@@ -495,7 +694,10 @@ pub fn view<'a>(
         format!("\u{25B6} {}", t(locale, "editor.excerpt"))
     };
     let excerpt_toggle = button(
-        text(excerpt_toggle_label).size(12).color(inputs::SECTION_COLOR).shaping(Shaping::Advanced),
+        text(excerpt_toggle_label)
+            .size(12)
+            .color(inputs::SECTION_COLOR)
+            .shaping(Shaping::Advanced),
     )
     .on_press(Message::PostEditor(PostEditorMsg::ToggleExcerpt))
     .padding([4, 0])
@@ -517,23 +719,64 @@ pub fn view<'a>(
 
     // ── Content section (fills remaining space) ──
     let content_label = inputs::section_header(&t(locale, "editor.content"));
-    let editor_widget: Element<'a, Message> = CodeEditor::new(
-            &state.editor_buffer,
-            highlighter(),
-            "md",
-        )
-        .word_wrap(word_wrap)
-        .on_change(|msg| match msg {
-            EditorMessage::ContentChanged(s) => Message::PostEditor(PostEditorMsg::ContentChanged(s)),
-            EditorMessage::SaveRequested => Message::PostEditor(PostEditorMsg::Save),
-        })
-        .into();
+    let body_toolbar = inputs::toolbar(
+        vec![content_label.into()],
+        vec![
+            button(
+                text(t(locale, "editor.insertLink"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::InsertLink))
+            .padding([6, 16])
+            .into(),
+            button(
+                text(t(locale, "editor.insertMedia"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::InsertMedia))
+            .padding([6, 16])
+            .into(),
+            button(
+                text(t(locale, "editor.gallery"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::Gallery))
+            .padding([6, 16])
+            .into(),
+        ],
+    );
+    let editor_widget: Element<'a, Message> =
+        CodeEditor::new(&state.editor_buffer, highlighter(), "md")
+            .word_wrap(word_wrap)
+            .on_change(|msg| match msg {
+                EditorMessage::ContentChanged(s) => {
+                    Message::PostEditor(PostEditorMsg::ContentChanged(s))
+                }
+                EditorMessage::SaveRequested => Message::PostEditor(PostEditorMsg::Save),
+            })
+            .into();
 
     // ── Footer ──
+    let published_gap: Element<'a, Message> = if state.published_at.is_some() {
+        Space::with_width(Length::Fixed(24.0)).into()
+    } else {
+        Space::new(0, 0).into()
+    };
+    let published_label: Element<'a, Message> = if let Some(published_at) = state.published_at {
+        inputs::date_label(&t(locale, "editor.publishedAt"), published_at)
+    } else {
+        Space::new(0, 0).into()
+    };
+
     let footer = row![
         inputs::date_label(&t(locale, "editor.createdAt"), state.created_at),
         Space::with_width(Length::Fixed(24.0)),
         inputs::date_label(&t(locale, "editor.updatedAt"), state.updated_at),
+        published_gap,
+        published_label,
     ]
     .padding(8);
 
@@ -547,22 +790,17 @@ pub fn view<'a>(
             excerpt_section,
         ]
         .spacing(4)
-        .width(Length::Fill)
+        .width(Length::Fill),
     )
     .height(Length::Shrink);
 
     // ── Full layout: top pane (shrink), editor (fill), footer (shrink) ──
-    column![
-        top_pane,
-        content_label,
-        editor_widget,
-        footer,
-    ]
-    .spacing(4)
-    .padding(16)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    column![top_pane, body_toolbar, editor_widget, footer,]
+        .spacing(4)
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// Chip input: shows existing chips as removable buttons + a text input to add new ones.
@@ -594,7 +832,10 @@ fn chip_input_field<'a>(
     }
 
     column![
-        text(label.to_string()).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
+        text(label.to_string())
+            .size(12)
+            .color(inputs::LABEL_COLOR)
+            .shaping(Shaping::Advanced),
         chip_row.wrap(),
         text_input(placeholder, input_value)
             .on_input(on_input)
@@ -676,5 +917,68 @@ fn flag_inactive_style(_theme: &Theme, status: button::Status) -> button::Style 
             ..iced::Border::default()
         },
         ..button::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_state() -> PostEditorState {
+        let post = Post {
+            id: "post-1".to_string(),
+            project_id: "project-1".to_string(),
+            title: "Sample".to_string(),
+            slug: "sample".to_string(),
+            excerpt: None,
+            content: Some("Hello world".to_string()),
+            status: PostStatus::Draft,
+            file_path: String::new(),
+            checksum: None,
+            created_at: 1,
+            updated_at: 1,
+            published_at: None,
+            published_title: None,
+            published_content: None,
+            published_excerpt: None,
+            published_tags: None,
+            published_categories: None,
+            tags: Vec::new(),
+            categories: Vec::new(),
+            author: None,
+            language: Some("en".to_string()),
+            template_slug: None,
+            do_not_translate: false,
+        };
+        PostEditorState::from_post(
+            &post,
+            &["en".to_string()],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn insert_markdown_at_cursor_uses_buffer_cursor() {
+        let mut state = sample_state();
+        state.editor_buffer.borrow_mut().set_cursor(0, 5);
+
+        state.insert_markdown_at_cursor(" brave");
+
+        assert_eq!(state.content, "Hello brave world");
+        assert!(state.is_dirty);
+    }
+
+    #[test]
+    fn insert_markdown_at_cursor_replaces_selection() {
+        let mut state = sample_state();
+        state.editor_buffer.borrow_mut().set_selection(0, 6, 0, 11);
+
+        state.insert_markdown_at_cursor("Rust");
+
+        assert_eq!(state.content, "Hello Rust");
+        assert!(state.is_dirty);
     }
 }
