@@ -54,7 +54,7 @@ surface ScriptEditorSurface {
         --   Enabled (checkbox).
 
     @guarantee EditorBody
-        -- Code editor with Python syntax highlighting.
+        -- Code editor with Lua syntax highlighting.
         -- Toolbar: "Content" label.
         -- Syntax errors shown as inline markers in editor gutter.
 
@@ -66,22 +66,22 @@ surface ScriptEditorSurface {
 
 rule ScriptSave {
     when: ScriptSaveRequested(script_id)
-    -- Python syntax check first (parse validation via Python runtime)
+    -- Lua syntax check first (parse validation via Lua parser/runtime semantics)
     -- If syntax error: blocks save, shows error inline in editor gutter
-    -- If valid: bumps version, saves to DB + rewrites .py file
+    -- If valid: bumps version, saves to DB + rewrites .lua file
     -- Entrypoint list re-discovered from AST after save
 }
 
 rule ScriptCheckSyntax {
     when: ScriptCheckSyntaxRequested(script_id)
-    -- Validates Python syntax without saving
+    -- Validates Lua syntax without saving
     -- Shows errors inline in editor gutter
     -- Success shown as toast or status indicator
 }
 
 rule ScriptRun {
     when: ScriptRunRequested(script_id)
-    -- Executes script in Python runtime
+    -- Executes script in Lua runtime
     -- Calls configured entrypoint function (default: main)
     -- stdout/stderr directed to Output panel tab
     -- Output panel auto-opens if not already visible
@@ -91,6 +91,6 @@ rule ScriptRun {
 rule ScriptDelete {
     when: ScriptDeleteRequested(script_id)
     -- No confirmation dialog
-    -- Deletes DB record + .py file on disk
+    -- Deletes DB record + .lua file on disk
     -- Closes script tab, sidebar removes item
 }

@@ -163,7 +163,8 @@ surface SettingsViewSurface {
         -- Per-model info: max output tokens, context window (when available).
 
     @guarantee TechnologySection
-        -- Section 5: Python runtime mode (webworker/main-thread),
+        -- Section 5: Lua is the only scripting runtime in the Rust app;
+        --   there is no scripting language selector.
         --   Semantic Similarity toggle.
 
     @guarantee PublishingSection
