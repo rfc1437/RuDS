@@ -8,6 +8,14 @@ use "./media.allium" as media
 use "./script.allium" as script
 use "./template.allium" as template
 
+surface MetadataMaintenanceSurface {
+    facing _: MaintenanceOperator
+
+    provides:
+        MetadataDiffRequested(project)
+        RebuildFromFilesystemRequested(project, entity_type)
+}
+
 value DiffField {
     name: String
     db_value: String

@@ -10,6 +10,23 @@ use "./metadata.allium" as meta
 use "./menu.allium" as menu
 use "./translation.allium" as translation
 
+surface GenerationControlSurface {
+    facing _: GenerationOperator
+
+    provides:
+        GenerateSiteRequested(generation)
+        ValidateSiteRequested(project)
+        ApplyValidationRequested(project_id, sections)
+}
+
+surface GenerationRuntimeSurface {
+    facing _: GenerationRuntime
+
+    provides:
+        PageRenderRequested(template, context)
+        GenerateSiteCompleted(generation)
+}
+
 value GenerationSection {
     kind: core | single | category | tag | date
 }
@@ -134,10 +151,9 @@ rule ValidateSite {
 }
 
 rule ApplyValidation {
-    when: ApplyValidationRequested(project, report)
+    when: ApplyValidationRequested(project_id, sections)
     -- Targeted re-rendering for affected sections only
-    for section in report.affected_sections:
-        ensures: GenerateSiteRequested(project, sections: {section})
+    ensures: GenerateSiteRequested(plan_generation(project_id, sections))
 }
 
 -- Day-block grouping for archives

@@ -8,6 +8,15 @@
 -- file types. The Rust implementation must read and write these
 -- formats byte-for-byte compatible with the TypeScript implementation.
 
+surface FrontmatterPersistenceSurface {
+    facing _: ContentPersistenceRuntime
+
+    provides:
+        PublishPostRequested(post)
+        PublishTemplateRequested(template)
+        PublishScriptRequested(script)
+}
+
 -- ============================================================================
 -- POST FILE FORMAT
 -- ============================================================================

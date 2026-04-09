@@ -10,6 +10,7 @@
 
 use "./tabs.allium" as tabs
 use "./i18n.allium" as i18n
+use "./generation.allium" as generation
 
 -- ─── Dashboard (no tab active) ───────────────────────────────
 
@@ -395,22 +396,26 @@ surface DocumentationSurface {
 -- ─── Site validation view ───────────────────────────────────
 
 value SiteValidationReport {
+    project_id: String
     expected_url_count: Integer
     existing_html_count: Integer
     missing_url_paths: List<String>     -- in sitemap, no HTML on disk
     extra_url_paths: List<String>       -- HTML on disk, not in sitemap
     updated_post_url_paths: List<String> -- source .md newer than HTML
+    affected_sections: Set<generation/GenerationSection>
 }
 
 surface SiteValidationSurface {
     context report: SiteValidationReport
 
     exposes:
+        report.project_id
         report.expected_url_count
         report.existing_html_count
         report.missing_url_paths
         report.extra_url_paths
         report.updated_post_url_paths
+        report.affected_sections
 
     provides:
         SiteValidationScanRequested()
@@ -447,7 +452,7 @@ rule SiteValidationApply {
     -- Deletes extra HTML files, removes empty directories
     -- Regenerates calendar if anything changed
     -- Rebuilds search index if anything rendered or deleted
-    ensures: GenerateSiteRequested(sections: report.affected_sections)
+    ensures: ApplyValidationRequested(report.project_id, report.affected_sections)
 }
 
 -- ─── Translation validation view ───────────────────────────

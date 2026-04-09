@@ -12,6 +12,15 @@
 -- GLOBAL TEMPLATE VARIABLES
 -- ============================================================================
 
+surface TemplateRenderingSurface {
+    facing _: RenderPipeline
+
+    provides:
+        RenderPostPageRequested(post, language)
+        RenderListPageRequested(posts, pagination, archive_context)
+        RenderNotFoundPageRequested()
+}
+
 value RenderContext {
     -- Top-level variables available in all templates
     language: String                -- Current language code

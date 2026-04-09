@@ -17,6 +17,22 @@ config {
     preview_port: Integer = 4123
 }
 
+surface PreviewControlSurface {
+    facing _: PreviewOperator
+
+    provides:
+        StartPreviewRequested(project)
+        StopPreviewRequested(server)
+}
+
+surface PreviewHttpSurface {
+    facing _: PreviewClient
+
+    provides:
+        PreviewRequest(path)
+        PreviewDraftRequest(path, post_id)
+}
+
 rule StartPreview {
     when: StartPreviewRequested(project)
     ensures: PreviewServer.created(
