@@ -7,11 +7,34 @@
 use "./post.allium" as post
 use "./media.allium" as media
 
+surface SearchControlSurface {
+    facing _: SearchOperator
+
+    provides:
+        SearchPostsRequested(query, filters)
+        SearchMediaRequested(query)
+}
+
+surface SearchIndexRuntimeSurface {
+    facing _: SearchRuntime
+
+    provides:
+        SearchIndexUpdated(post)
+        SearchIndexUpdated(media)
+}
+
 value StemmerLanguage {
     -- Snowball stemmers for 24 languages
     -- ISO 639-1 to Snowball mapping
     -- Applied to both indexing and query processing
     code: String
+}
+
+surface StemmerLanguageSurface {
+    context language: StemmerLanguage
+
+    exposes:
+        language.code
 }
 
 entity PostSearchIndex {

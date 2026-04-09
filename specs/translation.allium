@@ -7,9 +7,33 @@
 use "./post.allium" as post
 use "./media.allium" as media
 
+surface TranslationControlSurface {
+    facing _: TranslationOperator
+
+    provides:
+        UpsertPostTranslationRequested(post, language, title, content, excerpt)
+        DeletePostTranslationRequested(translation)
+        ValidateTranslationsRequested(project)
+}
+
+surface TranslationRuntimeSurface {
+    facing _: TranslationRuntime
+
+    provides:
+        PostPublished(post)
+        PublishTranslationRequested(translation)
+}
+
 value SupportedLanguage {
     -- en, de, fr, it, es
     code: String
+}
+
+surface SupportedLanguageSurface {
+    context language: SupportedLanguage
+
+    exposes:
+        language.code
 }
 
 entity PostTranslation {
@@ -34,6 +58,24 @@ entity PostTranslation {
     }
 }
 
+surface PostTranslationSurface {
+    context translation: PostTranslation
+
+    exposes:
+        translation.canonical_post
+        translation.language.code
+        translation.title
+        translation.excerpt when translation.excerpt != null
+        translation.content when translation.content != null
+        translation.status
+        translation.file_path
+        translation.checksum when translation.checksum != null
+        translation.created_at
+        translation.updated_at
+        translation.published_at when translation.published_at != null
+        translation.content_location
+}
+
 invariant UniqueTranslationPerLanguage {
     for a in PostTranslations:
         for b in PostTranslations:
@@ -54,15 +96,17 @@ invariant TranslationFilePath {
 rule UpsertPostTranslation {
     when: UpsertPostTranslationRequested(post, language, title, content, excerpt)
     requires: not post.do_not_translate
-    ensures: PostTranslation.created(
-        canonical_post: post,
-        language: language,
-        title: title,
-        content: content,
-        excerpt: excerpt,
-        status: draft,
-        file_path: ""
-    )
+    ensures:
+        let translation = PostTranslation.created(
+            canonical_post: post,
+            language: language,
+            title: title,
+            content: content,
+            excerpt: excerpt,
+            status: draft,
+            file_path: ""
+        )
+        translation.status = draft
     -- If translation already exists, update it instead
 }
 
@@ -70,11 +114,16 @@ rule PublishPostTranslation {
     when: PostPublished(post)
     -- All translations are also published when the canonical post is published
     for t in post.translations:
-        ensures: t.status = published
-        ensures: t.published_at = t.published_at ?? now
-        ensures: TranslationFileWritten(t)
-        ensures: t.content = null
-            -- Content moves to filesystem
+        ensures: PublishTranslationRequested(t)
+}
+
+rule PublishTranslation {
+    when: PublishTranslationRequested(translation)
+    ensures: translation.status = published
+    ensures: translation.published_at = translation.published_at ?? now
+    ensures: TranslationFileWritten(translation)
+    ensures: translation.content = null
+        -- Content moves to filesystem
 }
 
 rule DeletePostTranslation {

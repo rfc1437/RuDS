@@ -6,6 +6,18 @@
 use "./project.allium" as project
 use "./post.allium" as post
 
+surface TagControlSurface {
+    facing _: TagOperator
+
+    provides:
+        CreateTagRequested(project, name, color)
+        UpdateTagRequested(tag, changes)
+        DeleteTagRequested(tag)
+        RenameTagRequested(tag, new_name)
+        MergeTagsRequested(sources, target)
+        SyncTagsFromPostsRequested(project)
+}
+
 entity Tag {
     project: project/Project
     name: String
@@ -17,6 +29,20 @@ entity Tag {
     -- Derived
     posts: post/Post with this.name in tags
     post_count: posts.count
+}
+
+surface TagSurface {
+    context tag: Tag
+
+    exposes:
+        tag.project
+        tag.name
+        tag.color when tag.color != null
+        tag.post_template_slug when tag.post_template_slug != null
+        tag.created_at
+        tag.updated_at
+        tag.posts.count
+        tag.post_count
 }
 
 invariant UniqueTagNamePerProject {

@@ -15,6 +15,16 @@ entity McpServer {
     is_running: Boolean
 }
 
+surface McpServerSurface {
+    context server: McpServer
+
+    exposes:
+        server.transport
+        server.host
+        server.port
+        server.is_running
+}
+
 entity Proposal {
     kind: draft_post | propose_script | propose_template | propose_media_metadata | propose_post_metadata
     status: pending | accepted | discarded | expired
@@ -36,6 +46,24 @@ entity Proposal {
         pending -> discarded
         pending -> expired
     }
+}
+
+surface ProposalSurface {
+    context proposal: Proposal
+
+    exposes:
+        proposal.kind
+        proposal.status
+        proposal.entity_id
+        proposal.data
+        proposal.created_at
+        proposal.expires_at
+        proposal.draft_post when proposal.draft_post != null
+        proposal.proposed_script when proposal.proposed_script != null
+        proposal.proposed_template when proposal.proposed_template != null
+        proposal.target_media when proposal.target_media != null
+        proposal.target_post when proposal.target_post != null
+        proposal.is_expired
 }
 
 config {
@@ -337,6 +365,13 @@ value McpAgentKind {
     -- Supported: claude_code, claude_desktop, github_copilot,
     --   gemini_cli, opencode, mistral_vibe, openai_codex
     kind: String
+}
+
+surface McpAgentKindSurface {
+    context agent_kind: McpAgentKind
+
+    exposes:
+        agent_kind.kind
 }
 
 rule InstallAgentConfig {

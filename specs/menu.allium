@@ -3,6 +3,13 @@
 -- Scope: core (read for rendering), extension Bucket F (menu editor UI)
 -- Distilled from: src/main/engine/MenuEngine.ts
 
+surface MenuManagementSurface {
+    facing _: MenuOperator
+
+    provides:
+        UpdateMenuRequested(menu, items)
+}
+
 value MenuItem {
     kind: page | submenu | category_archive | home
     label: String
@@ -16,6 +23,15 @@ entity Menu {
     -- Derived
     home_items: items where kind = home
     home_entry: home_items.first
+}
+
+surface MenuSurface {
+    context menu: Menu
+
+    exposes:
+        menu.items.count
+        menu.home_items.count
+        menu.home_entry.label
 }
 
 invariant HomeAlwaysPresent {

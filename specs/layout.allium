@@ -11,6 +11,24 @@
 use "./i18n.allium" as i18n
 use "./task.allium" as task
 
+surface LayoutControlSurface {
+    facing _: LayoutOperator
+
+    provides:
+        ToggleSidebarRequested()
+        TogglePanelRequested()
+        ToggleAssistantSidebarRequested()
+        ActivityClicked(activity_id)
+}
+
+surface LayoutRuntimeSurface {
+    facing _: LayoutRuntime
+
+    provides:
+        GitBadgePollTick(badge)
+        ClearGitBadgeTick(badge)
+}
+
 -- ─── Window shell ─────────────────────────────────────────────
 
 -- +------------------------------------------------------------+
@@ -35,6 +53,17 @@ value AppShell {
     content_area: ContentArea
     assistant_sidebar: ResizableRegion
     status_bar: StatusBar
+}
+
+surface AppShellSurface {
+    context shell: AppShell
+
+    exposes:
+        shell.title_bar.title
+        shell.sidebar.visible
+        shell.sidebar.width
+        shell.content_area.panel.visible
+        shell.assistant_sidebar.visible
 }
 
 value ContentArea {
@@ -67,6 +96,15 @@ value ShellVisibility {
     sidebar_visible: Boolean
     panel_visible: Boolean
     assistant_sidebar_visible: Boolean
+}
+
+surface ShellVisibilitySurface {
+    context visibility: ShellVisibility
+
+    exposes:
+        visibility.sidebar_visible
+        visibility.panel_visible
+        visibility.assistant_sidebar_visible
 }
 
 rule ToggleSidebar {

@@ -26,6 +26,24 @@ entity Script {
     }
 }
 
+surface ScriptSurface {
+    context script: Script
+
+    exposes:
+        script.slug
+        script.title
+        script.kind
+        script.entrypoint
+        script.enabled
+        script.status
+        script.content when script.content != null
+        script.version
+        script.file_path
+        script.created_at
+        script.updated_at
+        script.content_location
+}
+
 surface ScriptManagementSurface {
     facing _: ScriptOperator
 

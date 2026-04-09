@@ -5,6 +5,17 @@
 
 use "./project.allium" as project
 
+surface MediaControlSurface {
+    facing _: MediaOperator
+
+    provides:
+        ImportMediaRequested(project, source_file)
+        UpdateMediaRequested(media, changes)
+        DeleteMediaRequested(media)
+        UpsertMediaTranslationRequested(media, language, title, alt, caption)
+        RebuildMediaFromFilesRequested(project)
+}
+
 value ThumbnailSet {
     small: String       -- 150px width (binary path)
     medium: String      -- 400px width (binary path)
@@ -17,6 +28,13 @@ value SidecarFile {
     -- Fields: title, alt, caption, author, tags, language, linkedPostIds
     -- Translations: {media_file}.{lang}.meta
     path: String
+}
+
+surface SidecarFileSurface {
+    context sidecar: SidecarFile
+
+    exposes:
+        sidecar.path
 }
 
 entity Media {
@@ -46,6 +64,37 @@ entity Media {
     -- Derived
     available_languages: translations -> language
     thumbnails: ThumbnailSet
+}
+
+surface MediaSurface {
+    context media: Media
+
+    exposes:
+        media.project
+        media.filename
+        media.original_name
+        media.mime_type
+        media.size
+        media.width when media.width != null
+        media.height when media.height != null
+        media.title when media.title != null
+        media.alt when media.alt != null
+        media.caption when media.caption != null
+        media.author when media.author != null
+        media.language when media.language != null
+        media.file_path
+        media.sidecar_path
+        media.checksum when media.checksum != null
+        media.tags
+        media.created_at
+        media.updated_at
+        media.translations.count
+        media.linked_posts.count
+        media.available_languages
+        media.thumbnails.small
+        media.thumbnails.medium
+        media.thumbnails.large
+        media.thumbnails.ai
 }
 
 entity MediaTranslation {

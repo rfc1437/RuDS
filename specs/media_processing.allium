@@ -10,6 +10,23 @@
 use "./media.allium" as media
 use "./search.allium" as search
 
+surface MediaProcessingControlSurface {
+    facing _: MediaProcessingOperator
+
+    provides:
+        ImportMediaRequested(source_path, project)
+        TagMediaRequested(media, tags)
+        DeleteMediaRequested(media)
+        ValidateMediaRequested(project)
+}
+
+surface MediaProcessingRuntimeSurface {
+    facing _: MediaProcessingRuntime
+
+    provides:
+        MediaImported(media)
+}
+
 -- ============================================================================
 -- MEDIA FILE ORGANIZATION
 -- ============================================================================
@@ -25,6 +42,18 @@ value MediaFileLayout {
     thumbnail_medium: String  -- thumbnails/{prefix}/{id}-medium.webp
     thumbnail_large: String   -- thumbnails/{prefix}/{id}-large.webp
     thumbnail_ai: String      -- thumbnails/{prefix}/{id}-ai.jpg
+}
+
+surface MediaFileLayoutSurface {
+    context layout: MediaFileLayout
+
+    exposes:
+        layout.binary_path
+        layout.sidecar_path
+        layout.thumbnail_small
+        layout.thumbnail_medium
+        layout.thumbnail_large
+        layout.thumbnail_ai
 }
 
 invariant MediaFileNaming {
@@ -109,6 +138,10 @@ value ThumbnailGeneration {
     -- No _source copy is made. Thumbnails regenerated from the original binary.
 }
 
+surface ThumbnailGenerationSurface {
+    context _: ThumbnailGeneration
+}
+
 invariant ThumbnailExifHandling {
     -- EXIF orientation IS applied during thumbnail generation so that
     -- thumbnails always appear right-side-up regardless of camera metadata.
@@ -140,6 +173,14 @@ value ImageProcessing {
     -- 4. EXIF data is not stripped (thumbnails are re-encoded, so EXIF is naturally absent)
 }
 
+surface ImageProcessingSurface {
+    context processing: ImageProcessing
+
+    exposes:
+        processing.input_formats
+        processing.output_formats
+}
+
 rule ProcessImageMetadata {
     when: MediaImported(media)
     -- Extract image metadata from raw file header
@@ -166,6 +207,17 @@ value MediaTranslationFile {
     title: String?
     alt: String?
     caption: String?
+}
+
+surface MediaTranslationFileSurface {
+    context file: MediaTranslationFile
+
+    exposes:
+        file.translation_for
+        file.language
+        file.title when file.title != null
+        file.alt when file.alt != null
+        file.caption when file.caption != null
 }
 
 invariant MediaTranslationFileLayout {

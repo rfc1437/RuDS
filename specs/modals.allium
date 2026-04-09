@@ -25,6 +25,13 @@ value AISuggestionsModal {
     -- Cancel discards all; Apply writes only accepted fields to entity
 }
 
+surface AISuggestionsModalSurface {
+    context modal: AISuggestionsModal
+
+    exposes:
+        modal.fields.count
+}
+
 value AISuggestionField {
     label: String
     current_value: String
@@ -65,6 +72,16 @@ value InsertPostLinkModal {
     related_posts: List<InsertLinkResult> -- similarity-based, shown when query empty
 }
 
+surface InsertPostLinkModalSurface {
+    context modal: InsertPostLinkModal
+
+    exposes:
+        modal.active_tab
+        modal.search_query
+        modal.results.count
+        modal.related_posts.count
+}
+
 value InsertLinkResult {
     post_id: String
     title: String
@@ -87,6 +104,14 @@ value InsertMediaModal {
     results: List<InsertMediaResult>
 }
 
+surface InsertMediaModalSurface {
+    context modal: InsertMediaModal
+
+    exposes:
+        modal.search_query
+        modal.results.count
+}
+
 value InsertMediaResult {
     media_id: String
     title: String
@@ -106,6 +131,14 @@ value LanguagePickerModal {
     -- Cancel closes without action.
     source_language: String
     available_targets: List<LanguageTarget>
+}
+
+surface LanguagePickerModalSurface {
+    context modal: LanguagePickerModal
+
+    exposes:
+        modal.source_language
+        modal.available_targets.count
 }
 
 value LanguageTarget {
@@ -130,6 +163,16 @@ value ConfirmDeleteModal {
     reference_list: List<String>         -- titles of referencing entities
 }
 
+surface ConfirmDeleteModalSurface {
+    context modal: ConfirmDeleteModal
+
+    exposes:
+        modal.entity_name
+        modal.entity_type
+        modal.reference_count
+        modal.reference_list
+}
+
 -- ─── Confirm Dialog ──────────────────────────────────────────
 
 value ConfirmDialog {
@@ -139,6 +182,14 @@ value ConfirmDialog {
     -- Buttons: Cancel (secondary), Confirm (primary).
     title: String
     message: String
+}
+
+surface ConfirmDialogSurface {
+    context modal: ConfirmDialog
+
+    exposes:
+        modal.title
+        modal.message
 }
 
 -- Native confirm dialogs (via rfd crate) are NOT modelled as values.
@@ -155,6 +206,14 @@ value GalleryOverlay {
     -- Close: X button or ESC key.
     post_id: String
     images: List<GalleryImage>
+}
+
+surface GalleryOverlaySurface {
+    context overlay: GalleryOverlay
+
+    exposes:
+        overlay.post_id
+        overlay.images.count
 }
 
 value GalleryImage {
@@ -174,6 +233,17 @@ value LightboxView {
     media_id: String
     image_url: String                    -- bds-media://media_id
     alt_text: String?
+}
+
+surface LightboxViewSurface {
+    context view: LightboxView
+
+    exposes:
+        view.current_index
+        view.total_count
+        view.media_id
+        view.image_url
+        view.alt_text when view.alt_text != null
 }
 
 -- All modals rendered as centered overlay with backdrop dimming.

@@ -20,6 +20,37 @@ entity Task {
     }
 }
 
+surface TaskControlSurface {
+    facing _: TaskOperator
+
+    provides:
+        SubmitTaskRequested(name, work)
+        CancelTaskRequested(task)
+        RegisterExternalTaskRequested(name)
+}
+
+surface TaskRuntimeSurface {
+    facing _: TaskRuntime
+
+    provides:
+        TaskWorkCompleted(task)
+        TaskWorkFailed(task, error_message)
+        ProgressReported(task, value, message)
+}
+
+surface TaskSurface {
+    context task: Task
+
+    exposes:
+        task.name
+        task.status
+        task.progress when task.progress != null
+        task.message when task.message != null
+        task.group_id when task.group_id != null
+        task.group_name when task.group_name != null
+        task.created_at
+}
+
 config {
     max_concurrent: Integer = 3
     progress_throttle: Duration = 250.milliseconds
@@ -39,9 +70,11 @@ invariant FifoQueue {
 rule SubmitTask {
     when: SubmitTaskRequested(name, work)
     let running_tasks = Tasks where status = running
-    ensures: Task.created(name: name, status: pending)
     ensures:
+        let task = Task.created(name: name, status: pending)
+        task.status = pending
         if running_tasks.count < config.max_concurrent:
+            task.status = running
             TaskStarted(task, work)
 }
 
@@ -82,7 +115,9 @@ invariant ProgressThrottled {
 -- External tasks: lifecycle controlled by caller (e.g., renderer-side scripts)
 rule RegisterExternalTask {
     when: RegisterExternalTaskRequested(name)
-    ensures: Task.created(name: name, status: running)
+    ensures:
+        let task = Task.created(name: name, status: running)
+        task.status = running
     @guidance
         -- External tasks are not managed by the queue
         -- The caller is responsible for updating status

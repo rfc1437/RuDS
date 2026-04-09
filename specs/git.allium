@@ -17,12 +17,30 @@ value GitSyncStatus {
     kind: local_only | remote_only | both
 }
 
+surface GitSyncStatusSurface {
+    context status: GitSyncStatus
+
+    exposes:
+        status.kind
+}
+
 entity GitRepository {
     is_initialized: Boolean
     remote_url: String?
     provider: GitProvider?
     current_branch: String?
     has_lfs: Boolean
+}
+
+surface GitRepositorySurface {
+    context repo: GitRepository
+
+    exposes:
+        repo.is_initialized
+        repo.remote_url when repo.remote_url != null
+        repo.provider when repo.provider != null
+        repo.current_branch when repo.current_branch != null
+        repo.has_lfs
 }
 
 surface GitControlSurface {

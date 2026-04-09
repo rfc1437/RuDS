@@ -3,6 +3,15 @@
 -- Scope: core (Wave 1)
 -- Distilled from: src/main/engine/ProjectEngine.ts, schema.ts
 
+surface ProjectControlSurface {
+    facing _: ProjectOperator
+
+    provides:
+        CreateProjectRequested(name, data_path)
+        SetActiveProjectRequested(project)
+        DeleteProjectRequested(project)
+}
+
 entity Project {
     name: String
     slug: String
@@ -23,6 +32,24 @@ entity Project {
         -- Contains: meta/, thumbnails/, tags.json
     effective_data_dir: data_path ?? internal_base_dir
         -- Custom data path overrides default
+}
+
+surface ProjectSurface {
+    context project: Project
+
+    exposes:
+        project.name
+        project.slug
+        project.description when project.description != null
+        project.data_path when project.data_path != null
+        project.is_active
+        project.created_at
+        project.updated_at
+        project.posts.count
+        project.media.count
+        project.tags.count
+        project.internal_base_dir
+        project.effective_data_dir
 }
 
 invariant SingleActiveProject {

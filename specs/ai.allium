@@ -19,11 +19,25 @@ entity AiEndpoint {
     -- airplane: local model (Ollama, LM Studio, etc.)
 }
 
+surface AiEndpointSurface {
+    context endpoint: AiEndpoint
+
+    exposes:
+        endpoint.kind
+        endpoint.url
+        endpoint.api_key when endpoint.api_key != null
+        endpoint.model
+}
+
 entity SecureKeyStore {
     -- Encrypts API keys using OS keychain
     --   macOS: Keychain, Windows: DPAPI, Linux: libsecret
     -- Stored as base64 in settings table with __encrypted_ prefix
     -- No plain-text fallback
+}
+
+surface SecureKeyStoreSurface {
+    context _: SecureKeyStore
 }
 
 entity ChatConversation {
@@ -35,6 +49,17 @@ entity ChatConversation {
     messages: ChatMessage with conversation = this
 }
 
+surface ChatConversationSurface {
+    context conversation: ChatConversation
+
+    exposes:
+        conversation.title
+        conversation.model
+        conversation.created_at
+        conversation.updated_at
+        conversation.messages.count
+}
+
 entity ChatMessage {
     conversation: ChatConversation
     role: system | user | assistant | tool
@@ -42,6 +67,18 @@ entity ChatMessage {
     token_usage_input: Integer?
     token_usage_output: Integer?
     created_at: Timestamp
+}
+
+surface ChatMessageSurface {
+    context message: ChatMessage
+
+    exposes:
+        message.conversation
+        message.role
+        message.content
+        message.token_usage_input when message.token_usage_input != null
+        message.token_usage_output when message.token_usage_output != null
+        message.created_at
 }
 
 surface OneShotAiSurface {

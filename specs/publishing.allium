@@ -25,6 +25,26 @@ value UploadTarget {
     remote_dir: String
 }
 
+surface PublishJobSurface {
+    context job: PublishJob
+
+    exposes:
+        job.ssh_host
+        job.ssh_user
+        job.ssh_remote_path
+        job.ssh_mode
+        job.status
+}
+
+surface UploadTargetSurface {
+    context target: UploadTarget
+
+    exposes:
+        target.kind
+        target.local_dir
+        target.remote_dir
+}
+
 surface PublishingControlSurface {
     facing _: PublishOperator
 
