@@ -27,6 +27,18 @@ entity Template {
     }
 }
 
+surface TemplateManagementSurface {
+    facing operator: TemplateOperator
+
+    provides:
+        CreateTemplateRequested(title, kind, content)
+        CreateAndPublishTemplateRequested(title, kind, content)
+        UpdateTemplateRequested(template, changes)
+        PublishTemplateRequested(template)
+        DeleteTemplateRequested(template)
+        RebuildTemplatesFromFilesRequested(project)
+}
+
 invariant UniqueTemplateSlug {
     for a in Templates:
         for b in Templates:
@@ -67,17 +79,18 @@ rule CreateAndPublishTemplate {
     when: CreateAndPublishTemplateRequested(title, kind, content)
     let slug = slugify(title)
     requires: ValidateLiquid(content) = valid
-    ensures: Template.created(
-        slug: slug,
-        title: title,
-        kind: kind,
-        content: null,
-        status: published,
-        enabled: true,
-        version: 1,
-        file_path: format("templates/{slug}.liquid", slug: slug)
-    )
-    ensures: TemplateFileWritten(template)
+    ensures:
+        let new_template = Template.created(
+            slug: slug,
+            title: title,
+            kind: kind,
+            content: null,
+            status: published,
+            enabled: true,
+            version: 1,
+            file_path: format("templates/{slug}.liquid", slug: slug)
+        )
+        TemplateFileWritten(new_template)
 }
 
 rule UpdateTemplate {

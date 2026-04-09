@@ -25,9 +25,31 @@ entity GitRepository {
     has_lfs: Boolean
 }
 
+surface GitControlSurface {
+    facing _: GitOperator
+
+    provides:
+        InitializeRepoRequested(project)
+        GitStatusRequested(project)
+        GitDiffRequested(project)
+        GitHistoryRequested(project, branch)
+        GitFetchRequested(project)
+        GitPullRequested(project)
+        GitPushRequested(project)
+        GitCommitAllRequested(project, message)
+        GitReconcileRequested(project, old_commit, new_commit)
+        PruneLfsCacheRequested(project, retain_recent)
+}
+
 rule InitializeRepo {
     when: InitializeRepoRequested(project)
-    ensures: GitRepository.created(is_initialized: true, has_lfs: true)
+    ensures: GitRepository.created(
+        is_initialized: true,
+        remote_url: null,
+        provider: null,
+        current_branch: "master",
+        has_lfs: true
+    )
     ensures: GitignoreCreated(project)
         -- .gitignore manages: thumbnails, generated html, node_modules, etc.
     ensures: LfsTrackingConfigured(project)
@@ -62,7 +84,7 @@ rule Fetch {
 rule Pull {
     when: GitPullRequested(project)
     ensures: LocalBranchUpdated(project)
-    ensures: ReconcileFromGit(project)
+    ensures: GitReconcileRequested(project, previous_head(project), current_head(project))
         -- After pull, detect changed files and reconcile DB
 }
 

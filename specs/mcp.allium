@@ -22,6 +22,11 @@ entity Proposal {
     data: String
     created_at: Timestamp
     expires_at: Timestamp
+    draft_post: post/Post?
+    proposed_script: script/Script?
+    proposed_template: template/Template?
+    target_media: media/Media?
+    target_post: post/Post?
 
     -- Derived
     is_expired: expires_at <= now
@@ -37,6 +42,25 @@ config {
     http_port: Integer = 4124
     proposal_ttl_app: Duration = 30.minutes
     proposal_ttl_cli: Duration = 8.hours
+}
+
+surface McpAutomationSurface {
+    facing _: McpClient
+
+    provides:
+        McpToolInvoked("check_term", term)
+        McpToolInvoked("search_posts", params)
+        McpToolInvoked("count_posts", params)
+        McpToolInvoked("read_post_by_slug", slug, language)
+        McpToolInvoked("draft_post", params)
+        McpToolInvoked("propose_script", params)
+        McpToolInvoked("propose_template", params)
+        McpToolInvoked("propose_media_metadata", params)
+        McpToolInvoked("propose_post_metadata", params)
+        AcceptProposalRequested(proposal)
+        DiscardProposalRequested(proposal)
+        InstallAgentConfigRequested(agent_kind)
+        UninstallAgentConfigRequested(agent_kind)
 }
 
 invariant LocalhostOnlyHttp {
@@ -161,7 +185,20 @@ rule DraftPost {
             content: params.content,
             status: draft
         )
-        Proposal.created(kind: draft_post, entity_id: new_post.id, status: pending)
+        let proposal = Proposal.created(
+            kind: draft_post,
+            entity_id: new_post.id,
+            data: "",
+            created_at: now,
+            expires_at: now + config.proposal_ttl_app,
+            draft_post: new_post,
+            proposed_script: null,
+            proposed_template: null,
+            target_media: null,
+            target_post: null,
+            status: pending
+        )
+        proposal.status = pending
 }
 
 rule ProposeScript {
@@ -174,7 +211,20 @@ rule ProposeScript {
             content: params.content,
             status: draft
         )
-        Proposal.created(kind: propose_script, entity_id: new_script.id, status: pending)
+        let proposal = Proposal.created(
+            kind: propose_script,
+            entity_id: new_script.id,
+            data: "",
+            created_at: now,
+            expires_at: now + config.proposal_ttl_app,
+            draft_post: null,
+            proposed_script: new_script,
+            proposed_template: null,
+            target_media: null,
+            target_post: null,
+            status: pending
+        )
+        proposal.status = pending
 }
 
 rule ProposeTemplate {
@@ -187,17 +237,58 @@ rule ProposeTemplate {
             content: params.content,
             status: draft
         )
-        Proposal.created(kind: propose_template, entity_id: new_template.id, status: pending)
+        let proposal = Proposal.created(
+            kind: propose_template,
+            entity_id: new_template.id,
+            data: "",
+            created_at: now,
+            expires_at: now + config.proposal_ttl_app,
+            draft_post: null,
+            proposed_script: null,
+            proposed_template: new_template,
+            target_media: null,
+            target_post: null,
+            status: pending
+        )
+        proposal.status = pending
 }
 
 rule ProposeMediaMetadata {
     when: McpToolInvoked("propose_media_metadata", params)
-    ensures: Proposal.created(kind: propose_media_metadata, entity_id: params.media_id, data: params, status: pending)
+    ensures:
+        let proposal = Proposal.created(
+            kind: propose_media_metadata,
+            entity_id: params.media_id,
+            data: serialize(params),
+            created_at: now,
+            expires_at: now + config.proposal_ttl_app,
+            draft_post: null,
+            proposed_script: null,
+            proposed_template: null,
+            target_media: params.media,
+            target_post: null,
+            status: pending
+        )
+        proposal.status = pending
 }
 
 rule ProposePostMetadata {
     when: McpToolInvoked("propose_post_metadata", params)
-    ensures: Proposal.created(kind: propose_post_metadata, entity_id: params.post_id, data: params, status: pending)
+    ensures:
+        let proposal = Proposal.created(
+            kind: propose_post_metadata,
+            entity_id: params.post_id,
+            data: serialize(params),
+            created_at: now,
+            expires_at: now + config.proposal_ttl_app,
+            draft_post: null,
+            proposed_script: null,
+            proposed_template: null,
+            target_media: null,
+            target_post: params.post,
+            status: pending
+        )
+        proposal.status = pending
 }
 
 -- Proposal lifecycle
@@ -207,15 +298,16 @@ rule AcceptProposal {
     requires: not proposal.is_expired
     ensures:
         if proposal.kind = draft_post:
-            post/PublishPostRequested(proposal.entity_id)
+            post/PublishPostRequested(proposal.draft_post)
         if proposal.kind = propose_script:
-            script/PublishScriptRequested(proposal.entity_id)
+            script/PublishScriptRequested(proposal.proposed_script)
         if proposal.kind = propose_template:
-            template/PublishTemplateRequested(proposal.entity_id)
+            template/PublishTemplateRequested(proposal.proposed_template)
         if proposal.kind = propose_media_metadata:
-            media/UpdateMediaRequested(proposal.entity_id, proposal.data)
+            media/UpdateMediaRequested(proposal.target_media, deserialize_media_changes(proposal.data))
         if proposal.kind = propose_post_metadata:
-            post/UpdatePostRequested(proposal.entity_id, proposal.data)
+            post/UpdatePostRequested(proposal.target_post, deserialize_post_changes(proposal.data))
+        proposal.status = accepted
         not exists proposal
 }
 
@@ -223,17 +315,19 @@ rule DiscardProposal {
     when: DiscardProposalRequested(proposal)
     ensures:
         if proposal.kind = draft_post:
-            post/DeletePostRequested(proposal.entity_id)
+            post/DeletePostRequested(proposal.draft_post)
         if proposal.kind = propose_script:
-            script/DeleteScriptRequested(proposal.entity_id)
+            script/DeleteScriptRequested(proposal.proposed_script)
         if proposal.kind = propose_template:
-            template/DeleteTemplateRequested(proposal.entity_id)
+            template/DeleteTemplateRequested(proposal.proposed_template)
+        proposal.status = discarded
         not exists proposal
 }
 
 rule ExpireProposal {
     when: proposal: Proposal.is_expired becomes true
     -- On expiry: clean up draft DB rows
+    ensures: proposal.status = expired
     ensures: DiscardProposalRequested(proposal)
 }
 
@@ -254,4 +348,10 @@ rule InstallAgentConfig {
 rule UninstallAgentConfig {
     when: UninstallAgentConfigRequested(agent_kind)
     ensures: AgentConfigRemoved(agent_kind)
+}
+
+invariant ProposalPayloadEncoding {
+    -- Proposal.data stores a serialized payload for metadata proposals.
+    -- draft_post / propose_script / propose_template proposals keep the
+    -- created entity reference directly on the proposal record.
 }

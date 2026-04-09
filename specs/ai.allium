@@ -44,6 +44,27 @@ entity ChatMessage {
     created_at: Timestamp
 }
 
+surface OneShotAiSurface {
+    facing _: AiOperator
+
+    provides:
+        AnalyzeTaxonomyRequested(post)
+        AnalyzeImageRequested(media)
+        AnalyzePostRequested(post)
+        DetectLanguageRequested(text)
+        TranslatePostRequested(post, target_language)
+        TranslateMediaRequested(media, target_language)
+}
+
+surface AiChatSurface {
+    facing _: ChatOperator
+
+    provides:
+        StartChatRequested(model)
+        SendChatMessageRequested(conversation, content)
+        RefreshModelCatalogRequested(endpoint)
+}
+
 -- One-shot AI tasks (core scope, no streaming)
 -- All use OpenAI Chat Completions wire format.
 -- Endpoint routing: see AirplaneModeGating invariant below.
@@ -95,13 +116,26 @@ rule TranslateMedia {
 
 rule StartChat {
     when: StartChatRequested(model)
-    ensures: ChatConversation.created(model: model)
+    ensures: ChatConversation.created(
+        title: generated_chat_title(model),
+        model: model,
+        created_at: now,
+        updated_at: now
+    )
 }
 
 rule SendChatMessage {
     when: SendChatMessageRequested(conversation, content)
     requires: active_endpoint_configured
-    ensures: ChatMessage.created(conversation: conversation, role: user, content: content)
+    ensures: ChatMessage.created(
+        conversation: conversation,
+        role: user,
+        content: content,
+        token_usage_input: null,
+        token_usage_output: null,
+        created_at: now
+    )
+    ensures: conversation.updated_at = now
     ensures: AiStreamingResponse(conversation)
         -- AI SDK v6 streamText() with tool-call loop (max 10 rounds)
         -- Blog data tools for post/media querying during chat
@@ -133,6 +167,13 @@ invariant TwoEndpointModel {
     --   airplane: for local models (no API key required)
     -- Both use the OpenAI Chat Completions wire format.
     -- This replaces the TypeScript app's 4 named provider model.
+}
+
+invariant AiSpecPartitioning {
+    -- This file covers two distinct but related AI contracts:
+    --   1. Core one-shot operations (taxonomy, vision, translation, language detection)
+    --   2. Extension chat/model-catalog behaviour
+    -- Both share the same endpoint routing and airplane-mode gating rules.
 }
 
 invariant SecureKeyStorage {

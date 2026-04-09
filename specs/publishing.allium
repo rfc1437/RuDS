@@ -25,36 +25,92 @@ value UploadTarget {
     remote_dir: String
 }
 
+surface PublishingControlSurface {
+    facing _: PublishOperator
+
+    provides:
+        UploadSiteRequested(project, credentials)
+}
+
+surface PublishingRuntimeSurface {
+    facing _: PublishRuntime
+
+    provides:
+        PublishJobStarted(project, job, credentials)
+        PublishTargetFailed(job, target, error)
+}
+
 rule UploadSite {
     when: UploadSiteRequested(project, credentials)
-    -- Three upload targets run as parallel tasks
-    ensures: UploadTargetStarted(html, "html/", credentials.ssh_remote_path, credentials)
-    ensures: UploadTargetStarted(thumbnails, "thumbnails/", credentials.ssh_remote_path + "/thumbnails", credentials)
-    ensures: UploadTargetStarted(media, "media/", credentials.ssh_remote_path + "/media", credentials)
+    ensures:
+        let job = PublishJob.created(
+            ssh_host: credentials.ssh_host,
+            ssh_user: credentials.ssh_user,
+            ssh_remote_path: credentials.ssh_remote_path,
+            ssh_mode: credentials.ssh_mode,
+            status: pending
+        )
+        job.status = pending
+        PublishJobStarted(project, job, credentials)
+}
+
+rule StartPublishJob {
+    when: PublishJobStarted(project, job, credentials)
+    ensures: job.status = running
+    ensures: UploadTargetStarted(job, html, "html/", credentials.ssh_remote_path, credentials)
+    ensures: UploadTargetStarted(job, thumbnails, "thumbnails/", credentials.ssh_remote_path + "/thumbnails", credentials)
+    ensures: UploadTargetStarted(job, media, "media/", credentials.ssh_remote_path + "/media", credentials)
 }
 
 rule UploadViaScp {
-    when: UploadTargetCompleted(target, credentials)
+    when: UploadTargetStarted(job, target, local_dir, remote_dir, credentials)
     requires: credentials.ssh_mode = scp
     -- mtime-based upload detection: skip unchanged files
     -- Uses SSH agent (SSH_AUTH_SOCK) for authentication
-    ensures: ScpUploadCompleted(target)
+    ensures: ScpUploadCompleted(job, target)
+    ensures: UploadTargetCompleted(job, target)
 }
 
 rule UploadViaRsync {
-    when: UploadTargetCompleted(target, credentials)
+    when: UploadTargetStarted(job, target, local_dir, remote_dir, credentials)
     requires: credentials.ssh_mode = rsync
     -- rsync --update --compress --verbose
     -- Media uploads exclude .meta sidecar files
-    ensures: RsyncUploadCompleted(target)
+    ensures: RsyncUploadCompleted(job, target)
+    ensures: UploadTargetCompleted(job, target)
 
     @guidance
         -- rsync exclude filters for .meta files on media target
 }
 
+rule CompletePublishJob {
+    when: PublishTargetsCompleted(job)
+    requires: job.status = running
+    ensures: job.status = completed
+}
+
+rule FailPublishJob {
+    when: PublishTargetFailed(job, target, error)
+    requires: job.status = running
+    ensures: job.status = failed
+}
+
+rule TrackUploadCompletion {
+    when: UploadTargetCompleted(job, target)
+    requires: all_upload_targets_completed(job)
+    ensures: PublishTargetsCompleted(job)
+}
+
 invariant MediaSidecarsExcludedFromUpload {
     -- .meta sidecar files are never uploaded to the remote server
     -- They are project metadata, not public content
+}
+
+invariant PublishJobLifecycle {
+    -- UploadSiteRequested creates one PublishJob in pending state.
+    -- PublishJobStarted moves the job to running before any target starts.
+    -- A job reaches completed only after PublishTargetsCompleted(job).
+    -- Any PublishTargetFailed(job, target, error) transitions the job to failed.
 }
 
 invariant SshAgentAuth {
