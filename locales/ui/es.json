@@ -337,6 +337,7 @@
   "dashboard.timeline": "Cronología",
   "dashboard.noTimelineData": "Todavía no hay datos de cronología",
   "dashboard.tagCloud": "Nube de etiquetas",
+  "dashboard.noTags": "Todavía no hay etiquetas",
   "dashboard.categoryCloud": "Nube de categorías",
   "dashboard.recentPosts": "Publicaciones recientes",
   "dashboard.noRecentPosts": "No hay publicaciones recientes",

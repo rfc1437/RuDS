@@ -337,6 +337,7 @@
   "dashboard.timeline": "Zeitachse",
   "dashboard.noTimelineData": "Noch keine Zeitachsendaten",
   "dashboard.tagCloud": "Tag-Wolke",
+  "dashboard.noTags": "Noch keine Tags",
   "dashboard.categoryCloud": "Kategorie-Wolke",
   "dashboard.recentPosts": "Letzte Beiträge",
   "dashboard.noRecentPosts": "Keine aktuellen Beiträge",

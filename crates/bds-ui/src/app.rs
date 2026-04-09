@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::Datelike;
 use iced::{Element, Subscription, Task};
 
 use bds_core::db::Database;
@@ -345,12 +346,13 @@ fn format_bytes(size: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
+    use super::{month_abbreviation, persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::post_editor::PostEditorState;
     use crate::views::script_editor::ScriptEditorState;
     use crate::views::settings_view::SettingsViewState;
     use crate::views::template_editor::TemplateEditorState;
+    use chrono::Datelike;
     use bds_core::db::fts::ensure_fts_tables;
     use bds_core::db::queries::project::insert_project;
     use bds_core::db::Database;
@@ -803,13 +805,17 @@ mod tests {
         let _ = app.refresh_counts();
 
         let dash = app.dashboard_state.expect("dashboard state should be set");
+        let now = chrono::Utc::now();
         assert_eq!(dash.stats.total_posts, 2);
         assert_eq!(dash.stats.published_count, 1);
         assert_eq!(dash.stats.media_count, 1);
         assert_eq!(dash.stats.tag_count, 2);
+        assert_eq!(dash.timeline.len(), 12);
+        assert_eq!(dash.timeline.last().map(|month| month.year), Some(now.year()));
+        assert_eq!(dash.timeline.last().map(|month| month.label.clone()), Some(month_abbreviation(now.month())));
+        assert_eq!(dash.timeline.iter().map(|month| month.count).sum::<usize>(), 2);
         assert_eq!(dash.recent_posts.len(), 2);
         assert!(!dash.category_cloud.is_empty());
-        assert!(!dash.timeline.is_empty());
         assert_eq!(dash.recent_posts[0].title, "Second");
         assert_eq!(first.title, "First");
     }
@@ -2757,17 +2763,27 @@ impl BdsApp {
         let image_count = media.iter().filter(|item| item.mime_type.starts_with("image/")).count();
         let total_media_size = media.iter().map(|item| item.size).sum::<i64>();
 
-        let mut timeline = monthly_counts
-            .into_iter()
+        let now = chrono::Utc::now();
+        let current_year = now.year();
+        let current_month = now.month() as i32;
+        let timeline = (0..12)
             .rev()
-            .take(12)
-            .map(|((year, month), count)| DashboardTimelineMonth {
-                label: month_abbreviation(month),
-                year,
-                count,
+            .map(|offset| {
+                let total_month_index = current_year * 12 + (current_month - 1) - offset;
+                let year = total_month_index.div_euclid(12);
+                let month = total_month_index.rem_euclid(12) + 1;
+                let count = monthly_counts
+                    .get(&(year, month as u32))
+                    .copied()
+                    .unwrap_or(0);
+
+                DashboardTimelineMonth {
+                    label: month_abbreviation(month as u32),
+                    year,
+                    count,
+                }
             })
             .collect::<Vec<_>>();
-        timeline.reverse();
 
         let mut tag_cloud = tags
             .into_iter()

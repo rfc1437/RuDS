@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, tooltip, Space};
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -191,20 +191,17 @@ fn stat_card<'a>(label: &str, value: String, details: Vec<String>) -> Element<'a
     .into()
 }
 
-fn timeline_chart<'a>(months: &'a [DashboardTimelineMonth], locale: UiLocale) -> Element<'a, Message> {
-    if months.is_empty() {
-        return text(t(locale, "dashboard.noTimelineData"))
-            .size(13)
-            .color(Color::from_rgb(0.6, 0.62, 0.68))
-            .into();
-    }
-
+fn timeline_chart<'a>(months: &'a [DashboardTimelineMonth], _locale: UiLocale) -> Element<'a, Message> {
     let max_count = months.iter().map(|month| month.count).max().unwrap_or(1).max(1);
     row(
         months
             .iter()
             .map(|month| {
-                let height = 24.0 + (month.count as f32 / max_count as f32) * 96.0;
+                let height = if month.count == 0 {
+                    8.0
+                } else {
+                    24.0 + (month.count as f32 / max_count as f32) * 96.0
+                };
                 container(
                     column![
                         text(month.count.to_string()).size(12).color(Color::WHITE),
@@ -231,33 +228,51 @@ fn timeline_chart<'a>(months: &'a [DashboardTimelineMonth], locale: UiLocale) ->
 }
 
 fn tag_cloud<'a>(tags: &'a [DashboardTag], overflow_count: usize, locale: UiLocale) -> Element<'a, Message> {
-    let items = tags.iter().fold(column![inputs::section_header(&t(locale, "dashboard.tagCloud"))].spacing(8), |column, tag| {
-        let bg = parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
-        column.push(
-            container(
-                row![
-                    text(tag.name.clone()).size(scale_font(tag.count)).color(contrast_color(bg)),
-                    text(tag.count.to_string()).size(12).color(contrast_color(bg)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding([6, 10])
-            .style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(bg)),
-                border: iced::Border { radius: 999.0.into(), ..iced::Border::default() },
-                ..container::Style::default()
-            }),
-        )
-    });
-
-    let with_overflow = if overflow_count > 0 {
-        items.push(text(format!("{} {}", t(locale, "dashboard.and"), overflow_count)).size(12).color(Color::from_rgb(0.6, 0.62, 0.68)))
+    let cloud = if tags.is_empty() {
+        row![text(t(locale, "dashboard.noTags")).size(13).color(Color::from_rgb(0.6, 0.62, 0.68))]
+            .spacing(8)
+            .wrap()
     } else {
-        items
+        let words = tags
+            .iter()
+            .map(|tag| {
+                let bg = parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
+                let fg = contrast_color(bg);
+                tooltip(
+                    container(
+                        text(tag.name.clone())
+                            .size(scale_font(tag.count))
+                            .color(fg),
+                    )
+                    .padding([6, 10])
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(bg)),
+                        border: iced::Border { radius: 999.0.into(), ..iced::Border::default() },
+                        ..container::Style::default()
+                    }),
+                    text(format!("{} {}", tag.name, tag.count)).size(12),
+                    tooltip::Position::Top,
+                )
+                .into()
+            })
+            .collect::<Vec<_>>();
+        row(words).spacing(8).wrap()
     };
 
-    container(with_overflow).width(Length::FillPortion(1)).into()
+    let content = if overflow_count > 0 {
+        column![
+            inputs::section_header(&t(locale, "dashboard.tagCloud")),
+            cloud,
+            text(format!("{} {}", t(locale, "dashboard.and"), overflow_count))
+                .size(12)
+                .color(Color::from_rgb(0.6, 0.62, 0.68)),
+        ]
+        .spacing(8)
+    } else {
+        column![inputs::section_header(&t(locale, "dashboard.tagCloud")), cloud].spacing(8)
+    };
+
+    container(content).width(Length::FillPortion(1)).into()
 }
 
 fn category_cloud<'a>(categories: &'a [DashboardCategory], locale: UiLocale) -> Element<'a, Message> {

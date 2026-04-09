@@ -337,6 +337,7 @@
   "dashboard.timeline": "Timeline",
   "dashboard.noTimelineData": "No timeline data yet",
   "dashboard.tagCloud": "Tag Cloud",
+  "dashboard.noTags": "No tags yet",
   "dashboard.categoryCloud": "Category Cloud",
   "dashboard.recentPosts": "Recent Posts",
   "dashboard.noRecentPosts": "No recent posts",
