@@ -67,6 +67,7 @@ pub struct PostEditorState {
     pub updated_at: i64,
     pub published_at: Option<i64>,
     pub is_dirty: bool,
+    pub last_edit_at_ms: i64,
     pub metadata_expanded: bool,
     pub excerpt_expanded: bool,
     pub tags_input: String,
@@ -120,6 +121,7 @@ impl Clone for PostEditorState {
             updated_at: self.updated_at,
             published_at: self.published_at,
             is_dirty: self.is_dirty,
+            last_edit_at_ms: self.last_edit_at_ms,
             metadata_expanded: self.metadata_expanded,
             excerpt_expanded: self.excerpt_expanded,
             tags_input: self.tags_input.clone(),
@@ -180,6 +182,7 @@ impl PostEditorState {
             updated_at: post.updated_at,
             published_at: post.published_at,
             is_dirty: false,
+            last_edit_at_ms: 0,
             metadata_expanded: title.is_empty(),
             excerpt_expanded: false,
             tags_input: String::new(),
@@ -196,6 +199,11 @@ impl PostEditorState {
         }
     }
 
+    pub fn mark_dirty(&mut self) {
+        self.is_dirty = true;
+        self.last_edit_at_ms = bds_core::util::now_unix_ms();
+    }
+
     pub fn insert_markdown_at_cursor(&mut self, markdown: &str) {
         let new_content = {
             let mut buffer = self.editor_buffer.borrow_mut();
@@ -203,7 +211,7 @@ impl PostEditorState {
             buffer.text()
         };
         self.content = new_content;
-        self.is_dirty = true;
+        self.mark_dirty();
     }
 
     /// Switch the editor to display a different language.

@@ -76,8 +76,9 @@ pub enum ConfirmAction {
     DeleteMedia(String),
     DeleteScript(String),
     DeleteTemplate(String),
+    ForceDeleteTemplate(String),
     DeleteTag(String),
-    MergeTags { source: String, target: String },
+    MergeTags { sources: Vec<String>, target: String },
 }
 
 // ── Modal backdrop style ──

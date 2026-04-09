@@ -13,6 +13,12 @@ use crate::components::inputs;
 use crate::i18n::t;
 use crate::views::post_editor::TranslationFlag;
 
+#[derive(Debug, Clone)]
+pub struct LinkedPostItem {
+    pub post_id: String,
+    pub title: String,
+}
+
 /// Saved draft content for a single media translation language.
 #[derive(Debug, Clone)]
 pub struct MediaTranslationDraft {
@@ -49,10 +55,19 @@ pub struct MediaEditorState {
     pub blog_languages: Vec<String>,
     pub saved_canonical: Option<MediaTranslationDraft>,
     pub translation_drafts: HashMap<String, MediaTranslationDraft>,
+    pub linked_posts: Vec<LinkedPostItem>,
+    pub post_picker_open: bool,
+    pub post_picker_search: String,
+    pub post_picker_results: Vec<LinkedPostItem>,
 }
 
 impl MediaEditorState {
-    pub fn from_media(media: &Media, blog_languages: &[String], translations: &[MediaTranslation]) -> Self {
+    pub fn from_media(
+        media: &Media,
+        blog_languages: &[String],
+        translations: &[MediaTranslation],
+        linked_posts: Vec<LinkedPostItem>,
+    ) -> Self {
         let canonical_lang = media.language.clone().unwrap_or_else(|| "en".to_string());
 
         let mut translation_drafts = HashMap::new();
@@ -89,6 +104,10 @@ impl MediaEditorState {
             blog_languages: blog_languages.to_vec(),
             saved_canonical: None,
             translation_drafts,
+            linked_posts,
+            post_picker_open: false,
+            post_picker_search: String::new(),
+            post_picker_results: Vec::new(),
         }
     }
 
@@ -174,6 +193,11 @@ pub enum MediaEditorMsg {
     LanguageChanged(String),
     TagsChanged(String),
     SwitchLanguage(String),
+    TogglePostPicker,
+    PostPickerSearchChanged(String),
+    LinkPost(String),
+    OpenLinkedPost(String),
+    UnlinkPost(String),
     Save,
     Delete,
 }
@@ -308,6 +332,88 @@ pub fn view<'a>(
     let meta_row2 = row![caption_input, author_input].spacing(16).width(Length::Fill);
     let meta_row3 = row![tags_input, language_input].spacing(16).width(Length::Fill);
 
+    let linked_posts_header = row![
+        text(t(locale, "editor.linkedPosts"))
+            .size(12)
+            .color(Color::from_rgb(0.55, 0.58, 0.65)),
+        Space::with_width(Length::Fill),
+        button(text(t(locale, "editor.linkToPost")).size(12))
+            .on_press(Message::MediaEditor(MediaEditorMsg::TogglePostPicker))
+            .padding([4, 10]),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(8);
+
+    let post_picker: Element<'a, Message> = if state.post_picker_open {
+        let search = inputs::labeled_input(
+            &t(locale, "editor.postPickerSearch"),
+            &t(locale, "editor.postPickerSearchPlaceholder"),
+            &state.post_picker_search,
+            |s| Message::MediaEditor(MediaEditorMsg::PostPickerSearchChanged(s)),
+        );
+        let results: Vec<Element<'a, Message>> = if state.post_picker_results.is_empty() {
+            vec![
+                text(t(locale, "sidebar.filter.noResults"))
+                    .size(12)
+                    .color(Color::from_rgb(0.55, 0.58, 0.65))
+                    .into(),
+            ]
+        } else {
+            state
+                .post_picker_results
+                .iter()
+                .map(|post| {
+                    button(text(post.title.clone()).size(12))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::LinkPost(post.post_id.clone())))
+                        .padding([4, 10])
+                        .width(Length::Fill)
+                        .into()
+                })
+                .collect()
+        };
+        container(column![search, column(results).spacing(4)].spacing(8).padding(8))
+            .style(|_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
+                border: iced::Border {
+                    color: Color::from_rgb(0.28, 0.28, 0.32),
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..iced::widget::container::Style::default()
+            })
+            .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    let linked_posts_list: Element<'a, Message> = if state.linked_posts.is_empty() {
+        text(t(locale, "editor.linkedPostsEmpty"))
+            .size(12)
+            .color(Color::from_rgb(0.55, 0.58, 0.65))
+            .into()
+    } else {
+        let rows: Vec<Element<'a, Message>> = state
+            .linked_posts
+            .iter()
+            .map(|post| {
+                row![
+                    button(text(post.title.clone()).size(12))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::OpenLinkedPost(post.post_id.clone())))
+                        .padding([4, 0]),
+                    Space::with_width(Length::Fill),
+                    button(text(t(locale, "editor.unlinkMedia")).size(11))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::UnlinkPost(post.post_id.clone())))
+                        .padding([3, 8])
+                        .style(inputs::danger_button),
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8)
+                .into()
+            })
+            .collect();
+        column(rows).spacing(6).into()
+    };
+
     // Footer
     let footer = row![
         inputs::date_label(&t(locale, "editor.createdAt"), state.created_at),
@@ -326,6 +432,9 @@ pub fn view<'a>(
             meta_row1,
             meta_row2,
             meta_row3,
+            linked_posts_header,
+            post_picker,
+            linked_posts_list,
             footer,
         ]
         .spacing(12)

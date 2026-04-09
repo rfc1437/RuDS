@@ -135,6 +135,11 @@ impl MenuRegistry {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self::new()
+    }
+
     fn register(&mut self, action: MenuAction, item: &MenuItem) {
         self.action_map.insert(item.id().clone(), action);
         self.id_map.insert(action, item.id().clone());

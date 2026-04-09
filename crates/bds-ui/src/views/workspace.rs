@@ -141,12 +141,18 @@ pub fn view<'a>(
         let active_tab_is_post = active_tab_type == Some(&TabType::Post);
         let active_tab_is_post_or_media =
             active_tab_is_post || active_tab_type == Some(&TabType::Media);
+        let (post_outlinks, post_backlinks) = active_tab
+            .and_then(|id| post_editors.get(id))
+            .map(|editor| (editor.outlinks.as_slice(), editor.backlinks.as_slice()))
+            .unwrap_or((&[], &[]));
 
         right_col = right_col.push(separator_h());
         right_col = right_col.push(panel::view(
             panel_tab,
             task_snapshots,
             output_entries,
+            post_outlinks,
+            post_backlinks,
             locale,
             active_tab_is_post,
             active_tab_is_post_or_media,

@@ -178,12 +178,18 @@ pub fn view<'a>(
         |k| Message::ScriptEditor(ScriptEditorMsg::KindChanged(k)),
     );
 
-    // Entrypoint: show discovered functions as a select or text input
-    let entrypoint_input = inputs::labeled_input(
+    let mut entrypoint_options = state.discovered_entrypoints.clone();
+    if !entrypoint_options.iter().any(|entrypoint| entrypoint == &state.entrypoint) {
+        entrypoint_options.push(state.entrypoint.clone());
+    }
+    let selected_entrypoint = entrypoint_options
+        .iter()
+        .find(|entrypoint| *entrypoint == &state.entrypoint);
+    let entrypoint_input = inputs::labeled_select(
         &t(locale, "editor.entrypoint"),
-        "render",
-        &state.entrypoint,
-        |s| Message::ScriptEditor(ScriptEditorMsg::EntrypointChanged(s)),
+        &entrypoint_options,
+        selected_entrypoint,
+        |entrypoint| Message::ScriptEditor(ScriptEditorMsg::EntrypointChanged(entrypoint)),
     );
 
     let enabled_check = inputs::labeled_checkbox(

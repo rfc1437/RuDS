@@ -274,9 +274,19 @@ pub fn sync_tags_from_posts(
             tag_q::insert_tag(conn, &tag)?;
         }
     }
-
     let all_tags = tag_q::list_tags_by_project(conn, project_id)?;
     Ok(all_tags)
+}
+
+/// Discover tags from posts and rewrite tags.json to match the resulting DB state.
+pub fn discover_tags(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<Vec<Tag>> {
+    let tags = sync_tags_from_posts(conn, project_id)?;
+    rewrite_tags_json(conn, data_dir, project_id)?;
+    Ok(tags)
 }
 
 /// Rewrite meta/tags.json from DB state.
@@ -520,7 +530,7 @@ mod tests {
 
     #[test]
     fn sync_tags_from_posts_creates_missing() {
-        let (db, dir) = setup();
+        let (db, _dir) = setup();
         insert_post(
             db.conn(),
             &make_post("x1", "a", vec!["rust".into(), "web".into()]),
@@ -538,6 +548,23 @@ mod tests {
         assert!(names.contains(&"go"));
         assert!(names.contains(&"rust"));
         assert!(names.contains(&"web"));
+    }
+
+    #[test]
+    fn discover_tags_rewrites_tags_json() {
+        let (db, dir) = setup();
+        insert_post(
+            db.conn(),
+            &make_post("x1", "a", vec!["rust".into(), "web".into()]),
+        )
+        .unwrap();
+
+        let tags = discover_tags(db.conn(), dir.path(), "p1").unwrap();
+        assert_eq!(tags.len(), 2);
+
+        let entries = meta::read_tags_json(dir.path()).unwrap();
+        let names = entries.into_iter().map(|entry| entry.name).collect::<Vec<_>>();
+        assert_eq!(names, vec!["rust".to_string(), "web".to_string()]);
     }
 
     #[test]

@@ -7,6 +7,8 @@ use bds_core::i18n::UiLocale;
 use crate::app::Message;
 use crate::i18n::t;
 use crate::state::navigation::{OutputEntry, PanelTab, TaskSnapshot};
+use crate::state::tabs::{Tab, TabType};
+use crate::views::post_editor::ResolvedPostLink;
 
 /// Panel background style.
 fn panel_style(_theme: &Theme) -> container::Style {
@@ -66,6 +68,8 @@ pub fn view(
     panel_tab: PanelTab,
     task_snapshots: &[TaskSnapshot],
     output_entries: &[OutputEntry],
+    post_outlinks: &[ResolvedPostLink],
+    post_backlinks: &[ResolvedPostLink],
     locale: UiLocale,
     active_tab_is_post: bool,
     active_tab_is_post_or_media: bool,
@@ -183,10 +187,51 @@ pub fn view(
             }
         }
         PanelTab::PostLinks => {
-            // Post Links content populated in M3 (editor integration)
-            container(text(t(locale, "panel.postLinksPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
-                .padding(8)
+            if post_outlinks.is_empty() && post_backlinks.is_empty() {
+                container(text(t(locale, "panel.postLinksPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
+                    .padding(8)
+                    .into()
+            } else {
+                let mut items: Vec<Element<'static, Message>> = vec![
+                    text(t(locale, "editor.outlinks"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.75, 0.77, 0.82))
+                        .into(),
+                ];
+
+                if post_outlinks.is_empty() {
+                    items.push(text(t(locale, "panel.postLinksPlaceholder")).size(11).color(muted).into());
+                } else {
+                    for link in post_outlinks {
+                        items.push(post_link_button(locale, link));
+                    }
+                }
+
+                items.push(Space::with_height(8.0).into());
+                items.push(
+                    text(t(locale, "editor.backlinks"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.75, 0.77, 0.82))
+                        .into(),
+                );
+
+                if post_backlinks.is_empty() {
+                    items.push(text(t(locale, "panel.postLinksPlaceholder")).size(11).color(muted).into());
+                } else {
+                    for link in post_backlinks {
+                        items.push(post_link_button(locale, link));
+                    }
+                }
+
+                scrollable(
+                    iced::widget::Column::with_children(items)
+                        .spacing(4)
+                        .padding(8),
+                )
                 .into()
+            }
         }
         PanelTab::GitLog => {
             // Git Log content populated in extension bucket A (git integration)
@@ -203,4 +248,22 @@ pub fn view(
     .height(Length::Fixed(200.0))
     .style(panel_style)
     .into()
+}
+
+fn post_link_button(locale: UiLocale, link: &ResolvedPostLink) -> Element<'static, Message> {
+    button(text(link.title.clone()).size(11).shaping(Shaping::Advanced))
+        .on_press(Message::OpenTab(Tab {
+            id: link.post_id.clone(),
+            title: if link.title.is_empty() {
+                t(locale, "editor.untitled")
+            } else {
+                link.title.clone()
+            },
+            tab_type: TabType::Post,
+            is_transient: false,
+            is_dirty: false,
+        }))
+        .padding([4, 8])
+        .style(tab_inactive)
+        .into()
 }
