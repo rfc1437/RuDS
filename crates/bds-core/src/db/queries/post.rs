@@ -209,10 +209,18 @@ pub fn count_posts_by_project(conn: &Connection, project_id: &str) -> rusqlite::
 pub struct PostFilterParams {
     /// FTS search query (empty = no search filter).
     pub search_query: String,
+    /// Exact status filter.
+    pub status: Option<String>,
+    /// Exact language filter.
+    pub language: Option<String>,
     /// Year filter from calendar archive.
     pub year: Option<i32>,
     /// Month filter (1-12) from calendar archive.
     pub month: Option<u32>,
+    /// Inclusive start timestamp filter.
+    pub from: Option<i64>,
+    /// Inclusive end timestamp filter.
+    pub to: Option<i64>,
     /// Tag filter (post must have ALL of these tags).
     pub tags: Vec<String>,
     /// Category filter (post must have at least one of these categories).
@@ -228,7 +236,11 @@ pub struct PostFilterParams {
 impl PostFilterParams {
     pub fn has_active_filters(&self) -> bool {
         !self.search_query.is_empty()
+            || self.status.is_some()
+            || self.language.is_some()
             || self.year.is_some()
+            || self.from.is_some()
+            || self.to.is_some()
             || !self.tags.is_empty()
             || !self.categories.is_empty()
     }
@@ -268,6 +280,18 @@ pub fn list_posts_filtered(
         let pattern = format!("%{}%", filters.search_query.replace('%', "\\%"));
         filter_conditions.push(format!("(p.title LIKE ?{idx} ESCAPE '\\')"));
         param_values.push(Box::new(pattern));
+    }
+
+    if let Some(status) = &filters.status {
+        let idx = param_values.len() + 1;
+        filter_conditions.push(format!("(p.status = ?{idx})"));
+        param_values.push(Box::new(status.clone()));
+    }
+
+    if let Some(language) = &filters.language {
+        let idx = param_values.len() + 1;
+        filter_conditions.push(format!("(p.language = ?{idx} OR p.language IS NULL)"));
+        param_values.push(Box::new(language.clone()));
     }
 
     if let Some(year) = filters.year {
@@ -331,10 +355,27 @@ pub fn list_posts_filtered(
         param_values.push(Box::new(pattern));
     }
 
-    // If there are active filter conditions, apply them only to non-draft posts
+    if let Some(from) = filters.from {
+        let idx = param_values.len() + 1;
+        filter_conditions.push(format!("(p.created_at >= ?{idx})"));
+        param_values.push(Box::new(from));
+    }
+
+    if let Some(to) = filters.to {
+        let idx = param_values.len() + 1;
+        filter_conditions.push(format!("(p.created_at <= ?{idx})"));
+        param_values.push(Box::new(to));
+    }
+
+    // Without an explicit status filter, drafts remain visible regardless of the
+    // rest of the active filters.
     if !filter_conditions.is_empty() {
         let combined = filter_conditions.join(" AND ");
-        conditions.push(format!("(p.status = 'draft' OR ({combined}))"));
+        if filters.status.is_some() {
+            conditions.push(format!("({combined})"));
+        } else {
+            conditions.push(format!("(p.status = 'draft' OR ({combined}))"));
+        }
     }
 
     let where_clause = conditions.join(" AND ");

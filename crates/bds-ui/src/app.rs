@@ -97,8 +97,12 @@ pub enum Message {
     // Sidebar filters
     PostSearchChanged(String),
     TogglePostFilterPanel,
+    SetPostStatusFilter(Option<String>),
+    SetPostLanguageFilter(Option<String>),
     SetPostCalendarYear(Option<i32>),
     SetPostCalendarMonth(Option<u32>),
+    SetPostFromDate(String),
+    SetPostToDate(String),
     TogglePostTagFilter(String),
     TogglePostCategoryFilter(String),
     ClearPostFilters,
@@ -151,6 +155,12 @@ pub enum Message {
     },
     LoadMorePosts,
     LoadMoreMedia,
+
+    CreatePost,
+    CreatePage,
+    CreateMedia,
+    CreateScript,
+    CreateTemplate,
 
     Noop,
     InitMenuBar,
@@ -347,6 +357,7 @@ fn format_bytes(size: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{month_abbreviation, persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
+    use crate::state::sidebar_filter::PostFilter;
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::post_editor::PostEditorState;
     use crate::views::script_editor::ScriptEditorState;
@@ -914,6 +925,156 @@ mod tests {
             "picture".to_string(),
         ]);
     }
+
+    #[test]
+    fn create_script_opens_editor_and_refreshes_sidebar() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.update(Message::CreateScript);
+
+        assert_eq!(app.sidebar_scripts.len(), 1);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].tab_type, crate::state::tabs::TabType::Scripts);
+        assert_eq!(app.active_tab.as_deref(), Some(app.sidebar_scripts[0].id.as_str()));
+        let editor = app
+            .script_editors
+            .get(&app.sidebar_scripts[0].id)
+            .expect("script editor should be hydrated");
+        assert_eq!(editor.entrypoint, "render");
+        assert!(editor.content.contains("new script"));
+    }
+
+    #[test]
+    fn create_template_opens_editor_and_refreshes_sidebar() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.update(Message::CreateTemplate);
+
+        assert_eq!(app.sidebar_templates.len(), 1);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].tab_type, crate::state::tabs::TabType::Templates);
+        assert_eq!(app.active_tab.as_deref(), Some(app.sidebar_templates[0].id.as_str()));
+        let editor = app
+            .template_editors
+            .get(&app.sidebar_templates[0].id)
+            .expect("template editor should be hydrated");
+        assert!(editor.content.is_empty());
+    }
+
+    #[test]
+    fn query_sidebar_posts_filters_status_language_and_date_range() {
+        let (_db, project, tmp) = setup();
+        let db_path = tmp.path().join("sidebar.db");
+        let mut db = Database::open(&db_path).unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &project).unwrap();
+
+        let draft = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Draft German",
+            Some("Body"),
+            vec![],
+            vec!["article".to_string()],
+            None,
+            Some("de"),
+            None,
+        )
+        .unwrap();
+        let published = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Published English",
+            Some("Body"),
+            vec![],
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let mut published_saved = bds_core::db::queries::post::get_post_by_id(db.conn(), &published.id).unwrap();
+        published_saved.status = PostStatus::Published;
+        published_saved.created_at = chrono::Utc
+            .with_ymd_and_hms(2026, 4, 12, 8, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        bds_core::db::queries::post::update_post(db.conn(), &published_saved).unwrap();
+
+        let mut draft_saved = bds_core::db::queries::post::get_post_by_id(db.conn(), &draft.id).unwrap();
+        draft_saved.created_at = chrono::Utc
+            .with_ymd_and_hms(2025, 1, 5, 8, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        bds_core::db::queries::post::update_post(db.conn(), &draft_saved).unwrap();
+
+        let filter = PostFilter {
+            status_filter: Some("published".to_string()),
+            language_filter: Some("en".to_string()),
+            from_date: "2026-04-01".to_string(),
+            to_date: "2026-04-30".to_string(),
+            ..PostFilter::default()
+        };
+
+        let posts = BdsApp::query_sidebar_posts_blocking(
+            db_path.as_path(),
+            &project.id,
+            "en",
+            &filter,
+            false,
+            50,
+            0,
+        );
+
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].id, published.id);
+    }
+
+    #[test]
+    fn regenerate_project_thumbnails_recreates_missing_files() {
+        let (db, project, tmp) = setup();
+        let source = tmp.path().join("tiny.png");
+        std::fs::write(&source, tiny_png_bytes()).unwrap();
+        let media = media::import_media(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            &source,
+            "tiny.png",
+            Some("Tiny"),
+            Some("Alt"),
+            None,
+            None,
+            Some("en"),
+            vec![],
+        )
+        .unwrap();
+
+        let small_thumb = tmp
+            .path()
+            .join(bds_core::util::paths::thumbnail_path(&media.id, "small", "webp"));
+        std::fs::remove_file(&small_thumb).unwrap();
+        assert!(!small_thumb.exists());
+
+        let regenerated = BdsApp::regenerate_project_thumbnails(
+            &db,
+            tmp.path(),
+            &project.id,
+            |_index, _total, _name| {},
+        )
+        .unwrap();
+
+        assert_eq!(regenerated, 1);
+        assert!(small_thumb.exists());
+    }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -1218,6 +1379,14 @@ impl BdsApp {
                 self.panel_visible = !self.panel_visible;
                 Task::none()
             }
+            Message::CreatePost => self.create_sidebar_post(false),
+            Message::CreatePage => self.create_sidebar_post(true),
+            Message::CreateMedia => crate::platform::dialog::pick_media_files(
+                t(self.ui_locale, "dialog.importMedia"),
+                t(self.ui_locale, "dialog.imageFilter"),
+            ),
+            Message::CreateScript => self.create_sidebar_script(),
+            Message::CreateTemplate => self.create_sidebar_template(),
             Message::OpenSettingsSection(section) => {
                 self.sidebar_view = SidebarView::Settings;
                 self.sidebar_visible = true;
@@ -1656,6 +1825,22 @@ impl BdsApp {
                 filter.filter_panel_visible = !filter.filter_panel_visible;
                 Task::none()
             }
+            Message::SetPostStatusFilter(status) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.status_filter = status;
+                self.refresh_sidebar_posts()
+            }
+            Message::SetPostLanguageFilter(language) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.language_filter = language;
+                self.refresh_sidebar_posts()
+            }
             Message::SetPostCalendarYear(year) => {
                 let filter = match self.sidebar_view {
                     SidebarView::Pages => &mut self.page_filter,
@@ -1671,6 +1856,22 @@ impl BdsApp {
                     _ => &mut self.post_filter,
                 };
                 filter.calendar.selected_month = month;
+                self.refresh_sidebar_posts()
+            }
+            Message::SetPostFromDate(value) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.from_date = value;
+                self.refresh_sidebar_posts()
+            }
+            Message::SetPostToDate(value) => {
+                let filter = match self.sidebar_view {
+                    SidebarView::Pages => &mut self.page_filter,
+                    _ => &mut self.post_filter,
+                };
+                filter.to_date = value;
                 self.refresh_sidebar_posts()
             }
             Message::TogglePostTagFilter(tag) => {
@@ -2451,43 +2652,7 @@ impl BdsApp {
     fn dispatch_menu_action(&mut self, action: MenuAction) -> Task<Message> {
         match action {
             // File
-            MenuAction::NewPost => {
-                if let (Some(db), Some(project), Some(data_dir)) =
-                    (&self.db, &self.active_project, &self.data_dir)
-                {
-                    let display_title = t(self.ui_locale, "post.untitled");
-                    match engine::post::create_post(
-                        db.conn(),
-                        data_dir,
-                        &project.id,
-                        "",
-                        Some(""),
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                        None,
-                        None,
-                    ) {
-                        Ok(post) => {
-                            let tab = Tab {
-                                id: post.id.clone(),
-                                tab_type: TabType::Post,
-                                title: display_title.to_string(),
-                                is_transient: true,
-                                is_dirty: false,
-                            };
-                            let idx = tabs::open_tab(&mut self.tabs, tab);
-                            if let Some(t) = self.tabs.get(idx) {
-                                self.active_tab = Some(t.id.clone());
-                            }
-                        }
-                        Err(e) => {
-                            self.add_output(&format!("Failed to create post: {e}"));
-                        }
-                    }
-                }
-                Task::none()
-            }
+            MenuAction::NewPost => self.create_sidebar_post(false),
             MenuAction::ImportMedia => crate::platform::dialog::pick_media_files(
                 t(self.ui_locale, "dialog.importMedia"),
                 t(self.ui_locale, "dialog.imageFilter"),
@@ -2599,6 +2764,133 @@ impl BdsApp {
             self.active_tab = Some(t.id.clone());
         }
         self.enforce_panel_tab_fallback();
+    }
+
+    fn create_sidebar_post(&mut self, is_page: bool) -> Task<Message> {
+        let (Some(db), Some(project), Some(data_dir)) =
+            (&self.db, &self.active_project, &self.data_dir)
+        else {
+            return Task::none();
+        };
+
+        let categories = if is_page {
+            vec!["page".to_string()]
+        } else {
+            Vec::new()
+        };
+
+        match engine::post::create_post(
+            db.conn(),
+            data_dir,
+            &project.id,
+            "",
+            Some(""),
+            Vec::new(),
+            categories,
+            None,
+            None,
+            None,
+        ) {
+            Ok(post) => {
+                let tab = Tab {
+                    id: post.id.clone(),
+                    tab_type: TabType::Post,
+                    title: t(self.ui_locale, "post.untitled"),
+                    is_transient: true,
+                    is_dirty: false,
+                };
+                let idx = tabs::open_tab(&mut self.tabs, tab);
+                if let Some(tab) = self.tabs.get(idx).cloned() {
+                    self.active_tab = Some(tab.id.clone());
+                    self.load_editor_for_tab(&tab);
+                }
+                self.sync_menu_state();
+                self.refresh_counts()
+            }
+            Err(error) => {
+                self.notify(ToastLevel::Error, &format!("Failed to create post: {error}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn create_sidebar_script(&mut self) -> Task<Message> {
+        let (Some(db), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
+
+        match engine::script::create_script(
+            db.conn(),
+            &project.id,
+            &t(self.ui_locale, "editor.untitled"),
+            bds_core::model::ScriptKind::Utility,
+            "print(\"new script\")",
+            Some("render"),
+        ) {
+            Ok(script) => {
+                let tab = Tab {
+                    id: script.id.clone(),
+                    tab_type: TabType::Scripts,
+                    title: if script.title.is_empty() {
+                        t(self.ui_locale, "editor.untitled")
+                    } else {
+                        script.title.clone()
+                    },
+                    is_transient: true,
+                    is_dirty: false,
+                };
+                let idx = tabs::open_tab(&mut self.tabs, tab);
+                if let Some(tab) = self.tabs.get(idx).cloned() {
+                    self.active_tab = Some(tab.id.clone());
+                    self.load_editor_for_tab(&tab);
+                }
+                self.sync_menu_state();
+                self.refresh_counts()
+            }
+            Err(error) => {
+                self.notify(ToastLevel::Error, &format!("Failed to create script: {error}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn create_sidebar_template(&mut self) -> Task<Message> {
+        let (Some(db), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
+
+        match engine::template::create_template(
+            db.conn(),
+            &project.id,
+            &t(self.ui_locale, "editor.untitled"),
+            bds_core::model::TemplateKind::Post,
+            "",
+        ) {
+            Ok(template) => {
+                let tab = Tab {
+                    id: template.id.clone(),
+                    tab_type: TabType::Templates,
+                    title: if template.title.is_empty() {
+                        t(self.ui_locale, "editor.untitled")
+                    } else {
+                        template.title.clone()
+                    },
+                    is_transient: true,
+                    is_dirty: false,
+                };
+                let idx = tabs::open_tab(&mut self.tabs, tab);
+                if let Some(tab) = self.tabs.get(idx).cloned() {
+                    self.active_tab = Some(tab.id.clone());
+                    self.load_editor_for_tab(&tab);
+                }
+                self.sync_menu_state();
+                self.refresh_counts()
+            }
+            Err(error) => {
+                self.notify(ToastLevel::Error, &format!("Failed to create template: {error}"));
+                Task::none()
+            }
+        }
     }
 
     fn refresh_task_snapshots(&mut self) {
@@ -2901,36 +3193,27 @@ impl BdsApp {
             return Task::none();
         };
 
-        use bds_core::db::queries::post::PostFilterParams;
-
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
+        let content_language = self.content_language.clone();
         let filter = match self.sidebar_view {
-            SidebarView::Pages => &self.page_filter,
-            _ => &self.post_filter,
+            SidebarView::Pages => self.page_filter.clone(),
+            _ => self.post_filter.clone(),
         };
         let is_pages = self.sidebar_view == SidebarView::Pages;
-
-        let params = PostFilterParams {
-            search_query: filter.search_query.clone(),
-            year: filter.calendar.selected_year,
-            month: filter.calendar.selected_month,
-            tags: filter.tag_filter.clone(),
-            categories: filter.category_filter.clone(),
-            exclude_pages: !is_pages,
-            pages_only: is_pages,
-        };
 
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    let db = Database::open(&db_path).ok();
-                    db.and_then(|db| {
-                        bds_core::db::queries::post::list_posts_filtered(
-                            db.conn(), &project_id, &params,
-                            Self::SIDEBAR_PAGE_SIZE + 1, 0,
-                        ).ok()
-                    }).unwrap_or_default()
+                    Self::query_sidebar_posts_blocking(
+                        &db_path,
+                        &project_id,
+                        &content_language,
+                        &filter,
+                        is_pages,
+                        Self::SIDEBAR_PAGE_SIZE + 1,
+                        0,
+                    )
                 }).await.unwrap_or_default()
             },
             Message::SidebarPostsLoaded,
@@ -2991,41 +3274,159 @@ impl BdsApp {
             return Task::none();
         };
 
-        use bds_core::db::queries::post::PostFilterParams;
-
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
+        let content_language = self.content_language.clone();
         let offset = self.sidebar_posts.len() as i64;
         let filter = match self.sidebar_view {
-            SidebarView::Pages => &self.page_filter,
-            _ => &self.post_filter,
+            SidebarView::Pages => self.page_filter.clone(),
+            _ => self.post_filter.clone(),
         };
         let is_pages = self.sidebar_view == SidebarView::Pages;
-
-        let params = PostFilterParams {
-            search_query: filter.search_query.clone(),
-            year: filter.calendar.selected_year,
-            month: filter.calendar.selected_month,
-            tags: filter.tag_filter.clone(),
-            categories: filter.category_filter.clone(),
-            exclude_pages: !is_pages,
-            pages_only: is_pages,
-        };
 
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    let db = Database::open(&db_path).ok();
-                    db.and_then(|db| {
-                        bds_core::db::queries::post::list_posts_filtered(
-                            db.conn(), &project_id, &params,
-                            Self::SIDEBAR_PAGE_SIZE + 1, offset,
-                        ).ok()
-                    }).unwrap_or_default()
+                    Self::query_sidebar_posts_blocking(
+                        &db_path,
+                        &project_id,
+                        &content_language,
+                        &filter,
+                        is_pages,
+                        Self::SIDEBAR_PAGE_SIZE + 1,
+                        offset,
+                    )
                 }).await.unwrap_or_default()
             },
             Message::SidebarPostsAppended,
         )
+    }
+
+    fn parse_filter_date(input: &str, end_of_day: bool) -> Option<i64> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let date = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").ok()?;
+        let time = if end_of_day {
+            date.and_hms_opt(23, 59, 59)?
+        } else {
+            date.and_hms_opt(0, 0, 0)?
+        };
+        Some(time.and_utc().timestamp_millis())
+    }
+
+    fn build_post_filter_params(
+        filter: &PostFilter,
+        is_pages: bool,
+    ) -> bds_core::db::queries::post::PostFilterParams {
+        bds_core::db::queries::post::PostFilterParams {
+            search_query: filter.search_query.clone(),
+            status: filter.status_filter.clone(),
+            language: filter.language_filter.clone(),
+            year: filter.calendar.selected_year,
+            month: filter.calendar.selected_month,
+            from: Self::parse_filter_date(&filter.from_date, false),
+            to: Self::parse_filter_date(&filter.to_date, true),
+            tags: filter.tag_filter.clone(),
+            categories: filter.category_filter.clone(),
+            exclude_pages: !is_pages,
+            pages_only: is_pages,
+        }
+    }
+
+    fn query_sidebar_posts_blocking(
+        db_path: &Path,
+        project_id: &str,
+        content_language: &str,
+        filter: &PostFilter,
+        is_pages: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Vec<Post> {
+        let Ok(db) = Database::open(db_path) else {
+            return Vec::new();
+        };
+
+        let params = Self::build_post_filter_params(filter, is_pages);
+        if filter.search_query.trim().is_empty() {
+            return bds_core::db::queries::post::list_posts_filtered(
+                db.conn(),
+                project_id,
+                &params,
+                limit,
+                offset,
+            )
+            .unwrap_or_default();
+        }
+
+        let fts_filters = bds_core::db::fts::PostSearchFilters {
+            status: params.status.as_deref(),
+            tags: (!params.tags.is_empty()).then_some(params.tags.as_slice()),
+            categories: (!params.categories.is_empty()).then_some(params.categories.as_slice()),
+            language: params.language.as_deref(),
+            year: params.year,
+            month: params.month,
+            from: params.from,
+            to: params.to,
+            limit: Some(limit as usize),
+            offset: Some(offset as usize),
+            ..Default::default()
+        };
+
+        let ids = bds_core::db::fts::search_posts_filtered(
+            db.conn(),
+            &params.search_query,
+            content_language,
+            &fts_filters,
+        )
+        .map(|results| results.post_ids)
+        .unwrap_or_default();
+
+        ids.into_iter()
+            .filter_map(|post_id| bds_core::db::queries::post::get_post_by_id(db.conn(), &post_id).ok())
+            .filter(|post| post.project_id == project_id)
+            .filter(|post| {
+                let is_page_post = post
+                    .categories
+                    .iter()
+                    .any(|category| category.eq_ignore_ascii_case("page"));
+                if is_pages {
+                    is_page_post
+                } else {
+                    !is_page_post
+                }
+            })
+            .collect()
+    }
+
+    fn regenerate_project_thumbnails(
+        db: &Database,
+        data_dir: &Path,
+        project_id: &str,
+        mut progress: impl FnMut(usize, usize, &str),
+    ) -> Result<usize, String> {
+        let media = bds_core::db::queries::media::list_media_by_project(db.conn(), project_id)
+            .map_err(|e| e.to_string())?;
+        let total = media.len();
+        let thumbnails_dir = data_dir.join("thumbnails");
+        let mut regenerated = 0usize;
+
+        for (index, item) in media.iter().enumerate() {
+            progress(index, total, &item.original_name);
+            if !item.mime_type.starts_with("image/") {
+                continue;
+            }
+            let source = data_dir.join(&item.file_path);
+            if !source.exists() {
+                continue;
+            }
+            bds_core::util::thumbnail::generate_all_thumbnails(&source, &thumbnails_dir, &item.id)
+                .map_err(|e| e.to_string())?;
+            regenerated += 1;
+        }
+
+        Ok(regenerated)
     }
 
     /// Load more media (append to existing sidebar data).
@@ -3094,6 +3495,7 @@ impl BdsApp {
             ).unwrap_or_default();
             self.post_filter.available_tags = all_tags.clone();
             self.post_filter.available_categories = all_cats.clone();
+            self.post_filter.available_languages = self.blog_languages.clone();
             self.post_filter.calendar_years = Self::build_calendar_tree(&post_cal);
 
             // Calendar counts for pages only
@@ -3102,6 +3504,7 @@ impl BdsApp {
             ).unwrap_or_default();
             self.page_filter.available_tags = all_tags;
             self.page_filter.available_categories = all_cats;
+            self.page_filter.available_languages = self.blog_languages.clone();
             self.page_filter.calendar_years = Self::build_calendar_tree(&page_cal);
 
             // Media filter metadata
@@ -4591,34 +4994,126 @@ impl BdsApp {
             SettingsMsg::SemanticSimilarityChanged(value) => {
                 state.semantic_similarity_enabled = value;
             }
-            SettingsMsg::RebuildPosts => { return Task::done(Message::RebuildDatabase); }
-            SettingsMsg::RebuildMedia => { return Task::done(Message::RebuildDatabase); }
-            SettingsMsg::RebuildScripts => { return Task::done(Message::RebuildDatabase); }
-            SettingsMsg::RebuildTemplates => { return Task::done(Message::RebuildDatabase); }
+            SettingsMsg::RebuildPosts => {
+                return self.spawn_engine_task(
+                    "settings.rebuildPosts",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::post::rebuild_posts_from_filesystem(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "created={}, updated={}, translations={}",
+                            report.posts_created,
+                            report.posts_updated,
+                            report.translations_created + report.translations_updated,
+                        ))
+                    },
+                );
+            }
+            SettingsMsg::RebuildMedia => {
+                return self.spawn_engine_task(
+                    "settings.rebuildMedia",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::media::rebuild_media_from_filesystem(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "created={}, updated={}, translations={}",
+                            report.media_created,
+                            report.media_updated,
+                            report.translations_created + report.translations_updated,
+                        ))
+                    },
+                );
+            }
+            SettingsMsg::RebuildScripts => {
+                return self.spawn_engine_task(
+                    "settings.rebuildScripts",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::script_rebuild::rebuild_scripts_from_filesystem(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "created={}, updated={}, errors={}",
+                            report.created,
+                            report.updated,
+                            report.errors.len(),
+                        ))
+                    },
+                );
+            }
+            SettingsMsg::RebuildTemplates => {
+                return self.spawn_engine_task(
+                    "settings.rebuildTemplates",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::template_rebuild::rebuild_templates_from_filesystem(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "created={}, updated={}, errors={}",
+                            report.created,
+                            report.updated,
+                            report.errors.len(),
+                        ))
+                    },
+                );
+            }
             SettingsMsg::RebuildLinks => {
-                if let (Some(db), Some(data_dir), Some(project)) =
-                    (&self.db, &self.data_dir, &self.active_project)
-                {
-                    match bds_core::engine::post::rebuild_all_links(
-                        db.conn(), data_dir, &project.id,
-                    ) {
-                        Ok(count) => {
-                            self.notify(
-                                ToastLevel::Info,
-                                &format!("Rebuilt {} links", count),
-                            );
-                        }
-                        Err(e) => {
-                            self.notify(
-                                ToastLevel::Error,
-                                &format!("Failed to rebuild links: {e}"),
-                            );
-                        }
-                    }
-                }
+                return self.spawn_engine_task(
+                    "settings.rebuildLinks",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let rebuilt = bds_core::engine::post::rebuild_all_links(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!("rebuilt={rebuilt}"))
+                    },
+                );
             }
             SettingsMsg::RegenerateThumbnails => {
-                self.notify(ToastLevel::Info, &t(self.ui_locale, "settings.regeneratingThumbnails"));
+                return self.spawn_engine_task(
+                    "settings.regenerateThumbnails",
+                    |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let regenerated = Self::regenerate_project_thumbnails(
+                            &db,
+                            &data_dir,
+                            &project_id,
+                            |index, total, name| {
+                                let progress = if total > 0 {
+                                    index as f32 / total as f32
+                                } else {
+                                    1.0
+                                };
+                                tm.report_progress(
+                                    tid,
+                                    Some(progress),
+                                    Some(format!("Regenerating: {name}")),
+                                );
+                            },
+                        )?;
+                        Ok(format!("regenerated={regenerated}"))
+                    },
+                );
             }
             SettingsMsg::OpenDataFolder => {
                 if let Some(ref dir) = self.data_dir {

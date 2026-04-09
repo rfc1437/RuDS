@@ -35,8 +35,16 @@ pub struct PostFilter {
     pub search_query: String,
     /// Whether the collapsible filter panel is visible.
     pub filter_panel_visible: bool,
+    /// Exact status filter.
+    pub status_filter: Option<String>,
+    /// Exact language filter.
+    pub language_filter: Option<String>,
     /// Year/month archive filter.
     pub calendar: CalendarFilter,
+    /// Inclusive start date input (`YYYY-MM-DD`).
+    pub from_date: String,
+    /// Inclusive end date input (`YYYY-MM-DD`).
+    pub to_date: String,
     /// Selected tag names (multi-select).
     pub tag_filter: Vec<String>,
     /// Selected category names (multi-select).
@@ -47,6 +55,8 @@ pub struct PostFilter {
     pub available_tags: Vec<String>,
     /// All available categories for the chip selector.
     pub available_categories: Vec<String>,
+    /// Available languages for the chip selector.
+    pub available_languages: Vec<String>,
 }
 
 /// Filter state for the Media sidebar.
@@ -70,7 +80,11 @@ impl PostFilter {
     /// Returns true if any filter is active (for "Clear All" visibility).
     pub fn has_active_filters(&self) -> bool {
         !self.search_query.is_empty()
+            || self.status_filter.is_some()
+            || self.language_filter.is_some()
             || self.calendar.selected_year.is_some()
+            || !self.from_date.trim().is_empty()
+            || !self.to_date.trim().is_empty()
             || !self.tag_filter.is_empty()
             || !self.category_filter.is_empty()
     }
@@ -78,7 +92,11 @@ impl PostFilter {
     /// Reset all filters to defaults.
     pub fn clear(&mut self) {
         self.search_query.clear();
+        self.status_filter = None;
+        self.language_filter = None;
         self.calendar = CalendarFilter::default();
+        self.from_date.clear();
+        self.to_date.clear();
         self.tag_filter.clear();
         self.category_filter.clear();
     }

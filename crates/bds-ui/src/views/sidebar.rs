@@ -386,6 +386,50 @@ fn chip_selector(
     iced::widget::Column::with_children(items).spacing(2).into()
 }
 
+fn single_select_chip_selector(
+    label: &str,
+    available: &[(String, String)],
+    selected: Option<&str>,
+    on_toggle: impl Fn(Option<String>) -> Message + 'static + Clone,
+    locale: UiLocale,
+) -> Element<'static, Message> {
+    let muted = Color::from_rgb(0.50, 0.50, 0.55);
+    let mut items: Vec<Element<'static, Message>> = Vec::new();
+
+    items.push(
+        text(t(locale, label))
+            .size(10)
+            .shaping(Shaping::Advanced)
+            .color(muted)
+            .into(),
+    );
+
+    let chips = available
+        .iter()
+        .map(|(value, display)| {
+            let is_selected = selected == Some(value.as_str());
+            let style_fn = if is_selected { chip_selected_style } else { chip_style };
+            let value = value.clone();
+            let on_toggle = on_toggle.clone();
+            button(text(display.clone()).size(10).shaping(Shaping::Advanced))
+                .on_press(if is_selected {
+                    on_toggle(None)
+                } else {
+                    on_toggle(Some(value))
+                })
+                .padding([2, 6])
+                .style(style_fn)
+                .into()
+        })
+        .collect::<Vec<Element<'static, Message>>>();
+
+    if !chips.is_empty() {
+        items.push(row(chips).spacing(4).into());
+    }
+
+    iced::widget::Column::with_children(items).spacing(2).into()
+}
+
 /// Build the filter panel for Posts/Pages view.
 fn post_filter_panel(
     filter: &PostFilter,
@@ -393,6 +437,35 @@ fn post_filter_panel(
     locale: UiLocale,
 ) -> Element<'static, Message> {
     let mut sections: Vec<Element<'static, Message>> = Vec::new();
+
+    sections.push(single_select_chip_selector(
+        "sidebar.filter.status",
+        &[
+            ("draft".to_string(), t(locale, "sidebar.drafts")),
+            ("published".to_string(), t(locale, "sidebar.published")),
+            ("archived".to_string(), t(locale, "sidebar.archived")),
+        ],
+        filter.status_filter.as_deref(),
+        Message::SetPostStatusFilter,
+        locale,
+    ));
+    sections.push(Space::with_height(4.0).into());
+
+    if !filter.available_languages.is_empty() {
+        let languages = filter
+            .available_languages
+            .iter()
+            .map(|lang| (lang.clone(), lang.to_uppercase()))
+            .collect::<Vec<_>>();
+        sections.push(single_select_chip_selector(
+            "sidebar.filter.language",
+            &languages,
+            filter.language_filter.as_deref(),
+            Message::SetPostLanguageFilter,
+            locale,
+        ));
+        sections.push(Space::with_height(4.0).into());
+    }
 
     // Calendar archive
     if !filter.calendar_years.is_empty() {
@@ -430,6 +503,33 @@ fn post_filter_panel(
         ));
         sections.push(Space::with_height(4.0).into());
     }
+
+    sections.push(
+        iced::widget::Column::with_children(vec![
+            text(t(locale, "sidebar.filter.dateRange"))
+                .size(10)
+                .shaping(Shaping::Advanced)
+                .color(Color::from_rgb(0.50, 0.50, 0.55))
+                .into(),
+            row![
+                text_input(&t(locale, "sidebar.filter.from"), &filter.from_date)
+                    .on_input(Message::SetPostFromDate)
+                    .size(10)
+                    .padding([3, 5])
+                    .style(search_input_style),
+                text_input(&t(locale, "sidebar.filter.to"), &filter.to_date)
+                    .on_input(Message::SetPostToDate)
+                    .size(10)
+                    .padding([3, 5])
+                    .style(search_input_style),
+            ]
+            .spacing(4)
+            .into(),
+        ])
+        .spacing(2)
+        .into(),
+    );
+    sections.push(Space::with_height(4.0).into());
 
     // Clear all filters button
     if filter.has_active_filters() {
@@ -519,6 +619,30 @@ pub fn view(
         .size(13)
         .shaping(Shaping::Advanced)
         .color(Color::from_rgb(0.85, 0.85, 0.90));
+
+    let create_action = match sidebar_view {
+        SidebarView::Posts => Some(Message::CreatePost),
+        SidebarView::Pages => Some(Message::CreatePage),
+        SidebarView::Media => Some(Message::CreateMedia),
+        SidebarView::Scripts => Some(Message::CreateScript),
+        SidebarView::Templates => Some(Message::CreateTemplate),
+        _ => None,
+    };
+
+    let header_row: Element<'static, Message> = if let Some(action) = create_action {
+        row![
+            header,
+            Space::with_width(Length::Fill),
+            button(text(t(locale, "common.add")).size(11).shaping(Shaping::Advanced))
+                .on_press(action)
+                .padding([3, 8])
+                .style(filter_button_style),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        header.into()
+    };
 
     let body: Element<'static, Message> = match sidebar_view {
         SidebarView::Posts | SidebarView::Pages => {
@@ -1020,7 +1144,7 @@ pub fn view(
     };
 
     let content = column![
-        header,
+        header_row,
         Space::with_height(8.0),
         body,
     ]

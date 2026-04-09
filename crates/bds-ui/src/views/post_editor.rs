@@ -276,14 +276,9 @@ impl PostEditorState {
     }
 
     /// Build the translation flags list for the view.
-    /// Flags are driven by the post's actual translations, not blog-level languages.
     pub fn translation_flags(&self) -> Vec<TranslationFlag> {
-        if self.translation_drafts.is_empty() {
-            return Vec::new();
-        }
         let mut flags = Vec::new();
 
-        // Canonical language first (always shown when translations exist)
         let canon = &self.canonical_language;
         let canon_locale = i18n::normalize_language(canon);
         flags.push(TranslationFlag {
@@ -293,20 +288,30 @@ impl PostEditorState {
             is_active: self.active_language == *canon,
         });
 
-        // Each existing translation for this post
-        let mut langs: Vec<&String> = self.translation_drafts.keys().collect();
+        let mut langs: Vec<String> = self
+            .blog_languages
+            .iter()
+            .filter(|lang| **lang != *canon)
+            .cloned()
+            .collect();
+        for lang in self.translation_drafts.keys() {
+            if lang != canon && !langs.contains(lang) {
+                langs.push(lang.clone());
+            }
+        }
         langs.sort();
         for lang in langs {
-            let locale = i18n::normalize_language(lang);
-            let status = match self.translation_drafts[lang].status {
-                PostStatus::Published => "published",
-                _ => "draft",
+            let locale = i18n::normalize_language(&lang);
+            let status = match self.translation_drafts.get(&lang).map(|draft| &draft.status) {
+                Some(PostStatus::Published) => "published",
+                Some(_) => "draft",
+                None => "missing",
             };
             flags.push(TranslationFlag {
                 language: lang.clone(),
                 flag_emoji: locale.flag_emoji().to_string(),
                 status: status.to_string(),
-                is_active: self.active_language == **lang,
+                is_active: self.active_language == lang,
             });
         }
 

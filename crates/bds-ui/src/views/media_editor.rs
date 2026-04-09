@@ -156,9 +156,6 @@ impl MediaEditorState {
 
     /// Build translation flags for the view.
     pub fn translation_flags(&self) -> Vec<TranslationFlag> {
-        if self.translation_drafts.is_empty() {
-            return Vec::new();
-        }
         let mut flags = Vec::new();
         let canon = &self.canonical_language;
         let canon_locale = i18n::normalize_language(canon);
@@ -168,15 +165,29 @@ impl MediaEditorState {
             status: "canonical".to_string(),
             is_active: self.active_language == *canon,
         });
-        let mut langs: Vec<&String> = self.translation_drafts.keys().collect();
+        let mut langs: Vec<String> = self
+            .blog_languages
+            .iter()
+            .filter(|lang| **lang != *canon)
+            .cloned()
+            .collect();
+        for lang in self.translation_drafts.keys() {
+            if lang != canon && !langs.contains(lang) {
+                langs.push(lang.clone());
+            }
+        }
         langs.sort();
         for lang in langs {
-            let locale = i18n::normalize_language(lang);
+            let locale = i18n::normalize_language(&lang);
             flags.push(TranslationFlag {
                 language: lang.clone(),
                 flag_emoji: locale.flag_emoji().to_string(),
-                status: "translation".to_string(),
-                is_active: self.active_language == **lang,
+                status: if self.translation_drafts.contains_key(&lang) {
+                    "translation".to_string()
+                } else {
+                    "missing".to_string()
+                },
+                is_active: self.active_language == lang,
             });
         }
         flags
@@ -446,6 +457,50 @@ pub fn view<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MediaEditorState;
+    use bds_core::model::Media;
+
+    fn make_media() -> Media {
+        Media {
+            id: "m1".to_string(),
+            project_id: "proj".to_string(),
+            filename: "image.png".to_string(),
+            original_name: "image.png".to_string(),
+            mime_type: "image/png".to_string(),
+            size: 10,
+            width: Some(1),
+            height: Some(1),
+            title: Some("Image".to_string()),
+            alt: Some("Alt".to_string()),
+            caption: None,
+            author: None,
+            language: Some("en".to_string()),
+            file_path: "media/test/image.png".to_string(),
+            sidecar_path: "media/test/image.png.meta".to_string(),
+            checksum: None,
+            tags: Vec::new(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn translation_flags_include_configured_languages_without_translations() {
+        let state = MediaEditorState::from_media(
+            &make_media(),
+            &["en".to_string(), "de".to_string()],
+            &[],
+            Vec::new(),
+        );
+
+        let flags = state.translation_flags();
+        let languages = flags.into_iter().map(|flag| flag.language).collect::<Vec<_>>();
+        assert_eq!(languages, vec!["en".to_string(), "de".to_string()]);
+    }
 }
 
 fn no_preview<'a>() -> Element<'a, Message> {
