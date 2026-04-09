@@ -73,6 +73,16 @@ value TranslationFlag {
     is_active: Boolean                  -- true when this language is currently being edited
 }
 
+surface TranslationFlagSurface {
+    context flag: TranslationFlag
+
+    exposes:
+        flag.language
+        flag.flag_emoji
+        flag.status
+        flag.is_active
+}
+
 surface PostEditorSurface {
     context editor: PostEditorView
 

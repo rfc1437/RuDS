@@ -98,6 +98,11 @@ invariant ThemeSwitching {
     -- Uses Pico CSS with configurable themes
 }
 
+invariant PreviewServerBinding {
+    for server in PreviewServers where server.is_running:
+        server.host = config.preview_host and server.port = config.preview_port
+}
+
 invariant LocalhostOnly {
     -- Preview server binds to 127.0.0.1 only, never 0.0.0.0
 }

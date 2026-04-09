@@ -36,6 +36,15 @@ value ColourPickerPopover {
     selected: String?
 }
 
+surface ColourPickerPopoverSurface {
+    context popover: ColourPickerPopover
+
+    exposes:
+        popover.presets
+        popover.custom_hex when popover.custom_hex != null
+        popover.selected when popover.selected != null
+}
+
 config {
     colour_picker_preset_count: Integer = 17
     tag_cloud_min_font: String = "0.85rem"

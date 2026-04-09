@@ -37,6 +37,20 @@ value ModelSelectorDropdown {
     selected_model_id: String?
 }
 
+surface ModelSelectorDropdownSurface {
+    context dropdown: ModelSelectorDropdown
+
+    exposes:
+        dropdown.selected_model_id when dropdown.selected_model_id != null
+        for group in dropdown.groups:
+            group.provider_name
+            for model in group.models:
+                model.model_id
+                model.display_name
+                model.context_window
+                model.max_output_tokens
+}
+
 value ModelProviderGroup {
     provider_name: String               -- e.g. "OpenAI", "Ollama", "LM Studio"
     models: List<ModelEntry>

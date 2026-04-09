@@ -58,6 +58,16 @@ value RelativeDateFormat {
         else: timestamp.toLocaleDateString(locale, month: short, day: numeric)
 }
 
+surface RelativeDateFormatSurface {
+    context format: RelativeDateFormat
+
+    exposes:
+        format.timestamp
+        format.locale
+        format.diff_days
+        format.display
+}
+
 value PostDateFormat {
     timestamp: Timestamp
     locale: String
@@ -65,6 +75,15 @@ value PostDateFormat {
     -- Derived
     display: String = timestamp.toLocaleDateString(locale, month: short, day: numeric, year: numeric)
     -- Example: "Feb 10, 2026"
+}
+
+surface PostDateFormatSurface {
+    context format: PostDateFormat
+
+    exposes:
+        format.timestamp
+        format.locale
+        format.display
 }
 
 value PostTypeIcon {
@@ -78,6 +97,14 @@ value PostTypeIcon {
         else if categories.any(c => lowercase(c) = "video"): "film"
         else if categories.any(c => lowercase(c) = "quote"): "speech_bubble"
         else: "document"
+}
+
+surface PostTypeIconSurface {
+    context icon: PostTypeIcon
+
+    exposes:
+        icon.categories
+        icon.icon
 }
 
 invariant SidebarEntityListPattern {
@@ -101,6 +128,22 @@ value PostsView {
     published_section: List<PostListItem>
     archived_section: List<PostListItem>
     has_more: Boolean                   -- pagination, 500 per batch
+}
+
+surface PostsViewSurface {
+    context view: PostsView
+
+    exposes:
+        view.mode
+        view.search_query
+        view.filter_panel_visible
+        view.calendar_filter when view.calendar_filter != null
+        view.tag_filter
+        view.category_filter
+        view.draft_section.count
+        view.published_section.count
+        view.archived_section.count
+        view.has_more
 }
 
 -- Drafts section always shows all drafts regardless of filters.
@@ -175,6 +218,17 @@ value MediaView {
     grid: List<MediaGridItem>           -- grid layout (not list)
 }
 
+surface MediaViewSurface {
+    context view: MediaView
+
+    exposes:
+        view.search_query
+        view.filter_panel_visible
+        view.calendar_filter when view.calendar_filter != null
+        view.tag_filter
+        view.grid.count
+}
+
 value MediaGridItem {
     media_id: String
     thumbnail_path: String?             -- small (150px) thumbnail on disk when image; null for non-image
@@ -240,6 +294,13 @@ value ScriptsView {
     items: List<ScriptListItem>
 }
 
+surface ScriptsViewSurface {
+    context view: ScriptsView
+
+    exposes:
+        view.items.count
+}
+
 value ScriptListItem {
     script_id: String
     title: String                       -- truncated with ellipsis on overflow
@@ -297,6 +358,13 @@ rule ScriptListClick {
 
 value TemplatesView {
     items: List<TemplateListItem>
+}
+
+surface TemplatesViewSurface {
+    context view: TemplatesView
+
+    exposes:
+        view.items.count
 }
 
 value TemplateListItem {
@@ -398,6 +466,13 @@ value SettingsNav {
     active_section: String?             -- persisted across sidebar switches
 }
 
+surface SettingsNavSurface {
+    context nav: SettingsNav
+
+    exposes:
+        nav.active_section when nav.active_section != null
+}
+
 rule SettingsNavClick {
     when: SettingsNavEntryClicked(section)
     if section = style:
@@ -452,6 +527,13 @@ value TagsNav {
     active_section: String?             -- persisted
 }
 
+surface TagsNavSurface {
+    context nav: TagsNav
+
+    exposes:
+        nav.active_section when nav.active_section != null
+}
+
 rule TagsNavClick {
     when: TagsNavEntryClicked(section)
     ensures: OpenTabRequested(type: tags, id: tags, intent: pin)
@@ -467,6 +549,14 @@ rule TagsNavClick {
 value ChatView {
     api_ready: Boolean                  -- shows API key prompt if false
     items: List<ChatListItem>
+}
+
+surface ChatViewSurface {
+    context view: ChatView
+
+    exposes:
+        view.api_ready
+        view.items.count
 }
 
 value ChatListItem {
@@ -512,6 +602,13 @@ rule ChatListClick {
 
 value ImportView {
     items: List<ImportListItem>
+}
+
+surface ImportViewSurface {
+    context view: ImportView
+
+    exposes:
+        view.items.count
 }
 
 value ImportListItem {
@@ -569,6 +666,22 @@ value GitActiveView {
     status_files: List<GitStatusFile>
     history_entries: List<GitHistoryEntry>
     has_more_history: Boolean           -- paginated, 20 per page
+}
+
+surface GitActiveViewSurface {
+    context view: GitActiveView
+
+    exposes:
+        view.branch
+        view.upstream when view.upstream != null
+        view.ahead
+        view.behind
+        view.status_files.count
+        view.history_entries.count
+        view.has_more_history
+
+    provides:
+        GitCommitRequested(message)
 }
 
 value GitStatusFile {
@@ -670,6 +783,14 @@ value CalendarFilter {
 value CalendarYear {
     year: Integer
     months: List<CalendarMonth>
+}
+
+surface CalendarYearSurface {
+    context calendar_year: CalendarYear
+
+    exposes:
+        calendar_year.year
+        calendar_year.months.count
 }
 
 value CalendarMonth {

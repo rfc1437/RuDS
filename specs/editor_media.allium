@@ -47,6 +47,17 @@ value PostPickerOverlay {
     overflow_count: Integer?             -- shown as "and N more" if > 0
 }
 
+surface PostPickerOverlaySurface {
+    context overlay: PostPickerOverlay
+
+    exposes:
+        overlay.search_query
+        for result in overlay.results:
+            result.post_id
+            result.title
+        overlay.overflow_count when overlay.overflow_count != null
+}
+
 value PostPickerResult {
     post_id: String
     title: String

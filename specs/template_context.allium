@@ -21,6 +21,42 @@ surface TemplateRenderingSurface {
         RenderNotFoundPageRequested()
 }
 
+surface RenderContextSurface {
+    context context: RenderContext
+
+    exposes:
+        context.language
+        context.language_prefix
+        context.page_title
+        context.pico_stylesheet_href
+        context.blog_languages
+        context.alternate_links
+        context.menu_items
+        context.post
+        context.day_blocks
+        context.archive_context
+        context.is_list_page
+        context.prev_page_href
+        context.next_page_href
+        context.not_found_message
+}
+
+surface PaginationContextSurface {
+    context pagination: PaginationContext
+
+    exposes:
+        pagination.is_first_page
+        pagination.is_last_page
+        pagination.has_prev_page
+        pagination.has_next_page
+        pagination.prev_page_href
+        pagination.next_page_href
+        pagination.current_page
+        pagination.total_pages
+        pagination.total_items
+        pagination.items_per_page
+}
+
 value RenderContext {
     -- Top-level variables available in all templates
     language: String                -- Current language code

@@ -49,6 +49,20 @@ entity SiteGeneration {
     generated_files: GeneratedFile with project_id = this.project_id
 }
 
+surface GenerationStatusSurface {
+    context generation: SiteGeneration
+
+    exposes:
+        generation.project_id
+        generation.base_url
+        generation.language
+        generation.blog_languages
+        generation.max_posts_per_page
+        generation.pico_theme
+        generation.sections
+        generation.generated_files.count
+}
+
 invariant IncrementalByContentHash {
     -- Files are only written when content_hash changes
     -- generatedFileHashes table tracks (projectId, relativePath, contentHash)
@@ -59,6 +73,21 @@ invariant MultiLanguageRoutes {
     -- Main language: flat routes (/{yyyy}/{mm}/{dd}/{slug})
     -- Additional languages: prefixed (/{lang}/{yyyy}/{mm}/{dd}/{slug})
     -- Each language subtree gets its own feeds and archives
+}
+
+invariant CanonicalBaseUrlConfigured {
+    for generation in SiteGenerations:
+        generation.base_url != ""
+}
+
+invariant NamedPicoTheme {
+    for generation in SiteGenerations where generation.pico_theme != null:
+        generation.pico_theme != ""
+}
+
+invariant GeneratedFilesTracked {
+    for generation in SiteGenerations:
+        generation.generated_files.count >= 0
 }
 
 -- Core section: root pages, sitemap, RSS, Atom, calendar.json

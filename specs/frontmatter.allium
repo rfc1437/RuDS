@@ -17,6 +17,67 @@ surface FrontmatterPersistenceSurface {
         PublishScriptRequested(script)
 }
 
+surface PostFrontmatterSurface {
+    context frontmatter: PostFrontmatter
+
+    exposes:
+        frontmatter.id
+        frontmatter.title
+        frontmatter.slug
+        frontmatter.status
+        frontmatter.published_at
+        frontmatter.tags
+        frontmatter.categories
+}
+
+surface MediaSidecarSurface {
+    context sidecar: MediaSidecar
+
+    exposes:
+        sidecar.id
+        sidecar.original_name
+        sidecar.mime_type
+        sidecar.width
+        sidecar.height
+        sidecar.updated_at
+}
+
+surface TemplateFrontmatterSurface {
+    context frontmatter: TemplateFrontmatter
+
+    exposes:
+        frontmatter.id
+        frontmatter.slug
+        frontmatter.kind
+        frontmatter.enabled
+        frontmatter.version
+}
+
+surface ScriptFrontmatterSurface {
+    context frontmatter: ScriptFrontmatter
+
+    exposes:
+        frontmatter.id
+        frontmatter.slug
+        frontmatter.kind
+        frontmatter.entrypoint
+        frontmatter.enabled
+        frontmatter.version
+}
+
+surface MenuOpmlSurface {
+    context document: MenuOpml
+
+    exposes:
+        document.header.title
+        document.header.date_created
+        document.header.date_modified
+        for item in document.body:
+            item.kind
+            item.label
+            item.slug
+}
+
 -- ============================================================================
 -- POST FILE FORMAT
 -- ============================================================================

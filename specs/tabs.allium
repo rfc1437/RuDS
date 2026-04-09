@@ -8,6 +8,25 @@
 
 use "./layout.allium" as layout
 
+surface TabControlSurface {
+    facing _: TabOperator
+
+    provides:
+        OpenTabRequested(type, id, intent)
+        OpenTabInBackgroundRequested(type, id, intent)
+        CloseTabRequested(tab)
+        PinTabRequested(tab)
+        ClearTabsRequested()
+}
+
+surface TabRuntimeSurface {
+    facing _: TabRuntime
+
+    provides:
+        TabOpening(tab_type, intent)
+        ActiveTabChanged(active_tab)
+}
+
 -- ─── Tab types ────────────────────────────────────────────────
 
 -- 17 distinct tab types, each routing to a matching editor view.
@@ -27,6 +46,15 @@ value Tab {
     type: String                  -- one of the 17 tab types
     id: String                    -- singleton: id = type name; entity: external ID
     is_transient: Boolean         -- true = preview tab (italic title, replaceable)
+}
+
+surface TabSurface {
+    context tab: Tab
+
+    exposes:
+        tab.type
+        tab.id
+        tab.is_transient
 }
 
 -- ─── Tab categories ───────────────────────────────────────────
@@ -159,6 +187,16 @@ value TabBarItem {
     is_active: Boolean
     is_transient: Boolean             -- italic title when true
     is_dirty: Boolean                 -- dot indicator, only for post tabs
+}
+
+surface TabBarItemSurface {
+    context item: TabBarItem
+
+    exposes:
+        item.title
+        item.is_active
+        item.is_transient
+        item.is_dirty
 }
 
 -- Tab title resolution:
