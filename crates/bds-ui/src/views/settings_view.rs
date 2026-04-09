@@ -6,7 +6,7 @@ use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
 use crate::components::inputs;
-use crate::i18n::t;
+use crate::i18n::{t, tw};
 
 /// Collapsible section identifiers per editor_settings.allium.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -19,6 +19,40 @@ pub enum SettingsSection {
     Publishing,
     Data,
     MCP,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsCategoryRow {
+    pub name: String,
+    pub title: String,
+    pub render_in_lists: bool,
+    pub show_title: bool,
+    pub post_template_slug: String,
+    pub list_template_slug: String,
+    pub is_protected: bool,
+}
+
+impl std::fmt::Display for SettingsCategoryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+const PROTECTED_CATEGORIES: [&str; 4] = ["article", "aside", "page", "picture"];
+
+pub fn default_category_rows() -> Vec<SettingsCategoryRow> {
+    PROTECTED_CATEGORIES
+        .iter()
+        .map(|name| SettingsCategoryRow {
+            name: (*name).to_string(),
+            title: (*name).to_string(),
+            render_in_lists: true,
+            show_title: true,
+            post_template_slug: String::new(),
+            list_template_slug: String::new(),
+            is_protected: true,
+        })
+        .collect()
 }
 
 impl SettingsSection {
@@ -59,13 +93,21 @@ pub struct SettingsViewState {
     pub project_description: text_editor::Content,
     pub data_path: String,
     pub public_url: String,
+    pub main_language: String,
+    pub blog_languages: Vec<String>,
+    pub available_languages: Vec<String>,
     pub default_author: String,
     pub max_posts_per_page: String,
+    pub blogmark_category: String,
     // Editor
     pub default_mode: String,
     pub diff_view_style: String,
     pub wrap_long_lines: bool,
     pub hide_unchanged_regions: bool,
+    // Content
+    pub categories: Vec<SettingsCategoryRow>,
+    pub new_category_name: String,
+    pub template_options: Vec<String>,
     // Publishing
     pub ssh_mode: String,
     pub ssh_host: String,
@@ -74,6 +116,8 @@ pub struct SettingsViewState {
     // AI
     pub offline_mode: bool,
     pub system_prompt: text_editor::Content,
+    // Technology
+    pub semantic_similarity_enabled: bool,
 }
 
 impl std::fmt::Debug for SettingsViewState {
@@ -94,18 +138,26 @@ impl Clone for SettingsViewState {
             project_description: text_editor::Content::with_text(&self.project_description.text()),
             data_path: self.data_path.clone(),
             public_url: self.public_url.clone(),
+            main_language: self.main_language.clone(),
+            blog_languages: self.blog_languages.clone(),
+            available_languages: self.available_languages.clone(),
             default_author: self.default_author.clone(),
             max_posts_per_page: self.max_posts_per_page.clone(),
+            blogmark_category: self.blogmark_category.clone(),
             default_mode: self.default_mode.clone(),
             diff_view_style: self.diff_view_style.clone(),
             wrap_long_lines: self.wrap_long_lines,
             hide_unchanged_regions: self.hide_unchanged_regions,
+            categories: self.categories.clone(),
+            new_category_name: self.new_category_name.clone(),
+            template_options: self.template_options.clone(),
             ssh_mode: self.ssh_mode.clone(),
             ssh_host: self.ssh_host.clone(),
             ssh_username: self.ssh_username.clone(),
             ssh_remote_path: self.ssh_remote_path.clone(),
             offline_mode: self.offline_mode,
             system_prompt: text_editor::Content::with_text(&self.system_prompt.text()),
+            semantic_similarity_enabled: self.semantic_similarity_enabled,
         }
     }
 }
@@ -120,18 +172,26 @@ impl Default for SettingsViewState {
             project_description: text_editor::Content::new(),
             data_path: String::new(),
             public_url: String::new(),
+            main_language: "en".to_string(),
+            blog_languages: vec!["en".to_string()],
+            available_languages: vec!["en".to_string(), "de".to_string(), "fr".to_string(), "it".to_string(), "es".to_string()],
             default_author: String::new(),
             max_posts_per_page: "50".to_string(),
+            blogmark_category: String::new(),
             default_mode: "markdown".to_string(),
             diff_view_style: "inline".to_string(),
             wrap_long_lines: true,
             hide_unchanged_regions: false,
+            categories: default_category_rows(),
+            new_category_name: String::new(),
+            template_options: Vec::new(),
             ssh_mode: "rsync".to_string(),
             ssh_host: String::new(),
             ssh_username: String::new(),
             ssh_remote_path: String::new(),
             offline_mode: false,
             system_prompt: text_editor::Content::new(),
+            semantic_similarity_enabled: false,
         }
     }
 }
@@ -171,8 +231,11 @@ pub enum SettingsMsg {
     BrowseDataPath,
     ResetDataPath,
     PublicUrlChanged(String),
+    MainLanguageChanged(String),
+    ToggleBlogLanguage(String),
     DefaultAuthorChanged(String),
     MaxPostsPerPageChanged(String),
+    BlogmarkCategoryChanged(String),
     SaveProject,
     // Editor
     DefaultModeChanged(String),
@@ -180,6 +243,17 @@ pub enum SettingsMsg {
     WrapLongLinesChanged(bool),
     HideUnchangedRegionsChanged(bool),
     SaveEditor,
+    // Content
+    AddCategoryNameChanged(String),
+    AddCategory,
+    CategoryTitleChanged(String, String),
+    CategoryRenderInListsChanged(String, bool),
+    CategoryShowTitleChanged(String, bool),
+    CategoryPostTemplateChanged(String, String),
+    CategoryListTemplateChanged(String, String),
+    SaveCategory(String),
+    RemoveCategory(String),
+    ResetCategoriesToDefaults,
     // Publishing
     SshModeChanged(String),
     SshHostChanged(String),
@@ -192,6 +266,8 @@ pub enum SettingsMsg {
     SystemPromptAction(text_editor::Action),
     SaveSystemPrompt,
     ResetSystemPrompt,
+    // Technology
+    SemanticSimilarityChanged(bool),
     // Data maintenance
     RebuildPosts,
     RebuildMedia,
@@ -215,7 +291,7 @@ pub fn view<'a>(
 
     let query_lower = state.search_query.to_lowercase();
 
-    let mut sections = column![].spacing(12).width(Length::Fill);
+    let mut section_items = Vec::new();
     for section in state.ordered_sections() {
         let label = t(locale, section.i18n_key());
         if !query_lower.is_empty() && !label.to_lowercase().contains(&query_lower) {
@@ -223,8 +299,23 @@ pub fn view<'a>(
         }
         let collapsed = state.collapsed.contains(&section);
         let section_el = render_section(state, &section, &label, collapsed, locale);
-        sections = sections.push(section_el);
+        section_items.push(section_el);
     }
+
+    let sections = if section_items.is_empty() {
+        column![
+            text(t(locale, "common.noResults"))
+                .size(14)
+                .color(Color::from_rgb(0.7, 0.72, 0.78)),
+            button(text(t(locale, "common.clear")).size(13))
+                .on_press(Message::Settings(SettingsMsg::SearchChanged(String::new())))
+                .padding([6, 12]),
+        ]
+        .spacing(8)
+        .width(Length::Fill)
+    } else {
+        column(section_items).spacing(12).width(Length::Fill)
+    };
 
     let body = scrollable(
         column![search, sections]
@@ -301,9 +392,9 @@ fn render_section<'a>(
     let content: Element<'a, Message> = match section {
         SettingsSection::Project => section_project(state, locale),
         SettingsSection::Editor => section_editor(state, locale),
-        SettingsSection::Content => section_content(locale),
+        SettingsSection::Content => section_content(state, locale),
         SettingsSection::AI => section_ai(state, locale),
-        SettingsSection::Technology => section_technology(locale),
+        SettingsSection::Technology => section_technology(state, locale),
         SettingsSection::Publishing => section_publishing(state, locale),
         SettingsSection::Data => section_data(locale),
         SettingsSection::MCP => section_mcp(locale),
@@ -352,6 +443,31 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         &state.public_url,
         |s| Message::Settings(SettingsMsg::PublicUrlChanged(s)),
     );
+    let language_options = state.available_languages.clone();
+    let main_language = inputs::labeled_select(
+        &t(locale, "settings.mainLanguage"),
+        &language_options,
+        Some(&state.main_language),
+        |s| Message::Settings(SettingsMsg::MainLanguageChanged(s)),
+    );
+    let blog_languages = column(
+        state
+            .available_languages
+            .iter()
+            .map(|language| {
+                let label = if *language == state.main_language {
+                    format!("{} ({})", language, t(locale, "settings.mainLanguageRequired"))
+                } else {
+                    language.clone()
+                };
+                inputs::labeled_checkbox(&label, state.blog_languages.iter().any(|item| item == language), {
+                    let language = language.clone();
+                    move |_| Message::Settings(SettingsMsg::ToggleBlogLanguage(language.clone()))
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .spacing(6);
     let author = inputs::labeled_input(
         &t(locale, "settings.defaultAuthor"),
         "",
@@ -364,18 +480,60 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         &state.max_posts_per_page,
         |s| Message::Settings(SettingsMsg::MaxPostsPerPageChanged(s)),
     );
+    let blogmark_category = inputs::labeled_select(
+        &t(locale, "settings.blogmarkCategory"),
+        &state.categories,
+        state.categories.iter().find(|row| row.name == state.blogmark_category),
+        |row| Message::Settings(SettingsMsg::BlogmarkCategoryChanged(row.name)),
+    );
     let save = button(text(t(locale, "common.save")).size(13))
         .on_press(Message::Settings(SettingsMsg::SaveProject))
         .style(inputs::primary_button)
         .padding([6, 16]);
 
-    column![name, desc, data_path, url, author, max_posts, save]
+    column![
+        name,
+        desc,
+        data_path,
+        url,
+        main_language,
+        column![
+            text(t(locale, "settings.blogLanguages"))
+                .size(12)
+                .color(inputs::LABEL_COLOR)
+                .shaping(Shaping::Advanced),
+            blog_languages,
+        ]
+        .spacing(4),
+        author,
+        max_posts,
+        blogmark_category,
+        save,
+    ]
         .spacing(8)
         .padding([0, 16])
         .into()
 }
 
 fn section_editor<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    let mode_options = vec![
+        "wysiwyg".to_string(),
+        "markdown".to_string(),
+        "preview".to_string(),
+    ];
+    let diff_options = vec!["inline".to_string(), "side-by-side".to_string()];
+    let mode = inputs::labeled_select(
+        &t(locale, "settings.defaultMode"),
+        &mode_options,
+        Some(&state.default_mode),
+        |s| Message::Settings(SettingsMsg::DefaultModeChanged(s)),
+    );
+    let diff = inputs::labeled_select(
+        &t(locale, "settings.diffViewStyle"),
+        &diff_options,
+        Some(&state.diff_view_style),
+        |s| Message::Settings(SettingsMsg::DiffViewStyleChanged(s)),
+    );
     let wrap = inputs::labeled_checkbox(
         &t(locale, "settings.wrapLongLines"),
         state.wrap_long_lines,
@@ -391,17 +549,112 @@ fn section_editor<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element
         .style(inputs::primary_button)
         .padding([6, 16]);
 
-    column![wrap, hide, save]
+    column![mode, diff, wrap, hide, save]
         .spacing(8)
         .padding([0, 16])
         .into()
 }
 
-fn section_content<'a>(locale: UiLocale) -> Element<'a, Message> {
-    // Categories table placeholder — full implementation in future iteration
-    text(t(locale, "settings.contentPlaceholder"))
-        .size(13)
-        .color(Color::from_rgb(0.5, 0.5, 0.5))
+fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    let template_options = std::iter::once(String::new())
+        .chain(state.template_options.iter().cloned())
+        .collect::<Vec<_>>();
+
+    let category_rows = state.categories.iter().fold(column![].spacing(8), |column, category| {
+        let title = inputs::labeled_input(
+            &tw(locale, "settings.categoryTitle", &[("category", &category.name)]),
+            "",
+            &category.title,
+            {
+                let name = category.name.clone();
+                move |value| Message::Settings(SettingsMsg::CategoryTitleChanged(name.clone(), value))
+            },
+        );
+        let post_template = inputs::labeled_select(
+            &t(locale, "settings.categoryPostTemplate"),
+            &template_options,
+            Some(&category.post_template_slug),
+            {
+                let name = category.name.clone();
+                move |value| Message::Settings(SettingsMsg::CategoryPostTemplateChanged(name.clone(), value))
+            },
+        );
+        let list_template = inputs::labeled_select(
+            &t(locale, "settings.categoryListTemplate"),
+            &template_options,
+            Some(&category.list_template_slug),
+            {
+                let name = category.name.clone();
+                move |value| Message::Settings(SettingsMsg::CategoryListTemplateChanged(name.clone(), value))
+            },
+        );
+        let toggles = column![
+            inputs::labeled_checkbox(
+                &t(locale, "settings.categoryRenderInLists"),
+                category.render_in_lists,
+                {
+                    let name = category.name.clone();
+                    move |value| Message::Settings(SettingsMsg::CategoryRenderInListsChanged(name.clone(), value))
+                },
+            ),
+            inputs::labeled_checkbox(
+                &t(locale, "settings.categoryShowTitles"),
+                category.show_title,
+                {
+                    let name = category.name.clone();
+                    move |value| Message::Settings(SettingsMsg::CategoryShowTitleChanged(name.clone(), value))
+                },
+            ),
+        ]
+        .spacing(6);
+        let actions = row![
+            button(text(t(locale, "common.save")).size(13))
+                .on_press(Message::Settings(SettingsMsg::SaveCategory(category.name.clone())))
+                .style(inputs::primary_button)
+                .padding([6, 12]),
+            button(text(t(locale, "common.remove")).size(13))
+                .on_press_maybe((!category.is_protected).then(|| Message::Settings(SettingsMsg::RemoveCategory(category.name.clone()))))
+                .style(inputs::danger_button)
+                .padding([6, 12]),
+        ]
+        .spacing(8);
+
+        column.push(
+            container(
+                column![
+                    text(category.name.clone()).size(15).color(Color::WHITE),
+                    title,
+                    toggles,
+                    row![post_template, list_template].spacing(12),
+                    actions,
+                ]
+                .spacing(8),
+            )
+            .padding(12),
+        )
+    });
+
+    let add_row = row![
+        inputs::labeled_input(
+            &t(locale, "settings.addCategory"),
+            "news",
+            &state.new_category_name,
+            |value| Message::Settings(SettingsMsg::AddCategoryNameChanged(value)),
+        ),
+        button(text(t(locale, "common.add")).size(13))
+            .on_press(Message::Settings(SettingsMsg::AddCategory))
+            .style(inputs::primary_button)
+            .padding([6, 12]),
+        button(text(t(locale, "settings.resetCategories")).size(13))
+            .on_press(Message::Settings(SettingsMsg::ResetCategoriesToDefaults))
+            .padding([6, 12]),
+    ]
+    .spacing(8)
+    .align_y(Alignment::End);
+
+    column![category_rows, add_row]
+        .spacing(12)
+        .padding([0, 16])
         .into()
 }
 
@@ -436,11 +689,20 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
         .into()
 }
 
-fn section_technology<'a>(locale: UiLocale) -> Element<'a, Message> {
-    text(t(locale, "settings.technologyPlaceholder"))
-        .size(13)
-        .color(Color::from_rgb(0.5, 0.5, 0.5))
-        .into()
+fn section_technology<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    column![
+        text(t(locale, "settings.luaRuntimeOnly"))
+            .size(13)
+            .color(Color::from_rgb(0.7, 0.72, 0.78)),
+        inputs::labeled_checkbox(
+            &t(locale, "settings.semanticSimilarityEnabled"),
+            state.semantic_similarity_enabled,
+            |value| Message::Settings(SettingsMsg::SemanticSimilarityChanged(value)),
+        ),
+    ]
+    .spacing(8)
+    .padding([0, 16])
+    .into()
 }
 
 fn section_publishing<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {

@@ -8,7 +8,7 @@ use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::{Media, Post, Project, PublishingPreferences, Script, SshMode, Template};
+use bds_core::model::{Media, Post, PostStatus, Project, PublishingPreferences, Script, SshMode, Template};
 
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -27,8 +27,8 @@ use crate::views::{
     template_editor::{TemplateEditorState, TemplateEditorMsg},
     script_editor::{ScriptEditorState, ScriptEditorMsg},
     tags_view::{self, TagsMsg, TagsSection, TagsViewState},
-    settings_view::{SettingsViewState, SettingsMsg},
-    dashboard::DashboardState,
+    settings_view::{default_category_rows, SettingsCategoryRow, SettingsViewState, SettingsMsg},
+    dashboard::{DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag, DashboardTimelineMonth},
 };
 
 // ───────────────────────────────────────────────────────────
@@ -302,9 +302,50 @@ fn save_editor_settings_state_impl(
     .map_err(|e| e.to_string())
 }
 
+fn month_abbreviation(month: u32) -> String {
+    match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "?",
+    }
+    .to_string()
+}
+
+fn format_timestamp(timestamp_ms: i64) -> String {
+    let secs = timestamp_ms / 1000;
+    let (year, month, day) = bds_core::util::timestamp::year_month_day_from_unix_ms(timestamp_ms);
+    let hour = ((secs % 86_400) / 3_600) as u32;
+    let minute = ((secs % 3_600) / 60) as u32;
+    format!("{year}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+fn format_bytes(size: i64) -> String {
+    let size = size.max(0) as f64;
+    if size < 1024.0 {
+        return format!("{} B", size as i64);
+    }
+    if size < 1024.0 * 1024.0 {
+        return format!("{:.1} KB", size / 1024.0);
+    }
+    if size < 1024.0 * 1024.0 * 1024.0 {
+        return format!("{:.1} MB", size / (1024.0 * 1024.0));
+    }
+    format!("{:.1} GB", size / (1024.0 * 1024.0 * 1024.0))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, POST_AUTO_SAVE_DELAY_MS};
+    use super::{persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::post_editor::PostEditorState;
     use crate::views::script_editor::ScriptEditorState;
@@ -352,8 +393,18 @@ mod tests {
         insert_project(db.conn(), &project).unwrap();
         let tempdir = TempDir::new().unwrap();
         std::fs::create_dir_all(tempdir.path().join("meta")).unwrap();
-        std::fs::write(tempdir.path().join("meta/project.json"), "{}\n").unwrap();
+        std::fs::write(
+            tempdir.path().join("meta/project.json"),
+            r#"{"name":"Test Project","maxPostsPerPage":50,"blogLanguages":["en"],"semanticSimilarityEnabled":false}"#,
+        )
+        .unwrap();
         std::fs::write(tempdir.path().join("meta/publishing.json"), "{}\n").unwrap();
+        std::fs::write(
+            tempdir.path().join("meta/categories.json"),
+            r#"["article","aside","page","picture"]"#,
+        )
+        .unwrap();
+        std::fs::write(tempdir.path().join("meta/category-meta.json"), "{}\n").unwrap();
         (db, project, tempdir)
     }
 
@@ -695,6 +746,117 @@ mod tests {
         let linked = bds_core::engine::post_media::list_posts_for_media(app.db.as_ref().unwrap().conn(), &imported.id).unwrap();
         assert!(linked.is_empty());
         assert!(app.media_editors.get(&imported.id).unwrap().linked_posts.is_empty());
+    }
+
+    #[test]
+    fn refresh_counts_populates_dashboard_state() {
+        let (db, project, tmp) = setup();
+        let first = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "First",
+            Some("Body"),
+            vec!["rust".to_string()],
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let second = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Second",
+            Some("Body"),
+            vec!["lua".to_string()],
+            vec!["aside".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut second_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &second.id).unwrap();
+        second_post.status = PostStatus::Published;
+        bds_core::db::queries::post::update_post(db.conn(), &second_post).unwrap();
+        bds_core::engine::tag::discover_tags(db.conn(), tmp.path(), &project.id).unwrap();
+
+        let source = tmp.path().join("tiny.png");
+        std::fs::write(&source, tiny_png_bytes()).unwrap();
+        media::import_media(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            &source,
+            "tiny.png",
+            Some("Tiny"),
+            Some("Alt"),
+            None,
+            None,
+            Some("en"),
+            vec!["cover".to_string()],
+        )
+        .unwrap();
+
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.refresh_counts();
+
+        let dash = app.dashboard_state.expect("dashboard state should be set");
+        assert_eq!(dash.stats.total_posts, 2);
+        assert_eq!(dash.stats.published_count, 1);
+        assert_eq!(dash.stats.media_count, 1);
+        assert_eq!(dash.stats.tag_count, 2);
+        assert_eq!(dash.recent_posts.len(), 2);
+        assert!(!dash.category_cloud.is_empty());
+        assert!(!dash.timeline.is_empty());
+        assert_eq!(dash.recent_posts[0].title, "Second");
+        assert_eq!(first.title, "First");
+    }
+
+    #[test]
+    fn save_project_persists_languages_and_blogmark_category() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let mut state = app.hydrate_settings_state();
+        state.project_name = "Localized Project".to_string();
+        state.main_language = "de".to_string();
+        state.blog_languages = vec!["de".to_string(), "en".to_string()];
+        state.blogmark_category = "article".to_string();
+        state.semantic_similarity_enabled = true;
+        app.settings_state = Some(state);
+
+        let _ = app.handle_settings_msg(SettingsMsg::SaveProject);
+
+        let meta = bds_core::engine::meta::read_project_json(tmp.path()).unwrap();
+        assert_eq!(meta.name, "Localized Project");
+        assert_eq!(meta.main_language.as_deref(), Some("de"));
+        assert_eq!(meta.blog_languages, vec!["de".to_string(), "en".to_string()]);
+        assert_eq!(meta.blogmark_category.as_deref(), Some("article"));
+        assert!(meta.semantic_similarity_enabled);
+    }
+
+    #[test]
+    fn add_category_and_reset_defaults_updates_metadata_files() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        app.settings_state = Some(app.hydrate_settings_state());
+
+        let _ = app.handle_settings_msg(SettingsMsg::AddCategoryNameChanged("news".to_string()));
+        let _ = app.handle_settings_msg(SettingsMsg::AddCategory);
+
+        let categories = bds_core::engine::meta::read_categories_json(tmp.path()).unwrap();
+        assert!(categories.iter().any(|category| category == "news"));
+
+        let _ = app.handle_settings_msg(SettingsMsg::ResetCategoriesToDefaults);
+
+        let categories = bds_core::engine::meta::read_categories_json(tmp.path()).unwrap();
+        assert_eq!(categories, vec![
+            "article".to_string(),
+            "aside".to_string(),
+            "page".to_string(),
+            "picture".to_string(),
+        ]);
     }
 }
 
@@ -2539,6 +2701,8 @@ impl BdsApp {
                     }
                 }
             }
+
+            self.dashboard_state = Some(self.hydrate_dashboard_state());
         }
 
         // Refresh sidebar data with current filters (async — off main thread)
@@ -2546,6 +2710,119 @@ impl BdsApp {
         let t2 = self.refresh_sidebar_media();
         self.refresh_filter_metadata();
         Task::batch([t1, t2])
+    }
+
+    fn hydrate_dashboard_state(&self) -> DashboardState {
+        let Some(project) = &self.active_project else {
+            return DashboardState::new(String::new());
+        };
+        let Some(db) = &self.db else {
+            return DashboardState::new(project.name.clone());
+        };
+
+        let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project.id)
+            .unwrap_or_default();
+        let media = bds_core::db::queries::media::list_media_by_project(db.conn(), &project.id)
+            .unwrap_or_default();
+        let tags = bds_core::db::queries::tag::list_tags_by_project(db.conn(), &project.id)
+            .unwrap_or_default();
+
+        let mut draft_count = 0usize;
+        let mut published_count = 0usize;
+        let mut archived_count = 0usize;
+        let mut monthly_counts: std::collections::BTreeMap<(i32, u32), usize> = std::collections::BTreeMap::new();
+        let mut category_counts: HashMap<String, usize> = HashMap::new();
+        let mut tag_counts: HashMap<String, usize> = HashMap::new();
+
+        for post in &posts {
+            match post.status {
+                PostStatus::Draft => draft_count += 1,
+                PostStatus::Published => published_count += 1,
+                PostStatus::Archived => archived_count += 1,
+            }
+
+            let (year, month, _) = bds_core::util::timestamp::year_month_day_from_unix_ms(post.updated_at);
+            let year = year.parse::<i32>().unwrap_or(0);
+            let month = month.parse::<u32>().unwrap_or(0);
+            *monthly_counts.entry((year, month)).or_insert(0) += 1;
+
+            for category in &post.categories {
+                *category_counts.entry(category.clone()).or_insert(0) += 1;
+            }
+            for tag in &post.tags {
+                *tag_counts.entry(tag.to_lowercase()).or_insert(0) += 1;
+            }
+        }
+
+        let image_count = media.iter().filter(|item| item.mime_type.starts_with("image/")).count();
+        let total_media_size = media.iter().map(|item| item.size).sum::<i64>();
+
+        let mut timeline = monthly_counts
+            .into_iter()
+            .rev()
+            .take(12)
+            .map(|((year, month), count)| DashboardTimelineMonth {
+                label: month_abbreviation(month),
+                year,
+                count,
+            })
+            .collect::<Vec<_>>();
+        timeline.reverse();
+
+        let mut tag_cloud = tags
+            .into_iter()
+            .map(|tag| DashboardTag {
+                count: tag_counts.get(&tag.name.to_lowercase()).copied().unwrap_or(0),
+                name: tag.name,
+                color: tag.color,
+            })
+            .collect::<Vec<_>>();
+        tag_cloud.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        let tag_overflow_count = tag_cloud.len().saturating_sub(40);
+        tag_cloud.truncate(40);
+
+        let mut category_cloud = category_counts
+            .into_iter()
+            .map(|(name, count)| DashboardCategory { name, count })
+            .collect::<Vec<_>>();
+        category_cloud.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+
+        let mut sorted_posts = posts;
+        sorted_posts.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        let mut recent_posts = sorted_posts
+            .into_iter()
+            .map(|post| DashboardRecentPost {
+                post_id: post.id,
+                title: if post.title.trim().is_empty() { "Untitled".to_string() } else { post.title },
+                status: match post.status {
+                    PostStatus::Published => "published".to_string(),
+                    _ => "draft".to_string(),
+                },
+                date: format_timestamp(post.updated_at),
+            })
+            .collect::<Vec<_>>();
+        recent_posts.truncate(5);
+
+        DashboardState {
+            title: t(self.ui_locale, "dashboard.overview"),
+            subtitle: project.name.clone(),
+            stats: DashboardStats {
+                total_posts: draft_count + published_count + archived_count,
+                published_count,
+                draft_count,
+                archived_count,
+                media_count: media.len(),
+                image_count,
+                total_media_size: format_bytes(total_media_size),
+                tag_count: tag_counts.len(),
+                category_count: category_cloud.len(),
+            },
+            timeline,
+            tag_cloud,
+            tag_overflow_count,
+            category_cloud,
+            recent_posts,
+        }
     }
 
     /// Number of items to load per sidebar page.
@@ -3710,9 +3987,43 @@ impl BdsApp {
         if let Some(data_dir) = &self.data_dir {
             if let Ok(meta) = engine::meta::read_project_json(data_dir) {
                 state.public_url = meta.public_url.unwrap_or_default();
+                state.main_language = meta.main_language.unwrap_or_else(|| self.content_language.clone());
                 state.default_author = meta.default_author.unwrap_or_default();
                 state.max_posts_per_page = meta.max_posts_per_page.to_string();
+                state.blogmark_category = meta.blogmark_category.unwrap_or_default();
+                state.blog_languages = if meta.blog_languages.is_empty() {
+                    vec![state.main_language.clone()]
+                } else {
+                    meta.blog_languages
+                };
+                if !state.blog_languages.iter().any(|language| language == &state.main_language) {
+                    state.blog_languages.push(state.main_language.clone());
+                }
+                state.semantic_similarity_enabled = meta.semantic_similarity_enabled;
             }
+            let categories = engine::meta::read_categories_json(data_dir).unwrap_or_else(|_| {
+                default_category_rows().into_iter().map(|row| row.name).collect()
+            });
+            let category_meta = engine::meta::read_category_meta_json(data_dir).unwrap_or_default();
+            state.categories = categories
+                .into_iter()
+                .map(|name| {
+                    let meta = category_meta.get(&name);
+                    SettingsCategoryRow {
+                        title: name.clone(),
+                        render_in_lists: meta.map(|value| value.render_in_lists).unwrap_or(true),
+                        show_title: meta.map(|value| value.show_title).unwrap_or(true),
+                        post_template_slug: meta
+                            .and_then(|value| value.post_template_slug.clone())
+                            .unwrap_or_default(),
+                        list_template_slug: meta
+                            .and_then(|value| value.list_template_slug.clone())
+                            .unwrap_or_default(),
+                        is_protected: ["article", "aside", "page", "picture"].contains(&name.as_str()),
+                        name,
+                    }
+                })
+                .collect();
             if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
                 state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();
                 state.ssh_username = pub_prefs.ssh_user.unwrap_or_default();
@@ -3724,6 +4035,13 @@ impl BdsApp {
             }
         }
         if let Some(db) = &self.db {
+            if let Some(project) = &self.active_project {
+                state.template_options = bds_core::db::queries::template::list_templates_by_project(db.conn(), &project.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|template| template.slug)
+                    .collect();
+            }
             if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.default_mode") {
                 state.default_mode = setting.value;
             }
@@ -3948,8 +4266,28 @@ impl BdsApp {
                 }
             }
             SettingsMsg::PublicUrlChanged(s) => { state.public_url = s; }
+            SettingsMsg::MainLanguageChanged(s) => {
+                state.main_language = s.clone();
+                if !state.blog_languages.iter().any(|language| language == &s) {
+                    state.blog_languages.push(s);
+                }
+            }
+            SettingsMsg::ToggleBlogLanguage(language) => {
+                if language == state.main_language {
+                    if !state.blog_languages.iter().any(|item| item == &language) {
+                        state.blog_languages.push(language);
+                    }
+                } else if let Some(index) = state.blog_languages.iter().position(|item| item == &language) {
+                    state.blog_languages.remove(index);
+                } else {
+                    state.blog_languages.push(language);
+                }
+                state.blog_languages.sort();
+                state.blog_languages.dedup();
+            }
             SettingsMsg::DefaultAuthorChanged(s) => { state.default_author = s; }
             SettingsMsg::MaxPostsPerPageChanged(s) => { state.max_posts_per_page = s; }
+            SettingsMsg::BlogmarkCategoryChanged(s) => { state.blogmark_category = s; }
             SettingsMsg::SaveProject => {
                 if let (Some(db), Some(data_dir), Some(project)) = (&self.db, &self.data_dir, self.active_project.as_mut()) {
                     let max_posts = match state.max_posts_per_page.trim().parse::<i32>() {
@@ -3977,8 +4315,12 @@ impl BdsApp {
                         if value.trim().is_empty() { None } else { Some(value) }
                     };
                     meta.public_url = if state.public_url.trim().is_empty() { None } else { Some(state.public_url.clone()) };
+                    meta.main_language = if state.main_language.trim().is_empty() { None } else { Some(state.main_language.clone()) };
                     meta.default_author = if state.default_author.trim().is_empty() { None } else { Some(state.default_author.clone()) };
                     meta.max_posts_per_page = max_posts;
+                    meta.blogmark_category = if state.blogmark_category.trim().is_empty() { None } else { Some(state.blogmark_category.clone()) };
+                    meta.blog_languages = state.blog_languages.clone();
+                    meta.semantic_similarity_enabled = state.semantic_similarity_enabled;
                     if let Err(e) = meta.validate() {
                         self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
                         return Task::none();
@@ -3994,6 +4336,9 @@ impl BdsApp {
                             if let Some(listing) = self.projects.iter_mut().find(|p| p.id == project.id) {
                                 *listing = project.clone();
                             }
+                            self.content_language = state.main_language.clone();
+                            self.blog_languages = state.blog_languages.clone();
+                            self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
                         (Err(e), _) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
@@ -4010,6 +4355,124 @@ impl BdsApp {
                     match save_editor_settings_state_impl(db, state) {
                         Ok(_) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
                         Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
+            SettingsMsg::AddCategoryNameChanged(value) => { state.new_category_name = value; }
+            SettingsMsg::AddCategory => {
+                let category_name = state.new_category_name.trim();
+                if category_name.is_empty() {
+                    self.notify(ToastLevel::Error, "Category name required");
+                    return Task::none();
+                }
+                if state.categories.iter().any(|row| row.name.eq_ignore_ascii_case(category_name)) {
+                    self.notify(ToastLevel::Error, "Category already exists");
+                    return Task::none();
+                }
+                if let Some(data_dir) = &self.data_dir {
+                    match engine::meta::add_category(data_dir, category_name) {
+                        Ok(()) => {
+                            self.settings_state = Some(self.hydrate_settings_state());
+                            if let Some(state) = self.settings_state.as_mut() {
+                                state.new_category_name.clear();
+                            }
+                            self.dashboard_state = Some(self.hydrate_dashboard_state());
+                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                        }
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
+            SettingsMsg::CategoryTitleChanged(name, value) => {
+                if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
+                    row.title = value;
+                }
+            }
+            SettingsMsg::CategoryRenderInListsChanged(name, value) => {
+                if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
+                    row.render_in_lists = value;
+                }
+            }
+            SettingsMsg::CategoryShowTitleChanged(name, value) => {
+                if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
+                    row.show_title = value;
+                }
+            }
+            SettingsMsg::CategoryPostTemplateChanged(name, value) => {
+                if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
+                    row.post_template_slug = value;
+                }
+            }
+            SettingsMsg::CategoryListTemplateChanged(name, value) => {
+                if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
+                    row.list_template_slug = value;
+                }
+            }
+            SettingsMsg::SaveCategory(name) => {
+                if let Some(data_dir) = &self.data_dir {
+                    if let Some(row) = state.categories.iter().find(|row| row.name == name) {
+                        let mut category_meta = engine::meta::read_category_meta_json(data_dir).unwrap_or_default();
+                        category_meta.insert(
+                            row.name.clone(),
+                            bds_core::model::metadata::CategorySettings {
+                                render_in_lists: row.render_in_lists,
+                                show_title: row.show_title,
+                                post_template_slug: (!row.post_template_slug.is_empty()).then(|| row.post_template_slug.clone()),
+                                list_template_slug: (!row.list_template_slug.is_empty()).then(|| row.list_template_slug.clone()),
+                            },
+                        );
+                        match engine::meta::write_category_meta_json(data_dir, &category_meta) {
+                            Ok(()) => {
+                                self.dashboard_state = Some(self.hydrate_dashboard_state());
+                                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                            }
+                            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        }
+                    }
+                }
+            }
+            SettingsMsg::RemoveCategory(name) => {
+                if let Some(data_dir) = &self.data_dir {
+                    match engine::meta::remove_category(data_dir, &name) {
+                        Ok(()) => {
+                            self.settings_state = Some(self.hydrate_settings_state());
+                            self.dashboard_state = Some(self.hydrate_dashboard_state());
+                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                        }
+                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                    }
+                }
+            }
+            SettingsMsg::ResetCategoriesToDefaults => {
+                if let Some(data_dir) = &self.data_dir {
+                    let default_names = default_category_rows()
+                        .into_iter()
+                        .map(|row| row.name)
+                        .collect::<Vec<_>>();
+                    let default_meta = default_category_rows()
+                        .into_iter()
+                        .map(|row| {
+                            (
+                                row.name,
+                                bds_core::model::metadata::CategorySettings {
+                                    render_in_lists: row.render_in_lists,
+                                    show_title: row.show_title,
+                                    post_template_slug: None,
+                                    list_template_slug: None,
+                                },
+                            )
+                        })
+                        .collect::<HashMap<_, _>>();
+                    match (
+                        engine::meta::write_categories_json(data_dir, &default_names),
+                        engine::meta::write_category_meta_json(data_dir, &default_meta),
+                    ) {
+                        (Ok(()), Ok(())) => {
+                            self.settings_state = Some(self.hydrate_settings_state());
+                            self.dashboard_state = Some(self.hydrate_dashboard_state());
+                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                        }
+                        (Err(e), _) | (_, Err(e)) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
                     }
                 }
             }
@@ -4058,6 +4521,9 @@ impl BdsApp {
             }
             SettingsMsg::ResetSystemPrompt => {
                 state.system_prompt = iced::widget::text_editor::Content::new();
+            }
+            SettingsMsg::SemanticSimilarityChanged(value) => {
+                state.semantic_similarity_enabled = value;
             }
             SettingsMsg::RebuildPosts => { return Task::done(Message::RebuildDatabase); }
             SettingsMsg::RebuildMedia => { return Task::done(Message::RebuildDatabase); }

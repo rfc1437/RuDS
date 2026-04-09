@@ -551,7 +551,7 @@ mod tests {
             Some(&dashboard),
         );
         match route {
-            ContentRoute::Dashboard(state) => assert_eq!(state.project_name, "Test Project"),
+            ContentRoute::Dashboard(state) => assert_eq!(state.subtitle, "Test Project"),
             _ => panic!("expected dashboard route"),
         }
     }
