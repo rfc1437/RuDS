@@ -101,8 +101,8 @@ pub fn update_post(conn: &Connection, post: &Post) -> rusqlite::Result<()> {
             file_path = ?10, checksum = ?11, tags = ?12, categories = ?13,
             published_title = ?14, published_content = ?15, published_tags = ?16,
             published_categories = ?17, published_excerpt = ?18,
-            updated_at = ?19, published_at = ?20
-         WHERE id = ?21",
+            created_at = ?19, updated_at = ?20, published_at = ?21
+         WHERE id = ?22",
         params![
             post.title,
             post.slug,
@@ -122,6 +122,7 @@ pub fn update_post(conn: &Connection, post: &Post) -> rusqlite::Result<()> {
             post.published_tags,
             post.published_categories,
             post.published_excerpt,
+            post.created_at,
             post.updated_at,
             post.published_at,
             post.id,

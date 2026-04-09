@@ -352,7 +352,7 @@ mod tests {
     use crate::views::script_editor::ScriptEditorState;
     use crate::views::settings_view::SettingsViewState;
     use crate::views::template_editor::TemplateEditorState;
-    use chrono::Datelike;
+    use chrono::{Datelike, TimeZone};
     use bds_core::db::fts::ensure_fts_tables;
     use bds_core::db::queries::project::insert_project;
     use bds_core::db::Database;
@@ -818,6 +818,56 @@ mod tests {
         assert!(!dash.category_cloud.is_empty());
         assert_eq!(dash.recent_posts[0].title, "Second");
         assert_eq!(first.title, "First");
+    }
+
+    #[test]
+    fn dashboard_timeline_uses_created_month_not_updated_month() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "March Post",
+            Some("Body"),
+            vec![],
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let march_created_at = chrono::Utc
+            .with_ymd_and_hms(2026, 3, 15, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let april_updated_at = chrono::Utc
+            .with_ymd_and_hms(2026, 4, 2, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+
+        let mut saved = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        saved.created_at = march_created_at;
+        saved.updated_at = april_updated_at;
+        bds_core::db::queries::post::update_post(db.conn(), &saved).unwrap();
+
+        let app = make_app(db, project, &tmp);
+        let dash = app.hydrate_dashboard_state();
+        let march = dash
+            .timeline
+            .iter()
+            .find(|month| month.year == 2026 && month.label == "Mar")
+            .expect("march bucket should exist");
+        let april = dash
+            .timeline
+            .iter()
+            .find(|month| month.year == 2026 && month.label == "Apr")
+            .expect("april bucket should exist");
+
+        assert_eq!(march.count, 1);
+        assert_eq!(april.count, 0);
     }
 
     #[test]
@@ -2747,7 +2797,7 @@ impl BdsApp {
                 PostStatus::Archived => archived_count += 1,
             }
 
-            let (year, month, _) = bds_core::util::timestamp::year_month_day_from_unix_ms(post.updated_at);
+            let (year, month, _) = bds_core::util::timestamp::year_month_day_from_unix_ms(post.created_at);
             let year = year.parse::<i32>().unwrap_or(0);
             let month = month.parse::<u32>().unwrap_or(0);
             *monthly_counts.entry((year, month)).or_insert(0) += 1;
