@@ -322,6 +322,11 @@ impl PostEditorState {
 /// Post editor messages.
 #[derive(Debug, Clone)]
 pub enum PostEditorMsg {
+    AnalyzeWithAi,
+    AnalyzeTaxonomy,
+    DetectLanguage,
+    Translate,
+    TranslateTo(String),
     TitleChanged(String),
     SlugChanged(String),
     ExcerptChanged(String),
@@ -389,6 +394,18 @@ pub fn view<'a>(
             .into()],
         vec![
             status_badge(&state.status),
+            button(text(t(locale, "editor.aiAnalyze")).size(13).shaping(Shaping::Advanced))
+                .on_press(Message::PostEditor(PostEditorMsg::AnalyzeWithAi))
+                .padding([6, 16])
+                .into(),
+            button(text(t(locale, "editor.suggestTaxonomy")).size(13).shaping(Shaping::Advanced))
+                .on_press(Message::PostEditor(PostEditorMsg::AnalyzeTaxonomy))
+                .padding([6, 16])
+                .into(),
+            button(text(t(locale, "editor.translate")).size(13).shaping(Shaping::Advanced))
+                .on_press(Message::PostEditor(PostEditorMsg::Translate))
+                .padding([6, 16])
+                .into(),
             button(
                 text(t(locale, "common.save"))
                     .size(13)
@@ -523,6 +540,9 @@ pub fn view<'a>(
             Some(&state.language),
             |lang| Message::PostEditor(PostEditorMsg::LanguageChanged(lang)),
         );
+        let detect_language = button(text(t(locale, "editor.detectLanguage")).size(12).shaping(Shaping::Advanced))
+            .on_press(Message::PostEditor(PostEditorMsg::DetectLanguage))
+            .padding([6, 12]);
         let template_input = inputs::labeled_input(
             &t(locale, "editor.templateSlug"),
             "",
@@ -534,7 +554,8 @@ pub fn view<'a>(
             state.do_not_translate,
             |b| Message::PostEditor(PostEditorMsg::ToggleDoNotTranslate(b)),
         );
-        let meta_row2 = row![author_input, language_input, template_input, dnt]
+        let language_block = column![language_input, detect_language].spacing(6);
+        let meta_row2 = row![author_input, language_block, template_input, dnt]
             .spacing(16)
             .width(Length::Fill);
 

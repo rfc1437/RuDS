@@ -197,6 +197,10 @@ impl MediaEditorState {
 /// Media editor messages.
 #[derive(Debug, Clone)]
 pub enum MediaEditorMsg {
+    AnalyzeWithAi,
+    DetectLanguage,
+    TranslateMetadata,
+    TranslateTo(String),
     TitleChanged(String),
     AltChanged(String),
     CaptionChanged(String),
@@ -224,6 +228,22 @@ pub fn view<'a>(
             text(state.original_name.clone()).size(18).into(),
         ],
         vec![
+            if state.mime_type.starts_with("image/") {
+                button(text(t(locale, "editor.aiAnalyze")).size(13))
+                    .on_press(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi))
+                    .padding([6, 16])
+                    .into()
+            } else {
+                Space::new(0, 0).into()
+            },
+            button(text(t(locale, "editor.detectLanguage")).size(13))
+                .on_press(Message::MediaEditor(MediaEditorMsg::DetectLanguage))
+                .padding([6, 16])
+                .into(),
+            button(text(t(locale, "editor.translate")).size(13))
+                .on_press(Message::MediaEditor(MediaEditorMsg::TranslateMetadata))
+                .padding([6, 16])
+                .into(),
             button(text(t(locale, "common.save")).size(13))
                 .on_press(Message::MediaEditor(MediaEditorMsg::Save))
                 .style(inputs::primary_button)

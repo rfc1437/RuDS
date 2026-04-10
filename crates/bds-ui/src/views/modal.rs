@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use iced::widget::text::Shaping;
-use iced::widget::{button, column, container, image, row, text, text_input, Space};
+use iced::widget::{button, checkbox, column, container, image, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -18,6 +18,31 @@ pub struct InsertLinkResult {
     pub title: String,
     pub status: String,
     pub canonical_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiEntityTarget {
+    Post(String),
+    Media(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiSuggestionField {
+    pub key: String,
+    pub label: String,
+    pub current_value: String,
+    pub suggested_value: String,
+    pub accepted: bool,
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageTarget {
+    pub code: String,
+    pub name: String,
+    pub flag_emoji: String,
+    pub has_existing_translation: bool,
+    pub existing_status: Option<String>,
 }
 
 /// Active modal state. Only one modal at a time.
@@ -59,6 +84,15 @@ pub enum ModalState {
         title: String,
         media_list: Vec<bds_core::model::Media>,
         selected_index: Option<usize>,
+    },
+    AISuggestions {
+        target: AiEntityTarget,
+        fields: Vec<AiSuggestionField>,
+    },
+    LanguagePicker {
+        target: AiEntityTarget,
+        source_language: String,
+        available_targets: Vec<LanguageTarget>,
     },
 }
 
@@ -871,6 +905,119 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
             container(content.padding(20))
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .style(modal_box_style)
+                .into()
+        }
+
+        ModalState::AISuggestions { target, fields } => {
+            let title = text(t(locale, "modal.aiSuggestions.title"))
+                .size(16)
+                .shaping(Shaping::Advanced)
+                .color(Color::WHITE);
+
+            let rows = fields.iter().enumerate().map(|(index, field)| {
+                let toggle = checkbox(field.label.clone(), field.accepted)
+                    .on_toggle_maybe((!field.locked)
+                        .then_some(move |value| Message::ToggleAiSuggestionField(index, value)))
+                    .size(16)
+                    .text_size(13);
+                container(column![
+                    toggle,
+                    row![
+                        container(text(field.current_value.clone()).size(12).color(Color::from_rgb(0.58, 0.58, 0.64))).width(Length::FillPortion(1)),
+                        text("→").size(14).color(Color::from_rgb(0.62, 0.66, 0.74)),
+                        container(text(field.suggested_value.clone()).size(12).color(Color::WHITE)).width(Length::FillPortion(1)),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(8))
+                .padding(10)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.18, 0.20, 0.25))),
+                    border: Border {
+                        color: Color::from_rgb(0.30, 0.30, 0.35),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                })
+                .into()
+            }).collect::<Vec<Element<'static, Message>>>();
+
+            let buttons = row![
+                button(text(t(locale, "common.cancel")).size(13))
+                    .on_press(Message::DismissModal)
+                    .padding([6, 16])
+                    .style(cancel_button_style),
+                Space::with_width(Length::Fill),
+                button(text(t(locale, "modal.aiSuggestions.applySelected")).size(13))
+                    .on_press(Message::ApplyAiSuggestions(target, fields))
+                    .padding([6, 16])
+                    .style(confirm_button_style),
+            ];
+
+            let content = column![
+                title,
+                Space::with_height(12.0),
+                scrollable(column(rows).spacing(8)).height(Length::Fixed(320.0)),
+                Space::with_height(16.0),
+                buttons,
+            ]
+            .spacing(4);
+
+            container(content.padding(20))
+                .width(Length::Fixed(640.0))
+                .style(modal_box_style)
+                .into()
+        }
+
+        ModalState::LanguagePicker { target, source_language, available_targets } => {
+            let title = text(t(locale, "modal.languagePicker.title"))
+                .size(16)
+                .shaping(Shaping::Advanced)
+                .color(Color::WHITE);
+            let subtitle = text(format!("{}: {}", t(locale, "editor.language"), source_language))
+                .size(12)
+                .shaping(Shaping::Advanced)
+                .color(Color::from_rgb(0.60, 0.60, 0.68));
+
+            let rows = if available_targets.is_empty() {
+                vec![text(t(locale, "common.noResults")).size(12).into()]
+            } else {
+                available_targets.into_iter().map(|language| {
+                    let message = match &target {
+                        AiEntityTarget::Post(_) => Message::PostEditor(PostEditorMsg::TranslateTo(language.code.clone())),
+                        AiEntityTarget::Media(_) => Message::MediaEditor(crate::views::media_editor::MediaEditorMsg::TranslateTo(language.code.clone())),
+                    };
+                    let status = language.existing_status.clone().unwrap_or_default();
+                    button(row![
+                        text(format!("{} {}", language.flag_emoji, language.name)).size(13).color(Color::WHITE),
+                        Space::with_width(Length::Fill),
+                        text(status).size(11).color(Color::from_rgb(0.60, 0.60, 0.68)),
+                    ].align_y(Alignment::Center))
+                    .on_press(message)
+                    .padding([8, 12])
+                    .style(cancel_button_style)
+                    .into()
+                }).collect::<Vec<Element<'static, Message>>>()
+            };
+
+            let content = column![
+                title,
+                subtitle,
+                Space::with_height(12.0),
+                column(rows).spacing(6),
+                Space::with_height(16.0),
+                button(text(t(locale, "common.cancel")).size(13))
+                    .on_press(Message::DismissModal)
+                    .padding([6, 16])
+                    .style(cancel_button_style),
+            ]
+            .spacing(4);
+
+            container(content.padding(20))
+                .width(Length::Fixed(420.0))
                 .style(modal_box_style)
                 .into()
         }
