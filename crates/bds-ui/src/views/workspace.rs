@@ -101,6 +101,7 @@ pub fn view<'a>(
     active_modal: Option<modal::ModalState>,
     // Data directory (for thumbnail paths)
     data_dir: Option<&'a Path>,
+    post_preview_widget: Option<Element<'a, Message>>,
     // Editor states
     post_editors: &'a HashMap<String, PostEditorState>,
     media_editors: &'a HashMap<String, MediaEditorState>,
@@ -122,6 +123,7 @@ pub fn view<'a>(
         active_tab,
         locale,
         data_dir,
+        post_preview_widget,
         post_editors,
         media_editors,
         template_editors,
@@ -343,6 +345,7 @@ fn route_content_area<'a>(
     active_tab: Option<&'a str>,
     locale: UiLocale,
     data_dir: Option<&'a Path>,
+    post_preview_widget: Option<Element<'a, Message>>,
     post_editors: &'a HashMap<String, PostEditorState>,
     media_editors: &'a HashMap<String, MediaEditorState>,
     template_editors: &'a HashMap<String, TemplateEditorState>,
@@ -368,7 +371,7 @@ fn route_content_area<'a>(
         ContentRoute::Post(tab_id) => {
             if let Some(state) = post_editors.get(tab_id) {
                 let wrap = settings_state.map(|s| s.wrap_long_lines).unwrap_or(true);
-                post_editor::view(state, locale, wrap)
+                post_editor::view(state, locale, wrap, post_preview_widget)
             } else {
                 loading_view(locale)
             }

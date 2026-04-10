@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 
 use iced::widget::text::{Shaping, Wrapping};
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
+use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Column, Space};
 use iced::{Color, Element, Length, Theme};
 use iced_widget::markdown;
 
@@ -20,7 +21,7 @@ use crate::views::status_bar;
 pub struct TranslationFlag {
     pub language: String,
     pub flag_emoji: String,
-    pub status: String, // "draft" | "published" | "missing"
+    pub status: String,
     pub is_active: bool,
 }
 
@@ -46,8 +47,15 @@ pub struct ResolvedPostLink {
 pub struct LinkedMediaItem {
     pub media_id: String,
     pub name: String,
+    pub file_path: String,
     pub is_image: bool,
     pub sort_order: i32,
+}
+
+#[derive(Debug, Clone)]
+enum PreviewBlock {
+    Markdown(Vec<markdown::Item>),
+    Image { alt: String, target: String },
 }
 
 /// State for an open post editor.
@@ -59,6 +67,7 @@ pub struct PostEditorState {
     pub content: String,
     pub editor_buffer: RefCell<EditorBuffer>,
     pub preview_items: Vec<markdown::Item>,
+    preview_blocks: Vec<PreviewBlock>,
     pub tags: Vec<String>,
     pub categories: Vec<String>,
     pub author: String,
@@ -77,22 +86,13 @@ pub struct PostEditorState {
     pub quick_actions_open: bool,
     pub tags_input: String,
     pub categories_input: String,
-    // ── Translation flags ──
-    /// Currently-displayed language (canonical or translation).
     pub active_language: String,
-    /// The post's own language (canonical).
     pub canonical_language: String,
-    /// All blog languages from project metadata.
     pub blog_languages: Vec<String>,
-    /// Saved canonical title/excerpt/content when viewing a translation.
     pub saved_canonical: Option<TranslationDraft>,
-    /// Translation drafts keyed by language code.
     pub translation_drafts: HashMap<String, TranslationDraft>,
-    /// Outgoing links from this post to other posts.
     pub outlinks: Vec<ResolvedPostLink>,
-    /// Incoming links from other posts to this post.
     pub backlinks: Vec<ResolvedPostLink>,
-    /// Media linked to this post.
     pub linked_media: Vec<LinkedMediaItem>,
 }
 
@@ -116,6 +116,7 @@ impl Clone for PostEditorState {
             content: self.content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
             preview_items: self.preview_items.clone(),
+            preview_blocks: self.preview_blocks.clone(),
             tags: self.tags.clone(),
             categories: self.categories.clone(),
             author: self.author.clone(),
@@ -160,8 +161,9 @@ impl PostEditorState {
         let excerpt = post.excerpt.clone().unwrap_or_default();
         let content = post.content.clone().unwrap_or_default();
         let canonical_lang = post.language.clone().unwrap_or_else(|| "en".to_string());
-        let preview_items = markdown::parse(&preview_markdown_document_parts(&title, &excerpt, &content))
-            .collect::<Vec<_>>();
+        let preview_document = preview_markdown_document_parts(&title, &excerpt, &content);
+        let preview_items = markdown::parse(&preview_document).collect::<Vec<_>>();
+        let preview_blocks = build_preview_blocks_from_document(&preview_document, &preview_items);
 
         let mut translation_drafts = HashMap::new();
         for tr in translations {
@@ -184,6 +186,7 @@ impl PostEditorState {
             content: content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&content)),
             preview_items,
+            preview_blocks,
             tags: post.tags.clone(),
             categories: post.categories.clone(),
             author: post.author.clone().unwrap_or_default(),
@@ -235,19 +238,17 @@ impl PostEditorState {
     }
 
     pub fn refresh_preview_items(&mut self) {
-        self.preview_items = markdown::parse(&preview_markdown_document(self)).collect();
+        let preview_document = preview_markdown_document(self);
+        self.preview_items = markdown::parse(&preview_document).collect();
+        self.preview_blocks = build_preview_blocks_from_document(&preview_document, &self.preview_items);
     }
 
-    /// Switch the editor to display a different language.
-    /// Saves current fields and loads the target language's draft.
     pub fn switch_language(&mut self, target_lang: &str) {
         if target_lang == self.active_language {
             return;
         }
 
-        // Save current fields
         if self.active_language == self.canonical_language {
-            // Switching away from canonical — stash canonical fields
             self.saved_canonical = Some(TranslationDraft {
                 title: self.title.clone(),
                 excerpt: self.excerpt.clone(),
@@ -256,7 +257,6 @@ impl PostEditorState {
                 is_dirty: self.is_dirty,
             });
         } else {
-            // Switching away from a translation — save to drafts
             self.translation_drafts.insert(
                 self.active_language.clone(),
                 TranslationDraft {
@@ -269,9 +269,7 @@ impl PostEditorState {
             );
         }
 
-        // Load target fields
         if target_lang == self.canonical_language {
-            // Restore canonical
             if let Some(saved) = self.saved_canonical.take() {
                 self.title = saved.title;
                 self.excerpt = saved.excerpt;
@@ -281,14 +279,12 @@ impl PostEditorState {
                 self.is_dirty = saved.is_dirty;
             }
         } else if let Some(draft) = self.translation_drafts.get(target_lang) {
-            // Load existing translation
             self.title = draft.title.clone();
             self.excerpt = draft.excerpt.clone();
             self.content = draft.content.clone();
             self.editor_buffer = RefCell::new(EditorBuffer::new(&draft.content));
             self.is_dirty = draft.is_dirty;
         } else {
-            // No translation yet — blank fields
             self.title = String::new();
             self.excerpt = String::new();
             self.content = String::new();
@@ -300,7 +296,6 @@ impl PostEditorState {
         self.refresh_preview_items();
     }
 
-    /// Build the translation flags list for the view.
     pub fn translation_flags(&self) -> Vec<TranslationFlag> {
         let mut flags = Vec::new();
 
@@ -402,6 +397,7 @@ pub fn view<'a>(
     state: &'a PostEditorState,
     locale: UiLocale,
     word_wrap: bool,
+    preview_widget: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let on_translation = state.active_language != state.canonical_language;
 
@@ -859,19 +855,17 @@ pub fn view<'a>(
         ],
     );
     let editor_widget: Element<'a, Message> = if state.editor_mode == "preview" {
-        scrollable(
+        preview_widget.unwrap_or_else(|| {
             container(
-                markdown::view(
-                    &state.preview_items,
-                    markdown::Settings::with_text_size(15),
-                    markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
-                )
-                .map(|url: markdown::Url| Message::UrlOpenRequested(url.to_string())),
+                text(t(locale, "tabBar.loading"))
+                    .size(14)
+                    .shaping(Shaping::Advanced),
             )
-            .padding(16),
-        )
-        .height(Length::Fill)
-        .into()
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        })
     } else {
         CodeEditor::new(&state.editor_buffer, highlighter(), "md")
             .word_wrap(word_wrap)
@@ -1051,6 +1045,133 @@ fn preview_markdown_document_parts(title: &str, excerpt: &str, content: &str) ->
     sections.join("\n\n")
 }
 
+fn build_preview_blocks_from_document(
+    document: &str,
+    fallback_items: &[markdown::Item],
+) -> Vec<PreviewBlock> {
+    let mut blocks = Vec::new();
+    let mut markdown_buffer = Vec::new();
+
+    for line in document.lines() {
+        if let Some((alt, target)) = parse_standalone_markdown_image(line) {
+            flush_markdown_buffer(&mut blocks, &mut markdown_buffer);
+            blocks.push(PreviewBlock::Image { alt, target });
+        } else {
+            markdown_buffer.push(line.to_string());
+        }
+    }
+    flush_markdown_buffer(&mut blocks, &mut markdown_buffer);
+
+    if blocks.is_empty() {
+        blocks.push(PreviewBlock::Markdown(fallback_items.to_vec()));
+    }
+
+    blocks
+}
+
+fn flush_markdown_buffer(blocks: &mut Vec<PreviewBlock>, markdown_buffer: &mut Vec<String>) {
+    let markdown_text = markdown_buffer.join("\n");
+    if !markdown_text.trim().is_empty() {
+        blocks.push(PreviewBlock::Markdown(
+            markdown::parse(&markdown_text).collect::<Vec<_>>(),
+        ));
+    }
+    markdown_buffer.clear();
+}
+
+fn parse_standalone_markdown_image(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("![") {
+        return None;
+    }
+    let alt_end = trimmed.find("](")?;
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let alt = trimmed[2..alt_end].to_string();
+    let target = trimmed[alt_end + 2..trimmed.len() - 1].trim().to_string();
+    if target.is_empty() {
+        None
+    } else {
+        Some((alt, target))
+    }
+}
+
+fn preview_block_view<'a>(
+    block: &'a PreviewBlock,
+    state: &'a PostEditorState,
+    data_dir: Option<&'a Path>,
+) -> Element<'a, Message> {
+    match block {
+        PreviewBlock::Markdown(items) => markdown::view(
+            items,
+            markdown::Settings::with_text_size(15),
+            markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
+        )
+        .map(|url: markdown::Url| Message::UrlOpenRequested(url.to_string()))
+        .into(),
+        PreviewBlock::Image { alt, target } => preview_image_block(state, data_dir, alt, target),
+    }
+}
+
+fn preview_image_block<'a>(
+    state: &'a PostEditorState,
+    data_dir: Option<&'a Path>,
+    alt: &str,
+    target: &str,
+) -> Element<'a, Message> {
+    let Some(path) = resolve_preview_image_path(state, data_dir, target) else {
+        return text(format!("![{alt}]({target})"))
+            .size(12)
+            .color(Color::from_rgb(0.70, 0.50, 0.50))
+            .shaping(Shaping::Advanced)
+            .into();
+    };
+
+    let mut content = column![
+        container(
+            image(path)
+                .width(Length::Fill)
+                .height(Length::Shrink)
+        )
+        .width(Length::Fill)
+    ]
+    .spacing(6);
+    if !alt.is_empty() {
+        content = content.push(
+            text(alt.to_string())
+                .size(12)
+                .color(Color::from_rgb(0.62, 0.66, 0.74))
+                .shaping(Shaping::Advanced),
+        );
+    }
+
+    content.into()
+}
+
+fn resolve_preview_image_path(
+    state: &PostEditorState,
+    data_dir: Option<&Path>,
+    target: &str,
+) -> Option<String> {
+    let data_dir = data_dir?;
+    if let Some(media_id) = target.strip_prefix("bds-media://") {
+        return state
+            .linked_media
+            .iter()
+            .find(|media| media.media_id == media_id && media.is_image)
+            .map(|media| data_dir.join(&media.file_path).to_string_lossy().to_string());
+    }
+
+    let relative = target.trim_start_matches('/');
+    let candidate = data_dir.join(relative);
+    if candidate.exists() {
+        Some(candidate.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
 fn normalize_editor_mode(mode: &str) -> String {
     match mode {
         "preview" => "preview".to_string(),
@@ -1117,7 +1238,6 @@ fn flag_inactive_style(_theme: &Theme, status: button::Status) -> button::Style 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn sample_state() -> PostEditorState {
         let post = Post {
             id: "post-1".to_string(),
@@ -1187,4 +1307,5 @@ mod tests {
         state.set_editor_mode("preview");
         assert_eq!(state.editor_mode, "preview");
     }
+
 }

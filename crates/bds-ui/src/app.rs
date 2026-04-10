@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Datelike;
-use iced::{Element, Subscription, Task};
+use iced::{Element, Subscription, Task, window};
 use serde_json::json;
 
 use bds_core::db::Database;
@@ -13,6 +13,7 @@ use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::i18n::{detect_os_locale, UiLocale};
 use bds_core::model::{Media, Post, PostStatus, Project, PublishingPreferences, Script, SshMode, Template};
 
+use crate::components::webview::{self, WebViewConfig, WebViewController};
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
 use crate::state::navigation::{
@@ -81,6 +82,8 @@ pub enum Message {
     // macOS lifecycle
     FileOpenRequested(PathBuf),
     UrlOpenRequested(String),
+    MainWindowLoaded(Option<window::Id>),
+    EmbeddedPreviewReady(Result<(), String>),
 
     // Panel
     SetPanelTab(PanelTab),
@@ -225,6 +228,11 @@ struct PreviewSession {
     handle: engine::preview::PreviewServerHandle,
 }
 
+struct EmbeddedPreviewState {
+    controller: WebViewController,
+    current_url: Option<String>,
+}
+
 fn persist_media_editor_state_impl(
     db: &Database,
     data_dir: &Path,
@@ -279,6 +287,35 @@ fn default_post_editor_mode(settings_state: Option<&SettingsViewState>) -> &str 
     settings_state
         .map(|state| state.default_mode.as_str())
         .unwrap_or("markdown")
+}
+
+fn referenced_media_ids(content: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = content;
+
+    while let Some(start) = rest.find("bds-media://") {
+        let suffix = &rest[start + "bds-media://".len()..];
+        let end = suffix
+            .find(|ch: char| ch == ')' || ch == ']' || ch.is_whitespace())
+            .unwrap_or(suffix.len());
+        let media_id = suffix[..end].trim();
+        if !media_id.is_empty() && !ids.iter().any(|existing| existing == media_id) {
+            ids.push(media_id.to_string());
+        }
+        rest = &suffix[end..];
+    }
+
+    ids
+}
+
+fn draft_preview_url(post_id: &str, language: &str) -> String {
+    format!(
+        "http://{}:{}/__draft/{}?language={}",
+        engine::preview::PREVIEW_HOST,
+        engine::preview::PREVIEW_PORT,
+        post_id,
+        language
+    )
 }
 
 fn save_template_editor_state_impl(
@@ -637,6 +674,47 @@ mod tests {
         assert_eq!(wrap.value, "false");
         assert_eq!(hide.value, "true");
         assert_eq!(diff.value, "side-by-side");
+    }
+
+    #[test]
+    fn load_post_media_items_includes_media_referenced_only_in_markdown() {
+        let (db, project, tmp) = setup();
+        let source = tmp.path().join("tiny.png");
+        std::fs::write(&source, tiny_png_bytes()).unwrap();
+        let imported = media::import_media(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            &source,
+            "tiny.png",
+            Some("Tiny"),
+            Some("Alt"),
+            None,
+            None,
+            Some("en"),
+            vec!["photo".to_string()],
+        )
+        .unwrap();
+        let post = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Referenced",
+            Some(&format!("![](bds-media://{})", imported.id)),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let app = make_app(db, project, &tmp);
+
+        let linked_media = app.load_post_media_items(&post.id, post.content.as_deref());
+
+        assert_eq!(linked_media.len(), 1);
+        assert_eq!(linked_media[0].media_id, imported.id);
+        assert!(linked_media[0].is_image);
     }
 
     #[test]
@@ -1178,6 +1256,8 @@ pub struct BdsApp {
 
     // Local preview
     preview_session: Option<PreviewSession>,
+    embedded_preview: Option<EmbeddedPreviewState>,
+    main_window_id: Option<window::Id>,
 
     // Editor states (keyed by entity id)
     post_editors: HashMap<String, PostEditorState>,
@@ -1256,7 +1336,11 @@ impl BdsApp {
 
         // Chain menu initialization after project loading
         // (must happen after the event loop has started for macOS)
-        let init_task = Task::batch([init_task, Task::done(Message::InitMenuBar)]);
+        let init_task = Task::batch([
+            init_task,
+            Task::done(Message::InitMenuBar),
+            window::get_oldest().map(Message::MainWindowLoaded),
+        ]);
         registry.set_enabled(MenuAction::Save, false);
         registry.set_enabled(MenuAction::PublishSelected, false);
         registry.set_enabled(MenuAction::PreviewPost, false);
@@ -1306,6 +1390,8 @@ impl BdsApp {
                 toasts: Vec::new(),
                 active_modal: None,
                 preview_session: None,
+                embedded_preview: None,
+                main_window_id: None,
                 post_editors: HashMap::new(),
                 media_editors: HashMap::new(),
                 template_editors: HashMap::new(),
@@ -1361,6 +1447,8 @@ impl BdsApp {
             toasts: Vec::new(),
             active_modal: None,
             preview_session: None,
+            embedded_preview: None,
+            main_window_id: None,
             post_editors: HashMap::new(),
             media_editors: HashMap::new(),
             template_editors: HashMap::new(),
@@ -1457,7 +1545,7 @@ impl BdsApp {
                 }
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
-                Task::none()
+                self.sync_embedded_preview_for_active_post()
             }
             Message::CloseTab(id) => {
                 if self.active_tab.as_deref() == Some(id.as_str()) {
@@ -1470,7 +1558,7 @@ impl BdsApp {
                 }
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
-                Task::none()
+                self.sync_embedded_preview_for_active_post()
             }
             Message::SelectTab(id) => {
                 if self.tabs.iter().any(|t| t.id == id) {
@@ -1480,7 +1568,7 @@ impl BdsApp {
                     self.active_tab = Some(id);
                 }
                 self.enforce_panel_tab_fallback();
-                Task::none()
+                self.sync_embedded_preview_for_active_post()
             }
             Message::PinTab(id) => {
                 tabs::pin_tab(&mut self.tabs, &id);
@@ -1490,6 +1578,7 @@ impl BdsApp {
                 self.flush_active_post_editor();
                 self.tabs.clear();
                 self.active_tab = None;
+                self.hide_embedded_preview();
                 Task::none()
             }
 
@@ -1532,6 +1621,7 @@ impl BdsApp {
                         Ok(()) => {
                             self.active_project = self.projects.iter().find(|p| p.id == project_id).cloned();
                             self.preview_session = None;
+                            self.hide_embedded_preview();
                             self.data_dir = self
                                 .active_project
                                 .as_ref()
@@ -1641,6 +1731,32 @@ impl BdsApp {
             }
             Message::MediaFilesPicked(_paths) => {
                 // Media import will be expanded in later milestones
+                Task::none()
+            }
+            Message::MainWindowLoaded(window_id) => {
+                self.main_window_id = window_id;
+                if self.active_post_uses_embedded_preview() {
+                    self.sync_embedded_preview_for_active_post()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::EmbeddedPreviewReady(result) => {
+                match result {
+                    Ok(()) => {
+                        let visible = self.active_post_uses_embedded_preview();
+                        if let Some(preview) = &mut self.embedded_preview {
+                            preview.controller.take_staged();
+                            if let Some(url) = preview.current_url.as_deref() {
+                                preview.controller.navigate(url);
+                            }
+                            preview.controller.set_visible(visible);
+                        }
+                    }
+                    Err(error) => {
+                        self.notify(ToastLevel::Error, &error);
+                    }
+                }
                 Task::none()
             }
 
@@ -2082,6 +2198,7 @@ impl BdsApp {
             Message::PostEditor(msg) => {
                 enum DeferredPostAction {
                     None,
+                    SyncEmbeddedPreview,
                     Analyze(String),
                     AnalyzeTaxonomy(String),
                     DetectLanguage(String),
@@ -2113,6 +2230,7 @@ impl BdsApp {
                 }
 
                 let mut deferred = DeferredPostAction::None;
+                let mut refresh_linked_media: Option<(String, String)> = None;
                 if let Some(tab_id) = self.active_tab.clone() {
                     if let Some(state) = self.post_editors.get_mut(&tab_id) {
                         match msg {
@@ -2129,6 +2247,7 @@ impl BdsApp {
                             }
                             PostEditorMsg::SwitchEditorMode(mode) => {
                                 state.set_editor_mode(&mode);
+                                deferred = DeferredPostAction::SyncEmbeddedPreview;
                             }
                             PostEditorMsg::DetectLanguage => {
                                 state.quick_actions_open = false;
@@ -2147,6 +2266,7 @@ impl BdsApp {
                             PostEditorMsg::ContentChanged(new_text) => {
                                 state.content = new_text;
                                 state.mark_dirty();
+                                refresh_linked_media = Some((state.post_id.clone(), state.content.clone()));
                             }
                             PostEditorMsg::AuthorChanged(s) => { state.author = s; state.mark_dirty(); }
                             PostEditorMsg::LanguageChanged(s) => { state.language = s; state.mark_dirty(); }
@@ -2154,7 +2274,12 @@ impl BdsApp {
                             PostEditorMsg::ToggleDoNotTranslate(b) => { state.do_not_translate = b; state.mark_dirty(); }
                             PostEditorMsg::ToggleMetadata => { state.metadata_expanded = !state.metadata_expanded; }
                             PostEditorMsg::ToggleExcerpt => { state.excerpt_expanded = !state.excerpt_expanded; }
-                            PostEditorMsg::SwitchLanguage(lang) => { state.switch_language(&lang); }
+                            PostEditorMsg::SwitchLanguage(lang) => {
+                                state.switch_language(&lang);
+                                if state.editor_mode == "preview" {
+                                    deferred = DeferredPostAction::SyncEmbeddedPreview;
+                                }
+                            }
                             PostEditorMsg::TagsInputChanged(s) => { state.tags_input = s; }
                             PostEditorMsg::TagsInputSubmit => {
                                 let tag = state.tags_input.trim().to_string();
@@ -2274,14 +2399,21 @@ impl BdsApp {
                             }
 
                         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == state.post_id) {
-                            state.refresh_preview_items();
                             tab.is_dirty = state.is_dirty;
                         }
                     }
                 }
 
+                if let Some((post_id, content)) = refresh_linked_media {
+                    let linked_media = self.load_post_media_items(&post_id, Some(&content));
+                    if let Some(state) = self.post_editors.get_mut(&post_id) {
+                        state.linked_media = linked_media;
+                    }
+                }
+
                 match deferred {
                     DeferredPostAction::None => Task::none(),
+                    DeferredPostAction::SyncEmbeddedPreview => self.sync_embedded_preview_for_active_post(),
                     DeferredPostAction::Analyze(tab_id) => self.run_post_ai_analysis(&tab_id),
                     DeferredPostAction::AnalyzeTaxonomy(tab_id) => self.run_post_taxonomy_analysis(&tab_id),
                     DeferredPostAction::DetectLanguage(tab_id) => self.detect_post_language(&tab_id),
@@ -2642,7 +2774,7 @@ impl BdsApp {
                             }
                         }
                         let (outlinks, backlinks) = self.load_post_links(&post.id);
-                        let linked_media = self.load_post_media_items(&post.id);
+                        let linked_media = self.load_post_media_items(&post.id, post.content.as_deref());
                         let state = PostEditorState::from_post(
                             &post,
                             default_post_editor_mode(self.settings_state.as_ref()),
@@ -2712,6 +2844,13 @@ impl BdsApp {
             SidebarView::Pages => &self.page_filter,
             _ => &self.post_filter,
         };
+        let post_preview_widget = if self.active_post_uses_embedded_preview() {
+            self.embedded_preview
+                .as_ref()
+                .map(|preview| webview::webview(&preview.controller).into())
+        } else {
+            None
+        };
 
         workspace::view(
             self.sidebar_view,
@@ -2745,6 +2884,7 @@ impl BdsApp {
             &self.toasts,
             self.active_modal.clone(),
             self.data_dir.as_deref(),
+            post_preview_widget,
             &self.post_editors,
             &self.media_editors,
             &self.template_editors,
@@ -5356,12 +5496,12 @@ impl BdsApp {
         (outlinks, backlinks)
     }
 
-    fn load_post_media_items(&self, post_id: &str) -> Vec<LinkedMediaItem> {
+    fn load_post_media_items(&self, post_id: &str, content: Option<&str>) -> Vec<LinkedMediaItem> {
         let Some(ref db) = self.db else {
             return Vec::new();
         };
 
-        bds_core::db::queries::post_media::list_post_media_by_post(db.conn(), post_id)
+        let mut media_by_id = bds_core::db::queries::post_media::list_post_media_by_post(db.conn(), post_id)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|link| {
@@ -5370,16 +5510,45 @@ impl BdsApp {
                     .map(|media| LinkedMediaItem {
                         media_id: media.id,
                         name: media.title.unwrap_or(media.original_name),
+                        file_path: media.file_path,
                         is_image: media.mime_type.starts_with("image/"),
                         sort_order: link.sort_order,
                     })
             })
-            .collect()
+            .map(|media| (media.media_id.clone(), media))
+            .collect::<HashMap<_, _>>();
+
+        for media_id in referenced_media_ids(content.unwrap_or_default()) {
+            if media_by_id.contains_key(&media_id) {
+                continue;
+            }
+
+            if let Ok(media) = bds_core::db::queries::media::get_media_by_id(db.conn(), &media_id) {
+                media_by_id.insert(
+                    media_id,
+                    LinkedMediaItem {
+                        media_id: media.id,
+                        name: media.title.unwrap_or(media.original_name),
+                        file_path: media.file_path,
+                        is_image: media.mime_type.starts_with("image/"),
+                        sort_order: i32::MAX,
+                    },
+                );
+            }
+        }
+
+        let mut items = media_by_id.into_values().collect::<Vec<_>>();
+        items.sort_by_key(|media| media.sort_order);
+        items
     }
 
     fn refresh_post_relationships(&mut self, post_id: &str) {
         let (outlinks, backlinks) = self.load_post_links(post_id);
-        let linked_media = self.load_post_media_items(post_id);
+        let current_content = self
+            .post_editors
+            .get(post_id)
+            .map(|state| state.content.clone());
+        let linked_media = self.load_post_media_items(post_id, current_content.as_deref());
         if let Some(state) = self.post_editors.get_mut(post_id) {
             state.outlinks = outlinks;
             state.backlinks = backlinks;
@@ -5437,7 +5606,7 @@ impl BdsApp {
                                 }
                             }
                             let (outlinks, backlinks) = self.load_post_links(&post.id);
-                            let linked_media = self.load_post_media_items(&post.id);
+                            let linked_media = self.load_post_media_items(&post.id, post.content.as_deref());
                             self.post_editors.insert(
                                 post.id.clone(),
                                 PostEditorState::from_post(
@@ -5677,29 +5846,12 @@ impl BdsApp {
         })
     }
 
-    fn preview_active_post(&mut self) -> Task<Message> {
-        let Some(active_id) = self.active_tab.clone() else {
-            return Task::none();
-        };
-        if !self
-            .tabs
-            .iter()
-            .any(|tab| tab.id == active_id && tab.tab_type == TabType::Post)
-        {
-            return Task::none();
-        }
-        if let Err(error) = self.persist_post_editor_state(&active_id) {
-            self.notify(ToastLevel::Error, &error);
-            return Task::none();
-        }
-
+    fn ensure_preview_server(&mut self) -> Result<(), String> {
         let Some(project) = self.active_project.as_ref() else {
-            self.notify(ToastLevel::Error, &t(self.ui_locale, "engine.generateSiteNoProject"));
-            return Task::none();
+            return Err(t(self.ui_locale, "engine.generateSiteNoProject"));
         };
         let Some(data_dir) = self.data_dir.clone() else {
-            self.notify(ToastLevel::Error, &t(self.ui_locale, "engine.previewDataDirUnavailable"));
-            return Task::none();
+            return Err(t(self.ui_locale, "engine.previewDataDirUnavailable"));
         };
 
         let should_restart = self
@@ -5721,12 +5873,10 @@ impl BdsApp {
                     });
                 }
                 Err(engine::EngineError::Conflict(_)) if self.preview_session.is_none() => {
-                    self.notify(ToastLevel::Error, &t(self.ui_locale, "engine.previewPortInUse"));
-                    return Task::none();
+                    return Err(t(self.ui_locale, "engine.previewPortInUse"));
                 }
                 Err(error) => {
-                    self.notify(ToastLevel::Error, &error.to_string());
-                    return Task::none();
+                    return Err(error.to_string());
                 }
             }
         }
@@ -5735,19 +5885,111 @@ impl BdsApp {
             let _ = &session.handle;
         }
 
+        Ok(())
+    }
+
+    fn preview_url_for_post(&mut self, post_id: &str) -> Result<String, String> {
+        if let Err(error) = self.persist_post_editor_state(post_id) {
+            return Err(error);
+        }
+        self.ensure_preview_server()?;
+
         let language = self
             .post_editors
-            .get(&active_id)
+            .get(post_id)
             .map(|editor| editor.active_language.clone())
             .filter(|language| !language.is_empty())
             .unwrap_or_else(|| self.content_language.clone());
-        let url = format!(
-            "http://{}:{}/__draft/{}?language={}",
-            engine::preview::PREVIEW_HOST,
-            engine::preview::PREVIEW_PORT,
-            active_id,
-            language
-        );
+
+        Ok(draft_preview_url(post_id, &language))
+    }
+
+    fn active_post_uses_embedded_preview(&self) -> bool {
+        self.active_tab
+            .as_ref()
+            .and_then(|tab_id| self.post_editors.get(tab_id))
+            .map(|editor| editor.editor_mode == "preview")
+            .unwrap_or(false)
+    }
+
+    fn hide_embedded_preview(&self) {
+        if let Some(preview) = &self.embedded_preview {
+            preview.controller.set_visible(false);
+        }
+    }
+
+    fn sync_embedded_preview_for_active_post(&mut self) -> Task<Message> {
+        let Some(active_id) = self.active_tab.clone() else {
+            self.hide_embedded_preview();
+            return Task::none();
+        };
+        let Some(editor) = self.post_editors.get(&active_id) else {
+            self.hide_embedded_preview();
+            return Task::none();
+        };
+        if editor.editor_mode != "preview" {
+            self.hide_embedded_preview();
+            return Task::none();
+        }
+
+        let url = match self.preview_url_for_post(&active_id) {
+            Ok(url) => url,
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error);
+                return Task::none();
+            }
+        };
+
+        if let Some(preview) = &mut self.embedded_preview {
+            preview.current_url = Some(url.clone());
+            if preview.controller.is_active() {
+                preview.controller.navigate(&url);
+                preview.controller.set_visible(true);
+                return Task::none();
+            }
+        } else {
+            self.embedded_preview = Some(EmbeddedPreviewState {
+                controller: WebViewController::new(WebViewConfig::default().url(url.clone())),
+                current_url: Some(url.clone()),
+            });
+        }
+
+        let Some(window_id) = self.main_window_id else {
+            return window::get_oldest().map(Message::MainWindowLoaded);
+        };
+
+        if let Some(preview) = &mut self.embedded_preview {
+            if !preview.controller.is_active() {
+                preview.controller = WebViewController::new(WebViewConfig::default().url(url));
+                return preview
+                    .controller
+                    .create_task(window_id, Message::EmbeddedPreviewReady);
+            }
+        }
+
+        Task::none()
+    }
+
+    fn preview_active_post(&mut self) -> Task<Message> {
+        let Some(active_id) = self.active_tab.clone() else {
+            return Task::none();
+        };
+        if !self
+            .tabs
+            .iter()
+            .any(|tab| tab.id == active_id && tab.tab_type == TabType::Post)
+        {
+            return Task::none();
+        }
+
+        let url = match self.preview_url_for_post(&active_id) {
+            Ok(url) => url,
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error);
+                return Task::none();
+            }
+        };
+
         if let Err(error) = open::that(&url) {
             self.notify(ToastLevel::Error, &error.to_string());
         }
