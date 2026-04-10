@@ -8,7 +8,6 @@ license.workspace = true
 bds-core = { workspace = true }
 bds-editor = { workspace = true }
 iced = { workspace = true }
-iced_widget = { version = "0.13.4", features = ["markdown"] }
 muda = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
@@ -17,6 +16,8 @@ chrono = { workspace = true }
 open = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+rusqlite = { workspace = true }
+uuid = { workspace = true }
 wry = "0.55"
 
 [target.'cfg(target_os = "macos")'.dependencies]

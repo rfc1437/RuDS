@@ -1,11 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
 
 use iced::widget::text::{Shaping, Wrapping};
-use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Column, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
 use iced::{Color, Element, Length, Theme};
-use iced_widget::markdown;
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
@@ -52,12 +50,6 @@ pub struct LinkedMediaItem {
     pub sort_order: i32,
 }
 
-#[derive(Debug, Clone)]
-enum PreviewBlock {
-    Markdown(Vec<markdown::Item>),
-    Image { alt: String, target: String },
-}
-
 /// State for an open post editor.
 pub struct PostEditorState {
     pub post_id: String,
@@ -66,8 +58,6 @@ pub struct PostEditorState {
     pub excerpt: String,
     pub content: String,
     pub editor_buffer: RefCell<EditorBuffer>,
-    pub preview_items: Vec<markdown::Item>,
-    preview_blocks: Vec<PreviewBlock>,
     pub tags: Vec<String>,
     pub categories: Vec<String>,
     pub author: String,
@@ -115,8 +105,6 @@ impl Clone for PostEditorState {
             excerpt: self.excerpt.clone(),
             content: self.content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
-            preview_items: self.preview_items.clone(),
-            preview_blocks: self.preview_blocks.clone(),
             tags: self.tags.clone(),
             categories: self.categories.clone(),
             author: self.author.clone(),
@@ -161,9 +149,6 @@ impl PostEditorState {
         let excerpt = post.excerpt.clone().unwrap_or_default();
         let content = post.content.clone().unwrap_or_default();
         let canonical_lang = post.language.clone().unwrap_or_else(|| "en".to_string());
-        let preview_document = preview_markdown_document_parts(&title, &excerpt, &content);
-        let preview_items = markdown::parse(&preview_document).collect::<Vec<_>>();
-        let preview_blocks = build_preview_blocks_from_document(&preview_document, &preview_items);
 
         let mut translation_drafts = HashMap::new();
         for tr in translations {
@@ -185,8 +170,6 @@ impl PostEditorState {
             excerpt,
             content: content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&content)),
-            preview_items,
-            preview_blocks,
             tags: post.tags.clone(),
             categories: post.categories.clone(),
             author: post.author.clone().unwrap_or_default(),
@@ -229,18 +212,11 @@ impl PostEditorState {
             buffer.text()
         };
         self.content = new_content;
-        self.refresh_preview_items();
         self.mark_dirty();
     }
 
     pub fn set_editor_mode(&mut self, mode: &str) {
         self.editor_mode = normalize_editor_mode(mode);
-    }
-
-    pub fn refresh_preview_items(&mut self) {
-        let preview_document = preview_markdown_document(self);
-        self.preview_items = markdown::parse(&preview_document).collect();
-        self.preview_blocks = build_preview_blocks_from_document(&preview_document, &self.preview_items);
     }
 
     pub fn switch_language(&mut self, target_lang: &str) {
@@ -293,7 +269,6 @@ impl PostEditorState {
         }
 
         self.active_language = target_lang.to_string();
-        self.refresh_preview_items();
     }
 
     pub fn translation_flags(&self) -> Vec<TranslationFlag> {
@@ -1024,151 +999,6 @@ fn truncate_header_title(title: &str) -> String {
         format!("{truncated}...")
     } else {
         title.to_string()
-    }
-}
-
-fn preview_markdown_document(state: &PostEditorState) -> String {
-    preview_markdown_document_parts(&state.title, &state.excerpt, &state.content)
-}
-
-fn preview_markdown_document_parts(title: &str, excerpt: &str, content: &str) -> String {
-    let mut sections = Vec::new();
-    if !title.trim().is_empty() {
-        sections.push(format!("# {}", title.trim()));
-    }
-    if !excerpt.trim().is_empty() {
-        sections.push(format!("> {}", excerpt.trim()));
-    }
-    if !content.trim().is_empty() {
-        sections.push(content.to_string());
-    }
-    sections.join("\n\n")
-}
-
-fn build_preview_blocks_from_document(
-    document: &str,
-    fallback_items: &[markdown::Item],
-) -> Vec<PreviewBlock> {
-    let mut blocks = Vec::new();
-    let mut markdown_buffer = Vec::new();
-
-    for line in document.lines() {
-        if let Some((alt, target)) = parse_standalone_markdown_image(line) {
-            flush_markdown_buffer(&mut blocks, &mut markdown_buffer);
-            blocks.push(PreviewBlock::Image { alt, target });
-        } else {
-            markdown_buffer.push(line.to_string());
-        }
-    }
-    flush_markdown_buffer(&mut blocks, &mut markdown_buffer);
-
-    if blocks.is_empty() {
-        blocks.push(PreviewBlock::Markdown(fallback_items.to_vec()));
-    }
-
-    blocks
-}
-
-fn flush_markdown_buffer(blocks: &mut Vec<PreviewBlock>, markdown_buffer: &mut Vec<String>) {
-    let markdown_text = markdown_buffer.join("\n");
-    if !markdown_text.trim().is_empty() {
-        blocks.push(PreviewBlock::Markdown(
-            markdown::parse(&markdown_text).collect::<Vec<_>>(),
-        ));
-    }
-    markdown_buffer.clear();
-}
-
-fn parse_standalone_markdown_image(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with("![") {
-        return None;
-    }
-    let alt_end = trimmed.find("](")?;
-    if !trimmed.ends_with(')') {
-        return None;
-    }
-    let alt = trimmed[2..alt_end].to_string();
-    let target = trimmed[alt_end + 2..trimmed.len() - 1].trim().to_string();
-    if target.is_empty() {
-        None
-    } else {
-        Some((alt, target))
-    }
-}
-
-fn preview_block_view<'a>(
-    block: &'a PreviewBlock,
-    state: &'a PostEditorState,
-    data_dir: Option<&'a Path>,
-) -> Element<'a, Message> {
-    match block {
-        PreviewBlock::Markdown(items) => markdown::view(
-            items,
-            markdown::Settings::with_text_size(15),
-            markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
-        )
-        .map(|url: markdown::Url| Message::UrlOpenRequested(url.to_string()))
-        .into(),
-        PreviewBlock::Image { alt, target } => preview_image_block(state, data_dir, alt, target),
-    }
-}
-
-fn preview_image_block<'a>(
-    state: &'a PostEditorState,
-    data_dir: Option<&'a Path>,
-    alt: &str,
-    target: &str,
-) -> Element<'a, Message> {
-    let Some(path) = resolve_preview_image_path(state, data_dir, target) else {
-        return text(format!("![{alt}]({target})"))
-            .size(12)
-            .color(Color::from_rgb(0.70, 0.50, 0.50))
-            .shaping(Shaping::Advanced)
-            .into();
-    };
-
-    let mut content = column![
-        container(
-            image(path)
-                .width(Length::Fill)
-                .height(Length::Shrink)
-        )
-        .width(Length::Fill)
-    ]
-    .spacing(6);
-    if !alt.is_empty() {
-        content = content.push(
-            text(alt.to_string())
-                .size(12)
-                .color(Color::from_rgb(0.62, 0.66, 0.74))
-                .shaping(Shaping::Advanced),
-        );
-    }
-
-    content.into()
-}
-
-fn resolve_preview_image_path(
-    state: &PostEditorState,
-    data_dir: Option<&Path>,
-    target: &str,
-) -> Option<String> {
-    let data_dir = data_dir?;
-    if let Some(media_id) = target.strip_prefix("bds-media://") {
-        return state
-            .linked_media
-            .iter()
-            .find(|media| media.media_id == media_id && media.is_image)
-            .map(|media| data_dir.join(&media.file_path).to_string_lossy().to_string());
-    }
-
-    let relative = target.trim_start_matches('/');
-    let candidate = data_dir.join(relative);
-    if candidate.exists() {
-        Some(candidate.to_string_lossy().to_string())
-    } else {
-        None
     }
 }
 

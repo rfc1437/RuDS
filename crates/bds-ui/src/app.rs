@@ -4,14 +4,16 @@ use std::sync::Arc;
 
 use chrono::Datelike;
 use iced::{Element, Subscription, Task, window};
+use rusqlite::Error as SqlError;
 use serde_json::json;
+use uuid::Uuid;
 
 use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
 use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::i18n::{detect_os_locale, UiLocale};
-use bds_core::model::{Media, Post, PostStatus, Project, PublishingPreferences, Script, SshMode, Template};
+use bds_core::model::{Media, Post, PostStatus, PostTranslation, Project, PublishingPreferences, Script, SshMode, Template};
 
 use crate::components::webview::{self, WebViewConfig, WebViewController};
 use crate::i18n::{t, tw};
@@ -203,7 +205,11 @@ fn persist_post_editor_state_impl(
             data_dir,
             &state.post_id,
             Some(&state.title),
-            Some(&state.slug),
+            if state.published_at.is_some() {
+                None
+            } else {
+                Some(&state.slug)
+            },
             Some(if state.excerpt.is_empty() { None } else { Some(state.excerpt.as_str()) }),
             Some(&state.content),
             Some(state.tags.clone()),
@@ -214,6 +220,127 @@ fn persist_post_editor_state_impl(
             Some(state.do_not_translate),
         )
         .map_err(|e| e.to_string())?;
+        Ok(PersistedPostState::Canonical(post))
+    }
+}
+
+fn persist_post_editor_preview_state_impl(
+    db: &Database,
+    state: &PostEditorState,
+) -> Result<PersistedPostState, String> {
+    if state.active_language != state.canonical_language {
+        let post = bds_core::db::queries::post::get_post_by_id(db.conn(), &state.post_id)
+            .map_err(|e| e.to_string())?;
+        if post.do_not_translate {
+            return Err("cannot create translation for a do-not-translate post".to_string());
+        }
+
+        let now = bds_core::util::now_unix_ms();
+        match bds_core::db::queries::post_translation::get_post_translation_by_post_and_language(
+            db.conn(),
+            &state.post_id,
+            &state.active_language,
+        ) {
+            Ok(mut translation) => {
+                translation.title = state.title.clone();
+                translation.excerpt = if state.excerpt.is_empty() {
+                    None
+                } else {
+                    Some(state.excerpt.clone())
+                };
+                translation.content = Some(state.content.clone());
+                translation.updated_at = now;
+                bds_core::db::queries::post_translation::update_post_translation(
+                    db.conn(),
+                    &translation,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(PersistedPostState::Translation(translation))
+            }
+            Err(SqlError::QueryReturnedNoRows) => {
+                let translation = PostTranslation {
+                    id: Uuid::new_v4().to_string(),
+                    project_id: post.project_id,
+                    translation_for: state.post_id.clone(),
+                    language: state.active_language.clone(),
+                    title: state.title.clone(),
+                    excerpt: if state.excerpt.is_empty() {
+                        None
+                    } else {
+                        Some(state.excerpt.clone())
+                    },
+                    content: Some(state.content.clone()),
+                    status: PostStatus::Draft,
+                    file_path: String::new(),
+                    checksum: None,
+                    created_at: now,
+                    updated_at: now,
+                    published_at: None,
+                };
+                bds_core::db::queries::post_translation::insert_post_translation(
+                    db.conn(),
+                    &translation,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(PersistedPostState::Translation(translation))
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    } else {
+        let mut post = bds_core::db::queries::post::get_post_by_id(db.conn(), &state.post_id)
+            .map_err(|e| e.to_string())?;
+
+        if post.published_at.is_none() && state.slug != post.slug {
+            match bds_core::db::queries::post::get_post_by_project_and_slug(
+                db.conn(),
+                &post.project_id,
+                &state.slug,
+            ) {
+                Ok(existing) if existing.id != post.id => {
+                    return Err(format!(
+                        "slug '{}' already exists in this project",
+                        state.slug
+                    ));
+                }
+                Ok(_) | Err(SqlError::QueryReturnedNoRows) => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+
+        post.title = state.title.clone();
+        if post.published_at.is_none() {
+            post.slug = state.slug.clone();
+        }
+        post.excerpt = if state.excerpt.is_empty() {
+            None
+        } else {
+            Some(state.excerpt.clone())
+        };
+        post.content = Some(state.content.clone());
+        post.tags = state.tags.clone();
+        post.categories = state.categories.clone();
+        post.author = if state.author.is_empty() {
+            None
+        } else {
+            Some(state.author.clone())
+        };
+        post.language = if state.language.is_empty() {
+            None
+        } else {
+            Some(state.language.clone())
+        };
+        post.template_slug = if state.template_slug.is_empty() {
+            None
+        } else {
+            Some(state.template_slug.clone())
+        };
+        post.do_not_translate = state.do_not_translate;
+        if matches!(post.status, PostStatus::Published | PostStatus::Archived) {
+            post.status = PostStatus::Draft;
+        }
+        post.updated_at = bds_core::util::now_unix_ms();
+
+        bds_core::db::queries::post::update_post(db.conn(), &post).map_err(|e| e.to_string())?;
         Ok(PersistedPostState::Canonical(post))
     }
 }
@@ -417,7 +544,7 @@ fn format_bytes(size: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{month_abbreviation, persist_media_editor_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
+    use super::{month_abbreviation, persist_media_editor_state_impl, persist_post_editor_preview_state_impl, persist_post_editor_state_impl, save_editor_settings_state_impl, save_script_editor_state_impl, save_template_editor_state_impl, BdsApp, Message, PersistedMediaState, PersistedPostState, PostStatus, SettingsMsg, POST_AUTO_SAVE_DELAY_MS};
     use crate::state::sidebar_filter::PostFilter;
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::post_editor::PostEditorState;
@@ -518,6 +645,160 @@ mod tests {
         assert_eq!(saved.title, "Updated Post");
         assert_eq!(saved.content.as_deref(), Some("Updated body"));
         assert_eq!(saved.tags, vec!["rust".to_string(), "lua".to_string()]);
+    }
+
+    #[test]
+    fn persist_post_editor_state_allows_published_posts_without_slug_conflict() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Published",
+            Some("Body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
+
+        let mut editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &published.id).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join(&editor_post.file_path)).unwrap();
+        let (_frontmatter, body) = bds_core::util::frontmatter::read_post_file(&raw).unwrap();
+        editor_post.content = Some(body);
+
+        let editor = PostEditorState::from_post(
+            &editor_post,
+            "preview",
+            &["en".to_string()],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let result = persist_post_editor_state_impl(&db, tmp.path(), &editor).unwrap();
+
+        match result {
+            PersistedPostState::Canonical(post) => {
+                assert_eq!(post.slug, created.slug);
+                assert_eq!(post.title, created.title);
+            }
+            PersistedPostState::Translation(_) => panic!("expected canonical post save"),
+        }
+    }
+
+    #[test]
+    fn preview_persist_bypasses_fts_for_published_canonical_post() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Published",
+            Some("Body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
+        db.conn().execute("DROP TABLE posts_fts", []).unwrap();
+
+        let mut editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &published.id).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join(&editor_post.file_path)).unwrap();
+        let (_frontmatter, body) = bds_core::util::frontmatter::read_post_file(&raw).unwrap();
+        editor_post.content = Some(body);
+
+        let mut editor = PostEditorState::from_post(
+            &editor_post,
+            "preview",
+            &["en".to_string()],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        editor.title = "Preview Draft".to_string();
+        editor.slug = "changed-slug".to_string();
+        editor.content = "Preview-only body".to_string();
+
+        let result = persist_post_editor_preview_state_impl(&db, &editor).unwrap();
+
+        match result {
+            PersistedPostState::Canonical(post) => {
+                assert_eq!(post.slug, created.slug);
+                assert_eq!(post.title, "Preview Draft");
+                assert_eq!(post.content.as_deref(), Some("Preview-only body"));
+                assert_eq!(post.status, PostStatus::Draft);
+            }
+            PersistedPostState::Translation(_) => panic!("expected canonical post save"),
+        }
+    }
+
+    #[test]
+    fn preview_persist_bypasses_fts_for_translation_updates() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Canonical",
+            Some("Body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        post::upsert_translation(
+            db.conn(),
+            tmp.path(),
+            &created.id,
+            "de",
+            "Alt",
+            Some("Auszug"),
+            Some("Inhalt"),
+        )
+        .unwrap();
+        db.conn().execute("DROP TABLE posts_fts", []).unwrap();
+
+        let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        let translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
+            db.conn(),
+            &created.id,
+        )
+        .unwrap();
+        let mut editor = PostEditorState::from_post(
+            &editor_post,
+            "preview",
+            &["en".to_string(), "de".to_string()],
+            &translations,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        editor.switch_language("de");
+        editor.title = "Vorschau".to_string();
+        editor.excerpt = "Kurz".to_string();
+        editor.content = "Nur Vorschau".to_string();
+
+        let result = persist_post_editor_preview_state_impl(&db, &editor).unwrap();
+
+        match result {
+            PersistedPostState::Translation(translation) => {
+                assert_eq!(translation.language, "de");
+                assert_eq!(translation.title, "Vorschau");
+                assert_eq!(translation.content.as_deref(), Some("Nur Vorschau"));
+            }
+            PersistedPostState::Canonical(_) => panic!("expected translation save"),
+        }
     }
 
     #[test]
@@ -715,6 +996,65 @@ mod tests {
         assert_eq!(linked_media.len(), 1);
         assert_eq!(linked_media[0].media_id, imported.id);
         assert!(linked_media[0].is_image);
+    }
+
+    #[test]
+    fn draft_preview_url_points_at_local_preview_server() {
+        let url = super::draft_preview_url("post-42", "de");
+
+        assert_eq!(
+            url,
+            format!(
+                "http://{}:{}/__draft/post-42?language=de",
+                bds_core::engine::preview::PREVIEW_HOST,
+                bds_core::engine::preview::PREVIEW_PORT,
+            )
+        );
+    }
+
+    #[test]
+    fn active_post_uses_embedded_preview_only_for_preview_mode_posts() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Previewed",
+            Some("Body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        let mut editor = PostEditorState::from_post(
+            &editor_post,
+            "markdown",
+            &["en".to_string()],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut app = make_app(db, project, &tmp);
+        app.tabs.push(crate::state::tabs::Tab {
+            id: created.id.clone(),
+            tab_type: crate::state::tabs::TabType::Post,
+            title: created.title.clone(),
+            is_transient: false,
+            is_dirty: false,
+        });
+        app.active_tab = Some(created.id.clone());
+        app.post_editors.insert(created.id.clone(), editor.clone());
+
+        assert!(!app.active_post_uses_embedded_preview());
+
+        editor.set_editor_mode("preview");
+        app.post_editors.insert(created.id.clone(), editor);
+
+        assert!(app.active_post_uses_embedded_preview());
     }
 
     #[test]
@@ -4378,19 +4718,13 @@ impl BdsApp {
         Task::none()
     }
 
-    fn persist_post_editor_state(&mut self, post_id: &str) -> Result<(), String> {
-        let state = self
-            .post_editors
-            .get(post_id)
-            .cloned()
-            .ok_or_else(|| "missing post editor".to_string())?;
-        let db = self.db.as_ref().ok_or_else(|| "database unavailable".to_string())?;
-        let data_dir = self
-            .data_dir
-            .as_ref()
-            .ok_or_else(|| "project data directory unavailable".to_string())?;
-
-        match persist_post_editor_state_impl(db, data_dir, &state)? {
+    fn apply_persisted_post_state(
+        &mut self,
+        post_id: &str,
+        state: &PostEditorState,
+        persisted: PersistedPostState,
+    ) {
+        match persisted {
             PersistedPostState::Translation(translation) => {
                 if let Some(editor) = self.post_editors.get_mut(post_id) {
                     editor.is_dirty = false;
@@ -4434,6 +4768,35 @@ impl BdsApp {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
             tab.is_dirty = false;
         }
+    }
+
+    fn persist_post_editor_state(&mut self, post_id: &str) -> Result<(), String> {
+        let state = self
+            .post_editors
+            .get(post_id)
+            .cloned()
+            .ok_or_else(|| "missing post editor".to_string())?;
+        let db = self.db.as_ref().ok_or_else(|| "database unavailable".to_string())?;
+        let data_dir = self
+            .data_dir
+            .as_ref()
+            .ok_or_else(|| "project data directory unavailable".to_string())?;
+
+        let persisted = persist_post_editor_state_impl(db, data_dir, &state)?;
+        self.apply_persisted_post_state(post_id, &state, persisted);
+        Ok(())
+    }
+
+    fn persist_post_editor_preview_state(&mut self, post_id: &str) -> Result<(), String> {
+        let state = self
+            .post_editors
+            .get(post_id)
+            .cloned()
+            .ok_or_else(|| "missing post editor".to_string())?;
+        let db = self.db.as_ref().ok_or_else(|| "database unavailable".to_string())?;
+
+        let persisted = persist_post_editor_preview_state_impl(db, &state)?;
+        self.apply_persisted_post_state(post_id, &state, persisted);
         Ok(())
     }
 
@@ -5889,7 +6252,7 @@ impl BdsApp {
     }
 
     fn preview_url_for_post(&mut self, post_id: &str) -> Result<String, String> {
-        if let Err(error) = self.persist_post_editor_state(post_id) {
+        if let Err(error) = self.persist_post_editor_preview_state(post_id) {
             return Err(error);
         }
         self.ensure_preview_server()?;
