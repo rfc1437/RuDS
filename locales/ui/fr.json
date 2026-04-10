@@ -225,6 +225,7 @@
   "editor.language": "Langue",
   "editor.aiAnalyze": "Analyser avec l'IA",
   "editor.detectLanguage": "Détecter la langue",
+  "editor.quickActions": "Actions rapides",
   "editor.modeMarkdown": "Markdown",
   "editor.modePreview": "Aperçu",
   "editor.suggestTaxonomy": "Suggérer la taxonomie",

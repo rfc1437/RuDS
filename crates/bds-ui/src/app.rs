@@ -2116,19 +2116,26 @@ impl BdsApp {
                 if let Some(tab_id) = self.active_tab.clone() {
                     if let Some(state) = self.post_editors.get_mut(&tab_id) {
                         match msg {
+                            PostEditorMsg::ToggleQuickActions => {
+                                state.quick_actions_open = !state.quick_actions_open;
+                            }
                             PostEditorMsg::AnalyzeWithAi => {
+                                state.quick_actions_open = false;
                                 deferred = DeferredPostAction::Analyze(tab_id.clone());
                             }
                             PostEditorMsg::AnalyzeTaxonomy => {
+                                state.quick_actions_open = false;
                                 deferred = DeferredPostAction::AnalyzeTaxonomy(tab_id.clone());
                             }
                             PostEditorMsg::SwitchEditorMode(mode) => {
                                 state.set_editor_mode(&mode);
                             }
                             PostEditorMsg::DetectLanguage => {
+                                state.quick_actions_open = false;
                                 deferred = DeferredPostAction::DetectLanguage(tab_id.clone());
                             }
                             PostEditorMsg::Translate => {
+                                state.quick_actions_open = false;
                                 deferred = DeferredPostAction::OpenTranslate(tab_id.clone());
                             }
                             PostEditorMsg::TranslateTo(target_language) => {

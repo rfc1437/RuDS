@@ -13,6 +13,7 @@ use bds_editor::{highlighter, CodeEditor, EditorBuffer, EditorMessage};
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::t;
+use crate::views::status_bar;
 
 /// Per editor_post.allium TranslationFlag value.
 #[derive(Debug, Clone)]
@@ -73,6 +74,7 @@ pub struct PostEditorState {
     pub metadata_expanded: bool,
     pub excerpt_expanded: bool,
     pub editor_mode: String,
+    pub quick_actions_open: bool,
     pub tags_input: String,
     pub categories_input: String,
     // ── Translation flags ──
@@ -129,6 +131,7 @@ impl Clone for PostEditorState {
             metadata_expanded: self.metadata_expanded,
             excerpt_expanded: self.excerpt_expanded,
             editor_mode: self.editor_mode.clone(),
+            quick_actions_open: self.quick_actions_open,
             tags_input: self.tags_input.clone(),
             categories_input: self.categories_input.clone(),
             active_language: self.active_language.clone(),
@@ -196,6 +199,7 @@ impl PostEditorState {
             metadata_expanded: title.is_empty(),
             excerpt_expanded: false,
             editor_mode: normalize_editor_mode(default_mode),
+            quick_actions_open: false,
             tags_input: String::new(),
             categories_input: String::new(),
             active_language: canonical_lang.clone(),
@@ -343,6 +347,7 @@ impl PostEditorState {
 /// Post editor messages.
 #[derive(Debug, Clone)]
 pub enum PostEditorMsg {
+    ToggleQuickActions,
     AnalyzeWithAi,
     AnalyzeTaxonomy,
     DetectLanguage,
@@ -405,86 +410,121 @@ pub fn view<'a>(
     let title_display = if state.title.is_empty() {
         t(locale, "editor.untitled")
     } else {
-        format!("{}{}", state.title, dirty_indicator)
+        format!("{}{}", truncate_header_title(&state.title), dirty_indicator)
     };
 
-    let header = inputs::toolbar(
-        vec![text(title_display)
-            .size(18)
-            .wrapping(Wrapping::None)
-            .shaping(Shaping::Advanced)
-            .into()],
-        vec![
-            status_badge(&state.status),
-            button(text(t(locale, "editor.aiAnalyze")).size(13).shaping(Shaping::Advanced))
-                .on_press(Message::PostEditor(PostEditorMsg::AnalyzeWithAi))
-                .padding([6, 16])
-                .into(),
-            button(text(t(locale, "editor.suggestTaxonomy")).size(13).shaping(Shaping::Advanced))
-                .on_press(Message::PostEditor(PostEditorMsg::AnalyzeTaxonomy))
-                .padding([6, 16])
-                .into(),
-            button(text(t(locale, "editor.translate")).size(13).shaping(Shaping::Advanced))
-                .on_press(Message::PostEditor(PostEditorMsg::Translate))
-                .padding([6, 16])
-                .into(),
+    let quick_actions_button: Element<'a, Message> = button(
+        text(t(locale, "editor.quickActions"))
+            .size(13)
+            .shaping(Shaping::Advanced),
+    )
+    .on_press(Message::PostEditor(PostEditorMsg::ToggleQuickActions))
+    .padding([6, 16])
+    .style(status_bar::dropdown_trigger)
+    .into();
+
+    let mut header_action_items: Vec<Element<'a, Message>> = vec![
+        status_badge(&state.status),
+        quick_actions_button,
+        button(
+            text(t(locale, "common.save"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::PostEditor(PostEditorMsg::Save))
+        .style(inputs::primary_button)
+        .padding([6, 16])
+        .into(),
+    ];
+    if !on_translation {
+        header_action_items.push(
             button(
-                text(t(locale, "common.save"))
+                text(t(locale, "editor.duplicate"))
                     .size(13)
                     .shaping(Shaping::Advanced),
             )
-            .on_press(Message::PostEditor(PostEditorMsg::Save))
+            .on_press(Message::PostEditor(PostEditorMsg::Duplicate))
+            .padding([6, 16])
+            .into(),
+        );
+    }
+    if state.status == PostStatus::Draft {
+        header_action_items.push(
+            button(
+                text(t(locale, "editor.publish"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::Publish))
             .style(inputs::primary_button)
             .padding([6, 16])
             .into(),
-            if !on_translation {
-                button(
-                    text(t(locale, "editor.duplicate"))
-                        .size(13)
-                        .shaping(Shaping::Advanced),
-                )
-                .on_press(Message::PostEditor(PostEditorMsg::Duplicate))
-                .padding([6, 16])
-                .into()
-            } else {
-                Space::new(0, 0).into()
-            },
-            if state.status == PostStatus::Draft {
-                button(
-                    text(t(locale, "editor.publish"))
-                        .size(13)
-                        .shaping(Shaping::Advanced),
-                )
-                .on_press(Message::PostEditor(PostEditorMsg::Publish))
-                .style(inputs::primary_button)
-                .padding([6, 16])
-                .into()
-            } else {
-                Space::new(0, 0).into()
-            },
-            if !on_translation && state.status == PostStatus::Draft && state.published_at.is_some() {
-                button(
-                    text(t(locale, "editor.discard"))
-                        .size(13)
-                        .shaping(Shaping::Advanced),
-                )
-                .on_press(Message::PostEditor(PostEditorMsg::Discard))
-                .padding([6, 16])
-                .into()
-            } else {
-                Space::new(0, 0).into()
-            },
+        );
+    }
+    if !on_translation && state.status == PostStatus::Draft && state.published_at.is_some() {
+        header_action_items.push(
             button(
-                text(t(locale, "modal.confirmDelete.delete"))
+                text(t(locale, "editor.discard"))
                     .size(13)
                     .shaping(Shaping::Advanced),
             )
-            .on_press(Message::PostEditor(PostEditorMsg::Delete))
-            .style(inputs::danger_button)
+            .on_press(Message::PostEditor(PostEditorMsg::Discard))
             .padding([6, 16])
             .into(),
-        ],
+        );
+    }
+    header_action_items.push(
+        button(
+            text(t(locale, "modal.confirmDelete.delete"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::PostEditor(PostEditorMsg::Delete))
+        .style(inputs::danger_button)
+        .padding([6, 16])
+        .into(),
     );
+    let header_actions = iced::widget::Row::with_children(header_action_items)
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
+    let header_row = row![
+        container(
+            text(title_display)
+                .size(18)
+                .wrapping(Wrapping::None)
+                .shaping(Shaping::Advanced)
+        )
+        .width(Length::Fill)
+        .clip(true),
+        header_actions,
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill);
+
+    let header_menu: Element<'a, Message> = if state.quick_actions_open {
+        row![
+            Space::with_width(Length::Fill),
+            container(
+                column![
+                    quick_action_item(locale, t(locale, "editor.aiAnalyze"), PostEditorMsg::AnalyzeWithAi),
+                    quick_action_item(locale, t(locale, "editor.suggestTaxonomy"), PostEditorMsg::AnalyzeTaxonomy),
+                    quick_action_item(locale, t(locale, "editor.translate"), PostEditorMsg::Translate),
+                    quick_action_item(locale, t(locale, "editor.detectLanguage"), PostEditorMsg::DetectLanguage),
+                ]
+                .spacing(4)
+            )
+            .padding(8)
+            .style(status_bar::dropdown_bg),
+        ]
+        .align_y(iced::Alignment::Start)
+        .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    let header = column![header_row, header_menu].spacing(6);
 
     // ── Collapsible Metadata Section ──
     let meta_toggle_label = if state.metadata_expanded {
@@ -968,6 +1008,29 @@ fn mode_button<'a>(
             flag_inactive_style
         })
         .into()
+}
+
+fn quick_action_item<'a>(locale: UiLocale, label: String, msg: PostEditorMsg) -> Element<'a, Message> {
+    let _ = locale;
+    button(text(label).size(12).shaping(Shaping::Advanced))
+        .on_press(Message::PostEditor(msg))
+        .padding([6, 12])
+        .style(status_bar::dropdown_item)
+        .width(Length::Fixed(220.0))
+        .into()
+}
+
+fn truncate_header_title(title: &str) -> String {
+    const HEADER_TITLE_MAX_LEN: usize = 56;
+    if title.chars().count() > HEADER_TITLE_MAX_LEN {
+        let truncated: String = title
+            .chars()
+            .take(HEADER_TITLE_MAX_LEN.saturating_sub(3))
+            .collect();
+        format!("{truncated}...")
+    } else {
+        title.to_string()
+    }
 }
 
 fn preview_markdown_document(state: &PostEditorState) -> String {

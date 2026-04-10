@@ -222,6 +222,7 @@
   "editor.language": "Language",
   "editor.aiAnalyze": "Analyze with AI",
   "editor.detectLanguage": "Detect Language",
+  "editor.quickActions": "Quick Actions",
   "editor.modeMarkdown": "Markdown",
   "editor.modePreview": "Preview",
   "editor.suggestTaxonomy": "Suggest Taxonomy",
