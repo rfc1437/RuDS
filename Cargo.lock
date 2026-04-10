@@ -520,7 +520,7 @@ dependencies = [
  "keyring",
  "liquid",
  "liquid-core",
- "pulldown-cmark",
+ "pulldown-cmark 0.13.3",
  "refinery",
  "reqwest",
  "rusqlite",
@@ -557,6 +557,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "iced",
+ "iced_widget",
  "muda",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -2536,9 +2537,11 @@ dependencies = [
  "iced_runtime",
  "num-traits",
  "once_cell",
+ "pulldown-cmark 0.11.3",
  "rustc-hash 2.1.2",
  "thiserror 1.0.69",
  "unicode-segmentation",
+ "url",
 ]
 
 [[package]]
@@ -4415,6 +4418,19 @@ checksum = "52717f9a02b6965224f95ca2a81e2e0c5c43baacd28ca057577988930b6c3d5b"
 dependencies = [
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "679341d22c78c6c649893cbd6c3278dcbe9fc4faa62fea3a9296ae2b50c14625"
+dependencies = [
+ "bitflags 2.11.0",
+ "getopts",
+ "memchr",
+ "pulldown-cmark-escape",
+ "unicase",
 ]
 
 [[package]]

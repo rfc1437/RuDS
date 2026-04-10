@@ -8,6 +8,7 @@ license.workspace = true
 bds-core = { workspace = true }
 bds-editor = { workspace = true }
 iced = { workspace = true }
+iced_widget = { version = "0.13.4", features = ["markdown"] }
 muda = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }

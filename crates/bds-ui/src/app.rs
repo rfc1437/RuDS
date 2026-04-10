@@ -275,6 +275,12 @@ fn load_generation_post_body(data_dir: &Path, post: &Post) -> Result<String, Str
     Ok(body)
 }
 
+fn default_post_editor_mode(settings_state: Option<&SettingsViewState>) -> &str {
+    settings_state
+        .map(|state| state.default_mode.as_str())
+        .unwrap_or("markdown")
+}
+
 fn save_template_editor_state_impl(
     db: &Database,
     project_id: &str,
@@ -460,7 +466,7 @@ mod tests {
         ).unwrap();
 
         let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
-        let mut editor = PostEditorState::from_post(&editor_post, &["en".to_string(), "de".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
+        let mut editor = PostEditorState::from_post(&editor_post, "markdown", &["en".to_string(), "de".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
         editor.title = "Updated Post".to_string();
         editor.content = "Updated body".to_string();
         editor.tags = vec!["rust".to_string(), "lua".to_string()];
@@ -650,7 +656,7 @@ mod tests {
         ).unwrap();
 
         let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
-        let mut editor = PostEditorState::from_post(&editor_post, &["en".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
+        let mut editor = PostEditorState::from_post(&editor_post, "markdown", &["en".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
         editor.title = "Autosaved".to_string();
         editor.mark_dirty();
         editor.last_edit_at_ms = bds_core::util::now_unix_ms() - POST_AUTO_SAVE_DELAY_MS - 100;
@@ -690,7 +696,7 @@ mod tests {
         ).unwrap();
 
         let editor_post = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
-        let mut editor = PostEditorState::from_post(&editor_post, &["en".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
+        let mut editor = PostEditorState::from_post(&editor_post, "markdown", &["en".to_string()], &[], Vec::new(), Vec::new(), Vec::new());
         editor.title = "Switched".to_string();
         editor.mark_dirty();
 
@@ -1650,8 +1656,8 @@ impl BdsApp {
                 // File open handling deferred to later milestones
                 Task::none()
             }
-            Message::UrlOpenRequested(_url) => {
-                // URL open handling deferred to later milestones
+            Message::UrlOpenRequested(url) => {
+                let _ = open::that(url);
                 Task::none()
             }
 
@@ -2116,6 +2122,9 @@ impl BdsApp {
                             PostEditorMsg::AnalyzeTaxonomy => {
                                 deferred = DeferredPostAction::AnalyzeTaxonomy(tab_id.clone());
                             }
+                            PostEditorMsg::SwitchEditorMode(mode) => {
+                                state.set_editor_mode(&mode);
+                            }
                             PostEditorMsg::DetectLanguage => {
                                 deferred = DeferredPostAction::DetectLanguage(tab_id.clone());
                             }
@@ -2258,6 +2267,7 @@ impl BdsApp {
                             }
 
                         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == state.post_id) {
+                            state.refresh_preview_items();
                             tab.is_dirty = state.is_dirty;
                         }
                     }
@@ -2628,6 +2638,7 @@ impl BdsApp {
                         let linked_media = self.load_post_media_items(&post.id);
                         let state = PostEditorState::from_post(
                             &post,
+                            default_post_editor_mode(self.settings_state.as_ref()),
                             &self.blog_languages,
                             &translations,
                             outlinks,
@@ -5424,6 +5435,7 @@ impl BdsApp {
                                 post.id.clone(),
                                 PostEditorState::from_post(
                                     &post,
+                                    default_post_editor_mode(self.settings_state.as_ref()),
                                     &self.blog_languages,
                                     &translations,
                                     outlinks,

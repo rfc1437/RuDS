@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use iced::widget::text::{Shaping, Wrapping};
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
 use iced::{Color, Element, Length, Theme};
+use iced_widget::markdown;
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
@@ -56,6 +57,7 @@ pub struct PostEditorState {
     pub excerpt: String,
     pub content: String,
     pub editor_buffer: RefCell<EditorBuffer>,
+    pub preview_items: Vec<markdown::Item>,
     pub tags: Vec<String>,
     pub categories: Vec<String>,
     pub author: String,
@@ -70,6 +72,7 @@ pub struct PostEditorState {
     pub last_edit_at_ms: i64,
     pub metadata_expanded: bool,
     pub excerpt_expanded: bool,
+    pub editor_mode: String,
     pub tags_input: String,
     pub categories_input: String,
     // ── Translation flags ──
@@ -110,6 +113,7 @@ impl Clone for PostEditorState {
             excerpt: self.excerpt.clone(),
             content: self.content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&self.content)),
+            preview_items: self.preview_items.clone(),
             tags: self.tags.clone(),
             categories: self.categories.clone(),
             author: self.author.clone(),
@@ -124,6 +128,7 @@ impl Clone for PostEditorState {
             last_edit_at_ms: self.last_edit_at_ms,
             metadata_expanded: self.metadata_expanded,
             excerpt_expanded: self.excerpt_expanded,
+            editor_mode: self.editor_mode.clone(),
             tags_input: self.tags_input.clone(),
             categories_input: self.categories_input.clone(),
             active_language: self.active_language.clone(),
@@ -141,6 +146,7 @@ impl Clone for PostEditorState {
 impl PostEditorState {
     pub fn from_post(
         post: &Post,
+        default_mode: &str,
         blog_languages: &[String],
         translations: &[PostTranslation],
         outlinks: Vec<ResolvedPostLink>,
@@ -148,8 +154,11 @@ impl PostEditorState {
         linked_media: Vec<LinkedMediaItem>,
     ) -> Self {
         let title = post.title.clone();
+        let excerpt = post.excerpt.clone().unwrap_or_default();
         let content = post.content.clone().unwrap_or_default();
         let canonical_lang = post.language.clone().unwrap_or_else(|| "en".to_string());
+        let preview_items = markdown::parse(&preview_markdown_document_parts(&title, &excerpt, &content))
+            .collect::<Vec<_>>();
 
         let mut translation_drafts = HashMap::new();
         for tr in translations {
@@ -168,9 +177,10 @@ impl PostEditorState {
         Self {
             post_id: post.id.clone(),
             slug: post.slug.clone(),
-            excerpt: post.excerpt.clone().unwrap_or_default(),
+            excerpt,
             content: content.clone(),
             editor_buffer: RefCell::new(EditorBuffer::new(&content)),
+            preview_items,
             tags: post.tags.clone(),
             categories: post.categories.clone(),
             author: post.author.clone().unwrap_or_default(),
@@ -185,6 +195,7 @@ impl PostEditorState {
             last_edit_at_ms: 0,
             metadata_expanded: title.is_empty(),
             excerpt_expanded: false,
+            editor_mode: normalize_editor_mode(default_mode),
             tags_input: String::new(),
             categories_input: String::new(),
             active_language: canonical_lang.clone(),
@@ -211,7 +222,16 @@ impl PostEditorState {
             buffer.text()
         };
         self.content = new_content;
+        self.refresh_preview_items();
         self.mark_dirty();
+    }
+
+    pub fn set_editor_mode(&mut self, mode: &str) {
+        self.editor_mode = normalize_editor_mode(mode);
+    }
+
+    pub fn refresh_preview_items(&mut self) {
+        self.preview_items = markdown::parse(&preview_markdown_document(self)).collect();
     }
 
     /// Switch the editor to display a different language.
@@ -273,6 +293,7 @@ impl PostEditorState {
         }
 
         self.active_language = target_lang.to_string();
+        self.refresh_preview_items();
     }
 
     /// Build the translation flags list for the view.
@@ -327,6 +348,7 @@ pub enum PostEditorMsg {
     DetectLanguage,
     Translate,
     TranslateTo(String),
+    SwitchEditorMode(String),
     TitleChanged(String),
     SlugChanged(String),
     ExcerptChanged(String),
@@ -753,25 +775,39 @@ pub fn view<'a>(
 
     // ── Content section (fills remaining space) ──
     let content_label = inputs::section_header(&t(locale, "editor.content"));
+    let mode_toggle = row![
+        mode_button(locale, &state.editor_mode, "markdown", Message::PostEditor(PostEditorMsg::SwitchEditorMode("markdown".to_string()))),
+        mode_button(locale, &state.editor_mode, "preview", Message::PostEditor(PostEditorMsg::SwitchEditorMode("preview".to_string()))),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
     let body_toolbar = inputs::toolbar(
-        vec![content_label.into()],
+        vec![row![content_label, Space::with_width(Length::Fixed(12.0)), mode_toggle].align_y(iced::Alignment::Center).into()],
         vec![
-            button(
-                text(t(locale, "editor.insertLink"))
-                    .size(13)
-                    .shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::InsertLink))
-            .padding([6, 16])
-            .into(),
-            button(
-                text(t(locale, "editor.insertMedia"))
-                    .size(13)
-                    .shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::InsertMedia))
-            .padding([6, 16])
-            .into(),
+            if state.editor_mode == "markdown" {
+                button(
+                    text(t(locale, "editor.insertLink"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::InsertLink))
+                .padding([6, 16])
+                .into()
+            } else {
+                Space::new(0, 0).into()
+            },
+            if state.editor_mode == "markdown" {
+                button(
+                    text(t(locale, "editor.insertMedia"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::InsertMedia))
+                .padding([6, 16])
+                .into()
+            } else {
+                Space::new(0, 0).into()
+            },
             button(
                 text(t(locale, "editor.gallery"))
                     .size(13)
@@ -782,7 +818,21 @@ pub fn view<'a>(
             .into(),
         ],
     );
-    let editor_widget: Element<'a, Message> =
+    let editor_widget: Element<'a, Message> = if state.editor_mode == "preview" {
+        scrollable(
+            container(
+                markdown::view(
+                    &state.preview_items,
+                    markdown::Settings::with_text_size(15),
+                    markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
+                )
+                .map(|url: markdown::Url| Message::UrlOpenRequested(url.to_string())),
+            )
+            .padding(16),
+        )
+        .height(Length::Fill)
+        .into()
+    } else {
         CodeEditor::new(&state.editor_buffer, highlighter(), "md")
             .word_wrap(word_wrap)
             .on_change(|msg| match msg {
@@ -791,7 +841,8 @@ pub fn view<'a>(
                 }
                 EditorMessage::SaveRequested => Message::PostEditor(PostEditorMsg::Save),
             })
-            .into();
+            .into()
+    };
 
     // ── Footer ──
     let published_gap: Element<'a, Message> = if state.published_at.is_some() {
@@ -898,6 +949,52 @@ fn chip_button_style(_theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+fn mode_button<'a>(
+    locale: UiLocale,
+    active_mode: &str,
+    mode: &str,
+    message: Message,
+) -> Element<'a, Message> {
+    let label = match mode {
+        "preview" => t(locale, "editor.modePreview"),
+        _ => t(locale, "editor.modeMarkdown"),
+    };
+    button(text(label).size(12).shaping(Shaping::Advanced))
+        .on_press(message)
+        .padding([4, 10])
+        .style(if active_mode == mode {
+            flag_active_style
+        } else {
+            flag_inactive_style
+        })
+        .into()
+}
+
+fn preview_markdown_document(state: &PostEditorState) -> String {
+    preview_markdown_document_parts(&state.title, &state.excerpt, &state.content)
+}
+
+fn preview_markdown_document_parts(title: &str, excerpt: &str, content: &str) -> String {
+    let mut sections = Vec::new();
+    if !title.trim().is_empty() {
+        sections.push(format!("# {}", title.trim()));
+    }
+    if !excerpt.trim().is_empty() {
+        sections.push(format!("> {}", excerpt.trim()));
+    }
+    if !content.trim().is_empty() {
+        sections.push(content.to_string());
+    }
+    sections.join("\n\n")
+}
+
+fn normalize_editor_mode(mode: &str) -> String {
+    match mode {
+        "preview" => "preview".to_string(),
+        _ => "markdown".to_string(),
+    }
+}
+
 fn status_badge<'a>(status: &PostStatus) -> Element<'a, Message> {
     let (label, color) = match status {
         PostStatus::Draft => ("Draft", Color::from_rgb(0.8, 0.7, 0.2)),
@@ -986,6 +1083,7 @@ mod tests {
         };
         PostEditorState::from_post(
             &post,
+            "markdown",
             &["en".to_string()],
             &[],
             Vec::new(),
@@ -1014,5 +1112,16 @@ mod tests {
 
         assert_eq!(state.content, "Hello Rust");
         assert!(state.is_dirty);
+    }
+
+    #[test]
+    fn unsupported_default_mode_falls_back_to_markdown() {
+        let mut state = sample_state();
+
+        state.set_editor_mode("wysiwyg");
+        assert_eq!(state.editor_mode, "markdown");
+
+        state.set_editor_mode("preview");
+        assert_eq!(state.editor_mode, "preview");
     }
 }

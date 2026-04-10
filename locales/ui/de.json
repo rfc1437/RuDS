@@ -225,6 +225,8 @@
   "editor.language": "Sprache",
   "editor.aiAnalyze": "Mit KI analysieren",
   "editor.detectLanguage": "Sprache erkennen",
+  "editor.modeMarkdown": "Markdown",
+  "editor.modePreview": "Vorschau",
   "editor.suggestTaxonomy": "Taxonomie vorschlagen",
   "editor.translate": "Übersetzen",
   "editor.templateSlug": "Vorlage",

@@ -225,6 +225,8 @@
   "editor.language": "Idioma",
   "editor.aiAnalyze": "Analizar con IA",
   "editor.detectLanguage": "Detectar idioma",
+  "editor.modeMarkdown": "Markdown",
+  "editor.modePreview": "Vista previa",
   "editor.suggestTaxonomy": "Sugerir taxonomía",
   "editor.translate": "Traducir",
   "editor.templateSlug": "Plantilla",
