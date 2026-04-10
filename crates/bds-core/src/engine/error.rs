@@ -46,6 +46,12 @@ impl From<std::io::Error> for EngineError {
     }
 }
 
+impl From<reqwest::Error> for EngineError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Parse(e.to_string())
+    }
+}
+
 impl From<serde_json::Error> for EngineError {
     fn from(e: serde_json::Error) -> Self {
         Self::Parse(e.to_string())

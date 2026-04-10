@@ -9,3 +9,4 @@ pub mod post_media;
 pub mod template;
 pub mod script;
 pub mod setting;
+pub mod generated_file_hash;

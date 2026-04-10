@@ -8,6 +8,7 @@ use iced::{Element, Subscription, Task};
 use bds_core::db::Database;
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::engine;
+use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::i18n::{detect_os_locale, UiLocale};
 use bds_core::model::{Media, Post, PostStatus, Project, PublishingPreferences, Script, SshMode, Template};
 
@@ -28,7 +29,7 @@ use crate::views::{
     template_editor::{TemplateEditorState, TemplateEditorMsg},
     script_editor::{ScriptEditorState, ScriptEditorMsg},
     tags_view::{self, TagsMsg, TagsSection, TagsViewState},
-    settings_view::{default_category_rows, SettingsCategoryRow, SettingsViewState, SettingsMsg},
+    settings_view::{default_category_rows, AiModelOption, SettingsCategoryRow, SettingsViewState, SettingsMsg},
     dashboard::{DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag, DashboardTimelineMonth},
 };
 
@@ -255,6 +256,15 @@ fn persist_media_editor_state_impl(
         .map_err(|e| e.to_string())?;
         Ok(PersistedMediaState::Canonical { media, tags })
     }
+}
+
+fn load_generation_post_body(data_dir: &Path, post: &Post) -> Result<String, String> {
+    if let Some(content) = &post.content {
+        return Ok(content.clone());
+    }
+    let raw = std::fs::read_to_string(data_dir.join(&post.file_path)).map_err(|e| e.to_string())?;
+    let (_frontmatter, body) = bds_core::util::frontmatter::read_post_file(&raw)?;
+    Ok(body)
 }
 
 fn save_template_editor_state_impl(
@@ -1766,11 +1776,47 @@ impl BdsApp {
                     "engine.generateSiteStarted",
                     |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.20), Some("Generating calendar...".into()));
-                        engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
+                        let metadata = engine::meta::read_project_json(&data_dir).map_err(|e| e.to_string())?;
+                        if metadata.public_url.as_deref().unwrap_or("").trim().is_empty() {
+                            return Err("public URL is required before generating the site".to_string());
+                        }
+                        let main_language = metadata.main_language.clone().unwrap_or_else(|| "en".to_string());
+                        let all_posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
                             .map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.90), Some("Calendar written".into()));
-                        Ok("done".to_string())
+                        let published_posts = all_posts
+                            .into_iter()
+                            .filter(|post| post.status == PostStatus::Published)
+                            .collect::<Vec<_>>();
+                        let total = published_posts.len().max(1) as f32;
+                        let mut sources = Vec::new();
+                        for (index, post) in published_posts.into_iter().enumerate() {
+                            tm.report_progress(
+                                tid,
+                                Some(((index as f32) / total) * 0.7),
+                                Some(format!("Rendering {}", post.slug)),
+                            );
+                            let body_markdown = load_generation_post_body(&data_dir, &post)?;
+                            sources.push(engine::generation::PublishedPostSource { post, body_markdown });
+                        }
+                        let output_dir = data_dir.join("html");
+                        std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.85), Some("Writing generated files".into()));
+                        let report = engine::generation::generate_starter_site(
+                            db.conn(),
+                            &output_dir,
+                            &project_id,
+                            &metadata,
+                            &sources,
+                            &main_language,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(1.0), Some("Site generation complete".into()));
+                        Ok(format!(
+                            "written={}, skipped={}, output={}",
+                            report.written_paths.len(),
+                            report.skipped_paths.len(),
+                            output_dir.display(),
+                        ))
                     },
                 )
             }
@@ -4526,6 +4572,30 @@ impl BdsApp {
             if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(db.conn(), "ai.system_prompt") {
                 state.system_prompt = iced::widget::text_editor::Content::with_text(&setting.value);
             }
+            if let Ok(ai_settings) = ai::load_ai_settings(db.conn(), self.offline_mode) {
+                state.online_endpoint_url = ai_settings.online_endpoint.url;
+                state.online_endpoint_model = ai_settings.online_endpoint.model;
+                state.online_api_key_configured = ai_settings.online_endpoint.api_key_configured;
+                if !state.online_endpoint_model.is_empty() {
+                    state.online_model_options = vec![AiModelOption {
+                        id: state.online_endpoint_model.clone(),
+                        label: state.online_endpoint_model.clone(),
+                        supports_vision: false,
+                    }];
+                }
+                state.airplane_endpoint_url = ai_settings.airplane_endpoint.url;
+                state.airplane_endpoint_model = ai_settings.airplane_endpoint.model;
+                if !state.airplane_endpoint_model.is_empty() {
+                    state.airplane_model_options = vec![AiModelOption {
+                        id: state.airplane_endpoint_model.clone(),
+                        label: state.airplane_endpoint_model.clone(),
+                        supports_vision: false,
+                    }];
+                }
+                state.default_model = ai_settings.default_model.unwrap_or_default();
+                state.title_model = ai_settings.title_model.unwrap_or_default();
+                state.image_model = ai_settings.image_model.unwrap_or_default();
+            }
         }
         state.offline_mode = self.offline_mode;
         state
@@ -4972,17 +5042,44 @@ impl BdsApp {
                 state.offline_mode = b;
                 return Task::done(Message::SetOfflineMode(b));
             }
+            SettingsMsg::OnlineEndpointUrlChanged(value) => { state.online_endpoint_url = value; }
+            SettingsMsg::OnlineEndpointModelChanged(value) => { state.online_endpoint_model = value; }
+            SettingsMsg::OnlineApiKeyChanged(value) => { state.online_api_key_input = value; }
+            SettingsMsg::AirplaneEndpointUrlChanged(value) => { state.airplane_endpoint_url = value; }
+            SettingsMsg::AirplaneEndpointModelChanged(value) => { state.airplane_endpoint_model = value; }
+            SettingsMsg::DefaultModelChanged(value) => { state.default_model = value; }
+            SettingsMsg::TitleModelChanged(value) => { state.title_model = value; }
+            SettingsMsg::ImageModelChanged(value) => { state.image_model = value; }
+            SettingsMsg::RefreshOnlineModels => {
+                if let Some(db) = &self.db {
+                    match Self::refresh_ai_models(
+                        db,
+                        state,
+                        AiEndpointKind::Online,
+                    ) {
+                        Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+                        Err(error) => self.notify(ToastLevel::Error, &format!("Save failed: {error}")),
+                    }
+                }
+            }
+            SettingsMsg::RefreshAirplaneModels => {
+                if let Some(db) = &self.db {
+                    match Self::refresh_ai_models(
+                        db,
+                        state,
+                        AiEndpointKind::Airplane,
+                    ) {
+                        Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+                        Err(error) => self.notify(ToastLevel::Error, &format!("Save failed: {error}")),
+                    }
+                }
+            }
             SettingsMsg::SystemPromptAction(action) => {
                 state.system_prompt.perform(action);
             }
-            SettingsMsg::SaveSystemPrompt => {
+            SettingsMsg::SaveAi => {
                 if let Some(db) = &self.db {
-                    match bds_core::db::queries::setting::set_setting_value(
-                        db.conn(),
-                        "ai.system_prompt",
-                        &state.system_prompt.text(),
-                        bds_core::util::now_unix_ms(),
-                    ) {
+                    match Self::save_ai_settings_state(db, state) {
                         Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
                         Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
                     }
@@ -5395,5 +5492,87 @@ impl BdsApp {
             }
             _ => {}
         }
+    }
+
+    fn refresh_ai_models(
+        db: &Database,
+        state: &mut SettingsViewState,
+        kind: AiEndpointKind,
+    ) -> Result<(), String> {
+        let endpoint = Self::compose_ai_endpoint(state, kind)?;
+        let models = ai::refresh_model_catalog(&endpoint).map_err(|error| error.to_string())?;
+        let options = models
+            .into_iter()
+            .map(|model| AiModelOption {
+                id: model.id,
+                label: model.name,
+                supports_vision: model.supports_vision,
+            })
+            .collect::<Vec<_>>();
+        match kind {
+            AiEndpointKind::Online => state.online_model_options = options,
+            AiEndpointKind::Airplane => state.airplane_model_options = options,
+        }
+        let _ = db;
+        Ok(())
+    }
+
+    fn save_ai_settings_state(
+        db: &Database,
+        state: &mut SettingsViewState,
+    ) -> Result<(), String> {
+        let online_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Online)?;
+        let airplane_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Airplane)?;
+        ai::test_endpoint(&online_endpoint).map_err(|error| error.to_string())?;
+        ai::test_endpoint(&airplane_endpoint).map_err(|error| error.to_string())?;
+        ai::save_endpoint(db.conn(), &online_endpoint).map_err(|error| error.to_string())?;
+        ai::save_endpoint(db.conn(), &airplane_endpoint).map_err(|error| error.to_string())?;
+        ai::save_model_preferences(
+            db.conn(),
+            (!state.default_model.trim().is_empty()).then_some(state.default_model.as_str()),
+            (!state.title_model.trim().is_empty()).then_some(state.title_model.as_str()),
+            (!state.image_model.trim().is_empty()).then_some(state.image_model.as_str()),
+            &state.system_prompt.text(),
+        )
+        .map_err(|error| error.to_string())?;
+        state.online_api_key_input.clear();
+        state.online_api_key_configured = true;
+        Ok(())
+    }
+
+    fn compose_ai_endpoint(
+        state: &SettingsViewState,
+        kind: AiEndpointKind,
+    ) -> Result<AiEndpointConfig, String> {
+        let (url, model, configured) = match kind {
+            AiEndpointKind::Online => (
+                state.online_endpoint_url.trim().to_string(),
+                state.online_endpoint_model.trim().to_string(),
+                state.online_api_key_configured,
+            ),
+            AiEndpointKind::Airplane => (
+                state.airplane_endpoint_url.trim().to_string(),
+                state.airplane_endpoint_model.trim().to_string(),
+                false,
+            ),
+        };
+        let api_key = if kind == AiEndpointKind::Online {
+            let input = state.online_api_key_input.trim();
+            if !input.is_empty() {
+                Some(input.to_string())
+            } else if configured {
+                ai::load_endpoint_api_key(kind).map_err(|error| error.to_string())?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(AiEndpointConfig {
+            kind,
+            url,
+            model,
+            api_key,
+        })
     }
 }

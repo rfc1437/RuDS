@@ -8,6 +8,19 @@ use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::{t, tw};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiModelOption {
+    pub id: String,
+    pub label: String,
+    pub supports_vision: bool,
+}
+
+impl std::fmt::Display for AiModelOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
 /// Collapsible section identifiers per editor_settings.allium.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SettingsSection {
@@ -115,6 +128,17 @@ pub struct SettingsViewState {
     pub ssh_remote_path: String,
     // AI
     pub offline_mode: bool,
+    pub online_endpoint_url: String,
+    pub online_endpoint_model: String,
+    pub online_api_key_input: String,
+    pub online_api_key_configured: bool,
+    pub online_model_options: Vec<AiModelOption>,
+    pub airplane_endpoint_url: String,
+    pub airplane_endpoint_model: String,
+    pub airplane_model_options: Vec<AiModelOption>,
+    pub default_model: String,
+    pub title_model: String,
+    pub image_model: String,
     pub system_prompt: text_editor::Content,
     // Technology
     pub semantic_similarity_enabled: bool,
@@ -156,6 +180,17 @@ impl Clone for SettingsViewState {
             ssh_username: self.ssh_username.clone(),
             ssh_remote_path: self.ssh_remote_path.clone(),
             offline_mode: self.offline_mode,
+            online_endpoint_url: self.online_endpoint_url.clone(),
+            online_endpoint_model: self.online_endpoint_model.clone(),
+            online_api_key_input: self.online_api_key_input.clone(),
+            online_api_key_configured: self.online_api_key_configured,
+            online_model_options: self.online_model_options.clone(),
+            airplane_endpoint_url: self.airplane_endpoint_url.clone(),
+            airplane_endpoint_model: self.airplane_endpoint_model.clone(),
+            airplane_model_options: self.airplane_model_options.clone(),
+            default_model: self.default_model.clone(),
+            title_model: self.title_model.clone(),
+            image_model: self.image_model.clone(),
             system_prompt: text_editor::Content::with_text(&self.system_prompt.text()),
             semantic_similarity_enabled: self.semantic_similarity_enabled,
         }
@@ -190,6 +225,17 @@ impl Default for SettingsViewState {
             ssh_username: String::new(),
             ssh_remote_path: String::new(),
             offline_mode: false,
+            online_endpoint_url: String::new(),
+            online_endpoint_model: String::new(),
+            online_api_key_input: String::new(),
+            online_api_key_configured: false,
+            online_model_options: Vec::new(),
+            airplane_endpoint_url: String::new(),
+            airplane_endpoint_model: String::new(),
+            airplane_model_options: Vec::new(),
+            default_model: String::new(),
+            title_model: String::new(),
+            image_model: String::new(),
             system_prompt: text_editor::Content::new(),
             semantic_similarity_enabled: false,
         }
@@ -263,8 +309,18 @@ pub enum SettingsMsg {
     ClearPublishing,
     // AI
     OfflineModeChanged(bool),
+    OnlineEndpointUrlChanged(String),
+    OnlineEndpointModelChanged(String),
+    OnlineApiKeyChanged(String),
+    RefreshOnlineModels,
+    AirplaneEndpointUrlChanged(String),
+    AirplaneEndpointModelChanged(String),
+    RefreshAirplaneModels,
+    DefaultModelChanged(String),
+    TitleModelChanged(String),
+    ImageModelChanged(String),
     SystemPromptAction(text_editor::Action),
-    SaveSystemPrompt,
+    SaveAi,
     ResetSystemPrompt,
     // Technology
     SemanticSimilarityChanged(bool),
@@ -659,10 +715,91 @@ fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
 }
 
 fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    let active_model_options = if state.offline_mode {
+        &state.airplane_model_options
+    } else {
+        &state.online_model_options
+    };
+    let model_options = std::iter::once(AiModelOption {
+        id: String::new(),
+        label: t(locale, "tags.noTemplate"),
+        supports_vision: false,
+    })
+    .chain(active_model_options.iter().cloned())
+    .collect::<Vec<_>>();
+    let image_model_options = std::iter::once(AiModelOption {
+        id: String::new(),
+        label: t(locale, "tags.noTemplate"),
+        supports_vision: false,
+    })
+    .chain(active_model_options.iter().filter(|option| option.supports_vision).cloned())
+    .collect::<Vec<_>>();
+
     let offline = inputs::labeled_checkbox(
         &t(locale, "settings.offlineMode"),
         state.offline_mode,
         |b| Message::Settings(SettingsMsg::OfflineModeChanged(b)),
+    );
+    let online_url = inputs::labeled_input(
+        &t(locale, "settings.onlineEndpointUrl"),
+        "https://api.example.com/v1",
+        &state.online_endpoint_url,
+        |value| Message::Settings(SettingsMsg::OnlineEndpointUrlChanged(value)),
+    );
+    let online_model = inputs::labeled_input(
+        &t(locale, "settings.onlineEndpointModel"),
+        "gpt-4.1-mini",
+        &state.online_endpoint_model,
+        |value| Message::Settings(SettingsMsg::OnlineEndpointModelChanged(value)),
+    );
+    let keychain_placeholder = t(locale, "settings.keychainConfigured");
+    let online_api_key = inputs::labeled_input(
+        &t(locale, "settings.onlineApiKey"),
+        if state.online_api_key_configured {
+            &keychain_placeholder
+        } else {
+            "sk-..."
+        },
+        &state.online_api_key_input,
+        |value| Message::Settings(SettingsMsg::OnlineApiKeyChanged(value)),
+    );
+    let online_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
+        .on_press(Message::Settings(SettingsMsg::RefreshOnlineModels))
+        .padding([6, 16]);
+
+    let airplane_url = inputs::labeled_input(
+        &t(locale, "settings.airplaneEndpointUrl"),
+        "http://localhost:11434/v1",
+        &state.airplane_endpoint_url,
+        |value| Message::Settings(SettingsMsg::AirplaneEndpointUrlChanged(value)),
+    );
+    let airplane_model = inputs::labeled_input(
+        &t(locale, "settings.airplaneEndpointModel"),
+        "llama3.2",
+        &state.airplane_endpoint_model,
+        |value| Message::Settings(SettingsMsg::AirplaneEndpointModelChanged(value)),
+    );
+    let airplane_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
+        .on_press(Message::Settings(SettingsMsg::RefreshAirplaneModels))
+        .padding([6, 16]);
+
+    let default_model = inputs::labeled_select(
+        &t(locale, "settings.defaultModel"),
+        &model_options,
+        model_options.iter().find(|option| option.id == state.default_model),
+        |option| Message::Settings(SettingsMsg::DefaultModelChanged(option.id)),
+    );
+    let title_model = inputs::labeled_select(
+        &t(locale, "settings.titleModel"),
+        &model_options,
+        model_options.iter().find(|option| option.id == state.title_model),
+        |option| Message::Settings(SettingsMsg::TitleModelChanged(option.id)),
+    );
+    let image_model = inputs::labeled_select(
+        &t(locale, "settings.imageAnalysisModel"),
+        &image_model_options,
+        image_model_options.iter().find(|option| option.id == state.image_model),
+        |option| Message::Settings(SettingsMsg::ImageModelChanged(option.id)),
     );
     let prompt = column![
         text(t(locale, "settings.systemPrompt")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
@@ -674,7 +811,7 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     .spacing(4);
     let btns = row![
         button(text(t(locale, "common.save")).size(13))
-            .on_press(Message::Settings(SettingsMsg::SaveSystemPrompt))
+            .on_press(Message::Settings(SettingsMsg::SaveAi))
             .style(inputs::primary_button)
             .padding([6, 16]),
         button(text(t(locale, "settings.resetToDefault")).size(13))
@@ -683,7 +820,21 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     ]
     .spacing(8);
 
-    column![offline, prompt, btns]
+    column![
+        offline,
+        text(t(locale, "settings.onlineEndpointSection")).size(12).color(inputs::LABEL_COLOR),
+        online_url,
+        row![online_model, online_api_key].spacing(12),
+        online_refresh,
+        text(t(locale, "settings.airplaneEndpointSection")).size(12).color(inputs::LABEL_COLOR),
+        airplane_url,
+        row![airplane_model, airplane_refresh].spacing(12),
+        default_model,
+        title_model,
+        image_model,
+        prompt,
+        btns,
+    ]
         .spacing(8)
         .padding([0, 16])
         .into()

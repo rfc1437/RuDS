@@ -32,6 +32,11 @@ rust-stemmers = "1"
 sys-locale = "0.3"
 dirs = "5"
 open = "5"
+pulldown-cmark = "0.13"
+liquid = "0.26"
+liquid-core = { version = "0.26", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # UI framework
 iced = { version = "0.13", features = ["wgpu", "advanced", "image", "svg", "tokio"] }

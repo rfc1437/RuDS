@@ -1,4 +1,5 @@
 pub mod error;
+pub mod ai;
 pub mod context;
 pub mod project;
 pub mod meta;
@@ -15,6 +16,8 @@ pub mod metadata_diff;
 pub mod rebuild;
 pub mod search;
 pub mod calendar;
+pub mod generation;
+pub mod preview;
 pub mod validate_translations;
 pub mod validate_media;
 pub mod validate_content;
