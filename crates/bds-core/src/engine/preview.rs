@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
+use std::collections::HashMap;
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, Uri, header};
@@ -14,7 +15,7 @@ use crate::db::{Database, queries};
 use crate::engine::generation::PublishedPostSource;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, PostStatus, ProjectMetadata};
-use crate::render::{build_canonical_post_path, render_starter_list_page, render_starter_single_post_page};
+use crate::render::{build_canonical_post_path, render_starter_list_page_with_media_map, render_starter_single_post_page_with_media_map};
 use crate::util::frontmatter::{read_post_file, read_translation_file};
 
 pub const PREVIEW_HOST: &str = "127.0.0.1";
@@ -110,6 +111,7 @@ pub fn render_preview_path(
     path: &str,
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
+    canonical_media_path_by_source_path: &HashMap<String, String>,
 ) -> EngineResult<Option<String>> {
     let normalized = if path.is_empty() { "/" } else { path };
     let main_language = metadata.main_language.as_deref().unwrap_or("en");
@@ -119,7 +121,12 @@ pub fn render_preview_path(
             .iter()
             .map(|source| (source.post.clone(), source.body_markdown.clone()))
             .collect::<Vec<_>>();
-        return render_starter_list_page(&list_posts, metadata, main_language)
+        return render_starter_list_page_with_media_map(
+            &list_posts,
+            metadata,
+            main_language,
+            canonical_media_path_by_source_path.clone(),
+        )
             .map(|page| Some(page.html))
             .map_err(|error| EngineError::Parse(error.to_string()));
     }
@@ -128,7 +135,13 @@ pub fn render_preview_path(
     if let Some(source) = posts.iter().find(|source| {
         build_canonical_post_path(&source.post, &language, main_language) == route_path
     }) {
-        return render_starter_single_post_page(&source.post, &source.body_markdown, metadata, &language)
+        return render_starter_single_post_page_with_media_map(
+            &source.post,
+            &source.body_markdown,
+            metadata,
+            &language,
+            canonical_media_path_by_source_path.clone(),
+        )
             .map(|page| Some(page.html))
             .map_err(|error| EngineError::Parse(error.to_string()));
     }
@@ -172,8 +185,10 @@ fn render_preview_response(
     }
 
     let metadata = crate::engine::meta::read_project_json(&state.data_dir)?;
+    let db = Database::open(&state.db_path)?;
+    let media_rewrite_map = build_media_rewrite_map(db.conn(), &state.project_id)?;
     let published_posts = collect_published_posts(state, &metadata)?;
-    match render_preview_path(path, &metadata, &published_posts)? {
+    match render_preview_path(path, &metadata, &published_posts, &media_rewrite_map)? {
         Some(html) => Ok(Html(html).into_response()),
         None => Ok(error_response(StatusCode::NOT_FOUND, "preview not found")),
     }
@@ -196,6 +211,7 @@ fn render_draft_preview(
             post_id,
             target_language,
         ) {
+            let media_rewrite_map = build_media_rewrite_map(db.conn(), &post.project_id)?;
             let mut translated_post = post.clone();
             translated_post.title = translation.title.clone();
             translated_post.excerpt = translation.excerpt.clone();
@@ -204,16 +220,51 @@ fn render_draft_preview(
             translated_post.file_path = translation.file_path.clone();
             translated_post.published_at = translation.published_at.or(post.published_at);
             let body = load_translation_body(&state.data_dir, &translation)?;
-            return render_starter_single_post_page(&translated_post, &body, &metadata, target_language)
+            return render_starter_single_post_page_with_media_map(
+                &translated_post,
+                &body,
+                &metadata,
+                target_language,
+                media_rewrite_map,
+            )
                 .map(|page| page.html)
                 .map_err(|error| EngineError::Parse(error.to_string()));
         }
     }
 
+    let media_rewrite_map = build_media_rewrite_map(db.conn(), &post.project_id)?;
     let body = load_post_body(&state.data_dir, &post)?;
-    render_starter_single_post_page(&post, &body, &metadata, canonical_language)
+    render_starter_single_post_page_with_media_map(
+        &post,
+        &body,
+        &metadata,
+        canonical_language,
+        media_rewrite_map,
+    )
         .map(|page| page.html)
         .map_err(|error| EngineError::Parse(error.to_string()))
+}
+
+fn build_media_rewrite_map(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+) -> EngineResult<HashMap<String, String>> {
+    let media_items = queries::media::list_media_by_project(conn, project_id)?;
+    let mut map = HashMap::new();
+
+    for media in media_items {
+        let canonical_path = if media.file_path.starts_with('/') {
+            media.file_path.clone()
+        } else {
+            format!("/{}", media.file_path.trim_start_matches('/'))
+        };
+        map.insert(format!("bds-media://{}", media.id), canonical_path.clone());
+
+        let relative_key = media.file_path.trim_start_matches('/').to_lowercase();
+        map.insert(relative_key, canonical_path);
+    }
+
+    Ok(map)
 }
 
 fn collect_published_posts(
@@ -454,7 +505,7 @@ mod tests {
 
     #[test]
     fn root_preview_renders_index_page() {
-        let html = render_preview_path("/", &make_metadata(), &[make_post()])
+        let html = render_preview_path("/", &make_metadata(), &[make_post()], &HashMap::new())
             .unwrap()
             .unwrap();
         assert!(html.contains("post-list"));
@@ -462,7 +513,12 @@ mod tests {
 
     #[test]
     fn preview_renders_single_post_for_canonical_path() {
-        let html = render_preview_path("/2024/03/09/hello", &make_metadata(), &[make_post()])
+        let html = render_preview_path(
+            "/2024/03/09/hello",
+            &make_metadata(),
+            &[make_post()],
+            &HashMap::new(),
+        )
             .unwrap()
             .unwrap();
         assert!(html.contains("<h1>Hello</h1>"));
@@ -471,7 +527,12 @@ mod tests {
 
     #[test]
     fn preview_renders_language_prefixed_single_post() {
-        let html = render_preview_path("/de/2024/03/09/hello", &make_metadata(), &[make_post()])
+        let html = render_preview_path(
+            "/de/2024/03/09/hello",
+            &make_metadata(),
+            &[make_post()],
+            &HashMap::new(),
+        )
             .unwrap()
             .unwrap();
         assert!(html.contains("lang=\"de\""));

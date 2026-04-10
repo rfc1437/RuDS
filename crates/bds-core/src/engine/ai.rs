@@ -614,7 +614,6 @@ mod tests {
 
     #[test]
     fn loads_empty_defaults() {
-        clear_keyring(AiEndpointKind::Online);
         let db = setup();
         let settings = load_ai_settings(db.conn(), false).unwrap();
         assert!(!settings.offline_mode);
@@ -624,6 +623,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "touches system keychain; run explicitly when validating keychain integration"]
     fn saves_online_endpoint_with_keychain_secret() {
         clear_keyring(AiEndpointKind::Online);
         let db = setup();
@@ -684,6 +684,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "touches system keychain; run explicitly when validating keychain integration"]
     fn run_one_shot_uses_active_endpoint_and_parses_response() {
         clear_keyring(AiEndpointKind::Online);
         let server = spawn_test_server(|request| {

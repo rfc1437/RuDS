@@ -1,13 +1,15 @@
 use std::path::Path;
+use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::Connection;
 
+use crate::db::queries;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
-    render_markdown_to_html, render_starter_list_page, render_starter_single_post_page,
+    render_markdown_to_html, render_starter_list_page_with_media_map, render_starter_single_post_page_with_media_map,
     write_generated_file,
 };
 
@@ -32,17 +34,29 @@ pub fn generate_starter_site(
     language: &str,
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
+    let media_rewrite_map = build_media_rewrite_map(conn, project_id)?;
 
     let list_input = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let index_page = render_starter_list_page(&list_input, metadata, language)
+    let index_page = render_starter_list_page_with_media_map(
+        &list_input,
+        metadata,
+        language,
+        media_rewrite_map.clone(),
+    )
         .map_err(|error| EngineError::Parse(error.to_string()))?;
     write_out(conn, output_dir, project_id, &index_page.relative_path, &index_page.html, &mut report)?;
 
     for source in posts {
-        let rendered = render_starter_single_post_page(&source.post, &source.body_markdown, metadata, language)
+        let rendered = render_starter_single_post_page_with_media_map(
+            &source.post,
+            &source.body_markdown,
+            metadata,
+            language,
+            media_rewrite_map.clone(),
+        )
             .map_err(|error| EngineError::Parse(error.to_string()))?;
         write_out(conn, output_dir, project_id, &rendered.relative_path, &rendered.html, &mut report)?;
     }
@@ -63,6 +77,28 @@ pub fn generate_starter_site(
     write_out(conn, output_dir, project_id, "sitemap.xml", &build_sitemap_xml(metadata, posts, language), &mut report)?;
 
     Ok(report)
+}
+
+fn build_media_rewrite_map(
+    conn: &Connection,
+    project_id: &str,
+) -> EngineResult<HashMap<String, String>> {
+    let media_items = queries::media::list_media_by_project(conn, project_id)?;
+    let mut map = HashMap::new();
+
+    for media in media_items {
+        let canonical_path = if media.file_path.starts_with('/') {
+            media.file_path.clone()
+        } else {
+            format!("/{}", media.file_path.trim_start_matches('/'))
+        };
+        map.insert(format!("bds-media://{}", media.id), canonical_path.clone());
+
+        let relative_key = media.file_path.trim_start_matches('/').to_lowercase();
+        map.insert(relative_key, canonical_path);
+    }
+
+    Ok(map)
 }
 
 fn write_out(

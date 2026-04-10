@@ -120,6 +120,22 @@ pub fn render_starter_single_post_page(
     metadata: &ProjectMetadata,
     language: &str,
 ) -> Result<RenderedPage, RenderError> {
+    render_starter_single_post_page_with_media_map(
+        post,
+        body_markdown,
+        metadata,
+        language,
+        HashMap::new(),
+    )
+}
+
+pub fn render_starter_single_post_page_with_media_map(
+    post: &Post,
+    body_markdown: &str,
+    metadata: &ProjectMetadata,
+    language: &str,
+    canonical_media_path_by_source_path: HashMap<String, String>,
+) -> Result<RenderedPage, RenderError> {
     let relative_path = format!("{}/index.html", build_canonical_post_path(post, language, main_language(metadata)).trim_start_matches('/'));
     let canonical_path = build_canonical_post_path(post, language, main_language(metadata));
     let (calendar_initial_year, calendar_initial_month) = calendar_initial_parts(post);
@@ -151,7 +167,7 @@ pub fn render_starter_single_post_page(
             .collect(),
         backlinks: vec![],
         canonical_post_path_by_slug: HashMap::from([(post.slug.clone(), canonical_path)]),
-        canonical_media_path_by_source_path: HashMap::new(),
+        canonical_media_path_by_source_path,
         post_data_json_by_id: HashMap::new(),
     };
 
@@ -168,6 +184,15 @@ pub fn render_starter_list_page(
     posts: &[(Post, String)],
     metadata: &ProjectMetadata,
     language: &str,
+) -> Result<RenderedPage, RenderError> {
+    render_starter_list_page_with_media_map(posts, metadata, language, HashMap::new())
+}
+
+pub fn render_starter_list_page_with_media_map(
+    posts: &[(Post, String)],
+    metadata: &ProjectMetadata,
+    language: &str,
+    canonical_media_path_by_source_path: HashMap<String, String>,
 ) -> Result<RenderedPage, RenderError> {
     let relative_path = if language.eq_ignore_ascii_case(main_language(metadata)) {
         "index.html".to_string()
@@ -217,7 +242,7 @@ pub fn render_starter_list_page(
         prev_page_href: None,
         next_page_href: None,
         canonical_post_path_by_slug: canonical_paths,
-        canonical_media_path_by_source_path: HashMap::new(),
+        canonical_media_path_by_source_path,
         post_data_json_by_id: HashMap::new(),
     };
 
@@ -445,6 +470,25 @@ mod tests {
         assert!(rendered.html.contains("https://example.com/2024/03/09/hello"));
         assert!(rendered.html.contains("https://example.com/de/2024/03/09/hello"));
         assert!(rendered.html.contains("href=\"/2024/03/09/hello\""));
+    }
+
+    #[test]
+    fn starter_single_post_renderer_rewrites_bds_media_image_links() {
+        let post = make_post();
+        let metadata = make_metadata();
+        let rendered = render_starter_single_post_page_with_media_map(
+            &post,
+            "![](bds-media://media-1)",
+            &metadata,
+            "en",
+            HashMap::from([(
+                "bds-media://media-1".to_string(),
+                "/media/2026/04/media-1.png".to_string(),
+            )]),
+        )
+        .unwrap();
+
+        assert!(rendered.html.contains("src=\"/media/2026/04/media-1.png\""));
     }
 
     #[test]

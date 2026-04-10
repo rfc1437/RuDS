@@ -208,11 +208,24 @@ fn rewrite_attribute_urls(
 }
 
 fn normalize_preview_href(raw_href: &str, rewrite_context: &impl RewriteContextView) -> String {
-    if raw_href.is_empty() || is_external_or_special_url(raw_href) {
+    if raw_href.is_empty() {
         return raw_href.to_string();
     }
 
     let (path_part, suffix) = split_path_suffix(raw_href.trim());
+    if let Some(media_lookup_key) = extract_media_lookup_key(path_part) {
+        let canonical = rewrite_context
+            .canonical_media_path_by_source_path()
+            .get(&media_lookup_key)
+            .cloned()
+            .unwrap_or_else(|| format!("/{media_lookup_key}"));
+        return format!("{canonical}{suffix}");
+    }
+
+    if is_external_or_special_url(raw_href) {
+        return raw_href.to_string();
+    }
+
     if let Some(normalized) = normalize_day_route(path_part) {
         return format!("{normalized}{suffix}");
     }
@@ -226,7 +239,7 @@ fn normalize_preview_href(raw_href: &str, rewrite_context: &impl RewriteContextV
         return format!("{canonical}{suffix}");
     }
 
-    if let Some(media_source_key) = extract_media_source_key(path_part) {
+    if let Some(media_source_key) = extract_media_lookup_key(path_part) {
         let canonical = rewrite_context
             .canonical_media_path_by_source_path()
             .get(&media_source_key)
@@ -239,18 +252,22 @@ fn normalize_preview_href(raw_href: &str, rewrite_context: &impl RewriteContextV
 }
 
 fn normalize_preview_src(raw_src: &str, rewrite_context: &impl RewriteContextView) -> String {
-    if raw_src.is_empty() || is_external_or_special_url(raw_src) {
+    if raw_src.is_empty() {
         return raw_src.to_string();
     }
 
     let (path_part, suffix) = split_path_suffix(raw_src.trim());
-    if let Some(media_source_key) = extract_media_source_key(path_part) {
+    if let Some(media_source_key) = extract_media_lookup_key(path_part) {
         let canonical = rewrite_context
             .canonical_media_path_by_source_path()
             .get(&media_source_key)
             .cloned()
             .unwrap_or_else(|| format!("/{media_source_key}"));
         return format!("{canonical}{suffix}");
+    }
+
+    if is_external_or_special_url(raw_src) {
+        return raw_src.to_string();
     }
 
     raw_src.to_string()
@@ -316,7 +333,15 @@ fn extract_post_slug(path: &str) -> Option<String> {
     }
 }
 
-fn extract_media_source_key(path: &str) -> Option<String> {
+fn extract_media_lookup_key(path: &str) -> Option<String> {
+    if let Some(media_id) = path.trim().strip_prefix("bds-media://") {
+        let media_id = media_id.trim();
+        if media_id.is_empty() {
+            return None;
+        }
+        return Some(format!("bds-media://{media_id}"));
+    }
+
     let trimmed = path.trim_start_matches('/');
     let segments: Vec<_> = trimmed.split('/').collect();
     match segments.as_slice() {
@@ -332,4 +357,43 @@ fn trim_html_suffix(value: &str) -> String {
         .trim_end_matches(".html")
         .trim_end_matches(".htm")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rewrite_rendered_html_urls, RewriteContextView};
+    use std::collections::HashMap;
+
+    struct TestRewriteContext {
+        canonical_post_path_by_slug: HashMap<String, String>,
+        canonical_media_path_by_source_path: HashMap<String, String>,
+    }
+
+    impl RewriteContextView for TestRewriteContext {
+        fn canonical_post_path_by_slug(&self) -> &HashMap<String, String> {
+            &self.canonical_post_path_by_slug
+        }
+
+        fn canonical_media_path_by_source_path(&self) -> &HashMap<String, String> {
+            &self.canonical_media_path_by_source_path
+        }
+    }
+
+    #[test]
+    fn rewrites_bds_media_image_src_to_canonical_media_path() {
+        let context = TestRewriteContext {
+            canonical_post_path_by_slug: HashMap::new(),
+            canonical_media_path_by_source_path: HashMap::from([(
+                "bds-media://media-1".to_string(),
+                "/media/2026/04/media-1.png".to_string(),
+            )]),
+        };
+
+        let html = rewrite_rendered_html_urls(
+            "<p><img src=\"bds-media://media-1\" alt=\"\" /></p>",
+            &context,
+        );
+
+        assert!(html.contains("src=\"/media/2026/04/media-1.png\""));
+    }
 }
