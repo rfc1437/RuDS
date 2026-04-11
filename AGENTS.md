@@ -3,7 +3,7 @@
 This is the Rust rewrite of an existing project bDS written in Typescript and living in ../bDS - if
 in doubt about behaviour, look at the original code to verify.
 
-This project has an allium spec in the folder spec/ - use it to verify behaviour against expected behaviour. It is based on the typescript implementation. The command line utility is installed.
+This project has an allium spec in the folder specs/ - use it to verify behaviour against expected behaviour. It is based on the typescript implementation. The command line utility is installed.
 
 Invariants and behaviours in the allium spec should be covered by unit tests of the application code, to make sure the spec is followed.
 
