@@ -57,6 +57,41 @@ fn markdown_filter_rewrites_post_and_media_urls() {
 }
 
 #[test]
+fn markdown_filter_expands_builtin_macros_from_runtime_context() {
+    let template = "{{ body | markdown: post.id, post_data_json_by_id, canonical_post_path_by_slug, canonical_media_path_by_source_path, language, language_prefix }}";
+    let partials = HashMap::new();
+    let context = serde_json::json!({
+        "body": "[[gallery images=post.linked_media columns=2]]\n\n[[youtube id=dQw4w9WgXcQ]]\n\n[[vimeo id=123456]]\n\n[[photo_archive media=post.linked_media]]\n\n[[tag_cloud tags=post_tags]]",
+        "post": {
+            "id": "post-1",
+            "linked_media": [
+                {"file_path": "/media/2026/04/one.jpg", "title": "One", "alt": "Image one"},
+                {"file_path": "/media/2026/04/two.jpg", "caption": "Two"}
+            ]
+        },
+        "post_data_json_by_id": {
+            "post-1": {"id": "post-1", "title": "Post 1"}
+        },
+        "post_tags": [
+            {"name": "Rust", "slug": "rust", "post_count": 4, "color": "#ff6600"},
+            {"name": "Iced", "slug": "iced", "post_count": 2}
+        ],
+        "tag_color_by_name": {"Iced": "#0088cc"},
+        "canonical_post_path_by_slug": {},
+        "canonical_media_path_by_source_path": {},
+        "language": "en",
+        "language_prefix": ""
+    });
+
+    let rendered = render_liquid_template(template, &partials, &context).unwrap();
+    assert!(rendered.contains("macro-gallery gallery-cols-2"));
+    assert!(rendered.contains("https://www.youtube.com/embed/dQw4w9WgXcQ"));
+    assert!(rendered.contains("https://player.vimeo.com/video/123456"));
+    assert!(rendered.contains("macro-photo-archive"));
+    assert!(rendered.contains("data-tag-cloud=\"true\""));
+}
+
+#[test]
 fn starter_single_post_template_renders_with_partials() {
     let template = include_str!("../../../assets/starter-templates/single-post.liquid");
     let partials = HashMap::from([

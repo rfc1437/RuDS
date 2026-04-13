@@ -13,6 +13,7 @@ pub mod script;
 pub mod script_rebuild;
 pub mod task;
 pub mod metadata_diff;
+pub mod site_assets;
 pub mod rebuild;
 pub mod search;
 pub mod calendar;

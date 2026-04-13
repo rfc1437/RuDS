@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::db::queries::project as q;
+use crate::engine::site_assets::copy_bundled_site_assets;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::Project;
 use crate::model::metadata::ProjectMetadata;
@@ -152,7 +153,7 @@ pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Op
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn create_directory_structure(data_dir: &Path) -> EngineResult<()> {
-    let subdirs = ["posts", "media", "meta", "thumbnails", "templates", "scripts"];
+    let subdirs = ["posts", "media", "meta", "thumbnails", "templates", "scripts", "assets"];
     for sub in &subdirs {
         fs::create_dir_all(data_dir.join(sub))?;
     }
@@ -200,6 +201,7 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
 
     // Starter templates — per project.allium StarterTemplatesCopied
     copy_starter_templates(data_dir)?;
+    copy_bundled_site_assets(data_dir)?;
 
     Ok(())
 }
@@ -274,6 +276,9 @@ mod tests {
         assert!(data_path.join("thumbnails").is_dir());
         assert!(data_path.join("templates").is_dir());
         assert!(data_path.join("scripts").is_dir());
+        assert!(data_path.join("assets").is_dir());
+        assert!(data_path.join("assets/pico.min.css").is_file());
+        assert!(data_path.join("assets/tag-cloud.js").is_file());
 
         // Verify meta files
         let project_json: serde_json::Value =

@@ -94,6 +94,8 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(report.written_paths.contains(&"feed.xml".to_string()));
     assert!(report.written_paths.contains(&"atom.xml".to_string()));
     assert!(report.written_paths.contains(&"sitemap.xml".to_string()));
+    assert!(report.written_paths.contains(&"assets/pico.min.css".to_string()));
+    assert!(report.written_paths.contains(&"assets/tag-cloud.js".to_string()));
     assert!(report.written_paths.contains(&"2024/03/09/hello/index.html".to_string()));
     assert!(report.written_paths.contains(&"2024/03/10/next/index.html".to_string()));
 
@@ -102,6 +104,8 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(dir.path().join("feed.xml").exists());
     assert!(dir.path().join("atom.xml").exists());
     assert!(dir.path().join("sitemap.xml").exists());
+    assert!(dir.path().join("assets/pico.min.css").exists());
+    assert!(dir.path().join("assets/tag-cloud.js").exists());
     assert!(dir.path().join("2024/03/09/hello/index.html").exists());
 
     let rss = std::fs::read_to_string(dir.path().join("rss.xml")).unwrap();
@@ -110,6 +114,34 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
 
     let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
     assert!(sitemap.contains("https://example.com/2024/03/09/hello"));
+    assert!(sitemap.contains("https://example.com/category/article"));
+}
+
+#[test]
+fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.main_language = Some("de".into());
+    metadata.blog_languages = vec!["de".into(), "en".into()];
+    let posts = vec![PublishedPostSource {
+        post: make_post("hallo", 1_710_000_000_000),
+        body_markdown: "Hallo Welt".into(),
+    }];
+
+    let report = generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "de").unwrap();
+
+    assert!(report.written_paths.contains(&"en/atom.xml".to_string()));
+    assert!(report.written_paths.contains(&"en/sitemap.xml".to_string()));
+
+    let atom = std::fs::read_to_string(dir.path().join("en/atom.xml")).unwrap();
+    assert!(atom.contains("<link href=\"https://example.com/en/\" rel=\"alternate\" />") || atom.contains("<link href=\"https://example.com/en\" rel=\"alternate\" />"));
+    assert!(atom.contains("<link href=\"https://example.com/en/atom.xml\" rel=\"self\" />"));
+
+    let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
+    assert!(sitemap.contains("hreflang=\"de\" href=\"https://example.com/\""));
+    assert!(sitemap.contains("hreflang=\"en\" href=\"https://example.com/en\""));
+    assert!(sitemap.contains("hreflang=\"x-default\" href=\"https://example.com/\""));
+    assert!(sitemap.contains("https://example.com/category/article"));
 }
 
 #[test]
@@ -129,6 +161,7 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
     assert!(second.skipped_paths.contains(&"calendar.json".to_string()));
     assert!(second.skipped_paths.contains(&"rss.xml".to_string()));
     assert!(second.skipped_paths.contains(&"feed.xml".to_string()));
+    assert!(second.skipped_paths.contains(&"assets/pico.min.css".to_string()));
 }
 
 #[test]

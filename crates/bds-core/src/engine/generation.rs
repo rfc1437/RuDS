@@ -7,6 +7,7 @@ use pagefind::options::PagefindServiceConfig;
 use rusqlite::Connection;
 
 use crate::db::queries;
+use crate::engine::site_assets::write_bundled_site_assets;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, ProjectMetadata};
 use crate::render::{
@@ -33,7 +34,7 @@ pub fn generate_starter_site(
     project_id: &str,
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
-    language: &str,
+    _language: &str,
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
     let input_posts = posts
@@ -46,6 +47,8 @@ pub fn generate_starter_site(
     for page in &artifacts.pages {
         write_out(conn, output_dir, project_id, &page.relative_path, &page.html, &mut report)?;
     }
+
+    write_bundled_site_assets(conn, output_dir, project_id, &mut report)?;
 
     write_out(
         conn,
@@ -69,7 +72,14 @@ pub fn generate_starter_site(
         }
         write_out(conn, output_dir, project_id, &format!("{prefix}feed.xml"), &rss, &mut report)?;
         write_out(conn, output_dir, project_id, &format!("{prefix}atom.xml"), &build_atom_xml(metadata, &localized_posts, &render_language), &mut report)?;
-        write_out(conn, output_dir, project_id, &format!("{prefix}sitemap.xml"), &build_sitemap_xml(metadata, &localized_posts, &render_language), &mut report)?;
+        write_out(
+            conn,
+            output_dir,
+            project_id,
+            &format!("{prefix}sitemap.xml"),
+            &build_sitemap_xml(metadata, &artifacts.pages, &localized_posts, &render_language),
+            &mut report,
+        )?;
     }
 
     write_pagefind_indexes(conn, output_dir, project_id, &artifacts.pagefind_documents, &mut report)?;
@@ -259,6 +269,8 @@ fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lang
 
 fn build_atom_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {
     let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+    let main_language = metadata.main_language.as_deref().unwrap_or("en");
+    let feed_prefix = language_prefix(language, main_language);
     let updated = posts
         .iter()
         .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
@@ -270,8 +282,8 @@ fn build_atom_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lan
         format!("  <title>{}</title>", escape_xml(&metadata.name)),
         format!("  <subtitle>{}</subtitle>", escape_xml(metadata.description.as_deref().unwrap_or(""))),
         format!("  <id>{base_url}/</id>"),
-        format!("  <link href=\"{base_url}/\" rel=\"alternate\" />"),
-        format!("  <link href=\"{base_url}/atom.xml\" rel=\"self\" />"),
+        format!("  <link href=\"{base_url}{feed_prefix}/\" rel=\"alternate\" />"),
+        format!("  <link href=\"{base_url}{feed_prefix}/atom.xml\" rel=\"self\" />"),
         format!("  <updated>{}</updated>", updated.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
     ];
 
@@ -303,41 +315,123 @@ fn build_atom_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lan
     xml.join("\n")
 }
 
-fn build_sitemap_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {
+fn build_sitemap_xml(
+    metadata: &ProjectMetadata,
+    pages: &[crate::render::SitePage],
+    posts: &[PublishedPostSource],
+    language: &str,
+) -> String {
     let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+    let main_language = metadata.main_language.as_deref().unwrap_or("en");
+    let languages = render_languages(metadata);
     let index_lastmod = posts
         .iter()
         .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
         .max()
         .unwrap_or_else(Utc::now)
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let post_lastmod_by_path = posts
+        .iter()
+        .filter_map(|source| {
+            timestamp(source.post.published_at.unwrap_or(source.post.created_at)).map(|lastmod| {
+                (
+                    build_canonical_post_path(&source.post, language, main_language),
+                    lastmod.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
+    let page_groups = group_pages_by_logical_path(pages, &languages, main_language);
 
     let mut xml = vec![
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
         "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">".to_string(),
-        "  <url>".to_string(),
-        format!("    <loc>{base_url}/</loc>"),
-        format!("    <lastmod>{index_lastmod}</lastmod>"),
-        "    <changefreq>daily</changefreq>".to_string(),
-        "    <priority>1.0</priority>".to_string(),
-        "  </url>".to_string(),
     ];
 
-    for source in posts {
-        let url = format!("{base_url}{}", build_canonical_post_path(&source.post, language, metadata.main_language.as_deref().unwrap_or("en")));
-        let lastmod = timestamp(source.post.published_at.unwrap_or(source.post.created_at))
-            .unwrap_or_else(Utc::now)
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    for page in pages.iter().filter(|page| page.language == language) {
+        let url = format!("{base_url}{}", page.url_path);
+        let logical_key = logical_page_key(&page.relative_path, &languages, main_language);
+        let alternates = page_groups.get(&logical_key);
+        let lastmod = post_lastmod_by_path
+            .get(&page.url_path)
+            .cloned()
+            .unwrap_or_else(|| index_lastmod.clone());
+        let is_home = page.url_path == language_root_url_path(language, main_language);
         xml.push("  <url>".to_string());
         xml.push(format!("    <loc>{url}</loc>"));
         xml.push(format!("    <lastmod>{lastmod}</lastmod>"));
-        xml.push("    <changefreq>weekly</changefreq>".to_string());
-        xml.push("    <priority>0.8</priority>".to_string());
+        xml.push(format!(
+            "    <changefreq>{}</changefreq>",
+            if is_home { "daily" } else { "weekly" }
+        ));
+        xml.push(format!(
+            "    <priority>{}</priority>",
+            if is_home { "1.0" } else { "0.8" }
+        ));
+        if let Some(alternates) = alternates {
+            for alternate in alternates {
+                xml.push(format!(
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{base_url}{}\" />",
+                    escape_xml(&alternate.language),
+                    alternate.url_path,
+                ));
+            }
+            if let Some(default_page) = alternates.iter().find(|alternate| alternate.language == main_language) {
+                xml.push(format!(
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{base_url}{}\" />",
+                    default_page.url_path,
+                ));
+            }
+        }
         xml.push("  </url>".to_string());
     }
 
     xml.push("</urlset>".to_string());
     xml.join("\n")
+}
+
+fn language_prefix(language: &str, main_language: &str) -> String {
+    if language.eq_ignore_ascii_case(main_language) {
+        String::new()
+    } else {
+        format!("/{language}")
+    }
+}
+
+fn language_root_url_path(language: &str, main_language: &str) -> String {
+    let prefix = language_prefix(language, main_language);
+    if prefix.is_empty() {
+        "/".to_string()
+    } else {
+        format!("{prefix}/")
+    }
+}
+
+fn group_pages_by_logical_path<'a>(
+    pages: &'a [crate::render::SitePage],
+    languages: &[String],
+    main_language: &str,
+) -> HashMap<String, Vec<&'a crate::render::SitePage>> {
+    let mut grouped = HashMap::<String, Vec<&crate::render::SitePage>>::new();
+    for page in pages {
+        let key = logical_page_key(&page.relative_path, languages, main_language);
+        grouped.entry(key).or_default().push(page);
+    }
+    grouped
+}
+
+fn logical_page_key(relative_path: &str, languages: &[String], main_language: &str) -> String {
+    let mut parts = relative_path.split('/');
+    let Some(first) = parts.next() else {
+        return relative_path.to_string();
+    };
+    if first.eq_ignore_ascii_case(main_language) {
+        return parts.collect::<Vec<_>>().join("/");
+    }
+    if languages.iter().any(|language| language.eq_ignore_ascii_case(first) && !language.eq_ignore_ascii_case(main_language)) {
+        return parts.collect::<Vec<_>>().join("/");
+    }
+    relative_path.to_string()
 }
 
 fn timestamp(timestamp_ms: i64) -> Option<DateTime<Utc>> {

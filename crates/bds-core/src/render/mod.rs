@@ -1,4 +1,5 @@
 mod markdown;
+mod macros;
 mod generation;
 mod page_renderer;
 mod routes;

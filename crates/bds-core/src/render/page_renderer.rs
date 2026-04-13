@@ -6,10 +6,13 @@ use liquid_core::{
     Display_filter, Expression, Filter, FilterParameters, FilterReflection,
     FromFilterParameters, ParseFilter, Runtime, Value, ValueView,
 };
+use liquid_core::model::ScalarCow;
 use serde::Serialize;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use thiserror::Error;
 
 use crate::i18n::translate_render;
+use crate::render::macros::{MacroRenderContext, expand_builtin_macros};
 use crate::render::render_markdown_to_html;
 
 #[derive(Debug, Error)]
@@ -123,10 +126,68 @@ impl Filter for MarkdownFilter {
                 .map(value_to_string_map)
                 .unwrap_or_default(),
         };
+        let macro_context = MacroRenderContext {
+            roots: collect_macro_roots(runtime),
+            post_id: runtime
+                .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
+                .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string())),
+        };
 
-        let rendered = render_markdown_to_html(markdown.as_str());
+        let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
+        let rendered = render_markdown_to_html(&expanded);
         Ok(Value::scalar(rewrite_rendered_html_urls(&rendered, &rewrite_context)))
     }
+}
+
+fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {
+    let mut roots = JsonMap::new();
+
+    for key in ["post", "post_tags", "tag_color_by_name", "project", "Tags"] {
+        if let Some(value) = runtime.try_get(&[ScalarCow::new(key)]) {
+            roots.insert(key.to_string(), liquid_value_to_json(value.as_view()));
+        }
+    }
+
+    if !roots.contains_key("Tags") {
+        if let Some(tags) = roots.get("post_tags").cloned() {
+            roots.insert("Tags".to_string(), tags);
+        }
+    }
+
+    roots
+}
+
+fn liquid_value_to_json(value: &dyn ValueView) -> JsonValue {
+    if value.is_nil() {
+        return JsonValue::Null;
+    }
+
+    if let Some(scalar) = value.as_scalar() {
+        if let Some(boolean) = scalar.to_bool() {
+            return JsonValue::Bool(boolean);
+        }
+        if let Some(integer) = scalar.to_integer() {
+            return JsonValue::from(integer);
+        }
+        if let Some(float) = scalar.to_float() {
+            return JsonValue::from(float);
+        }
+        return JsonValue::String(scalar.to_kstr().to_string());
+    }
+
+    if let Some(array) = value.as_array() {
+        return JsonValue::Array(array.values().map(liquid_value_to_json).collect());
+    }
+
+    if let Some(object) = value.as_object() {
+        let mapped = object
+            .iter()
+            .map(|(key, value)| (key.to_string(), liquid_value_to_json(value)))
+            .collect();
+        return JsonValue::Object(mapped);
+    }
+
+    JsonValue::String(value.to_kstr().to_string())
 }
 
 fn value_to_string_map(value: &impl ValueView) -> HashMap<String, String> {
