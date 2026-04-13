@@ -2,6 +2,8 @@ use std::path::Path;
 use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
+use pagefind::api::PagefindIndex;
+use pagefind::options::PagefindServiceConfig;
 use rusqlite::Connection;
 
 use crate::db::queries;
@@ -9,7 +11,7 @@ use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
-    render_markdown_to_html, render_starter_list_page_with_media_map, render_starter_single_post_page_with_media_map,
+    build_site_render_artifacts, render_markdown_to_html, write_generated_bytes,
     write_generated_file,
 };
 
@@ -34,31 +36,15 @@ pub fn generate_starter_site(
     language: &str,
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
-    let media_rewrite_map = build_media_rewrite_map(conn, project_id)?;
-
-    let list_input = posts
+    let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let index_page = render_starter_list_page_with_media_map(
-        &list_input,
-        metadata,
-        language,
-        media_rewrite_map.clone(),
-    )
+    let artifacts = build_site_render_artifacts(conn, output_dir.parent().unwrap_or(output_dir), project_id, metadata, &input_posts)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
-    write_out(conn, output_dir, project_id, &index_page.relative_path, &index_page.html, &mut report)?;
 
-    for source in posts {
-        let rendered = render_starter_single_post_page_with_media_map(
-            &source.post,
-            &source.body_markdown,
-            metadata,
-            language,
-            media_rewrite_map.clone(),
-        )
-            .map_err(|error| EngineError::Parse(error.to_string()))?;
-        write_out(conn, output_dir, project_id, &rendered.relative_path, &rendered.html, &mut report)?;
+    for page in &artifacts.pages {
+        write_out(conn, output_dir, project_id, &page.relative_path, &page.html, &mut report)?;
     }
 
     write_out(
@@ -70,11 +56,23 @@ pub fn generate_starter_site(
         &mut report,
     )?;
 
-    let rss = build_rss_xml(metadata, posts, language);
-    write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
-    write_out(conn, output_dir, project_id, "feed.xml", &rss, &mut report)?;
-    write_out(conn, output_dir, project_id, "atom.xml", &build_atom_xml(metadata, posts, language), &mut report)?;
-    write_out(conn, output_dir, project_id, "sitemap.xml", &build_sitemap_xml(metadata, posts, language), &mut report)?;
+    for render_language in render_languages(metadata) {
+        let localized_posts = localized_sources(conn, output_dir.parent().unwrap_or(output_dir), posts, &render_language, metadata)?;
+        let prefix = if render_language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
+            String::new()
+        } else {
+            format!("{}/", render_language)
+        };
+        let rss = build_rss_xml(metadata, &localized_posts, &render_language);
+        if prefix.is_empty() {
+            write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
+        }
+        write_out(conn, output_dir, project_id, &format!("{prefix}feed.xml"), &rss, &mut report)?;
+        write_out(conn, output_dir, project_id, &format!("{prefix}atom.xml"), &build_atom_xml(metadata, &localized_posts, &render_language), &mut report)?;
+        write_out(conn, output_dir, project_id, &format!("{prefix}sitemap.xml"), &build_sitemap_xml(metadata, &localized_posts, &render_language), &mut report)?;
+    }
+
+    write_pagefind_indexes(conn, output_dir, project_id, &artifacts.pagefind_documents, &mut report)?;
 
     Ok(report)
 }
@@ -116,6 +114,99 @@ fn write_out(
         GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative_path.to_string()),
     }
     Ok(())
+}
+
+fn write_pagefind_indexes(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    documents: &[crate::render::PagefindDocument],
+    report: &mut GenerationReport,
+) -> EngineResult<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(EngineError::Io)?;
+
+    let grouped = documents.iter().fold(HashMap::<String, Vec<&crate::render::PagefindDocument>>::new(), |mut acc, doc| {
+        acc.entry(doc.language.clone()).or_default().push(doc);
+        acc
+    });
+
+    for (language, docs) in grouped {
+        let config = PagefindServiceConfig::builder()
+            .keep_index_url(true)
+            .force_language(language.clone())
+            .build();
+        let mut index = PagefindIndex::new(Some(config))
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
+        runtime.block_on(async {
+            for doc in docs {
+                index
+                    .add_html_file(Some(doc.relative_path.clone()), None, doc.html.clone())
+                    .await
+                    .map_err(|error| EngineError::Parse(error.to_string()))?;
+            }
+            let files = index.get_files().await.map_err(|error| EngineError::Parse(error.to_string()))?;
+            for file in files {
+                let relative = file.filename.to_string_lossy().trim_start_matches('/').to_string();
+                match write_generated_bytes(conn, output_dir, project_id, &relative, &file.contents)
+                    .map_err(|error| EngineError::Parse(error.to_string()))?
+                {
+                    GeneratedWriteOutcome::Written => report.written_paths.push(relative),
+                    GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative),
+                }
+            }
+            Ok::<(), EngineError>(())
+        })?;
+    }
+
+    Ok(())
+}
+
+fn render_languages(metadata: &ProjectMetadata) -> Vec<String> {
+    let main = metadata.main_language.clone().unwrap_or_else(|| "en".to_string());
+    let mut languages = vec![main.clone()];
+    for language in &metadata.blog_languages {
+        if !languages.iter().any(|existing| existing.eq_ignore_ascii_case(language)) {
+            languages.push(language.clone());
+        }
+    }
+    languages
+}
+
+fn localized_sources(
+    conn: &Connection,
+    data_dir: &Path,
+    posts: &[PublishedPostSource],
+    language: &str,
+    metadata: &ProjectMetadata,
+) -> EngineResult<Vec<PublishedPostSource>> {
+    let main_language = metadata.main_language.as_deref().unwrap_or("en");
+    let mut localized = Vec::new();
+    for source in posts {
+        if language.eq_ignore_ascii_case(main_language) {
+            localized.push(source.clone());
+            continue;
+        }
+        if let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(conn, &source.post.id, language) {
+            let raw = std::fs::read_to_string(data_dir.join(translation.file_path.trim_start_matches('/')))
+                .map_err(EngineError::Io)?;
+            let (_, body) = crate::util::frontmatter::read_translation_file(&raw)
+                .map_err(EngineError::Parse)?;
+            let mut translated_post = source.post.clone();
+            translated_post.title = translation.title.clone();
+            translated_post.excerpt = translation.excerpt.clone();
+            translated_post.language = Some(translation.language.clone());
+            translated_post.file_path = translation.file_path.clone();
+            translated_post.published_at = translation.published_at.or(source.post.published_at);
+            localized.push(PublishedPostSource {
+                post: translated_post,
+                body_markdown: body,
+            });
+        }
+    }
+    Ok(localized)
 }
 
 fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {

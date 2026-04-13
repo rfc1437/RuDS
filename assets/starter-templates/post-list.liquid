@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="{{ language }}" data-language-prefix="{{ language_prefix }}"{% if html_theme_attribute %} {{ html_theme_attribute }}{% endif %}>
-  {% render 'partials/head', page_title: page_title, pico_stylesheet_href: pico_stylesheet_href, language_prefix: language_prefix %}
+  {% render 'partials/head', page_title: page_title, pico_stylesheet_href: pico_stylesheet_href, language_prefix: language_prefix, alternate_links: alternate_links %}
   <body>
     <main>
       {% render 'partials/language-switcher', blog_languages: blog_languages, language: language %}

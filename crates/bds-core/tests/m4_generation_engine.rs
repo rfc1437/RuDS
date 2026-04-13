@@ -1,6 +1,7 @@
 use bds_core::db::queries::project::insert_project;
 use bds_core::db::Database;
 use bds_core::engine::generation::{PublishedPostSource, generate_starter_site};
+use bds_core::engine::validate_site::validate_site;
 use bds_core::model::{Post, PostStatus, Project, ProjectMetadata};
 use tempfile::TempDir;
 
@@ -64,7 +65,10 @@ fn setup() -> (Database, TempDir) {
     let mut db = Database::open_in_memory().unwrap();
     db.migrate().unwrap();
     insert_project(db.conn(), &make_project()).unwrap();
-    (db, TempDir::new().unwrap())
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+    bds_core::engine::meta::write_project_json(dir.path(), &make_metadata()).unwrap();
+    (db, dir)
 }
 
 #[test]
@@ -125,4 +129,26 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
     assert!(second.skipped_paths.contains(&"calendar.json".to_string()));
     assert!(second.skipped_paths.contains(&"rss.xml".to_string()));
     assert!(second.skipped_paths.contains(&"feed.xml".to_string()));
+}
+
+#[test]
+fn site_validation_detects_stale_and_missing_outputs() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let post = make_post("hello", 1_710_000_000_000);
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let posts = vec![PublishedPostSource {
+        post,
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    std::fs::write(dir.path().join("index.html"), "tampered").unwrap();
+    std::fs::remove_file(dir.path().join("feed.xml")).unwrap();
+
+    let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert!(report.stale_pages.contains(&"index.html".to_string()));
+    assert!(report.missing_pages.contains(&"feed.xml".to_string()));
+    assert!(report.extra_pages.is_empty());
 }

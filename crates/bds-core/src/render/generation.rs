@@ -56,6 +56,39 @@ pub fn write_generated_file(
     Ok(GeneratedWriteOutcome::Written)
 }
 
+pub fn write_generated_bytes(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &[u8],
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    let hash = content_hash(content);
+    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path) {
+        if existing.content_hash == hash {
+            return Ok(GeneratedWriteOutcome::SkippedUnchanged);
+        }
+    }
+
+    let target_path = output_dir.join(relative_path);
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    crate::util::atomic_write(&target_path, content)?;
+
+    qhash::upsert_generated_file_hash(
+        conn,
+        &GeneratedFileHash {
+            project_id: project_id.to_string(),
+            relative_path: relative_path.to_string(),
+            content_hash: hash,
+            updated_at: now_unix_ms(),
+        },
+    )?;
+
+    Ok(GeneratedWriteOutcome::Written)
+}
+
 pub fn build_core_generation_paths(main_language: &str, blog_languages: &[String]) -> Vec<String> {
     let mut paths = vec![
         "index.html".to_string(),

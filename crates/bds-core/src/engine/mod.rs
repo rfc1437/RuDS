@@ -18,6 +18,7 @@ pub mod search;
 pub mod calendar;
 pub mod generation;
 pub mod preview;
+pub mod validate_site;
 pub mod validate_translations;
 pub mod validate_media;
 pub mod validate_content;

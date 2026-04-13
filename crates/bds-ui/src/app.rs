@@ -3330,7 +3330,20 @@ impl BdsApp {
             MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
             MenuAction::ValidateSite => {
                 self.open_singleton_tab(TabType::SiteValidation, "tabBar.siteValidation");
-                Task::none()
+                self.spawn_engine_task(
+                    "tabBar.siteValidation",
+                    |db_path, project_id, data_dir, _tm, _tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let report = engine::validate_site::validate_site(db.conn(), &data_dir, &project_id)
+                            .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "missing={}, extra={}, stale={}",
+                            report.missing_pages.len(),
+                            report.extra_pages.len(),
+                            report.stale_pages.len(),
+                        ))
+                    },
+                )
             }
             MenuAction::UploadSite => {
                 if self.offline_mode {
