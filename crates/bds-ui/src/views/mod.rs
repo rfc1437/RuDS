@@ -15,3 +15,4 @@ pub mod script_editor;
 pub mod tags_view;
 pub mod settings_view;
 pub mod dashboard;
+pub mod site_validation;

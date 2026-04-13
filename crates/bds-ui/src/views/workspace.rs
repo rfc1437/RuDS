@@ -20,6 +20,7 @@ use crate::views::{
     modal, panel,
     post_editor::{self, PostEditorState},
     project_selector,
+    site_validation::{self, SiteValidationState},
     script_editor::{self, ScriptEditorState},
     settings_view::{self, SettingsViewState},
     sidebar, status_bar, tab_bar,
@@ -110,6 +111,7 @@ pub fn view<'a>(
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
+    site_validation_state: &'a SiteValidationState,
 ) -> Element<'a, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
@@ -131,6 +133,7 @@ pub fn view<'a>(
         tags_view_state,
         settings_state,
         dashboard_state,
+        site_validation_state,
     );
 
     // Right column: tab bar + content + panel
@@ -353,6 +356,7 @@ fn route_content_area<'a>(
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
+    site_validation_state: &'a SiteValidationState,
 ) -> Element<'a, Message> {
     match route_kind(
         tabs,
@@ -364,6 +368,7 @@ fn route_content_area<'a>(
         tags_view_state,
         settings_state,
         dashboard_state,
+        site_validation_state,
     ) {
         ContentRoute::Dashboard(state) => crate::views::dashboard::view(state, locale),
         ContentRoute::Welcome => welcome::view(locale),
@@ -411,6 +416,7 @@ fn route_content_area<'a>(
                 loading_view(locale)
             }
         }
+        ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
         ContentRoute::Placeholder(title) => welcome::tab_placeholder(title, None),
     }
 }
@@ -426,6 +432,7 @@ enum ContentRoute<'a> {
     Scripts(&'a str),
     Tags,
     Settings,
+    SiteValidation,
     Placeholder(&'a str),
 }
 
@@ -439,6 +446,7 @@ fn route_kind<'a>(
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
+    _site_validation_state: &'a SiteValidationState,
 ) -> ContentRoute<'a> {
     let Some(tab_id) = active_tab else {
         return dashboard_state.map(ContentRoute::Dashboard).unwrap_or(ContentRoute::Welcome);
@@ -466,6 +474,7 @@ fn route_kind<'a>(
         TabType::Settings => {
             if settings_state.is_some() { ContentRoute::Settings } else { ContentRoute::Loading }
         }
+        TabType::SiteValidation => ContentRoute::SiteValidation,
         TabType::Style
         | TabType::Chat
         | TabType::Import
@@ -474,7 +483,6 @@ fn route_kind<'a>(
         | TabType::GitDiff
         | TabType::Documentation
         | TabType::ApiDocumentation
-        | TabType::SiteValidation
         | TabType::TranslationValidation
         | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
     }
@@ -501,6 +509,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
         let unsupported = [
             TabType::Style,
             TabType::Chat,
@@ -510,7 +519,6 @@ mod tests {
             TabType::GitDiff,
             TabType::Documentation,
             TabType::ApiDocumentation,
-            TabType::SiteValidation,
             TabType::TranslationValidation,
             TabType::FindDuplicates,
         ];
@@ -527,6 +535,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &site_validation_state,
             );
             match route {
                 ContentRoute::Placeholder(title) => assert_eq!(title, "Tool"),
@@ -542,6 +551,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
         let route = route_kind(
             &[],
             None,
@@ -552,10 +562,39 @@ mod tests {
             None,
             None,
             Some(&dashboard),
+            &site_validation_state,
         );
         match route {
             ContentRoute::Dashboard(state) => assert_eq!(state.subtitle, "Test Project"),
             _ => panic!("expected dashboard route"),
+        }
+    }
+
+    #[test]
+    fn site_validation_tab_routes_to_real_view() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
+        let tabs = vec![tab("site_validation", TabType::SiteValidation, "Validation")];
+
+        let route = route_kind(
+            &tabs,
+            Some("site_validation"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            None,
+            None,
+            None,
+            &site_validation_state,
+        );
+
+        match route {
+            ContentRoute::SiteValidation => {}
+            _ => panic!("expected site validation route"),
         }
     }
 }

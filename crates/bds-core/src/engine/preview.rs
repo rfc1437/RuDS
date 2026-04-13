@@ -59,9 +59,11 @@ struct PreviewServerState {
 #[derive(Debug, Deserialize, Default)]
 struct DraftPreviewQuery {
     language: Option<String>,
+    theme: Option<String>,
+    mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 struct StylePreviewQuery {
     theme: Option<String>,
     mode: Option<String>,
@@ -115,9 +117,10 @@ pub fn start_preview_server(
 
 async fn handle_preview_request(
     State(state): State<PreviewServerState>,
+    Query(query): Query<StylePreviewQuery>,
     uri: Uri,
 ) -> Response {
-    match render_preview_response(&state, uri.path(), None) {
+    match render_preview_response(&state, uri.path(), None, Some(&query)) {
         Ok(response) => response,
         Err(error) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
@@ -128,7 +131,11 @@ async fn handle_draft_preview(
     AxumPath(post_id): AxumPath<String>,
     Query(query): Query<DraftPreviewQuery>,
 ) -> Response {
-    match render_preview_response(&state, &format!("/__draft/{post_id}"), query.language.as_deref()) {
+    let style = StylePreviewQuery {
+        theme: query.theme.clone(),
+        mode: query.mode.clone(),
+    };
+    match render_preview_response(&state, &format!("/__draft/{post_id}"), query.language.as_deref(), Some(&style)) {
         Ok(response) => response,
         Err(error) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
@@ -153,9 +160,10 @@ fn render_preview_response(
     state: &PreviewServerState,
     path: &str,
     requested_language: Option<&str>,
+    style: Option<&StylePreviewQuery>,
 ) -> EngineResult<Response> {
     if let Some(post_id) = path.strip_prefix("/__draft/") {
-        let html = render_draft_preview(state, post_id, requested_language)?;
+        let html = apply_preview_style(render_draft_preview(state, post_id, requested_language)?, style);
         return Ok(Html(html).into_response());
     }
 
@@ -173,7 +181,53 @@ fn render_preview_response(
     let response = build_preview_response(db.conn(), &state.data_dir, &state.project_id, &metadata, &input_posts, path)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
     let status = StatusCode::from_u16(response.status_code).unwrap_or(StatusCode::OK);
-    Ok((status, Html(response.html)).into_response())
+    Ok((status, Html(apply_preview_style(response.html, style))).into_response())
+}
+
+fn apply_preview_style(html: String, style: Option<&StylePreviewQuery>) -> String {
+    let Some(style) = style else {
+        return html;
+    };
+    if style.theme.as_deref().unwrap_or("").is_empty() && style.mode.as_deref().unwrap_or("").is_empty() {
+        return html;
+    }
+
+    let Some(start) = html.find("<html") else {
+        return html;
+    };
+    let Some(end_rel) = html[start..].find('>') else {
+        return html;
+    };
+    let end = start + end_rel;
+
+    let mut attrs = String::new();
+    if let Some(theme) = style.theme.as_deref().filter(|value| !value.is_empty()) {
+        attrs.push_str(" data-theme=\"");
+        attrs.push_str(&escape_html_attr(theme));
+        attrs.push('"');
+    }
+    if let Some(mode) = style.mode.as_deref().filter(|value| !value.is_empty()) {
+        attrs.push_str(" data-mode=\"");
+        attrs.push_str(&escape_html_attr(mode));
+        attrs.push('"');
+    }
+    if attrs.is_empty() {
+        return html;
+    }
+
+    let mut styled = String::with_capacity(html.len() + attrs.len());
+    styled.push_str(&html[..end]);
+    styled.push_str(&attrs);
+    styled.push_str(&html[end..]);
+    styled
+}
+
+fn escape_html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn render_draft_preview(
@@ -578,5 +632,31 @@ mod tests {
         assert!(body.contains("Style Preview"));
         assert!(body.contains("nightfall"));
         assert!(body.contains("dark"));
+    }
+
+    #[test]
+    fn preview_server_applies_theme_query_to_rendered_pages() {
+        let _guard = preview_port_guard().lock().unwrap();
+        let (dir, _db) = setup_preview_fixture();
+
+        let server = start_preview_server(
+            dir.path().join("bds.db"),
+            dir.path().to_path_buf(),
+            "project-1".into(),
+        )
+        .unwrap();
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/?theme=nightfall&mode=dark"
+            ))
+            .send()
+            .unwrap();
+        let body = response.text().unwrap();
+        server.stop().unwrap();
+
+        assert!(body.contains("data-theme=\"nightfall\""));
+        assert!(body.contains("data-mode=\"dark\""));
     }
 }

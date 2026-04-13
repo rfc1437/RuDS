@@ -9,6 +9,7 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use crate::db::queries;
+use crate::engine::menu::{self, MenuItemKind};
 use crate::model::{CategorySettings, Media, Post, ProjectMetadata, Tag, Template, TemplateKind, TemplateStatus};
 use crate::render::{RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path, render_liquid_template, resolve_post_template};
 use crate::util::frontmatter::{read_template_file, read_translation_file};
@@ -100,6 +101,7 @@ pub fn build_site_render_artifacts(
         let localized_posts = load_language_posts(conn, data_dir, published_posts, &language, &main_language)?;
         let routes = build_language_routes(&localized_posts, metadata, &language, &tags);
         let post_data_json_by_id = build_post_data_json_by_id(&localized_posts);
+        let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
             .par_iter()
             .map(|route| {
@@ -109,6 +111,7 @@ pub fn build_site_render_artifacts(
                     &language,
                     &localized_posts,
                     &tags,
+                    &menu_items,
                     &post_data_json_by_id,
                     &bundle,
                 )
@@ -144,6 +147,7 @@ pub fn build_site_render_artifacts(
                 &category_settings,
                 &media_by_id,
                 &canonical_map,
+                &menu_items,
                 &post_data_json_by_id,
                 &bundle,
             )?;
@@ -186,7 +190,8 @@ pub fn build_preview_response(
 
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let language = language_from_path(&normalized, metadata);
-    let html = render_not_found_route(&bundle, metadata, &language, &normalized)?;
+    let menu_items = build_menu_items(data_dir, &language, main_language(metadata))?;
+    let html = render_not_found_route(&bundle, metadata, &language, &normalized, &menu_items)?;
     Ok(PreviewRenderResult {
         status_code: 404,
         html,
@@ -447,6 +452,7 @@ fn render_list_route(
     language: &str,
     posts: &[RenderPostRecord],
     tags: &[Tag],
+    menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
     bundle: &TemplateBundle,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
@@ -461,7 +467,7 @@ fn render_list_route(
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
         "blog_languages": build_list_blog_languages(metadata, language, &route.url_path),
         "alternate_links": build_alternate_list_links(metadata, &route.url_path),
-        "menu_items": Vec::<Value>::new(),
+        "menu_items": menu_items,
         "calendar_initial_year": route.posts.first().map(|post| calendar_initial_parts(&post.post).0).unwrap_or(1970),
         "calendar_initial_month": route.posts.first().map(|post| calendar_initial_parts(&post.post).1).unwrap_or(1),
         "archive_context": route.archive_context,
@@ -506,6 +512,7 @@ fn render_post_route(
     category_settings: &HashMap<String, CategorySettings>,
     media_by_id: &HashMap<String, Media>,
     canonical_post_path_by_slug: &HashMap<String, String>,
+    menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
     bundle: &TemplateBundle,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
@@ -553,7 +560,7 @@ fn render_post_route(
         "html_theme_attribute": serde_json::Value::Null,
         "alternate_links": build_alternate_post_links(&record.post, metadata),
         "blog_languages": build_post_blog_languages(&record.post, metadata, language),
-        "menu_items": Vec::<Value>::new(),
+        "menu_items": menu_items,
         "calendar_initial_year": calendar_initial_parts(&record.post).0,
         "calendar_initial_month": calendar_initial_parts(&record.post).1,
         "post": post_context(&record.post, &record.body_markdown, linked_media, outgoing_link_context, incoming_link_context),
@@ -588,6 +595,7 @@ fn render_not_found_route(
     metadata: &ProjectMetadata,
     language: &str,
     requested_path: &str,
+    menu_items: &[Value],
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let context = json!({
         "language": language,
@@ -597,7 +605,7 @@ fn render_not_found_route(
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
         "blog_languages": build_list_blog_languages(metadata, language, requested_path),
         "alternate_links": build_alternate_list_links(metadata, requested_path),
-        "menu_items": Vec::<Value>::new(),
+        "menu_items": menu_items,
         "calendar_initial_year": 1970,
         "calendar_initial_month": 1,
         "post": serde_json::Value::Null,
@@ -618,12 +626,74 @@ fn render_not_found_route(
         "prev_page_href": serde_json::Value::Null,
         "next_page_href": serde_json::Value::Null,
         "not_found_message": format!("No rendered page exists for {}", requested_path),
-        "not_found_back_label": "Back to home",
+        "not_found_back_label": serde_json::Value::Null,
         "canonical_post_path_by_slug": HashMap::<String, String>::new(),
         "canonical_media_path_by_source_path": HashMap::<String, String>::new(),
         "post_data_json_by_id": HashMap::<String, Value>::new(),
     });
     Ok(render_liquid_template(&bundle.not_found_template, &bundle.partials, &context)?)
+}
+
+fn build_menu_items(
+    data_dir: &Path,
+    language: &str,
+    main_language: &str,
+) -> Result<Vec<Value>, Box<dyn Error + Send + Sync>> {
+    let items = menu::read_menu(data_dir)?;
+    Ok(items
+        .iter()
+        .map(|item| menu_item_context(item, language, main_language))
+        .collect())
+}
+
+fn menu_item_context(item: &menu::MenuItem, language: &str, main_language: &str) -> Value {
+    let children = item
+        .children
+        .iter()
+        .map(|child| menu_item_context(child, language, main_language))
+        .collect::<Vec<_>>();
+    json!({
+        "title": item.label,
+        "href": menu_item_href(item, language, main_language),
+        "has_children": !children.is_empty(),
+        "children": children,
+    })
+}
+
+fn menu_item_href(item: &menu::MenuItem, language: &str, main_language: &str) -> String {
+    let prefix = language_prefix(language, main_language);
+    match item.kind {
+        MenuItemKind::Home => {
+            if prefix.is_empty() {
+                "/".to_string()
+            } else {
+                format!("{prefix}/")
+            }
+        }
+        MenuItemKind::Submenu => "#".to_string(),
+        MenuItemKind::Page => item
+            .slug
+            .as_deref()
+            .map(|slug| prefixed_slug_path(&prefix, slug))
+            .unwrap_or_else(|| "#".to_string()),
+        MenuItemKind::CategoryArchive => item
+            .slug
+            .as_deref()
+            .map(|slug| format!("{}/category/{}/", prefix_or_root(&prefix), slugify(slug)))
+            .unwrap_or_else(|| "#".to_string()),
+    }
+}
+
+fn prefixed_slug_path(prefix: &str, slug: &str) -> String {
+    format!("{}{}/", prefix_or_root(prefix), slug.trim_matches('/'))
+}
+
+fn prefix_or_root(prefix: &str) -> &str {
+    if prefix.is_empty() {
+        "/"
+    } else {
+        prefix
+    }
 }
 
 fn route_href(route: &RouteSpec, page: usize) -> String {

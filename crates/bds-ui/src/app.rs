@@ -30,6 +30,7 @@ use crate::views::{
     modal, workspace,
     post_editor::{LinkedMediaItem, PostEditorMsg, PostEditorState, ResolvedPostLink},
     media_editor::{LinkedPostItem, MediaEditorState, MediaEditorMsg},
+    site_validation::SiteValidationState,
     template_editor::{TemplateEditorState, TemplateEditorMsg},
     script_editor::{ScriptEditorState, ScriptEditorMsg},
     tags_view::{self, TagsMsg, TagsSection, TagsViewState},
@@ -135,7 +136,9 @@ pub enum Message {
     ValidateMedia,
     GenerateSite,
     RunMetadataDiff,
+    RunSiteValidation,
     EngineTaskDone { task_id: TaskId, label: String, result: Result<String, String> },
+    SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
 
     // Editor views
     PostEditor(PostEditorMsg),
@@ -555,8 +558,11 @@ mod tests {
     use bds_core::db::fts::ensure_fts_tables;
     use bds_core::db::queries::project::insert_project;
     use bds_core::db::Database;
-    use bds_core::engine::{media, post, script, template};
+    use bds_core::engine::{ai, media, post, script, template};
     use bds_core::model::{Project, ScriptKind, TemplateKind};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use tempfile::TempDir;
 
     fn make_project() -> Project {
@@ -607,6 +613,28 @@ mod tests {
         .unwrap();
         std::fs::write(tempdir.path().join("meta/category-meta.json"), "{}\n").unwrap();
         (db, project, tempdir)
+    }
+
+    fn spawn_models_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            if let Some(stream) = listener.incoming().next() {
+                let mut stream = stream.unwrap();
+                let mut buffer = [0_u8; 8192];
+                let size = stream.read(&mut buffer).unwrap();
+                let request = String::from_utf8_lossy(&buffer[..size]).to_string();
+                assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+                let body = r#"{"data":[{"id":"llama3.2","name":"Llama 3.2"}]}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        format!("http://{}", addr)
     }
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
@@ -799,6 +827,24 @@ mod tests {
             }
             PersistedPostState::Canonical(_) => panic!("expected translation save"),
         }
+    }
+
+    #[test]
+    fn save_ai_settings_allows_airplane_only_configuration() {
+        let (db, _project, _tmp) = setup();
+        let mut state = SettingsViewState::default();
+        state.airplane_endpoint_url = spawn_models_server();
+        state.airplane_endpoint_model = "llama3.2".to_string();
+        state.system_prompt = iced::widget::text_editor::Content::with_text("Use JSON only.");
+
+        BdsApp::save_ai_settings_state(&db, &mut state).unwrap();
+
+        let settings = ai::load_ai_settings(db.conn(), false).unwrap();
+        assert!(settings.online_endpoint.url.is_empty());
+        assert!(settings.online_endpoint.model.is_empty());
+        assert_eq!(settings.airplane_endpoint.url, state.airplane_endpoint_url);
+        assert_eq!(settings.airplane_endpoint.model, "llama3.2");
+        assert_eq!(settings.system_prompt.trim_end(), "Use JSON only.");
     }
 
     #[test]
@@ -1607,6 +1653,7 @@ pub struct BdsApp {
     tags_view_state: Option<TagsViewState>,
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
+    site_validation_state: SiteValidationState,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -1739,6 +1786,7 @@ impl BdsApp {
                 tags_view_state: None,
                 settings_state: None,
                 dashboard_state: None,
+                site_validation_state: SiteValidationState::default(),
             },
             init_task,
         )
@@ -1796,6 +1844,7 @@ impl BdsApp {
             tags_view_state: None,
             settings_state: None,
             dashboard_state: None,
+            site_validation_state: SiteValidationState::default(),
         }
     }
 
@@ -2301,6 +2350,7 @@ impl BdsApp {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 Task::none()
             }
+            Message::RunSiteValidation => self.start_site_validation(),
             Message::EngineTaskDone { task_id, label, result } => {
                 match &result {
                     Ok(detail) => {
@@ -2315,6 +2365,36 @@ impl BdsApp {
                 let sidebar_task = self.refresh_counts();
                 self.refresh_task_snapshots();
                 sidebar_task
+            }
+            Message::SiteValidationLoaded(result) => {
+                self.site_validation_state.is_running = false;
+                self.site_validation_state.has_run = true;
+                match result {
+                    Ok(report) => {
+                        self.site_validation_state.error_message = None;
+                        self.site_validation_state.missing_files = report.missing_pages;
+                        self.site_validation_state.extra_files = report.extra_pages;
+                        self.site_validation_state.stale_files = report.stale_pages;
+                        self.notify(
+                            ToastLevel::Success,
+                            &format!(
+                                "{}: missing={}, extra={}, stale={}",
+                                t(self.ui_locale, "tabBar.siteValidation"),
+                                self.site_validation_state.missing_files.len(),
+                                self.site_validation_state.extra_files.len(),
+                                self.site_validation_state.stale_files.len(),
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        self.site_validation_state.error_message = Some(error.clone());
+                        self.site_validation_state.missing_files.clear();
+                        self.site_validation_state.extra_files.clear();
+                        self.site_validation_state.stale_files.clear();
+                        self.notify(ToastLevel::Error, &error);
+                    }
+                }
+                Task::none()
             }
 
             // ── Toast ──
@@ -3232,6 +3312,7 @@ impl BdsApp {
             self.tags_view_state.as_ref(),
             self.settings_state.as_ref(),
             self.dashboard_state.as_ref(),
+            &self.site_validation_state,
         )
     }
 
@@ -3330,20 +3411,7 @@ impl BdsApp {
             MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
             MenuAction::ValidateSite => {
                 self.open_singleton_tab(TabType::SiteValidation, "tabBar.siteValidation");
-                self.spawn_engine_task(
-                    "tabBar.siteValidation",
-                    |db_path, project_id, data_dir, _tm, _tid| {
-                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::validate_site::validate_site(db.conn(), &data_dir, &project_id)
-                            .map_err(|e| e.to_string())?;
-                        Ok(format!(
-                            "missing={}, extra={}, stale={}",
-                            report.missing_pages.len(),
-                            report.extra_pages.len(),
-                            report.stale_pages.len(),
-                        ))
-                    },
-                )
+                self.start_site_validation()
             }
             MenuAction::UploadSite => {
                 if self.offline_mode {
@@ -3601,6 +3669,38 @@ impl BdsApp {
     fn notify(&mut self, level: ToastLevel, text: &str) {
         self.toasts.push(Toast::new(level, text.to_string()));
         self.add_output(text);
+    }
+
+    fn start_site_validation(&mut self) -> Task<Message> {
+        self.open_singleton_tab(TabType::SiteValidation, "tabBar.siteValidation");
+        let Some(_db) = self.db.as_ref() else {
+            self.site_validation_state.is_running = false;
+            self.site_validation_state.error_message = Some(t(self.ui_locale, "engine.generateSiteNoProject"));
+            return Task::none();
+        };
+        let Some(project_id) = self.active_project.as_ref().map(|project| project.id.clone()) else {
+            self.site_validation_state.is_running = false;
+            self.site_validation_state.error_message = Some(t(self.ui_locale, "engine.generateSiteNoProject"));
+            return Task::none();
+        };
+        let Some(data_dir) = self.data_dir.clone() else {
+            self.site_validation_state.is_running = false;
+            self.site_validation_state.error_message = Some(t(self.ui_locale, "engine.previewDataDirUnavailable"));
+            return Task::none();
+        };
+
+        self.site_validation_state.is_running = true;
+        self.site_validation_state.error_message = None;
+        let db_path = self.db_path.clone();
+
+        Task::perform(
+            async move {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                engine::validate_site::validate_site(db.conn(), &data_dir, &project_id)
+                    .map_err(|error| error.to_string())
+            },
+            Message::SiteValidationLoaded,
+        )
     }
 
     /// Spawn a blocking engine operation on a background thread via TaskManager.
@@ -6167,12 +6267,18 @@ impl BdsApp {
         db: &Database,
         state: &mut SettingsViewState,
     ) -> Result<(), String> {
-        let online_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Online)?;
-        let airplane_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Airplane)?;
-        ai::test_endpoint(&online_endpoint).map_err(|error| error.to_string())?;
-        ai::test_endpoint(&airplane_endpoint).map_err(|error| error.to_string())?;
-        ai::save_endpoint(db.conn(), &online_endpoint).map_err(|error| error.to_string())?;
-        ai::save_endpoint(db.conn(), &airplane_endpoint).map_err(|error| error.to_string())?;
+        if Self::endpoint_has_configuration(state, AiEndpointKind::Online) {
+            let online_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Online)?;
+            ai::test_endpoint(&online_endpoint).map_err(|error| error.to_string())?;
+            ai::save_endpoint(db.conn(), &online_endpoint).map_err(|error| error.to_string())?;
+            state.online_api_key_input.clear();
+            state.online_api_key_configured = true;
+        }
+        if Self::endpoint_has_configuration(state, AiEndpointKind::Airplane) {
+            let airplane_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Airplane)?;
+            ai::test_endpoint(&airplane_endpoint).map_err(|error| error.to_string())?;
+            ai::save_endpoint(db.conn(), &airplane_endpoint).map_err(|error| error.to_string())?;
+        }
         ai::save_model_preferences(
             db.conn(),
             (!state.default_model.trim().is_empty()).then_some(state.default_model.as_str()),
@@ -6181,9 +6287,25 @@ impl BdsApp {
             &state.system_prompt.text(),
         )
         .map_err(|error| error.to_string())?;
-        state.online_api_key_input.clear();
-        state.online_api_key_configured = true;
         Ok(())
+    }
+
+    fn endpoint_has_configuration(
+        state: &SettingsViewState,
+        kind: AiEndpointKind,
+    ) -> bool {
+        match kind {
+            AiEndpointKind::Online => {
+                !state.online_endpoint_url.trim().is_empty()
+                    || !state.online_endpoint_model.trim().is_empty()
+                    || !state.online_api_key_input.trim().is_empty()
+                    || state.online_api_key_configured
+            }
+            AiEndpointKind::Airplane => {
+                !state.airplane_endpoint_url.trim().is_empty()
+                    || !state.airplane_endpoint_model.trim().is_empty()
+            }
+        }
     }
 
     fn compose_ai_endpoint(
