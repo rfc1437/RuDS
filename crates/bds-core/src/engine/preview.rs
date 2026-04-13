@@ -760,4 +760,139 @@ mod tests {
         assert!(!featured_response.html.contains("<h2 class=\"post-title\""));
         assert!(!featured_response.html.contains("Featured Post"));
     }
+
+    #[test]
+    fn preview_renders_tag_archive_pagination_and_date_routes() {
+        let db = Database::open_in_memory().unwrap();
+        let mut metadata = make_metadata();
+        metadata.max_posts_per_page = 1;
+
+        let mut oldest = make_post();
+        oldest.post.id = "post-1".into();
+        oldest.post.slug = "alpha".into();
+        oldest.post.title = "Alpha".into();
+        oldest.post.tags = vec!["Rust".into()];
+        oldest.post.published_at = Some(1_709_568_000_000);
+        oldest.post.created_at = 1_709_568_000_000;
+        oldest.body_markdown = "Alpha body".into();
+
+        let mut newest = make_post();
+        newest.post.id = "post-2".into();
+        newest.post.slug = "beta".into();
+        newest.post.title = "Beta".into();
+        newest.post.tags = vec!["Rust".into()];
+        newest.post.published_at = Some(1_710_086_400_000);
+        newest.post.created_at = 1_710_086_400_000;
+        newest.body_markdown = "Beta body".into();
+
+        let mut april = make_post();
+        april.post.id = "post-3".into();
+        april.post.slug = "gamma".into();
+        april.post.title = "Gamma".into();
+        april.post.tags = vec!["Preview".into()];
+        april.post.published_at = Some(1_712_016_000_000);
+        april.post.created_at = 1_712_016_000_000;
+        april.body_markdown = "Gamma body".into();
+
+        let posts = vec![
+            (oldest.post.clone(), oldest.body_markdown.clone()),
+            (newest.post.clone(), newest.body_markdown.clone()),
+            (april.post.clone(), april.body_markdown.clone()),
+        ];
+
+        let tag_first = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/tag/rust",
+        )
+        .unwrap();
+        assert_eq!(tag_first.status_code, 200);
+        assert!(tag_first.html.contains("Beta body"));
+        assert!(!tag_first.html.contains("Alpha body"));
+
+        let tag_second = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/tag/rust/page/2",
+        )
+        .unwrap();
+        assert_eq!(tag_second.status_code, 200);
+        assert!(tag_second.html.contains("Alpha body"));
+        assert!(!tag_second.html.contains("Beta body"));
+
+        let year_archive = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/2024",
+        )
+        .unwrap();
+        assert_eq!(year_archive.status_code, 200);
+        assert!(year_archive.html.contains("Gamma body"));
+        assert!(!year_archive.html.contains("Beta body"));
+
+        let year_archive_page_two = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/2024/page/2",
+        )
+        .unwrap();
+        assert_eq!(year_archive_page_two.status_code, 200);
+        assert!(year_archive_page_two.html.contains("Beta body"));
+
+        let month_archive = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/2024/03",
+        )
+        .unwrap();
+        assert_eq!(month_archive.status_code, 200);
+        assert!(month_archive.html.contains("Beta body"));
+        assert!(!month_archive.html.contains("Alpha body"));
+        assert!(!month_archive.html.contains("Gamma body"));
+
+        let month_archive_page_two = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/2024/03/page/2",
+        )
+        .unwrap();
+        assert_eq!(month_archive_page_two.status_code, 200);
+        assert!(month_archive_page_two.html.contains("Alpha body"));
+        assert!(!month_archive_page_two.html.contains("Beta body"));
+    }
+
+    #[test]
+    fn preview_returns_not_found_template_for_unknown_routes() {
+        let db = Database::open_in_memory().unwrap();
+        let response = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &make_metadata(),
+            &[(make_post().post, make_post().body_markdown)],
+            "/missing/route",
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 404);
+        assert!(response.html.contains("No rendered page exists for /missing/route"));
+    }
 }

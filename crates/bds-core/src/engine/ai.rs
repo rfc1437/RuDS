@@ -696,7 +696,7 @@ mod tests {
             http_ok(
                 r#"{"data":[{"id":"gpt-4.1-mini","name":"GPT 4.1 mini","context_window":128000,"max_output_tokens":8192,"modalities":["text"]},{"id":"gpt-4.1","modalities":["text","vision"]}]}"#,
             )
-        });
+        }, 1);
         let models = refresh_model_catalog(&AiEndpointConfig {
             kind: AiEndpointKind::Airplane,
             url: server,
@@ -722,7 +722,7 @@ mod tests {
             http_ok(
                 r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
             )
-        });
+        }, 1);
 
         let db = setup();
         save_endpoint(
@@ -774,11 +774,177 @@ mod tests {
         assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,abc123");
     }
 
-    fn spawn_test_server(handler: impl Fn(String) -> String + Send + 'static) -> String {
+    #[test]
+    fn run_one_shot_supports_taxonomy_analysis_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::AnalyzeTaxonomy,
+                content: json!({
+                    "title": "Rust preview parity",
+                    "excerpt": "Closing M4",
+                    "content": "Rendering routes and previews",
+                    "tags": ["rendering"],
+                    "categories": ["engineering"]
+                }),
+            },
+            r#"{"choices":[{"message":{"content":"{\"tags\":[\"rust\",\"preview\"],\"categories\":[\"engineering\"]}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::Taxonomy(TaxonomySuggestion {
+                tags: vec!["rust".to_string(), "preview".to_string()],
+                categories: vec!["engineering".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_post_analysis_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::AnalyzePost,
+                content: json!({"title":"Draft title","excerpt":"","content":"Body"}),
+            },
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::PostAnalysis(PostAnalysisResult {
+                title: "Better title".to_string(),
+                excerpt: "Short summary".to_string(),
+                slug: "better-title".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_language_detection_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::DetectLanguage,
+                content: json!({"text": "Bonjour tout le monde"}),
+            },
+            r#"{"choices":[{"message":{"content":"{\"language_code\":\"fr\"}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::LanguageDetection(LanguageDetectionResult {
+                language_code: "fr".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_post_translation_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::TranslatePost {
+                    target_language: "de".to_string(),
+                },
+                content: json!({
+                    "title": "Hello",
+                    "excerpt": "Short summary",
+                    "content": "Body"
+                }),
+            },
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Hallo\",\"excerpt\":\"Kurzfassung\",\"content\":\"Inhalt\"}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::Translation(TranslationResult {
+                title: "Hallo".to_string(),
+                excerpt: "Kurzfassung".to_string(),
+                content: "Inhalt".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_image_analysis_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::AnalyzeImage,
+                content: json!({
+                    "title": "Existing title",
+                    "alt": "",
+                    "caption": "",
+                    "filename": "hero.jpg",
+                    "mime_type": "image/jpeg",
+                    "image_data_url": "data:image/jpeg;base64,abc123"
+                }),
+            },
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Hero image\",\"alt\":\"A scenic mountain\",\"caption\":\"Sunrise over the ridge\"}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::ImageAnalysis(ImageAnalysisResult {
+                title: "Hero image".to_string(),
+                alt: "A scenic mountain".to_string(),
+                caption: "Sunrise over the ridge".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_media_translation_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::TranslateMedia {
+                    target_language: "it".to_string(),
+                },
+                content: json!({
+                    "title": "Mountain",
+                    "alt": "Snowy ridge",
+                    "caption": "Morning light"
+                }),
+            },
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Montagna\",\"alt\":\"Cresta innevata\",\"caption\":\"Luce del mattino\"}"}}]}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::MediaTranslation(MediaTranslationResult {
+                title: "Montagna".to_string(),
+                alt: "Cresta innevata".to_string(),
+                caption: "Luce del mattino".to_string(),
+            })
+        );
+    }
+
+    fn run_airplane_one_shot(request: OneShotRequest, body: &'static str) -> OneShotResponse {
+        let server = spawn_test_server(
+            move |incoming| {
+                assert!(incoming.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                http_ok(body)
+            },
+            1,
+        );
+
+        let db = setup();
+        save_endpoint(
+            db.conn(),
+            &AiEndpointConfig {
+                kind: AiEndpointKind::Airplane,
+                url: server,
+                model: "llama3.2".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+
+        run_one_shot(db.conn(), true, &request).unwrap()
+    }
+
+    fn spawn_test_server(handler: impl Fn(String) -> String + Send + 'static, request_count: usize) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         thread::spawn(move || {
-            for stream in listener.incoming().take(2) {
+            for stream in listener.incoming().take(request_count) {
                 let mut stream = stream.unwrap();
                 let mut buffer = [0_u8; 8192];
                 let size = stream.read(&mut buffer).unwrap();
