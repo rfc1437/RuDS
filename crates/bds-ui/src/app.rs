@@ -137,8 +137,10 @@ pub enum Message {
     GenerateSite,
     RunMetadataDiff,
     RunSiteValidation,
+    ApplySiteValidation,
     EngineTaskDone { task_id: TaskId, label: String, result: Result<String, String> },
     SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
+    SiteValidationApplied(Result<String, String>),
 
     // Editor views
     PostEditor(PostEditorMsg),
@@ -2351,6 +2353,7 @@ impl BdsApp {
                 Task::none()
             }
             Message::RunSiteValidation => self.start_site_validation(),
+            Message::ApplySiteValidation => self.apply_site_validation(),
             Message::EngineTaskDone { task_id, label, result } => {
                 match &result {
                     Ok(detail) => {
@@ -2395,6 +2398,21 @@ impl BdsApp {
                     }
                 }
                 Task::none()
+            }
+            Message::SiteValidationApplied(result) => {
+                self.site_validation_state.is_applying = false;
+                match result {
+                    Ok(detail) => {
+                        self.site_validation_state.error_message = None;
+                        self.notify(ToastLevel::Success, &detail);
+                        self.start_site_validation()
+                    }
+                    Err(error) => {
+                        self.site_validation_state.error_message = Some(error.clone());
+                        self.notify(ToastLevel::Error, &error);
+                        Task::none()
+                    }
+                }
             }
 
             // ── Toast ──
@@ -3700,6 +3718,70 @@ impl BdsApp {
                     .map_err(|error| error.to_string())
             },
             Message::SiteValidationLoaded,
+        )
+    }
+
+    fn apply_site_validation(&mut self) -> Task<Message> {
+        if self.site_validation_state.is_running || self.site_validation_state.is_applying {
+            return Task::none();
+        }
+
+        let report = engine::validate_site::SiteValidationReport {
+            missing_pages: self.site_validation_state.missing_files.clone(),
+            extra_pages: self.site_validation_state.extra_files.clone(),
+            stale_pages: self.site_validation_state.stale_files.clone(),
+        };
+        let sections = engine::generation::sections_from_validation_report(&report);
+        if sections.is_empty() {
+            return Task::none();
+        }
+
+        let Some(project_id) = self.active_project.as_ref().map(|project| project.id.clone()) else {
+            self.site_validation_state.error_message = Some(t(self.ui_locale, "engine.generateSiteNoProject"));
+            return Task::none();
+        };
+        let Some(data_dir) = self.data_dir.clone() else {
+            self.site_validation_state.error_message = Some(t(self.ui_locale, "engine.previewDataDirUnavailable"));
+            return Task::none();
+        };
+
+        self.site_validation_state.is_applying = true;
+        self.site_validation_state.error_message = None;
+        let db_path = self.db_path.clone();
+        let applied_label = t(self.ui_locale, "siteValidation.apply");
+
+        Task::perform(
+            async move {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let metadata = engine::meta::read_project_json(&data_dir).map_err(|error| error.to_string())?;
+                let all_posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
+                    .map_err(|error| error.to_string())?;
+                let mut sources = Vec::new();
+                for post in all_posts.into_iter().filter(|post| post.status == PostStatus::Published) {
+                    let body_markdown = load_generation_post_body(&data_dir, &post)?;
+                    sources.push(engine::generation::PublishedPostSource { post, body_markdown });
+                }
+                let output_dir = data_dir.join("html");
+                std::fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
+                let apply_report = engine::generation::apply_validation_sections(
+                    db.conn(),
+                    &output_dir,
+                    &project_id,
+                    &metadata,
+                    &sources,
+                    &sections,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(format!(
+                    "{}: written={}, skipped={}, deleted={}, output={}",
+                    applied_label,
+                    apply_report.written_paths.len(),
+                    apply_report.skipped_paths.len(),
+                    apply_report.deleted_paths.len(),
+                    output_dir.display(),
+                ))
+            },
+            Message::SiteValidationApplied,
         )
     }
 

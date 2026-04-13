@@ -11,6 +11,7 @@ use crate::i18n::t;
 pub struct SiteValidationState {
     pub has_run: bool,
     pub is_running: bool,
+    pub is_applying: bool,
     pub missing_files: Vec<String>,
     pub extra_files: Vec<String>,
     pub stale_files: Vec<String>,
@@ -24,6 +25,15 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
         button(text(t(locale, "siteValidation.run")).size(13).shaping(Shaping::Advanced))
             .on_press(Message::RunSiteValidation)
     };
+    let has_issues = !state.missing_files.is_empty() || !state.extra_files.is_empty() || !state.stale_files.is_empty();
+    let apply_button = if state.is_applying {
+        button(text(t(locale, "siteValidation.applying")).size(13).shaping(Shaping::Advanced))
+    } else if !state.is_running && state.error_message.is_none() && has_issues {
+        button(text(t(locale, "siteValidation.apply")).size(13).shaping(Shaping::Advanced))
+            .on_press(Message::ApplySiteValidation)
+    } else {
+        button(text(t(locale, "siteValidation.apply")).size(13).shaping(Shaping::Advanced))
+    };
 
     let mut content = column![
         row![
@@ -31,7 +41,7 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
                 .size(24)
                 .shaping(Shaping::Advanced)
                 .color(Color::from_rgb(0.88, 0.88, 0.92)),
-            run_button,
+            row![run_button, apply_button].spacing(12),
         ]
         .spacing(16),
     ]

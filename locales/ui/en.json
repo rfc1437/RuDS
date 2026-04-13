@@ -94,6 +94,8 @@
   "tabBar.siteValidation": "Site Validation",
   "tabBar.translationValidation": "Translation Validation",
   "siteValidation.run": "Run Validation",
+  "siteValidation.apply": "Apply Validation",
+  "siteValidation.applying": "Applying...",
   "siteValidation.idle": "Run site validation to compare generated files against expected output.",
   "siteValidation.running": "Validation in progress...",
   "siteValidation.clean": "No missing, extra, or stale generated files were found.",

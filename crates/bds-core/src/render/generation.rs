@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::db::queries::generated_file_hash as qhash;
 use crate::model::{GeneratedFileHash, Post};
-use crate::util::{atomic_write_str, content_hash, now_unix_ms};
+use crate::util::{atomic_write_str, content_hash, file_hash, now_unix_ms};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GeneratedWriteOutcome {
@@ -31,13 +31,16 @@ pub fn write_generated_file(
     content: &str,
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content.as_bytes());
+    let target_path = output_dir.join(relative_path);
     if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path) {
-        if existing.content_hash == hash {
+        if existing.content_hash == hash
+            && target_path.exists()
+            && file_hash(&target_path)? == hash
+        {
             return Ok(GeneratedWriteOutcome::SkippedUnchanged);
         }
     }
 
-    let target_path = output_dir.join(relative_path);
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -64,13 +67,16 @@ pub fn write_generated_bytes(
     content: &[u8],
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content);
+    let target_path = output_dir.join(relative_path);
     if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path) {
-        if existing.content_hash == hash {
+        if existing.content_hash == hash
+            && target_path.exists()
+            && file_hash(&target_path)? == hash
+        {
             return Ok(GeneratedWriteOutcome::SkippedUnchanged);
         }
     }
 
-    let target_path = output_dir.join(relative_path);
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent)?;
     }

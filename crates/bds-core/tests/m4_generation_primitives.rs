@@ -76,6 +76,32 @@ fn generated_write_skips_unchanged_content() {
 }
 
 #[test]
+fn generated_write_rewrites_missing_file_even_when_hash_matches() {
+    let (db, dir) = setup();
+
+    let first = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+    fs::remove_file(dir.path().join("index.html")).unwrap();
+    let second = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+
+    assert_eq!(first, GeneratedWriteOutcome::Written);
+    assert_eq!(second, GeneratedWriteOutcome::Written);
+    assert_eq!(fs::read_to_string(dir.path().join("index.html")).unwrap(), "hello");
+}
+
+#[test]
+fn generated_write_rewrites_stale_file_even_when_db_hash_matches() {
+    let (db, dir) = setup();
+
+    let first = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+    fs::write(dir.path().join("index.html"), "tampered").unwrap();
+    let second = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+
+    assert_eq!(first, GeneratedWriteOutcome::Written);
+    assert_eq!(second, GeneratedWriteOutcome::Written);
+    assert_eq!(fs::read_to_string(dir.path().join("index.html")).unwrap(), "hello");
+}
+
+#[test]
 fn core_generation_paths_include_language_prefixed_variants() {
     let paths = build_core_generation_paths("en", &["en".into(), "de".into(), "fr".into()]);
     assert!(paths.contains(&"index.html".to_string()));

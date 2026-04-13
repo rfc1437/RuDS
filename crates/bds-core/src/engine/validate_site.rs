@@ -23,7 +23,7 @@ pub fn validate_site(
     project_id: &str,
 ) -> EngineResult<SiteValidationReport> {
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
-    let output_dir = data_dir.to_path_buf();
+    let output_dir = generated_output_dir(data_dir);
     let published_posts = load_published_posts(data_dir, conn, project_id)?;
     let artifacts = build_site_render_artifacts(conn, data_dir, project_id, &metadata, &published_posts)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
@@ -96,6 +96,15 @@ pub fn validate_site(
         extra_pages,
         stale_pages,
     })
+}
+
+fn generated_output_dir(data_dir: &Path) -> std::path::PathBuf {
+    let html_dir = data_dir.join("html");
+    if html_dir.exists() {
+        html_dir
+    } else {
+        data_dir.to_path_buf()
+    }
 }
 
 fn load_published_posts(

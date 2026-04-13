@@ -1,6 +1,9 @@
 use bds_core::db::queries::project::insert_project;
 use bds_core::db::Database;
-use bds_core::engine::generation::{PublishedPostSource, generate_starter_site};
+use bds_core::engine::generation::{
+    PublishedPostSource, apply_validation_sections, generate_starter_site,
+    sections_from_validation_report,
+};
 use bds_core::engine::validate_site::validate_site;
 use bds_core::model::{Post, PostStatus, Project, ProjectMetadata};
 use tempfile::TempDir;
@@ -184,4 +187,78 @@ fn site_validation_detects_stale_and_missing_outputs() {
     assert!(report.stale_pages.contains(&"index.html".to_string()));
     assert!(report.missing_pages.contains(&"feed.xml".to_string()));
     assert!(report.extra_pages.is_empty());
+}
+
+#[test]
+fn apply_validation_repairs_core_section_outputs() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let post = make_post("hello", 1_710_000_000_000);
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let posts = vec![PublishedPostSource {
+        post,
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    std::fs::write(dir.path().join("index.html"), "tampered").unwrap();
+    std::fs::remove_file(dir.path().join("feed.xml")).unwrap();
+
+    let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
+    let sections = sections_from_validation_report(&report);
+    let apply_report = apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections).unwrap();
+    let repaired = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert!(!apply_report.written_paths.is_empty() || !apply_report.skipped_paths.is_empty());
+    assert!(repaired.missing_pages.is_empty());
+    assert!(repaired.extra_pages.is_empty());
+    assert!(repaired.stale_pages.is_empty());
+}
+
+#[test]
+fn apply_validation_removes_extra_section_outputs() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let post = make_post("hello", 1_710_000_000_000);
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let posts = vec![PublishedPostSource {
+        post,
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let extra_dir = dir.path().join("tag/ghost");
+    std::fs::create_dir_all(&extra_dir).unwrap();
+    std::fs::write(extra_dir.join("index.html"), "ghost").unwrap();
+
+    let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
+    assert!(report.extra_pages.contains(&"tag/ghost/index.html".to_string()));
+    let sections = sections_from_validation_report(&report);
+    let apply_report = apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections).unwrap();
+    let repaired = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert!(apply_report.deleted_paths.contains(&"tag/ghost/index.html".to_string()));
+    assert!(repaired.extra_pages.is_empty());
+}
+
+#[test]
+fn site_validation_uses_html_output_directory_when_present() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let post = make_post("hello", 1_710_000_000_000);
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let posts = vec![PublishedPostSource {
+        post,
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    let output_dir = dir.path().join("html");
+    std::fs::create_dir_all(&output_dir).unwrap();
+    generate_starter_site(db.conn(), &output_dir, "p1", &metadata, &posts, "en").unwrap();
+
+    let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert!(report.missing_pages.is_empty());
+    assert!(report.extra_pages.is_empty());
+    assert!(report.stale_pages.is_empty());
 }
