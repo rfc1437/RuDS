@@ -11,7 +11,7 @@ use crate::db::queries;
 use crate::engine::site_assets::write_bundled_site_assets;
 use crate::engine::validate_site::SiteValidationReport;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, ProjectMetadata};
+use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
     build_site_render_artifacts, render_markdown_to_html, write_generated_bytes,
@@ -49,11 +49,14 @@ pub fn generate_starter_site(
     _language: &str,
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
+    let data_dir = project_data_dir(output_dir);
+    let category_settings = load_category_settings(&data_dir);
+    let list_posts = filter_posts_for_lists(posts, &category_settings);
     let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let artifacts = build_site_render_artifacts(conn, output_dir.parent().unwrap_or(output_dir), project_id, metadata, &input_posts)
+    let artifacts = build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
 
     for page in &artifacts.pages {
@@ -67,12 +70,12 @@ pub fn generate_starter_site(
         output_dir,
         project_id,
         "calendar.json",
-        &build_calendar_json(&posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
+        &build_calendar_json(&list_posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
         &mut report,
     )?;
 
     for render_language in render_languages(metadata) {
-        let localized_posts = localized_sources(conn, output_dir.parent().unwrap_or(output_dir), posts, &render_language, metadata)?;
+        let localized_posts = localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
         let prefix = if render_language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
             String::new()
         } else {
@@ -142,6 +145,8 @@ pub fn apply_validation_sections(
 
     let section_set = sections.iter().copied().collect::<HashSet<_>>();
     let data_dir = project_data_dir(output_dir);
+    let category_settings = load_category_settings(&data_dir);
+    let list_posts = filter_posts_for_lists(posts, &category_settings);
     let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
@@ -170,7 +175,7 @@ pub fn apply_validation_sections(
             output_dir,
             project_id,
             "calendar.json",
-            &build_calendar_json(&posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
+            &build_calendar_json(&list_posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
             &mut report,
         )?;
 
@@ -178,7 +183,7 @@ pub fn apply_validation_sections(
             let localized_posts = localized_sources(
                 conn,
                 &data_dir,
-                posts,
+                &list_posts,
                 &render_language,
                 metadata,
             )?;
@@ -509,6 +514,27 @@ fn localized_sources(
         }
     }
     Ok(localized)
+}
+
+fn load_category_settings(data_dir: &Path) -> HashMap<String, CategorySettings> {
+    crate::engine::meta::read_category_meta_json(data_dir).unwrap_or_default()
+}
+
+fn filter_posts_for_lists(
+    posts: &[PublishedPostSource],
+    category_settings: &HashMap<String, CategorySettings>,
+) -> Vec<PublishedPostSource> {
+    posts.iter()
+        .filter(|source| {
+            !source.post.categories.iter().any(|category| {
+                category_settings
+                    .get(category)
+                    .map(|settings| !settings.render_in_lists)
+                    .unwrap_or(false)
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {

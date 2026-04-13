@@ -372,6 +372,7 @@ pub fn view<'a>(
     state: &'a PostEditorState,
     locale: UiLocale,
     word_wrap: bool,
+    ai_enabled: bool,
     preview_widget: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let on_translation = state.active_language != state.canonical_language;
@@ -389,7 +390,7 @@ pub fn view<'a>(
             .size(13)
             .shaping(Shaping::Advanced),
     )
-    .on_press(Message::PostEditor(PostEditorMsg::ToggleQuickActions))
+    .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::ToggleQuickActions)))
     .padding([6, 16])
     .style(status_bar::dropdown_trigger)
     .into();
@@ -479,10 +480,10 @@ pub fn view<'a>(
             Space::with_width(Length::Fill),
             container(
                 column![
-                    quick_action_item(locale, t(locale, "editor.aiAnalyze"), PostEditorMsg::AnalyzeWithAi),
-                    quick_action_item(locale, t(locale, "editor.suggestTaxonomy"), PostEditorMsg::AnalyzeTaxonomy),
-                    quick_action_item(locale, t(locale, "editor.translate"), PostEditorMsg::Translate),
-                    quick_action_item(locale, t(locale, "editor.detectLanguage"), PostEditorMsg::DetectLanguage),
+                    quick_action_item(locale, t(locale, "editor.aiAnalyze"), PostEditorMsg::AnalyzeWithAi, ai_enabled),
+                    quick_action_item(locale, t(locale, "editor.suggestTaxonomy"), PostEditorMsg::AnalyzeTaxonomy, ai_enabled),
+                    quick_action_item(locale, t(locale, "editor.translate"), PostEditorMsg::Translate, ai_enabled),
+                    quick_action_item(locale, t(locale, "editor.detectLanguage"), PostEditorMsg::DetectLanguage, ai_enabled),
                 ]
                 .spacing(4)
             )
@@ -574,7 +575,7 @@ pub fn view<'a>(
             |lang| Message::PostEditor(PostEditorMsg::LanguageChanged(lang)),
         );
         let detect_language = button(text(t(locale, "editor.detectLanguage")).size(12).shaping(Shaping::Advanced))
-            .on_press(Message::PostEditor(PostEditorMsg::DetectLanguage))
+            .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::DetectLanguage)))
             .padding([6, 12]);
         let template_input = inputs::labeled_input(
             &t(locale, "editor.templateSlug"),
@@ -979,10 +980,10 @@ fn mode_button<'a>(
         .into()
 }
 
-fn quick_action_item<'a>(locale: UiLocale, label: String, msg: PostEditorMsg) -> Element<'a, Message> {
+fn quick_action_item<'a>(locale: UiLocale, label: String, msg: PostEditorMsg, enabled: bool) -> Element<'a, Message> {
     let _ = locale;
     button(text(label).size(12).shaping(Shaping::Advanced))
-        .on_press(Message::PostEditor(msg))
+    .on_press_maybe(enabled.then_some(Message::PostEditor(msg)))
         .padding([6, 12])
         .style(status_bar::dropdown_item)
         .width(Length::Fixed(220.0))

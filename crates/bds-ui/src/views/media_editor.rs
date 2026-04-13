@@ -222,6 +222,7 @@ pub fn view<'a>(
     state: &'a MediaEditorState,
     locale: UiLocale,
     data_dir: Option<&Path>,
+    ai_enabled: bool,
 ) -> Element<'a, Message> {
     let header = inputs::toolbar(
         vec![
@@ -230,18 +231,18 @@ pub fn view<'a>(
         vec![
             if state.mime_type.starts_with("image/") {
                 button(text(t(locale, "editor.aiAnalyze")).size(13))
-                    .on_press(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi))
+                    .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi)))
                     .padding([6, 16])
                     .into()
             } else {
                 Space::new(0, 0).into()
             },
             button(text(t(locale, "editor.detectLanguage")).size(13))
-                .on_press(Message::MediaEditor(MediaEditorMsg::DetectLanguage))
+                .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::DetectLanguage)))
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "editor.translate")).size(13))
-                .on_press(Message::MediaEditor(MediaEditorMsg::TranslateMetadata))
+                .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::TranslateMetadata)))
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "common.save")).size(13))

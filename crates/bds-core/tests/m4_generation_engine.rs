@@ -1,11 +1,15 @@
+use std::collections::HashMap;
+
 use bds_core::db::queries::project::insert_project;
+use bds_core::db::queries::template::insert_template;
 use bds_core::db::Database;
 use bds_core::engine::generation::{
     PublishedPostSource, apply_validation_sections, generate_starter_site,
     sections_from_validation_report,
 };
+use bds_core::engine::meta::write_category_meta_json;
 use bds_core::engine::validate_site::validate_site;
-use bds_core::model::{Post, PostStatus, Project, ProjectMetadata};
+use bds_core::model::{CategorySettings, Post, PostStatus, Project, ProjectMetadata, Template, TemplateKind, TemplateStatus};
 use tempfile::TempDir;
 
 fn make_project() -> Project {
@@ -61,6 +65,23 @@ fn make_post(slug: &str, published_at: i64) -> Post {
         created_at: published_at,
         updated_at: published_at,
         published_at: Some(published_at),
+    }
+}
+
+fn make_list_template(slug: &str, content: &str) -> Template {
+    Template {
+        id: format!("template-{slug}"),
+        project_id: "p1".into(),
+        slug: slug.into(),
+        title: slug.into(),
+        kind: TemplateKind::List,
+        enabled: true,
+        version: 1,
+        file_path: String::new(),
+        status: TemplateStatus::Published,
+        content: Some(content.into()),
+        created_at: 1,
+        updated_at: 1,
     }
 }
 
@@ -145,6 +166,92 @@ fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
     assert!(sitemap.contains("hreflang=\"en\" href=\"https://example.com/en\""));
     assert!(sitemap.contains("hreflang=\"x-default\" href=\"https://example.com/\""));
     assert!(sitemap.contains("https://example.com/category/article"));
+}
+
+#[test]
+fn generation_respects_category_list_settings_and_writes_bundled_images() {
+    let (db, dir) = setup();
+    insert_template(
+        db.conn(),
+        &make_list_template(
+            "featured-list",
+            "FEATURED:{% for day_block in day_blocks %}{% for post in day_block.posts %}[{{ post.title }}|{{ post.show_title }}]{% endfor %}{% endfor %}",
+        ),
+    )
+    .unwrap();
+    write_category_meta_json(
+        dir.path(),
+        &HashMap::from([
+            (
+                "hidden".to_string(),
+                CategorySettings {
+                    render_in_lists: false,
+                    show_title: true,
+                    post_template_slug: None,
+                    list_template_slug: None,
+                },
+            ),
+            (
+                "featured".to_string(),
+                CategorySettings {
+                    render_in_lists: true,
+                    show_title: false,
+                    post_template_slug: None,
+                    list_template_slug: Some("featured-list".to_string()),
+                },
+            ),
+        ]),
+    )
+    .unwrap();
+
+    let mut hidden_post = make_post("hidden-post", 1_710_000_000_000);
+    hidden_post.title = "Hidden Post".into();
+    hidden_post.categories = vec!["hidden".into()];
+
+    let mut featured_post = make_post("featured-post", 1_710_086_400_000);
+    featured_post.title = "Featured Post".into();
+    featured_post.categories = vec!["featured".into()];
+
+    let posts = vec![
+        PublishedPostSource {
+            post: hidden_post,
+            body_markdown: "Hidden body".into(),
+        },
+        PublishedPostSource {
+            post: featured_post,
+            body_markdown: "Featured body".into(),
+        },
+    ];
+
+    let report = generate_starter_site(db.conn(), dir.path(), "p1", &make_metadata(), &posts, "en").unwrap();
+
+    for asset in [
+        "images/close.png",
+        "images/loading.gif",
+        "images/next.png",
+        "images/prev.png",
+    ] {
+        assert!(report.written_paths.contains(&asset.to_string()));
+        assert!(dir.path().join(asset).exists(), "missing bundled image {asset}");
+    }
+
+    assert!(!report.written_paths.contains(&"category/hidden/index.html".to_string()));
+    assert!(report.written_paths.contains(&"category/featured/index.html".to_string()));
+
+    let index_html = std::fs::read_to_string(dir.path().join("index.html")).unwrap();
+    assert!(!index_html.contains("Hidden Post"));
+    assert!(index_html.contains("[Featured Post|false]"));
+
+    let featured_html = std::fs::read_to_string(dir.path().join("category/featured/index.html")).unwrap();
+    assert!(featured_html.contains("FEATURED:[Featured Post|false]"));
+
+    let feed = std::fs::read_to_string(dir.path().join("feed.xml")).unwrap();
+    assert!(!feed.contains("hidden-post"));
+    assert!(feed.contains("featured-post"));
+
+    let calendar = std::fs::read_to_string(dir.path().join("calendar.json")).unwrap();
+    assert!(!calendar.contains("2024-03-09"));
+    assert!(calendar.contains("2024-03-10"));
 }
 
 #[test]

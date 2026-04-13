@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use base64::Engine as _;
 use chrono::Datelike;
 use iced::{Element, Subscription, Task, window};
 use rusqlite::Error as SqlError;
@@ -6815,8 +6816,19 @@ impl BdsApp {
             self.notify(ToastLevel::Error, "database unavailable");
             return Task::none();
         };
+        let Some(data_dir) = &self.data_dir else {
+            self.notify(ToastLevel::Error, "project data directory unavailable");
+            return Task::none();
+        };
         let Some(state) = self.media_editors.get(media_id).cloned() else {
             return Task::none();
+        };
+        let image_data_url = match build_ai_image_data_url(data_dir, &state.media_id, &state.file_path, &state.mime_type) {
+            Ok(value) => value,
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error);
+                return Task::none();
+            }
         };
         let request = ai::OneShotRequest {
             operation: ai::OneShotOperation::AnalyzeImage,
@@ -6826,6 +6838,7 @@ impl BdsApp {
                 "caption": state.caption,
                 "filename": state.original_name,
                 "mime_type": state.mime_type,
+                "image_data_url": image_data_url,
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
@@ -7041,6 +7054,35 @@ impl BdsApp {
 
 fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
+}
+
+fn build_ai_image_data_url(
+    data_dir: &Path,
+    media_id: &str,
+    file_path: &str,
+    mime_type: &str,
+) -> Result<String, String> {
+    if !mime_type.starts_with("image/") {
+        return Err("AI image analysis requires an image".to_string());
+    }
+
+    let source_path = data_dir.join(file_path.trim_start_matches('/'));
+    let thumbnail_relative = bds_core::util::thumbnail_path(media_id, "ai", "jpg");
+    let thumbnail_path = data_dir.join(&thumbnail_relative);
+
+    if !thumbnail_path.exists() {
+        bds_core::util::thumbnail::generate_all_thumbnails(
+            &source_path,
+            &data_dir.join("thumbnails"),
+            media_id,
+        )
+        .map_err(|error| format!("failed to generate AI thumbnail: {error}"))?;
+    }
+
+    let bytes = std::fs::read(&thumbnail_path)
+        .map_err(|error| format!("failed to read AI thumbnail: {error}"))?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:image/jpeg;base64,{encoded}"))
 }
 
 fn split_csv_values(value: &str) -> Vec<String> {

@@ -302,7 +302,7 @@ pub fn run_one_shot(
     let settings = load_ai_settings(conn, offline_mode)?;
     let endpoint = active_endpoint(conn, offline_mode)?;
     let model = select_model(&settings, &endpoint, &request.operation)?;
-    let prompt = build_one_shot_prompt(request)?;
+    let user_content = build_one_shot_user_content(request)?;
     let schema = response_schema(&request.operation);
     let payload = json!({
         "model": model,
@@ -313,7 +313,7 @@ pub fn run_one_shot(
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": user_content,
             }
         ],
         "response_format": {
@@ -412,35 +412,61 @@ fn build_system_prompt(base_prompt: &str, operation: &OneShotOperation) -> Strin
     }
 }
 
-fn build_one_shot_prompt(request: &OneShotRequest) -> EngineResult<String> {
+fn build_one_shot_user_content(request: &OneShotRequest) -> EngineResult<Value> {
     match &request.operation {
         OneShotOperation::AnalyzeTaxonomy => Ok(format!(
             "Suggest tags and categories for this post: {}",
             serde_json::to_string(&request.content)?
-        )),
+        ).into()),
         OneShotOperation::AnalyzePost => Ok(format!(
             "Analyze this post and suggest title, excerpt, and slug: {}",
             serde_json::to_string(&request.content)?
-        )),
+        ).into()),
         OneShotOperation::DetectLanguage => Ok(format!(
             "Detect the language of this text: {}",
             serde_json::to_string(&request.content)?
-        )),
+        ).into()),
         OneShotOperation::TranslatePost { target_language } => Ok(format!(
             "Translate this post to {}: {}",
             target_language,
             serde_json::to_string(&request.content)?
-        )),
-        OneShotOperation::AnalyzeImage => Ok(format!(
-            "Analyze this image metadata and return title, alt, and caption suggestions: {}",
-            serde_json::to_string(&request.content)?
-        )),
+        ).into()),
+        OneShotOperation::AnalyzeImage => build_image_analysis_user_content(&request.content),
         OneShotOperation::TranslateMedia { target_language } => Ok(format!(
             "Translate this media metadata to {}: {}",
             target_language,
             serde_json::to_string(&request.content)?
-        )),
+        ).into()),
     }
+}
+
+fn build_image_analysis_user_content(content: &Value) -> EngineResult<Value> {
+    let image_data_url = content
+        .get("image_data_url")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| EngineError::Validation("image analysis requires image data".to_string()))?;
+
+    let mut metadata = content.clone();
+    if let Some(object) = metadata.as_object_mut() {
+        object.remove("image_data_url");
+    }
+
+    Ok(json!([
+        {
+            "type": "text",
+            "text": format!(
+                "Analyze this image and return title, alt, and caption suggestions. Metadata: {}",
+                serde_json::to_string(&metadata)?
+            )
+        },
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": image_data_url
+            }
+        }
+    ]))
 }
 
 fn response_schema(operation: &OneShotOperation) -> (&'static str, Value) {
@@ -729,6 +755,23 @@ mod tests {
                 slug: "better-title".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn image_analysis_user_content_is_multimodal() {
+        let content = build_image_analysis_user_content(&json!({
+            "title": "Existing title",
+            "alt": "Existing alt",
+            "image_data_url": "data:image/jpeg;base64,abc123"
+        }))
+        .unwrap();
+
+        let parts = content.as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "text");
+        assert!(parts[0]["text"].as_str().unwrap().contains("Existing title"));
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,abc123");
     }
 
     fn spawn_test_server(handler: impl Fn(String) -> String + Send + 'static) -> String {

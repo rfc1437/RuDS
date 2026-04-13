@@ -124,6 +124,7 @@ pub fn view<'a>(
         tabs,
         active_tab,
         locale,
+        offline_mode,
         data_dir,
         post_preview_widget,
         post_editors,
@@ -347,6 +348,7 @@ fn route_content_area<'a>(
     tabs: &'a [Tab],
     active_tab: Option<&'a str>,
     locale: UiLocale,
+    offline_mode: bool,
     data_dir: Option<&'a Path>,
     post_preview_widget: Option<Element<'a, Message>>,
     post_editors: &'a HashMap<String, PostEditorState>,
@@ -376,14 +378,14 @@ fn route_content_area<'a>(
         ContentRoute::Post(tab_id) => {
             if let Some(state) = post_editors.get(tab_id) {
                 let wrap = settings_state.map(|s| s.wrap_long_lines).unwrap_or(true);
-                post_editor::view(state, locale, wrap, post_preview_widget)
+                post_editor::view(state, locale, wrap, is_ai_enabled(settings_state, offline_mode), post_preview_widget)
             } else {
                 loading_view(locale)
             }
         }
         ContentRoute::Media(tab_id) => {
             if let Some(state) = media_editors.get(tab_id) {
-                media_editor::view(state, locale, data_dir)
+                media_editor::view(state, locale, data_dir, is_ai_enabled(settings_state, offline_mode))
             } else {
                 loading_view(locale)
             }
@@ -485,6 +487,20 @@ fn route_kind<'a>(
         | TabType::ApiDocumentation
         | TabType::TranslationValidation
         | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
+    }
+}
+
+fn is_ai_enabled(settings_state: Option<&SettingsViewState>, offline_mode: bool) -> bool {
+    let Some(state) = settings_state else {
+        return false;
+    };
+
+    if offline_mode {
+        !state.airplane_endpoint_url.trim().is_empty() && !state.airplane_endpoint_model.trim().is_empty()
+    } else {
+        !state.online_endpoint_url.trim().is_empty()
+            && !state.online_endpoint_model.trim().is_empty()
+            && (state.online_api_key_configured || !state.online_api_key_input.trim().is_empty())
     }
 }
 
@@ -596,6 +612,23 @@ mod tests {
             ContentRoute::SiteValidation => {}
             _ => panic!("expected site validation route"),
         }
+    }
+
+    #[test]
+    fn ai_actions_require_configured_endpoint_for_current_mode() {
+        let mut settings = SettingsViewState::default();
+        assert!(!is_ai_enabled(Some(&settings), false));
+        assert!(!is_ai_enabled(Some(&settings), true));
+
+        settings.online_endpoint_url = "https://api.example.com/v1".to_string();
+        settings.online_endpoint_model = "gpt-4.1-mini".to_string();
+        settings.online_api_key_configured = true;
+        assert!(is_ai_enabled(Some(&settings), false));
+        assert!(!is_ai_enabled(Some(&settings), true));
+
+        settings.airplane_endpoint_url = "http://localhost:11434/v1".to_string();
+        settings.airplane_endpoint_model = "llama3.2".to_string();
+        assert!(is_ai_enabled(Some(&settings), true));
     }
 }
 

@@ -52,8 +52,15 @@ fn render_macro(invocation: &str, context: &MacroRenderContext) -> Option<String
         "vimeo" => Some(render_vimeo(&args)),
         "photo_archive" => Some(render_photo_archive(&args, context)),
         "tag_cloud" => Some(render_tag_cloud(&args, context)),
-        _ => None,
+        _ => Some(unsupported_macro(name)),
     }
+}
+
+fn unsupported_macro(name: &str) -> String {
+    format!(
+        "<section class=\"macro-unsupported\"><p>Unsupported macro: <code>{}</code></p></section>",
+        escape_html_attr(name),
+    )
 }
 
 fn tokenize_invocation(invocation: &str) -> Vec<String> {

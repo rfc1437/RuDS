@@ -92,6 +92,24 @@ fn markdown_filter_expands_builtin_macros_from_runtime_context() {
 }
 
 #[test]
+fn markdown_filter_marks_unsupported_macros_visibly() {
+    let template = "{{ body | markdown: nil, nil, canonical_post_path_by_slug, canonical_media_path_by_source_path, language, language_prefix }}";
+    let partials = HashMap::new();
+    let context = serde_json::json!({
+        "body": "[[custom_block foo=bar]]",
+        "canonical_post_path_by_slug": {},
+        "canonical_media_path_by_source_path": {},
+        "language": "en",
+        "language_prefix": ""
+    });
+
+    let rendered = render_liquid_template(template, &partials, &context).unwrap();
+    assert!(rendered.contains("macro-unsupported"));
+    assert!(rendered.contains("Unsupported macro"));
+    assert!(rendered.contains("custom_block"));
+}
+
+#[test]
 fn starter_single_post_template_renders_with_partials() {
     let template = include_str!("../../../assets/starter-templates/single-post.liquid");
     let partials = HashMap::from([

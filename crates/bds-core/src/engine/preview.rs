@@ -608,6 +608,38 @@ mod tests {
     }
 
     #[test]
+    fn preview_server_serves_media_and_asset_files() {
+        let _guard = preview_port_guard().lock().unwrap();
+        let (dir, _db) = setup_preview_fixture();
+        std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("media/ok.txt"), "ok").unwrap();
+        std::fs::write(dir.path().join("assets/site.css"), "body { color: red; }").unwrap();
+
+        let server = start_preview_server(
+            dir.path().join("bds.db"),
+            dir.path().to_path_buf(),
+            "project-1".into(),
+        )
+        .unwrap();
+
+        let client = reqwest::blocking::Client::new();
+        let media = client
+            .get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/ok.txt"))
+            .send()
+            .unwrap();
+        let asset = client
+            .get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/assets/site.css"))
+            .send()
+            .unwrap();
+        let media_body = media.text().unwrap();
+        let asset_body = asset.text().unwrap();
+        server.stop().unwrap();
+
+        assert_eq!(media_body, "ok");
+        assert!(asset_body.contains("color: red"));
+    }
+
+    #[test]
     fn preview_server_serves_style_preview() {
         let _guard = preview_port_guard().lock().unwrap();
         let (dir, _db) = setup_preview_fixture();
@@ -658,5 +690,74 @@ mod tests {
 
         assert!(body.contains("data-theme=\"nightfall\""));
         assert!(body.contains("data-mode=\"dark\""));
+    }
+
+    #[test]
+    fn preview_respects_category_list_visibility_and_show_title_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        crate::engine::meta::write_category_meta_json(
+            dir.path(),
+            &std::collections::HashMap::from([
+                (
+                    "hidden".to_string(),
+                    crate::model::CategorySettings {
+                        render_in_lists: false,
+                        show_title: true,
+                        post_template_slug: None,
+                        list_template_slug: None,
+                    },
+                ),
+                (
+                    "featured".to_string(),
+                    crate::model::CategorySettings {
+                        render_in_lists: true,
+                        show_title: false,
+                        post_template_slug: None,
+                        list_template_slug: None,
+                    },
+                ),
+            ]),
+        )
+        .unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mut hidden = make_post();
+        hidden.post.title = "Hidden Post".into();
+        hidden.post.slug = "hidden-post".into();
+        hidden.post.categories = vec!["hidden".into()];
+        hidden.body_markdown = "Hidden body".into();
+
+        let mut featured = make_post();
+        featured.post.title = "Featured Post".into();
+        featured.post.slug = "featured-post".into();
+        featured.post.categories = vec!["featured".into()];
+        featured.body_markdown = "Featured body".into();
+
+        let hidden_response = build_preview_response(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &[(hidden.post.clone(), hidden.body_markdown.clone()), (featured.post.clone(), featured.body_markdown.clone())],
+            "/category/hidden",
+        )
+        .unwrap();
+        assert_eq!(hidden_response.status_code, 404);
+
+        let featured_response = build_preview_response(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &[(hidden.post, hidden.body_markdown), (featured.post, featured.body_markdown)],
+            "/category/featured",
+        )
+        .unwrap();
+
+        assert_eq!(featured_response.status_code, 200);
+        assert!(featured_response.html.contains("Featured body"));
+        assert!(!featured_response.html.contains("<h2 class=\"post-title\""));
+        assert!(!featured_response.html.contains("Featured Post"));
     }
 }

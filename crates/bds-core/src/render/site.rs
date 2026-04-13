@@ -54,7 +54,8 @@ pub struct PreviewRenderResult {
 struct TemplateBundle {
     post_templates: Vec<Template>,
     template_source_by_slug: HashMap<String, String>,
-    list_template: String,
+    list_template_sources: HashMap<String, String>,
+    default_list_template: String,
     not_found_template: String,
     partials: HashMap<String, String>,
 }
@@ -71,6 +72,7 @@ struct RouteSpec {
     url_path: String,
     page_title: String,
     archive_context: Option<Value>,
+    list_template_slug: Option<String>,
     posts: Vec<RenderPostRecord>,
     current_page: usize,
     total_pages: usize,
@@ -99,7 +101,8 @@ pub fn build_site_render_artifacts(
     let mut artifacts = SiteRenderArtifacts::default();
     for language in languages {
         let localized_posts = load_language_posts(conn, data_dir, published_posts, &language, &main_language)?;
-        let routes = build_language_routes(&localized_posts, metadata, &language, &tags);
+        let localized_list_posts = filter_posts_for_lists(&localized_posts, &category_settings);
+        let routes = build_language_routes(&localized_list_posts, metadata, &language, &tags, &category_settings);
         let post_data_json_by_id = build_post_data_json_by_id(&localized_posts);
         let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
@@ -109,8 +112,9 @@ pub fn build_site_render_artifacts(
                     route,
                     metadata,
                     &language,
-                    &localized_posts,
+                    &localized_list_posts,
                     &tags,
+                    &category_settings,
                     &menu_items,
                     &post_data_json_by_id,
                     &bundle,
@@ -206,8 +210,9 @@ fn load_template_bundle(
     let templates = queries::template::list_templates_by_project(conn, project_id).unwrap_or_default();
     let mut template_source_by_slug = HashMap::new();
     let mut post_templates = Vec::new();
+    let mut list_template_sources = HashMap::new();
     let mut partials = starter_partials();
-    let mut list_template = STARTER_POST_LIST_TEMPLATE.to_string();
+    let mut default_list_template = STARTER_POST_LIST_TEMPLATE.to_string();
     let mut not_found_template = STARTER_NOT_FOUND_TEMPLATE.to_string();
 
     for template in templates {
@@ -223,8 +228,12 @@ fn load_template_bundle(
                 post_templates.push(hydrated);
             }
             TemplateKind::List => {
-                if template.slug == "list" || list_template == STARTER_POST_LIST_TEMPLATE {
-                    list_template = source;
+                list_template_sources.insert(template.slug.clone(), source.clone());
+                if template.slug == "list"
+                    || template.slug == "post-list"
+                    || default_list_template == STARTER_POST_LIST_TEMPLATE
+                {
+                    default_list_template = source;
                 }
             }
             TemplateKind::NotFound => {
@@ -241,6 +250,13 @@ fn load_template_bundle(
             }
         }
     }
+
+    list_template_sources
+        .entry("post-list".to_string())
+        .or_insert_with(|| STARTER_POST_LIST_TEMPLATE.to_string());
+    list_template_sources
+        .entry("list".to_string())
+        .or_insert_with(|| STARTER_POST_LIST_TEMPLATE.to_string());
 
     if !post_templates.iter().any(|template| template.slug == "post") {
         post_templates.push(Template {
@@ -263,7 +279,8 @@ fn load_template_bundle(
     Ok(TemplateBundle {
         post_templates,
         template_source_by_slug,
-        list_template,
+        list_template_sources,
+        default_list_template,
         not_found_template,
         partials,
     })
@@ -330,10 +347,18 @@ fn build_language_routes(
     metadata: &ProjectMetadata,
     language: &str,
     tags: &[Tag],
+    category_settings: &HashMap<String, CategorySettings>,
 ) -> Vec<RouteSpec> {
     let per_page = metadata.max_posts_per_page.max(1) as usize;
     let mut routes = Vec::new();
-    routes.extend(paginated_route_specs(posts, per_page, language_root_prefix(language, metadata), metadata.name.clone(), None));
+    routes.extend(paginated_route_specs(
+        posts,
+        per_page,
+        language_root_prefix(language, metadata),
+        metadata.name.clone(),
+        None,
+        None,
+    ));
 
     let mut category_posts: BTreeMap<String, Vec<RenderPostRecord>> = BTreeMap::new();
     let mut tag_posts: BTreeMap<String, Vec<RenderPostRecord>> = BTreeMap::new();
@@ -361,6 +386,9 @@ fn build_language_routes(
             format!("{}/category/{slug}", language_root_prefix(language, metadata)),
             category.clone(),
             Some(json!({"kind": "category", "name": category})),
+            category_settings
+                .get(&category)
+                .and_then(|settings| settings.list_template_slug.clone()),
         ));
     }
 
@@ -377,6 +405,7 @@ fn build_language_routes(
             format!("{}/tag/{slug}", language_root_prefix(language, metadata)),
             display_name.clone(),
             Some(json!({"kind": "tag", "name": display_name})),
+            None,
         ));
     }
 
@@ -387,6 +416,7 @@ fn build_language_routes(
             format!("{}/{year}", language_root_prefix(language, metadata)),
             format!("{} {year}", metadata.name),
             Some(json!({"kind": "year", "year": year})),
+            None,
         ));
     }
 
@@ -397,6 +427,7 @@ fn build_language_routes(
             format!("{}/{year}/{month:02}", language_root_prefix(language, metadata)),
             format!("{} {year}-{month:02}", metadata.name),
             Some(json!({"kind": "month", "year": year, "month": month})),
+            None,
         ));
     }
 
@@ -409,6 +440,7 @@ fn paginated_route_specs(
     base_path: String,
     page_title: String,
     archive_context: Option<Value>,
+    list_template_slug: Option<String>,
 ) -> Vec<RouteSpec> {
     let total_items = posts.len();
     let total_pages = total_items.max(1).div_ceil(per_page.max(1));
@@ -436,6 +468,7 @@ fn paginated_route_specs(
             url_path,
             page_title: page_title.clone(),
             archive_context: archive_context.clone(),
+            list_template_slug: list_template_slug.clone(),
             posts: slice,
             current_page,
             total_pages: total_pages.max(1),
@@ -452,6 +485,7 @@ fn render_list_route(
     language: &str,
     posts: &[RenderPostRecord],
     tags: &[Tag],
+    category_settings: &HashMap<String, CategorySettings>,
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
     bundle: &TemplateBundle,
@@ -459,6 +493,11 @@ fn render_list_route(
     let main_language = main_language(metadata);
     let canonical_map = canonical_post_path_by_slug(posts, language, main_language);
     let taxonomy_counts = build_taxonomy_counts(posts, tags);
+    let list_template = route
+        .list_template_slug
+        .as_deref()
+        .and_then(|slug| bundle.list_template_sources.get(slug))
+        .unwrap_or(&bundle.default_list_template);
     let context = json!({
         "language": language,
         "language_prefix": language_prefix(language, main_language),
@@ -474,7 +513,7 @@ fn render_list_route(
         "show_archive_range_heading": false,
         "min_date": route.posts.last().map(|record| timestamp_parts(record.post.published_at.unwrap_or(record.post.created_at))),
         "max_date": route.posts.first().map(|record| timestamp_parts(record.post.published_at.unwrap_or(record.post.created_at))),
-        "day_blocks": build_day_blocks(&route.posts),
+        "day_blocks": build_day_blocks(&route.posts, category_settings),
         "is_list_page": route.current_page > 1,
         "is_first_page": route.current_page == 1,
         "is_last_page": route.current_page >= route.total_pages,
@@ -497,7 +536,7 @@ fn render_list_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template(&bundle.list_template, &bundle.partials, &context)?)
+    Ok(render_liquid_template(list_template, &bundle.partials, &context)?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -707,7 +746,10 @@ fn route_href(route: &RouteSpec, page: usize) -> String {
     }
 }
 
-fn build_day_blocks(posts: &[RenderPostRecord]) -> Vec<Value> {
+fn build_day_blocks(
+    posts: &[RenderPostRecord],
+    category_settings: &HashMap<String, CategorySettings>,
+) -> Vec<Value> {
     let mut blocks = Vec::new();
     let mut current_key = String::new();
     let mut current_posts = Vec::new();
@@ -730,12 +772,13 @@ fn build_day_blocks(posts: &[RenderPostRecord]) -> Vec<Value> {
         }
         current_key = key;
         current_label = format!("{:02}.{:02}.{:04}", timestamp.day(), timestamp.month(), timestamp.year());
+        let show_title = should_show_list_title(&record.post, category_settings);
         current_posts.push(json!({
             "id": record.post.id,
             "title": record.post.title,
             "slug": record.post.slug,
-            "content": record.post.excerpt.clone().unwrap_or_else(|| record.body_markdown.clone()),
-            "show_title": true,
+            "content": resolve_list_content(record, category_settings),
+            "show_title": show_title,
         }));
     }
 
@@ -748,6 +791,58 @@ fn build_day_blocks(posts: &[RenderPostRecord]) -> Vec<Value> {
         }));
     }
     blocks
+}
+
+fn filter_posts_for_lists(
+    posts: &[RenderPostRecord],
+    category_settings: &HashMap<String, CategorySettings>,
+) -> Vec<RenderPostRecord> {
+    posts.iter()
+        .filter(|record| !is_post_excluded_from_lists(&record.post, category_settings))
+        .cloned()
+        .collect()
+}
+
+fn is_post_excluded_from_lists(
+    post: &Post,
+    category_settings: &HashMap<String, CategorySettings>,
+) -> bool {
+    post.categories.iter().any(|category| {
+        category_settings
+            .get(category)
+            .map(|settings| !settings.render_in_lists)
+            .unwrap_or(false)
+    })
+}
+
+fn should_show_list_title(
+    post: &Post,
+    category_settings: &HashMap<String, CategorySettings>,
+) -> bool {
+    if post.categories.is_empty() {
+        return true;
+    }
+
+    !post.categories.iter().any(|category| {
+        category_settings
+            .get(category)
+            .map(|settings| !settings.show_title)
+            .unwrap_or(false)
+    })
+}
+
+fn resolve_list_content(
+    record: &RenderPostRecord,
+    category_settings: &HashMap<String, CategorySettings>,
+) -> String {
+    let show_title = should_show_list_title(&record.post, category_settings);
+    let excerpt = record.post.excerpt.as_deref().map(str::trim).unwrap_or("");
+
+    if show_title && !excerpt.is_empty() {
+        record.post.excerpt.clone().unwrap_or_default()
+    } else {
+        record.body_markdown.clone()
+    }
 }
 
 fn canonical_post_path_by_slug(

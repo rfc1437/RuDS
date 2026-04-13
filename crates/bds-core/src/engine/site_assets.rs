@@ -45,6 +45,10 @@ const BUNDLED_SITE_ASSETS: &[BundledSiteAsset] = &[
     BundledSiteAsset { relative_path: "assets/tag-cloud.js", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/assets/tag-cloud.js") },
     BundledSiteAsset { relative_path: "assets/vanilla-calendar.min.css", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/assets/vanilla-calendar.min.css") },
     BundledSiteAsset { relative_path: "assets/vanilla-calendar.min.js", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/assets/vanilla-calendar.min.js") },
+    BundledSiteAsset { relative_path: "images/close.png", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/images/close.png") },
+    BundledSiteAsset { relative_path: "images/loading.gif", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/images/loading.gif") },
+    BundledSiteAsset { relative_path: "images/next.png", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/images/next.png") },
+    BundledSiteAsset { relative_path: "images/prev.png", bytes: include_bytes!("../../../../fixtures/golden-generated-sites/rfc1437-sample/images/prev.png") },
 ];
 
 pub(crate) fn copy_bundled_site_assets(project_dir: &Path) -> EngineResult<()> {
