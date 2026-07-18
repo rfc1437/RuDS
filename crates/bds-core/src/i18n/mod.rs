@@ -1,3 +1,5 @@
+use fluent_bundle::concurrent::FluentBundle;
+use fluent_bundle::{FluentArgs, FluentResource};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -74,55 +76,112 @@ pub fn detect_os_locale() -> UiLocale {
     }
 }
 
-type Catalog = HashMap<String, String>;
+type Bundle = FluentBundle<FluentResource>;
 
-fn parse_catalog(json: &str) -> Catalog {
-    serde_json::from_str(json).unwrap_or_default()
+const UI_EN: &str = include_str!("../../../../locales/ui/en.ftl");
+const RENDER_EN: &str = include_str!("../../../../locales/render/en.ftl");
+
+fn resource(source: &str) -> FluentResource {
+    FluentResource::try_new(source.to_owned())
+        .unwrap_or_else(|(_, errors)| panic!("invalid Fluent catalog: {errors:?}"))
 }
 
-static CATALOG_EN: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/en.json")));
-static CATALOG_DE: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/de.json")));
-static CATALOG_FR: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/fr.json")));
-static CATALOG_IT: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/it.json")));
-static CATALOG_ES: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/ui/es.json")));
-
-// ── Render catalogs (content/template locale, independent of UI locale) ──
-
-static RENDER_EN: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/en.json")));
-static RENDER_DE: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/de.json")));
-static RENDER_FR: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/fr.json")));
-static RENDER_IT: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/it.json")));
-static RENDER_ES: LazyLock<Catalog> =
-    LazyLock::new(|| parse_catalog(include_str!("../../../../locales/render/es.json")));
-
-fn render_catalog_for(code: &str) -> &'static Catalog {
-    let base = code.split(['-', '_']).next().unwrap_or("en").to_lowercase();
-    match base.as_str() {
-        "de" => &RENDER_DE,
-        "fr" => &RENDER_FR,
-        "it" => &RENDER_IT,
-        "es" => &RENDER_ES,
-        _ => &RENDER_EN,
+fn bundle(locale: UiLocale, english: &str, localized: &str) -> Bundle {
+    let mut bundle = FluentBundle::new_concurrent(vec![
+        locale.code().parse().expect("supported locale is valid"),
+    ]);
+    bundle.set_use_isolating(false);
+    bundle
+        .add_resource(resource(english))
+        .expect("English Fluent catalog has unique keys");
+    if locale != UiLocale::En {
+        bundle.add_resource_overriding(resource(localized));
     }
+    bundle
 }
 
-fn catalog_for(locale: UiLocale) -> &'static Catalog {
+static UI_CATALOGS: LazyLock<[Bundle; 5]> = LazyLock::new(|| {
+    [
+        bundle(UiLocale::En, UI_EN, UI_EN),
+        bundle(
+            UiLocale::De,
+            UI_EN,
+            include_str!("../../../../locales/ui/de.ftl"),
+        ),
+        bundle(
+            UiLocale::Fr,
+            UI_EN,
+            include_str!("../../../../locales/ui/fr.ftl"),
+        ),
+        bundle(
+            UiLocale::It,
+            UI_EN,
+            include_str!("../../../../locales/ui/it.ftl"),
+        ),
+        bundle(
+            UiLocale::Es,
+            UI_EN,
+            include_str!("../../../../locales/ui/es.ftl"),
+        ),
+    ]
+});
+
+static RENDER_CATALOGS: LazyLock<[Bundle; 5]> = LazyLock::new(|| {
+    [
+        bundle(UiLocale::En, RENDER_EN, RENDER_EN),
+        bundle(
+            UiLocale::De,
+            RENDER_EN,
+            include_str!("../../../../locales/render/de.ftl"),
+        ),
+        bundle(
+            UiLocale::Fr,
+            RENDER_EN,
+            include_str!("../../../../locales/render/fr.ftl"),
+        ),
+        bundle(
+            UiLocale::It,
+            RENDER_EN,
+            include_str!("../../../../locales/render/it.ftl"),
+        ),
+        bundle(
+            UiLocale::Es,
+            RENDER_EN,
+            include_str!("../../../../locales/render/es.ftl"),
+        ),
+    ]
+});
+
+fn locale_index(locale: UiLocale) -> usize {
     match locale {
-        UiLocale::En => &CATALOG_EN,
-        UiLocale::De => &CATALOG_DE,
-        UiLocale::Fr => &CATALOG_FR,
-        UiLocale::It => &CATALOG_IT,
-        UiLocale::Es => &CATALOG_ES,
+        UiLocale::En => 0,
+        UiLocale::De => 1,
+        UiLocale::Fr => 2,
+        UiLocale::It => 3,
+        UiLocale::Es => 4,
     }
+}
+
+fn format(bundle: &Bundle, key: &str, params: &[(&str, &str)]) -> Option<String> {
+    let id = key.replace('.', "-");
+    let pattern = bundle.get_message(&id)?.value()?;
+    let mut args = FluentArgs::new();
+    for (name, value) in params {
+        args.set(*name, *value);
+    }
+    let mut errors = Vec::new();
+    let value = bundle
+        .format_pattern(pattern, Some(&args), &mut errors)
+        .into_owned();
+    Some(value)
+}
+
+fn ui_catalog_for(locale: UiLocale) -> &'static Bundle {
+    &UI_CATALOGS[locale_index(locale)]
+}
+
+fn render_catalog_for(language: &str) -> &'static Bundle {
+    &RENDER_CATALOGS[locale_index(normalize_language(language))]
 }
 
 /// Look up a translation key for the given locale.
@@ -130,27 +189,14 @@ fn catalog_for(locale: UiLocale) -> &'static Catalog {
 /// Fallback chain: requested locale → English → key itself.
 /// This implements the MenuTranslations invariant from i18n.allium.
 pub fn translate(locale: UiLocale, key: &str) -> String {
-    if let Some(val) = catalog_for(locale).get(key) {
-        return val.clone();
-    }
-    if locale != UiLocale::En
-        && let Some(val) = CATALOG_EN.get(key)
-    {
-        return val.clone();
-    }
-    key.to_string()
+    format(ui_catalog_for(locale), key, &[]).unwrap_or_else(|| key.to_owned())
 }
 
 /// Look up a translation key and substitute `{param}` placeholders.
 ///
 /// Parameters are provided as `&[("param_name", "value")]`.
 pub fn translate_with(locale: UiLocale, key: &str, params: &[(&str, &str)]) -> String {
-    let mut result = translate(locale, key);
-    for (name, value) in params {
-        let placeholder = format!("{{{name}}}");
-        result = result.replace(&placeholder, value);
-    }
-    result
+    format(ui_catalog_for(locale), key, params).unwrap_or_else(|| key.to_owned())
 }
 
 /// Look up a render/template translation key by content language code.
@@ -159,24 +205,63 @@ pub fn translate_with(locale: UiLocale, key: &str, params: &[(&str, &str)]) -> S
 /// Fallback chain: requested language → English → key itself.
 /// Implements the RenderTranslations invariant from i18n.allium.
 pub fn translate_render(language: &str, key: &str) -> String {
-    let catalog = render_catalog_for(language);
-    if let Some(val) = catalog.get(key) {
-        return val.clone();
-    }
-    if !language.starts_with("en")
-        && let Some(val) = RENDER_EN.get(key)
-    {
-        return val.clone();
-    }
-    key.to_string()
+    format(render_catalog_for(language), key, &[]).unwrap_or_else(|| key.to_owned())
 }
 
 /// Return the entire render translation map for a language.
 ///
 /// Used to inject as `translations` into the Liquid template context.
 pub fn get_render_translations(language: &str) -> &'static HashMap<String, String> {
-    render_catalog_for(language)
+    &RENDER_MAPS[locale_index(normalize_language(language))]
 }
+
+const RENDER_KEYS: &[&str] = &[
+    "render.archive",
+    "render.pagination.label",
+    "render.pagination.newer",
+    "render.pagination.older",
+    "render.notFound.message",
+    "render.notFound.back",
+    "render.photoArchive.empty",
+    "render.gallery.empty",
+    "render.tagCloud.empty",
+    "render.tagCloud.ariaLabel",
+    "render.calendar.open",
+    "render.calendar.close",
+    "render.calendar.title",
+    "render.calendar.loading",
+    "render.calendar.error",
+    "render.taxonomy.ariaLabel",
+    "render.backlinks.label",
+    "render.backlinks.ariaLabel",
+    "render.languageSwitcher.ariaLabel",
+    "render.video.youtubeTitle",
+    "render.video.vimeoTitle",
+    "render.month.1",
+    "render.month.2",
+    "render.month.3",
+    "render.month.4",
+    "render.month.5",
+    "render.month.6",
+    "render.month.7",
+    "render.month.8",
+    "render.month.9",
+    "render.month.10",
+    "render.month.11",
+    "render.month.12",
+    "render.search.placeholder",
+    "render.search.ariaLabel",
+];
+
+static RENDER_MAPS: LazyLock<[HashMap<String, String>; 5]> = LazyLock::new(|| {
+    std::array::from_fn(|index| {
+        let locale = UiLocale::all()[index];
+        RENDER_KEYS
+            .iter()
+            .map(|key| ((*key).to_owned(), translate_render(locale.code(), key)))
+            .collect()
+    })
+});
 
 #[cfg(test)]
 mod tests {

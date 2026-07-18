@@ -19,6 +19,7 @@ walkdir = { workspace = true }
 image = { workspace = true }
 rust-stemmers = { workspace = true }
 sys-locale = { workspace = true }
+fluent-bundle = { workspace = true }
 pulldown-cmark = { workspace = true }
 liquid = { workspace = true }
 liquid-core = { workspace = true }
