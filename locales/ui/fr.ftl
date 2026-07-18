@@ -267,7 +267,6 @@ editor-templateSlug = Modèle
 editor-doNotTranslate = Ne pas traduire
 editor-publish = Publier
 editor-discard = Annuler les modifications
-editor-duplicate = Dupliquer
 editor-validate = Valider
 editor-run = Exécuter
 editor-checkSyntax = Vérifier la syntaxe

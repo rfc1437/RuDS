@@ -457,60 +457,6 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
     }
 }
 
-/// Create a new draft post by duplicating an existing post.
-pub fn duplicate_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
-    let source = qp::get_post_by_id(conn, post_id)?;
-    let body = if let Some(ref content) = source.content {
-        content.clone()
-    } else if !source.file_path.is_empty() {
-        let abs_path = data_dir.join(&source.file_path);
-        if abs_path.exists() {
-            let raw = fs::read_to_string(&abs_path)?;
-            let (_fm, body) = read_post_file(&raw).map_err(EngineError::Parse)?;
-            body
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let duplicate_title = if source.title.is_empty() {
-        "Untitled Copy".to_string()
-    } else {
-        format!("{} Copy", source.title)
-    };
-
-    let duplicated = create_post(
-        conn,
-        data_dir,
-        &source.project_id,
-        &duplicate_title,
-        Some(&body),
-        source.tags.clone(),
-        source.categories.clone(),
-        source.author.as_deref(),
-        source.language.as_deref(),
-        source.template_slug.as_deref(),
-    )?;
-
-    update_post(
-        conn,
-        data_dir,
-        &duplicated.id,
-        None,
-        None,
-        Some(source.excerpt.as_deref()),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(source.do_not_translate),
-    )
-}
-
 /// Delete a post and all related data.
 pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<()> {
     let post = qp::get_post_by_id(conn, post_id)?;
@@ -1538,54 +1484,6 @@ mod tests {
         assert_eq!(unchanged.title, "Draft Title");
         assert_eq!(unchanged.status, PostStatus::Draft);
         assert_eq!(unchanged.content.as_deref(), Some("draft body"));
-    }
-
-    #[test]
-    fn duplicate_post_creates_new_draft_copy() {
-        let (db, dir) = setup();
-        let post = create_post(
-            db.conn(),
-            dir.path(),
-            "p1",
-            "Original",
-            Some("body text"),
-            vec!["rust".into()],
-            vec!["guide".into()],
-            Some("Alice"),
-            Some("en"),
-            None,
-        )
-        .unwrap();
-        let source = update_post(
-            db.conn(),
-            dir.path(),
-            &post.id,
-            None,
-            None,
-            Some(Some("excerpt")),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(true),
-        )
-        .unwrap();
-
-        let duplicate = duplicate_post(db.conn(), dir.path(), &post.id).unwrap();
-
-        assert_ne!(duplicate.id, source.id);
-        assert_eq!(duplicate.status, PostStatus::Draft);
-        assert_eq!(duplicate.title, "Original Copy");
-        assert_eq!(duplicate.content.as_deref(), Some("body text"));
-        assert_eq!(duplicate.tags, source.tags);
-        assert_eq!(duplicate.categories, source.categories);
-        assert_eq!(duplicate.author, source.author);
-        assert_eq!(duplicate.language, source.language);
-        assert_eq!(duplicate.excerpt, source.excerpt);
-        assert!(duplicate.do_not_translate);
-        assert!(duplicate.slug.starts_with("original-copy"));
     }
 
     #[test]

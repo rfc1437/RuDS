@@ -3744,36 +3744,6 @@ impl BdsApp {
         Task::none()
     }
 
-    fn duplicate_post_editor(&mut self, post_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            return Task::none();
-        };
-        let Some(data_dir) = &self.data_dir else {
-            return Task::none();
-        };
-        match engine::post::duplicate_post(db.conn(), data_dir, post_id) {
-            Ok(post) => {
-                let tab = Tab {
-                    id: post.id.clone(),
-                    title: post.title.clone(),
-                    tab_type: TabType::Post,
-                    is_transient: false,
-                    is_dirty: false,
-                };
-                let idx = tabs::open_tab(&mut self.tabs, tab);
-                self.active_tab = self.tabs.get(idx).map(|tab| tab.id.clone());
-                if let Some(tab) = self.tabs.get(idx).cloned() {
-                    self.load_editor_for_tab(&tab);
-                }
-                self.enforce_panel_tab_fallback();
-                self.sync_menu_state();
-                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-            }
-            Err(e) => self.notify_operation_failed("editor.duplicate", e),
-        }
-        Task::none()
-    }
-
     fn delete_media_editor(&mut self, media_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
             return Task::none();

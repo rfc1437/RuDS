@@ -347,7 +347,6 @@ pub enum PostEditorMsg {
     RemoveCategory(String),
     Save,
     Publish,
-    Duplicate,
     Discard,
     Delete,
     InsertLink,
@@ -412,19 +411,6 @@ pub fn view<'a>(
         .padding([6, 16])
         .into(),
     ];
-    if !on_translation {
-        header_action_items.push(
-            button(
-                text(t(locale, "editor.duplicate"))
-                    .size(13)
-                    .shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::Duplicate))
-            .padding([6, 16])
-            .style(inputs::secondary_button)
-            .into(),
-        );
-    }
     if state.status == PostStatus::Draft {
         header_action_items.push(
             button(

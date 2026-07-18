@@ -68,7 +68,7 @@ Open:
 Available:
 
 - Dashboard and editors for posts, translations, media, tags, templates, scripts, and settings.
-- Post create, edit, duplicate, publish, unpublish, discard, and delete flows.
+- Post create, edit, publish, unpublish, discard, and delete flows.
 - Media import, replacement, metadata editing, translations, thumbnails, filters, and post assignment.
 - Template and Lua script creation, editing, validation, publication, and deletion.
 - Rope-based editing with syntax highlighting, selection, clipboard, undo/redo, word/line/page movement, line numbers, soft wrapping, mouse selection, and committed IME input.

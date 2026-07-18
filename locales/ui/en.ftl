@@ -264,7 +264,6 @@ editor-templateSlug = Template
 editor-doNotTranslate = Do Not Translate
 editor-publish = Publish
 editor-discard = Discard
-editor-duplicate = Duplicate
 editor-validate = Validate
 editor-run = Run
 editor-checkSyntax = Check Syntax

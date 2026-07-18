@@ -267,7 +267,6 @@ editor-templateSlug = Plantilla
 editor-doNotTranslate = No traducir
 editor-publish = Publicar
 editor-discard = Descartar
-editor-duplicate = Duplicar
 editor-validate = Validar
 editor-run = Ejecutar
 editor-checkSyntax = Verificar sintaxis
