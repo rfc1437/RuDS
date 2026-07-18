@@ -69,7 +69,7 @@ rule InitializeRepo {
         has_lfs: true
     )
     ensures: GitignoreCreated(project)
-        -- .gitignore manages: thumbnails, generated html, node_modules, etc.
+        -- .gitignore manages generated artifacts, cached assets, dependency directories, etc.
     ensures: LfsTrackingConfigured(project)
         -- Git LFS auto-tracks image patterns (*.jpg, *.png, *.gif, etc.)
 }

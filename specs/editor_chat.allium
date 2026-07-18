@@ -23,7 +23,70 @@ value ChatMessage {
     role: String                        -- user | assistant | system
     content: String                     -- user: plain text; assistant: GFM markdown
     tool_markers: List<ToolMarker>
+    inline_surfaces: List<InlineSurface>
     is_streaming: Boolean               -- true while accumulating
+}
+
+value InlineSurface {
+    id: String
+    type: "card" | "chart" | "form" | "list" | "metric" | "mindmap" | "table" | "tabs" | "text" | "json"
+    title: String?
+    subtitle: String?                    -- card only
+    body: String?                        -- card, text
+    actions: List<SurfaceAction>         -- card only
+    columns: List<String>                -- table
+    rows: List<List<String>>             -- table
+    chart_type: String?                  -- chart: bar/pie/line
+    series: List<ChartSeries>            -- chart
+    max_value: Integer?                  -- chart
+    label: String?                       -- metric
+    value: String?                       -- metric
+    items: List<String>                  -- list
+    nodes: List<MindmapNode>             -- mindmap
+    fields: List<FormField>              -- form
+    submit_label: String?                -- form
+    submit_action: String?               -- form
+    tabs: List<TabPanel>                 -- tabs
+    selected_index: Integer?             -- tabs
+    raw: Map?                            -- json catch-all
+}
+
+value SurfaceAction {
+    label: String
+    action: String
+    payload: Map
+}
+
+value ChartSeries {
+    label: String
+    value: Integer
+    segments: List
+}
+
+value MindmapNode {
+    id: String?
+    label: String
+    children: List<String>
+}
+
+value FormField {
+    key: String
+    label: String
+    input_type: String
+    placeholder: String?
+    value: String?
+    options: List<FieldOption>
+    required: Boolean
+}
+
+value FieldOption {
+    label: String
+    value: String
+}
+
+value TabPanel {
+    label: String
+    content: List<InlineSurface>        -- nested surfaces or text
 }
 
 value ToolMarker {
@@ -66,6 +129,7 @@ value ModelEntry {
 config {
     chat_tool_args_max_length: Integer = 30
     chat_input_max_height: Integer = 200
+    surface_form_debounce_ms: Integer = 500
 }
 
 surface ChatPanelSurface {
@@ -85,6 +149,9 @@ surface ChatPanelSurface {
                 tm.tool_name
                 tm.args_preview
                 tm.is_complete
+            for sfc in msg.inline_surfaces:
+                sfc.type
+                sfc.id
 
     provides:
         ChatSendMessage(panel.conversation_id, panel.input_text)
@@ -137,6 +204,19 @@ surface ChatPanelSurface {
         --   open_post(id), open_media(id), open_settings(), etc.
         -- Actions dispatched through store, same as user clicks.
         -- Navigation actions open tabs with pin intent.
+
+    @guarantee InlineSurfaceRendering
+        -- Assistant render-tool calls produce structured inline surfaces
+        -- rendered between message content and tool markers.
+        -- 9 surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
+        -- Render tool names: render_card, render_chart, render_form, render_list,
+        --   render_metric, render_mindmap, render_table, render_tabs.
+        -- Unrecognized render names render as json (raw dump).
+        -- Tab content nests any surface type including plain text.
+        -- Form surfaces persist field values in conversation surface_state.
+        -- Tab surfaces track selected_index in conversation surface_state.
+        -- Surfaces can be dismissed, persisted in conversation surface_state.
+        -- Form debounce: config.surface_form_debounce_ms.
 
     @guarantee TokenTracking
         -- Token usage tracked per conversation.

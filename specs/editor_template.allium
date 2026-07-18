@@ -18,6 +18,7 @@ value TemplateEditorView {
     kind: String                        -- select: post | list | not_found | partial
     enabled: Boolean                    -- checkbox
     content: String                     -- code editor content
+    can_publish: Boolean                -- true while status = draft
     created_at: String                  -- locale-formatted date
     updated_at: String                  -- locale-formatted date
 }
@@ -35,12 +36,15 @@ surface TemplateEditorSurface {
 
     provides:
         TemplateSaveRequested(editor.template_id)
+        TemplatePublishRequested(editor.template_id)
+            when editor.can_publish
         TemplateValidateRequested(editor.template_id)
         TemplateDeleteRequested(editor.template_id)
 
     @guarantee HeaderLayout
         -- Header bar with template title tab.
-        -- Actions (right side): Save button, Validate button,
+        -- Actions (right side): Save button, Publish button (shown only when
+        --   can_publish, i.e. status = draft), Validate button,
         --   Delete button (danger style).
 
     @guarantee MetadataRow
@@ -67,6 +71,15 @@ rule TemplateSave {
     -- See engine_side_effects.allium UpdateTemplateSideEffects
 }
 
+rule TemplatePublish {
+    when: TemplatePublishRequested(template_id)
+    -- Only offered while the template is a draft (can_publish gate on the button)
+    -- Validates Liquid first (publish gate); invalid source blocks publish
+    -- Saves current draft fields, then publishes (status -> published)
+    -- Writes the published .liquid file to disk
+    -- See template.allium PublishTemplate
+}
+
 rule TemplateValidate {
     when: TemplateValidateRequested(template_id)
     -- Validates Liquid syntax without saving
@@ -77,7 +90,7 @@ rule TemplateValidate {
 rule TemplateDelete {
     when: TemplateDeleteRequested(template_id)
     -- Checks for references: posts using this template, tags with postTemplateSlug
-    -- If references exist: native confirm dialog (rfd)
+    -- If references exist: system confirm dialog
     --   "This template is used by N posts and M tags. Force delete?"
     --   Force delete: nulls templateSlug on referencing posts,
     --     nulls postTemplateSlug on referencing tags

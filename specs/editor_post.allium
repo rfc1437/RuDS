@@ -19,7 +19,7 @@ value PostEditorView {
     metadata: PostEditorMetadata
     metadata_expanded: Boolean          -- starts expanded when title is empty
     excerpt_expanded: Boolean
-    editor_mode: String                 -- visual | markdown | preview
+    editor_mode: String                 -- markdown | preview
     footer: PostEditorFooter
 }
 
@@ -137,10 +137,14 @@ surface PostEditorSurface {
 
     @guarantee TagAutocomplete
         -- Tag input with autocomplete.
-        -- Standard: prefix match on existing tag names (case-insensitive).
-        -- When semanticSimilarityEnabled: also suggests tags from 10 similar posts,
-        --   weighted by similarity, top 5 shown.
-        -- Merged results: prefix matches first, then embedding suggestions.
+        -- While typing: substring match on existing tag names (case-insensitive),
+        --   top 8 shown, plus a "create tag" row when the query is new.
+        -- While the query is empty (on focus): semantic suggestions appear under a
+        --   "Suggested tags" label — tags drawn from up to 10 similar posts,
+        --   weighted by similarity, top 5, excluding tags already on the post.
+        --   Requires semanticSimilarityEnabled and a built embedding index;
+        --   it is an index read (no model inference) so it works offline and
+        --   yields nothing when similarity is disabled or unindexed.
 
     @guarantee TranslationFlagsBar
         -- Row of flag emoji buttons inline with metadata toggle.
@@ -152,15 +156,15 @@ surface PostEditorSurface {
         -- Collapsible section with textarea (4 rows).
 
     @guarantee EditorBodyToolbar
-        -- Toolbar: "Content" label, mode toggle (Visual/Markdown/Preview),
+        -- Toolbar: "Content" label, mode toggle (Markdown/Preview),
         --   action buttons (markdown mode only): Gallery (with media count),
         --   Insert Post Link, Insert Media.
 
     @guarantee EditorModes
-        -- Visual: rich-text WYSIWYG editor.
         -- Markdown: code editor with markdown-with-macros language,
         --   highlighting [[macro ...]] syntax. Word wrap on, minimap off, 14px font.
         -- Preview: iframe showing rendered preview.
+        -- Note: visual/WYSIWYG mode not implemented; "visual" normalizes to markdown.
 
     @guarantee DragDropImages
         -- Drop image file onto editor area triggers import chain.
@@ -193,8 +197,8 @@ invariant PostDirtyTracking {
 }
 
 invariant PostEditorModePersistence {
-    -- Editor mode (visual/markdown/preview) persists per session.
-    -- Default mode comes from editor settings.
+    -- Editor mode (markdown/preview) persists per session.
+    -- Default mode comes from editor settings (markdown).
 }
 
 -- ─── Post editor actions ────────────────────────────────────
@@ -227,6 +231,8 @@ rule PostTranslateAction {
 
 rule PostAutoTranslateOnSave {
     when: PostSaved(post_id)
+    -- Only an explicit manual save (or publish) triggers this. Auto-saves and
+    -- post creation (sidebar, deeplink/bookmarklet, import, scripting) never do.
     -- Gate: airplane mode check + auto_translate not disabled (doNotTranslate=false)
     -- For each configured blog language missing a translation:
     --   Enqueue background translation task (title model)
@@ -247,7 +253,7 @@ rule PostPublishAction {
 rule PostDiscardChanges {
     when: PostDiscardRequested(post_id)
     -- Only available for published posts with pending draft changes
-    -- Native confirm dialog (rfd): "Discard changes to this post?"
+    -- System confirm dialog: "Discard changes to this post?"
     -- On confirm: reads published version from .md file,
     --   restores DB to published state (content=null, status=published)
     -- Editor reloads with restored content
@@ -255,7 +261,7 @@ rule PostDiscardChanges {
 
 rule PostDeleteAction {
     when: PostDeleteRequested(post_id)
-    -- Native confirm dialog (rfd): "Delete this post?"
+    -- System confirm dialog: "Delete this post?"
     -- If published: also deletes .md file and all translation files
     -- If never published: only deletes DB record
     -- Removes from DB, closes tab, sidebar removes item

@@ -9,7 +9,7 @@ One row per persisted field or compatibility-sensitive artifact.
 ## How To Use
 
 1. Start with posts, translations, media, templates, project metadata, menus, and generated outputs.
-2. Record the current TypeScript behavior first.
+2. Record the baseline (bDS2, `../bDS2/`) behavior first; the allium specs in `specs/` are the contract.
 3. Record the intended Rust behavior only if it is identical or explicitly approved as a divergence.
 4. Link every row to tests or golden fixtures once available.
 
@@ -73,7 +73,7 @@ Use this for compatibility-sensitive behaviors that are not a single persisted f
 | rendering | built-in macros | JS server-side (gallery, youtube, vimeo, photo_archive, tag_cloud) | Rust-native in bds-core/render | implementation language changes, output must match | golden-generated-site comparisons | not-started | These are NOT Python macros |
 | rendering | Liquid feature subset | liquidjs 10.25 (full spec available) | Rust Liquid (scoped to used subset) | implementation may differ for unused features | template compatibility suite | not-started | Only ~35% of spec used by default templates |
 | slugs | slug generation | `transliteration` npm package | `deunicode` Rust crate | possible edge-case differences | slug corpus tests in M0 fixtures | not-started | Verify against real content |
-| editor | content editing | Milkdown WYSIWYG (default) | plain-text syntax-highlighting editor (bds-editor: ropey + syntect + cosmic-text) + live preview | yes | n/a | approved-divergence | Rich editor deferred to extension Bucket I, builds on bds-editor foundation |
+| editor | content editing | rich editor (default) | plain-text syntax-highlighting editor (bds-editor: ropey + syntect + cosmic-text) + live preview | yes | n/a | approved-divergence | Rich editor deferred to extension Bucket I, builds on bds-editor foundation |
 | preview | asset sourcing | local assets only | identical | no | HTML assertions | not-started |  |
 | runtime | JS dependency | Electron (Chromium + Node.js) | no JavaScript anywhere — pure Rust + native APIs | yes (intentional) | build verification: no JS in dependency tree | approved-divergence | Supply-chain security constraint |
 | runtime | async executor | Node.js event loop | tokio | yes (internal) | n/a | approved-divergence | Used for preview server, publish, file watching |

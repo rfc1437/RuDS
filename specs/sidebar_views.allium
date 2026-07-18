@@ -338,7 +338,7 @@ surface ScriptListItemEntry {
 
     @guarantee CreateDefaults
         -- New scripts default to: kind=utility, content='print("new script")',
-        -- entrypoint='render', enabled=true.
+        -- entrypoint='main', enabled=true.
 
     @guarantee LiveRefresh
         -- Item list refreshes on scripts-changed event.
@@ -652,6 +652,9 @@ rule ImportListClick {
 
 -- Full git interface, not the SidebarEntityList pattern.
 -- Three possible states: loading, not_a_repo, active_repo.
+-- Backend: BDS.Git provides status, diff, commit_all, history,
+-- fetch, pull, push, prune_lfs_cache, remote_state, initialize_repo.
+-- The sidebar must surface these capabilities directly.
 
 -- State: not_a_repo
 --   Remote URL text input + "Initialize Git" button.

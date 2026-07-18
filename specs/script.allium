@@ -1,16 +1,34 @@
 -- allium: 1
 -- bDS Scripting System
--- Scope: core (Wave 6 — Lua runtime and scripting docs)
+-- Scope: core (Wave 6 — scripting behaviour and file contracts)
 -- Distilled from: src/main/engine/ScriptEngine.ts, schema.ts
--- Scripting runtime is Lua (mlua crate). Behavioural contract preserved.
+-- Lua is the normative scripting language for user-authored scripts in the
+-- rewrite. The concrete embedding strategy remains an implementation choice;
+-- only the behavioural contract is normative here.
+
+config {
+    script_extension: String = "lua"
+    macro_timeout: Duration = 10.seconds
+    transform_max_toasts_per_script: Integer = 5
+    transform_max_toasts_total: Integer = 20
+    transform_max_toast_length: Integer = 300
+    blogmark_max_title_length: Integer = 200
+    blogmark_max_url_length: Integer = 2048
+}
+
+enum ScriptStatus {
+    draft
+    published
+}
 
 entity Script {
+    project_id: String
     slug: String
     title: String
     kind: macro | utility | transform
-    entrypoint: String          -- default: "render" for macros
+    entrypoint: String          -- named Lua function used as the script entrypoint
     enabled: Boolean
-    status: draft | published
+    status: ScriptStatus
     content: String?
     version: Integer
     file_path: String
@@ -48,8 +66,9 @@ surface ScriptManagementSurface {
     facing _: ScriptOperator
 
     provides:
-        CreateScriptRequested(title, kind, content, entrypoint)
-        CreateAndPublishScriptRequested(title, kind, content, entrypoint)
+        CreateScriptRequested(project, title, kind, content, entrypoint)
+        CreateAndPublishScriptRequested(project, title, kind, content, entrypoint)
+        UpdateScriptRequested(script, changes)
         PublishScriptRequested(script)
         DeleteScriptRequested(script)
         RunUtilityRequested(script)
@@ -58,60 +77,124 @@ surface ScriptManagementSurface {
         RebuildScriptsFromFilesRequested(project)
 }
 
+surface ScriptRuntimeSurface {
+    facing _: ScriptRuntime
+
+    provides:
+        ValidateScript(source)
+        ExecuteScriptRequested(script, entrypoint, args, progress_sink)
+
+    @guarantee SandboxedExecution
+        -- User-authored Lua executes from a sandboxed runtime state.
+        -- Filesystem mutation, process control, package loading, and other
+        -- unrestricted host capabilities are unavailable unless explicitly
+        -- re-exposed by the host application.
+
+    @guarantee ExplicitHostCapabilities
+        -- Host-provided functions are exposed only through an explicit bds.*
+        -- capability table, never through ambient global access.
+
+    @guarantee MacroTimeout
+        -- Macro execution has a short timeout budget of config.macro_timeout.
+
+    @guarantee ManagedBatchExecution
+        -- Utility and transform scripts execute as managed jobs.
+        -- The contract does not define a fixed wall-clock limit for those
+        -- jobs because batch work can legitimately scale with project size.
+        -- Progress reporting, operator cancellation, and host orchestration
+        -- govern their lifecycle instead of a fixed timeout.
+
+    @guarantee ProgressFeedback
+        -- Long-running utility and transform scripts may emit progress updates
+        -- through explicit host APIs during execution.
+        -- Progress reporting is cooperative and flows through the supplied
+        -- progress sink rather than ambient global side effects.
+
+    @guarantee ScriptOutputRouting
+        -- print(…) calls and the explicit bds.app.log(…) API append lines to a
+        -- host-routed script output stream: the desktop app's Output panel,
+        -- stdout in the CLI, and the host logger when no sink is attached —
+        -- never the ambient console.
+
+    @guarantee BatchCancellation
+        -- Managed utility and transform jobs can be cancelled by the host
+        -- operator boundary.
+}
+
 invariant UniqueScriptSlug {
+    -- Slug uniqueness is scoped per project, not globally.
     for a in Scripts:
         for b in Scripts:
-            a != b implies a.slug != b.slug
+            a != b and a.project_id = b.project_id implies a.slug != b.slug
 }
 
 invariant ScriptFileLayout {
     for s in Scripts where file_path != "":
-        s.file_path = format("scripts/{slug}.lua", slug: s.slug)
+        s.file_path = format("scripts/{slug}.{extension}", slug: s.slug, extension: config.script_extension)
 }
--- Script files use .lua with standard --- YAML frontmatter
+-- Script files use standard --- YAML frontmatter
 
 rule CreateScript {
-    when: CreateScriptRequested(title, kind, content, entrypoint)
+    when: CreateScriptRequested(project, title, kind, content, entrypoint)
     let slug = slugify(title)
     -- Creates a draft script: content stored in DB, no file written yet
-    ensures: Script.created(
-        slug: slug,
-        title: title,
-        kind: kind,
-        content: content,
-        entrypoint: entrypoint ?? "render",
-        status: draft,
-        enabled: true,
-        version: 1,
-        file_path: ""
-    )
+    ensures:
+        let new_script = Script.created(
+            project_id: project.id,
+            slug: slug,
+            title: title,
+            kind: kind,
+            content: content,
+            entrypoint: entrypoint ?? if kind = macro: "render" else: "main",
+            status: draft,
+            enabled: true,
+            version: 1,
+            file_path: ""
+        )
+        new_script.status = draft
+}
+
+rule UpdateScript {
+    when: UpdateScriptRequested(script, changes)
+    ensures: ScriptFieldsUpdated(script, changes)
+    ensures: script.updated_at = now
+    ensures: script.version = script.version + 1
+}
+
+rule ReopenPublishedScript {
+    when: UpdateScriptRequested(script, changes)
+    requires: script.status = published
+    requires: script_changes_affect_published_output(changes)
+    ensures: script.status = draft
 }
 
 rule CreateAndPublishScript {
     -- Alternative creation path: create + immediately publish (file written)
-    -- TypeScript: createScript() does this in one step
-    when: CreateAndPublishScriptRequested(title, kind, content, entrypoint)
+    -- Some implementations may expose this as a single user action
+    when: CreateAndPublishScriptRequested(project, title, kind, content, entrypoint)
     let slug = slugify(title)
     requires: ValidateScript(content) = valid
     ensures:
         let new_script = Script.created(
+            project_id: project.id,
             slug: slug,
             title: title,
             kind: kind,
             content: null,
-            entrypoint: entrypoint ?? "render",
+            entrypoint: entrypoint ?? if kind = macro: "render" else: "main",
             status: published,
             enabled: true,
             version: 1,
-            file_path: format("scripts/{slug}.lua", slug: slug)
+            file_path: format("scripts/{slug}.{extension}", slug: slug, extension: config.script_extension)
         )
         ScriptFileWritten(new_script)
 }
 
 rule PublishScript {
     when: PublishScriptRequested(script)
+    requires: script.status = draft
     requires: ValidateScript(script.content) = valid
-        -- AST parsing must succeed
+        -- Lua parsing must succeed before a script can be published
     ensures: script.status = published
     ensures: ScriptFileWritten(script)
     ensures: script.content = null
@@ -129,9 +212,17 @@ rule ExecuteMacro {
     when: MacroExpansionRequested(script, template_context)
     requires: script.kind = macro
     requires: script.enabled = true
+    requires: script.entrypoint != ""
     -- Macro scripts are invoked during template rendering
     -- via [[slug param1=value1 param2=value2]] syntax in post content
-    -- They receive named parameters and the template context, return HTML
+    -- Unknown macro names are resolved against enabled macro scripts by slug.
+    -- They receive named parameters plus template_context.env fields that
+    -- include isPreview, mainLanguage, languagePrefix, hook, source.kind,
+    -- and translations.
+    -- They return HTML and run sequentially with config.macro_timeout per
+    -- invocation.
+    -- Macro failures degrade to empty output for that invocation and do not
+    -- abort rendering of the surrounding page.
     ensures: MacroOutputProduced(script, html_output)
 }
 
@@ -139,7 +230,11 @@ rule ExecuteUtility {
     when: RunUtilityRequested(script)
     requires: script.kind = utility
     requires: script.enabled = true
-    -- Runs on-demand from the UI, produces stdout output
+    requires: script.entrypoint != ""
+    -- Utility scripts commonly perform long-running data manipulation work.
+    -- They are manually started by an operator action, run as managed jobs,
+    -- may issue host-backed API calls, may emit progress during execution,
+    -- and may be cancelled by the operator.
     ensures: UtilityOutputProduced(script, stdout)
 }
 
@@ -147,19 +242,76 @@ rule ExecuteTransform {
     when: BlogmarkReceived(data)
     -- Transform scripts run sequentially on blogmark deep link data
     -- Input: title, content, tags, categories, source url
-    -- Each transform can modify the data before post creation
-    let transforms = Scripts where kind = transform and enabled = true
-    for t in ordered_by(transforms, s => s.slug):
+    -- Each transform can modify the data before post creation.
+    -- Execution uses the same managed job host API contract as other batch
+    -- scripts and may report progress while mass-processing remote or local
+    -- content.
+    let transforms = Scripts where project_id = data.project_id and kind = transform and enabled = true
+    for t in ordered_by(transforms, s => s.updated_at, s => s.slug, s => s.id):
+        requires: t.entrypoint != ""
         ensures: TransformApplied(t, data)
 
+    @guarantee BlogmarkInputHardening
+        -- The deep link is sanitized before transforms run. Title and url have
+        -- control characters stripped and are trimmed. The url is kept only
+        -- when it is http(s) with a host, after removing any credentials and
+        -- fragment, and at most config.blogmark_max_url_length characters;
+        -- otherwise it is dropped so it can never reach the post body. The
+        -- title is capped at config.blogmark_max_title_length and falls back to
+        -- the url host when blank.
+
+    @guarantee BlogmarkDefaultBody
+        -- When the deep link supplies no content, the post body defaults to a
+        -- markdown link [title](url) to the bookmarked page, with the title
+        -- escaped, so transforms operate on the same candidate whether or not
+        -- an explicit body was provided. Explicit content always wins.
+
+    @guarantee BlogmarkProjectTargeting
+        -- A link's own project_id determines the target project. When it names a
+        -- project that exists and differs from the active one, the shell
+        -- switches to it before importing so the new post is shown in context.
+        -- When it names a project that does not exist in this install (e.g. a
+        -- bookmarklet copied from another instance) the import is refused with
+        -- an error — the post is never redirected into a different project.
+        -- With no link project_id, the active project is used; with no link
+        -- project_id and no active project the import is refused with a warning.
+
+    @guarantee BlogmarkColdStartDelivery
+        -- A deep link that arrives before the shell is ready (e.g. the
+        -- bookmarklet launching the app) is queued and replayed only after the
+        -- client has finished initialising and rehydrating its stored
+        -- workbench session, so the post is created and the editor it opens is
+        -- not overwritten by the session restore. A session restore arriving
+        -- after a deep link (e.g. when the link switched projects) preserves
+        -- the newly opened editor tab as the active tab.
+
+    @guarantee TransformTrigger
+        -- Transform scripts are triggered automatically by blogmark import.
+        -- Each script receives the current post candidate plus a context with
+        -- source='blogmark' and the originating URL.
+
+    @guarantee TransformPipelineContinuation
+        -- Transform errors are captured per script and do not roll back the
+        -- last valid post state produced by earlier transforms.
+        -- The pipeline continues with subsequent enabled transforms.
+
+    @guarantee TransformToastBudget
+        -- Transform scripts may emit toast feedback.
+        -- At most config.transform_max_toasts_per_script toasts are accepted
+        -- from any one transform, with a total budget of
+        -- config.transform_max_toasts_total across the pipeline.
+        -- Individual toast messages are truncated to
+        -- config.transform_max_toast_length characters.
+
     @guidance
-        -- bds://new-post deep links from browser bookmarks
-        -- Max 5 toast notifications per script, 20 total
+        -- bds2://new-post deep links from browser bookmarks
+        -- (bds2:// scheme avoids clashing with the legacy app's bds:// scheme)
+        -- Ordering is deterministic: updated_at, then slug, then id
 }
 
 rule RebuildScriptsFromFiles {
     when: RebuildScriptsFromFilesRequested(project)
-    for file in scan_directory(project.effective_data_dir + "/scripts", "*.lua"):
+    for file in scan_directory(project.public_dir + "/scripts", "*." + config.script_extension):
         let parsed = parse_script_file(file)
         ensures: Script.created(parsed)
 }

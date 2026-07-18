@@ -7,6 +7,11 @@
 use "./post.allium" as post
 use "./media.allium" as media
 
+enum PostTranslationStatus {
+    draft
+    published
+}
+
 surface TranslationControlSurface {
     facing _: TranslationOperator
 
@@ -22,6 +27,7 @@ surface TranslationRuntimeSurface {
     provides:
         PostPublished(post)
         PublishTranslationRequested(translation)
+        TranslationEdited(translation, changes)
 }
 
 value SupportedLanguage {
@@ -42,7 +48,7 @@ entity PostTranslation {
     title: String
     excerpt: String?
     content: String?
-    status: draft | published
+    status: PostTranslationStatus
     file_path: String
     checksum: String?
     created_at: Timestamp
@@ -56,6 +62,18 @@ entity PostTranslation {
         draft -> published
         published -> draft
     }
+}
+
+invariant TranslationFilesCarryFullMetadata {
+    -- Translation markdown files include status and timestamps alongside
+    -- language-specific fields. This allows each translation to be rebuilt
+    -- independently. On rebuild, missing fields fall back to canonical post
+    -- values for compatibility with legacy files.
+    for t in PostTranslations where file_path != "":
+        translation_file(t).has_fields(
+            id, translation_for, language, title, excerpt?,
+            status, created_at, updated_at, published_at
+        )
 }
 
 surface PostTranslationSurface {
@@ -119,11 +137,20 @@ rule PublishPostTranslation {
 
 rule PublishTranslation {
     when: PublishTranslationRequested(translation)
+    requires: translation.status = draft
     ensures: translation.status = published
     ensures: translation.published_at = translation.published_at ?? now
     ensures: TranslationFileWritten(translation)
     ensures: translation.content = null
         -- Content moves to filesystem
+}
+
+rule ReopenPublishedTranslation {
+    when: TranslationEdited(translation, changes)
+    requires: translation.status = published
+    requires: translation_edit_affects_published_content(changes)
+    ensures: translation.status = draft
+    ensures: translation.updated_at = now
 }
 
 rule DeletePostTranslation {
@@ -158,4 +185,132 @@ invariant FtsIncludesTranslations {
         includes_text(search_index(post), post.title)
         for t in post.translations:
             includes_text(search_index(post), t.title)
+}
+
+-- ===========================================================================
+-- Auto-Translation System
+-- Distilled from: lib/bds/posts/auto_translation.ex
+--
+-- Two entry points share one translation primitive:
+--   1. ScheduleAutoTranslation - reactive, fired only by an explicit manual
+--      save (or publish) in the post editor — never by post creation or
+--      auto-save. One background task per missing language produces a DRAFT
+--      translation, then cascades to the post's linked media.
+--   2. FillMissingTranslations - batch maintenance action. Scans every
+--      published post, AUTO-PUBLISHES the generated translations, fills linked
+--      media, reports progress and returns a summary.
+-- All AI work is gated by a resolvable endpoint and runs on background tasks.
+-- ===========================================================================
+
+config {
+    -- Background translations use the "AI" task group named per project.
+    auto_translation_task_group_name: String = "AI"
+}
+
+surface AutoTranslationControlSurface {
+    facing _: TranslationOperator
+
+    provides:
+        -- Reactive trigger: emitted only when a post is updated with
+        -- auto_translate enabled (the editor's manual save/publish path);
+        -- post creation and auto-save never emit it.
+        PostSavedForAutoTranslation(post)
+        -- Batch trigger: "fill missing translations" maintenance action.
+        FillMissingTranslationsRequested(project)
+}
+
+invariant AutoTranslationGatedByEndpoint {
+    -- No automatic translation runs unless an endpoint is resolvable for the
+    -- current mode. Airplane mode needs url+model; online additionally needs an
+    -- api_key. When unconfigured, scheduling is a silent no-op.
+    -- See ai.allium AirplaneModeGating for endpoint selection.
+    for post in Posts:
+        auto_translation_runs(post) implies endpoint_configured(post.project)
+}
+
+invariant AutoTranslationSkipsDoNotTranslate {
+    -- Posts flagged do_not_translate never schedule background translation,
+    -- and the batch scan rejects them before computing missing languages.
+    for post in Posts where post.do_not_translate:
+        not auto_translation_runs(post)
+}
+
+invariant AutoTranslationOnlyMissingLanguages {
+    -- The target set is the configured languages (main_language plus
+    -- blog_languages, normalized + de-duplicated) minus the post's source
+    -- language and any language that already has a translation.
+    for post in Posts:
+        auto_translation_targets(post) =
+            configured_languages(post.project)
+                - source_language(post)
+                - post.available_languages
+}
+
+rule ScheduleAutoTranslation {
+    when: PostSavedForAutoTranslation(post)
+    requires: not post.do_not_translate
+    requires: endpoint_configured(post.project)
+    -- One background task per missing language, each producing a DRAFT
+    -- translation (not auto-published) followed by a media cascade.
+    for language in auto_translation_targets(post):
+        ensures: BackgroundTaskSubmitted(
+            group: post.project,
+            group_name: config.auto_translation_task_group_name)
+        ensures: AutoTranslatePost(post, language, auto_publish: false)
+        ensures: AutoTranslateMediaCascade(post, language)
+
+    @guidance
+        -- Best-effort: missing metadata, unconfigured endpoint, or
+        -- do_not_translate all collapse to a silent success with no task.
+}
+
+rule AutoTranslatePost {
+    when: AutoTranslatePost(post, language, auto_publish)
+    requires: trim(editor_body(post)) != ""
+    -- Calls the AI endpoint with the post's source language, then upserts a
+    -- translation marked auto_generated. Publishes only in the batch path.
+    ensures:
+        let translation = UpsertPostTranslation(post, language)
+        if auto_publish:
+            translation.status = published
+        else:
+            translation.status = draft
+
+    @guidance
+        -- An empty body yields a no_content_to_translate error and no
+        -- translation is created.
+}
+
+rule AutoTranslateMediaCascade {
+    when: AutoTranslateMediaCascade(post, language)
+    -- After a post translation, each linked media (ordered by sort_order) gets
+    -- its own background task when its source language differs from the target
+    -- and it lacks a translation in that language.
+    for m in post.linked_media:
+        if m.language != "" and m.language != language and not (language in m.available_languages):
+            ensures: BackgroundTaskSubmitted(
+                group: post.project,
+                group_name: config.auto_translation_task_group_name)
+            ensures: media/UpsertMediaTranslation(m, language)
+}
+
+rule FillMissingTranslations {
+    when: FillMissingTranslationsRequested(project)
+    -- Batch maintenance. No-op (nothing_to_do) when there is at most one
+    -- configured language or nothing is missing. Otherwise scans published,
+    -- non-do_not_translate posts and their linked media.
+    requires: configured_languages(project).count > 1
+    for post in project.posts where status = published and not do_not_translate:
+        for language in auto_translation_targets(post):
+            ensures: AutoTranslatePost(post, language, auto_publish: true)
+            ensures: AutoTranslateMediaCascade(post, language)
+    ensures: ProgressReported(project)
+    ensures: FillMissingTranslationsCompleted(project)
+
+    @guidance
+        -- Returns a summary of counts: translated_posts, translated_media,
+        -- failed_count, warned_count, and nothing_to_do. nothing_to_do is true
+        -- when there is at most one configured language or nothing is missing.
+        -- Per-item failures increment failed_count and never abort the batch.
+        -- Progress runs through scanning (0.0-0.15) then per-item (0.15-1.0).
 }

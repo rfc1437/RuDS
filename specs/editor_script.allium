@@ -16,9 +16,10 @@ value ScriptEditorView {
     title: String                       -- editable text input
     slug: String                        -- editable text input, auto-generated from title
     kind: String                        -- select: utility | macro | transform
-    entrypoint: String                  -- select: dynamically discovered functions, "main" always first
+    entrypoint: String                  -- select: discovered Lua functions available as entrypoints
     enabled: Boolean                    -- checkbox
     content: String                     -- code editor content
+    can_publish: Boolean                -- true while status = draft
     created_at: String                  -- locale-formatted date
     updated_at: String                  -- locale-formatted date
 }
@@ -37,20 +38,23 @@ surface ScriptEditorSurface {
 
     provides:
         ScriptSaveRequested(editor.script_id)
+        ScriptPublishRequested(editor.script_id)
+            when editor.can_publish
         ScriptRunRequested(editor.script_id)
         ScriptCheckSyntaxRequested(editor.script_id)
         ScriptDeleteRequested(editor.script_id)
 
     @guarantee HeaderLayout
         -- Header bar with script title tab.
-        -- Actions (right side): Save button, Run button,
+        -- Actions (right side): Save button, Publish button (shown only when
+        --   can_publish, i.e. status = draft), Run button,
         --   Check Syntax button, Delete button (danger style).
 
     @guarantee MetadataRow
         -- Two rows of metadata fields above the editor.
         -- Row 1: Title (text input), Slug (text input, auto-generated from title).
         -- Row 2: Kind (select: utility/macro/transform),
-        --   Entrypoint (select: dynamically discovered functions with "main" always first),
+        --   Entrypoint (select: discovered Lua functions exposed by the script),
         --   Enabled (checkbox).
 
     @guarantee EditorBody
@@ -66,10 +70,19 @@ surface ScriptEditorSurface {
 
 rule ScriptSave {
     when: ScriptSaveRequested(script_id)
-    -- Lua syntax check first (parse validation via Lua parser/runtime semantics)
+    -- Lua syntax check first using the configured runtime semantics
     -- If syntax error: blocks save, shows error inline in editor gutter
-    -- If valid: bumps version, saves to DB + rewrites .lua file
-    -- Entrypoint list re-discovered from AST after save
+    -- If valid: bumps version, saves to DB + rewrites the published script file
+    -- Entrypoint list re-discovered from Lua source after save
+}
+
+rule ScriptPublish {
+    when: ScriptPublishRequested(script_id)
+    -- Only offered while the script is a draft (can_publish gate on the button)
+    -- Validates Lua syntax first (publish gate); invalid source blocks publish
+    -- Saves current draft fields, then publishes (status -> published)
+    -- Writes the published script file to disk
+    -- See script.allium PublishScript
 }
 
 rule ScriptCheckSyntax {
@@ -81,8 +94,8 @@ rule ScriptCheckSyntax {
 
 rule ScriptRun {
     when: ScriptRunRequested(script_id)
-    -- Executes script in Lua runtime
-    -- Calls configured entrypoint function (default: main)
+    -- Executes the script in the configured Lua runtime
+    -- Calls the configured Lua entrypoint function
     -- stdout/stderr directed to Output panel tab
     -- Output panel auto-opens if not already visible
     -- Errors shown in Output panel with line numbers
@@ -91,6 +104,6 @@ rule ScriptRun {
 rule ScriptDelete {
     when: ScriptDeleteRequested(script_id)
     -- No confirmation dialog
-    -- Deletes DB record + .lua file on disk
+    -- Deletes DB record + published script file on disk
     -- Closes script tab, sidebar removes item
 }

@@ -1,0 +1,219 @@
+-- allium: 1
+-- bDS Rendering Subsystem
+-- Scope: core — template rendering shared by preview and generation
+-- Distilled from: lib/bds/rendering/{filters,labels,links_and_languages,
+--   metadata,post_rendering,list_archive}.ex
+
+-- The rendering subsystem turns a post/list/not-found record plus project
+-- metadata into the assigns consumed by a Liquid template. It is shared by the
+-- preview server (on-demand) and static site generation (published .md files).
+-- Rendering language is the CONTENT language (post/project), never the UI locale.
+
+use "./template.allium" as template
+use "./template_context.allium" as template_context
+use "./i18n.allium" as i18n
+use "./post.allium" as post
+
+-- ─── Custom Liquid filters ───────────────────────────────────
+
+-- The three custom filters available in the Liquid subset (see
+-- template.allium LiquidFilterSubset). Applied during template rendering.
+
+surface RenderFilterSurface {
+    facing _: TemplateRenderer
+
+    provides:
+        I18nFilterApplied(value, language)
+        MarkdownFilterApplied(value, post_id, language)
+        SlugifyFilterApplied(value)
+}
+
+rule I18nFilter {
+    when: I18nFilterApplied(value, language)
+    -- {{ "Key" | i18n }} -> localized "render" domain string for `language`.
+    -- Empty/blank input returns empty string.
+    ensures: result = lgettext(language, "render", trim(value))
+}
+
+rule SlugifyFilter {
+    when: SlugifyFilterApplied(value)
+    -- {{ title | slugify }} -> URL-friendly slug (same Slug.slugify as posts).
+    ensures: result = slugify(value)
+}
+
+rule MarkdownFilter {
+    when: MarkdownFilterApplied(value, post_id, language)
+    -- {{ body | markdown }} pipeline, in order:
+    --   1. Expand built-in [[...]] macros (see ExpandBuiltinMacros)
+    --   2. Convert markdown to HTML (Earmark; errors degrade to partial HTML)
+    --   3. Rewrite href/src URLs to canonical post/media paths (see RewriteUrls)
+    ensures: result = rewritten_html
+}
+
+-- ─── Built-in macros ─────────────────────────────────────────
+
+-- Macros use double-bracket syntax [[name param="value" ...]], expanded in
+-- markdown before HTML conversion. NOT Liquid tags. Each renders a bundled
+-- macro template (macros/{name}) in an isolated Liquid subscope.
+
+value BuiltinMacro {
+    name: String        -- youtube | vimeo | gallery | photo_archive | tag_cloud
+    params: Map<String, String>
+}
+
+surface BuiltinMacroSurface {
+    context macro: BuiltinMacro
+
+    exposes:
+        macro.name
+        macro.params
+}
+
+rule ExpandBuiltinMacros {
+    when: MacroEncountered(macro, language, post_id)
+    -- Project-scoped macros (photo_archive, tag_cloud) resolve the owning
+    -- project id from the render context (carried in the Liquid context's
+    -- private data), so they populate correctly even when content is
+    -- pre-rendered outside a full page context.
+    -- Unknown macro names are left verbatim in the source.
+    if macro.name = "youtube" or macro.name = "vimeo":
+        -- Embeds video by `id`; localized default title when title param absent.
+        ensures: MacroTemplateRendered(format("macros/{name}", name: macro.name))
+    if macro.name = "gallery":
+        -- Image gallery from the post's linked image media (PostMedia links,
+        -- restored from media sidecars on rebuild). Linking on import is
+        -- independent of AI enrichment. Ordered newest-first (created_at desc);
+        -- lightbox group is "gallery-{post_id}"; title is caption|title|name.
+        -- `columns` clamped to 1..6 (default 3). Empty when no post_id/images.
+        ensures: MacroTemplateRendered("macros/gallery")
+    if macro.name = "photo_archive":
+        -- Month-grouped image archive for the project (optional year/month filter).
+        ensures: MacroTemplateRendered("macros/photo-archive")
+    if macro.name = "tag_cloud":
+        -- Weighted tag cloud from PUBLISHED post tag counts; per-tag colours
+        -- from Tag rows. Words carry {text, size, count, url}; the JSON is
+        -- HTML-escaped into the data-tag-cloud-words attribute so the client
+        -- runtime can JSON.parse it. `orientation` aliases normalize to
+        -- horizontal | mixed-hv | mixed-diagonal; width (320..1600, def 900)
+        -- and height (180..900, def 420) clamp to defaults when out of range.
+        ensures: MacroTemplateRendered("macros/tag-cloud")
+}
+
+invariant MacroIsolation {
+    -- Macro templates render in an isolated Liquid subscope so macro-local
+    -- assigns never leak into the surrounding template context.
+}
+
+-- ─── URL rewriting ───────────────────────────────────────────
+
+rule RewriteUrls {
+    when: RenderedHtmlProduced(html, canonical_post_paths, canonical_media_paths)
+    -- Rewrites href= and src= attribute values in rendered HTML.
+    -- External/special URLs (scheme:, //, #) are left untouched.
+    -- Internal post references (/post/{slug}, /posts/{slug}, dated paths) map to
+    --   the post's canonical dated path; query/fragment suffixes are preserved.
+    -- Internal /media/YYYY/MM/{file} references map to canonical media paths.
+    ensures: AttributesRewritten(html)
+}
+
+-- ─── Links and languages ─────────────────────────────────────
+
+value LinkContext {
+    href: String
+    title: String
+    display_slug: String
+    language: String
+}
+
+rule ResolveLanguagePrefix {
+    when: LanguagePrefixRequested(language, main_language)
+    -- "" for the main language (and nil/blank); "/{language}" otherwise.
+    if language = main_language:
+        ensures: prefix = ""
+    else:
+        ensures: prefix = format("/{lang}", lang: language)
+}
+
+rule CollectLinkContexts {
+    when: LinkContextsRequested(project, post_id, direction)
+    -- direction = incoming (backlinks) | outgoing.
+    -- One LinkContext per linked post that still exists; missing targets dropped.
+    -- href = canonical post path, language normalized to main when unset.
+    ensures: List<LinkContext>
+}
+
+-- ─── Render labels ───────────────────────────────────────────
+
+value RenderLabels {
+    -- Localized strings for rendered/preview output, resolved in the "render"
+    -- gettext domain for the CONTENT language (not the UI locale). Includes
+    -- taxonomy, backlinks, archive, pagination, calendar, search, not-found,
+    -- and macro fallback labels. Month names resolved 1..12 per language.
+}
+
+invariant LabelsUseContentLanguage {
+    -- RenderLabels and the i18n filter resolve against the content/render
+    -- language, consistent with i18n.allium's split-localization rule.
+}
+
+-- ─── Post render assigns ─────────────────────────────────────
+
+-- The full assigns map for a single post template, assembled from the post
+-- record (Post or PostTranslation) and project metadata.
+
+value PostRenderAssigns {
+    language: String
+    language_prefix: String
+    page_title: String?
+    pico_stylesheet_href: String
+    blog_languages: List<i18n/RenderLanguage>
+    alternate_links: List<AlternateLink>     -- hreflang alternates for translations
+    menu_items: List<template_context/MenuItem>
+    post_categories: List<String>
+    post_tags: List<String>
+    tag_color_by_name: Map<String, String?>
+    backlinks: List<LinkContext>
+    canonical_post_path_by_slug: Map<String, String>
+    canonical_media_path_by_source_path: Map<String, String>
+    post_data_json_by_id: String             -- PostData JSON for client widgets
+    post: template_context/PostContext        -- includes incoming/outgoing links
+    labels: RenderLabels
+    calendar_initial_year: Integer?
+    calendar_initial_month: Integer?
+}
+
+value AlternateLink {
+    language: String
+    href: String
+}
+
+rule BuildPostAssigns {
+    when: PostAssignsRequested(project, assigns)
+    -- Loads the post/translation record, renders its markdown body (macros +
+    --   HTML + URL rewrite), collects incoming/outgoing links, and resolves all
+    --   metadata-derived assigns (menu, languages, alternates, tag colours,
+    --   calendar bounds, labels) for the post's language.
+    ensures: PostRenderAssigns
+}
+
+rule BuildNotFoundAssigns {
+    when: NotFoundAssignsRequested(project, assigns)
+    -- Assigns for the 404 page: page_title defaults to "404", no alternates,
+    --   but shares language/menu/blog_languages/stylesheet/labels with posts.
+    -- Consumed by the not-found template (see generation.allium 404.html).
+    ensures: NotFoundRenderAssigns
+}
+
+rule BuildListAssigns {
+    when: ListAssignsRequested(project, assigns)
+    -- Assigns for list/archive pages (home, category, tag, date archives):
+    --   paginated post list plus shared metadata-derived assigns.
+    ensures: ListRenderAssigns
+}
+
+invariant SharedRenderPathForPreviewAndGeneration {
+    -- Preview and generation produce identical HTML for the same input because
+    -- both build assigns through this subsystem and render via the same Liquid
+    -- subset. They differ only in content SOURCE (see preview.allium
+    -- PreviewDraftOverlay and generation.allium GenerationPublishedOnly).
+}

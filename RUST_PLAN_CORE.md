@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ship a native desktop Rust application (macOS primary, cross-platform ready) that fully replaces the current TypeScript app for the primary blogging workflow:
+Ship a native desktop Rust application (macOS primary, cross-platform ready) that fully replaces the baseline app (bDS2, Elixir, at `../bDS2/`) for the primary blogging workflow:
 
 1. open an existing project
 2. create and edit content
@@ -52,6 +52,43 @@ Core is not a toy MVP. Core must already be a production-capable replacement for
 User content and project data are compatible.
 User-authored Python scripts are not compatible and are treated as legacy artifacts.
 
+## bDS2 Spec Sync — Contract Updates (2026-07-18)
+
+The specs in `specs/` were synced wholesale from `../bDS2/specs/`. The following contracts changed or were made explicit relative to what this plan and the existing Rust code assumed. Each item names the spec file that is authoritative; the executable gap list lives in RUST_EXECUTION_BACKLOG.md M6.
+
+### Data placement (project.allium)
+
+- `public_dir` = the project folder (the directory containing `meta/project.json`): all user-owned, portable, webserver-bound content — posts, media + thumbnails, templates/, scripts/, meta/, tags.json, menu.opml, and generated `html/` output.
+- `private_dir` = the OS per-user app-data dir (`~/Library/Application Support/bds`, `$XDG_CONFIG_HOME/bds`, `%APPDATA%\bds`): SQLite database, per-project embeddings index, model cache, project registry, window/UI state. Never inside the repo or the project folder.
+- `data_path` is **discovered** from the on-disk location of `meta/project.json` and never persisted inside project.json — projects must stay movable (invariant `DataPathNotPersistedInProjectJson`).
+- Creating a project does not seed `public_dir/templates` with bundled defaults (`ProjectTemplatesDirectoryReservedForUserTemplates`).
+
+### Behaviour deltas vs. old plan assumptions
+
+- **Slug uniqueness** (post.allium): unbounded numeric suffix `{slug}-2, -3, …`. The old `-999` cap and timestamp fallback are gone.
+- **Menu** (menu.allium): file-only model — `meta/menu.opml` is the sole store, no DB table. Normalization guarantees home is always the first item (`HomeAlwaysFirst`); `UpdateMenu` strips incoming home entries and prepends one. A `SyncMenuFromFilesystem` flow reloads it from disk.
+- **Scripts** (script.allium, schema.allium): file path is `scripts/{slug}.{extension}` with configurable `script_extension` (default `"lua"`); entrypoint default is `"render"` for macros, `"main"` otherwise. Execution guarantees: sandboxed runtime (no filesystem mutation, process control, or package loading) with host capabilities exposed only through an explicit `bds.*` API. Config limits: macro timeout 10s, transform toast limits (5/script, 20 total, 300 chars), blogmark title ≤200 / URL ≤2048.
+- **Schema** (schema.allium): `ai_usage` gains `cache_read_tokens` / `cache_write_tokens` (nullable); the legacy `npm` / `provider_npm` columns are the generic `package_ref` / provider package reference. Statuses are named enums (PostStatus, PostTranslationStatus, TemplateStatus, ScriptStatus).
+- **Media** (media.allium): import accepts optional caller-supplied metadata (title, alt, caption, author, language, tags); a `ReplaceMediaFile` flow swaps the underlying file for an existing media record; batch import processes linked images. Media search takes `filters`, not just a query (search.allium).
+- **Search** (search.allium): FTS5 tables use per-field stemmed columns (title/excerpt/content/tags/categories); translations are stemmed with their own language stemmer and appended per-field. Languages without a Snowball algorithm pass through unstemmed. (Already implemented in `bds-core/db/fts.rs`.)
+- **Generation** (generation.allium): only published content generates (`GenerationPublishedOnly`); language variant selection is specified; generation/validation run as a task group — one task per section (Site Core, Single Posts, Category/Tag/Date Archives) plus a final Build Search Index task — streaming one progress message per written page.
+- **Rendering** (rendering.allium — NEW, core scope): the render-assigns contract shared by preview and generation. Rendering language is the content language, never the UI locale. Custom Liquid filters are `i18n`, `markdown`, and `slugify` (slugify was not in the old plan's filter list).
+- **Metadata diff** (metadata_diff.allium): translation files carry only translation-specific metadata — shared status/timestamps come from the canonical post and must not be reported missing; repair supports a direction per item; `embedding` is a diffable entity type.
+- **Translations** (translation.allium): translation files carry full metadata (`TranslationFilesCarryFullMetadata`); editing a published translation reopens it to draft (`ReopenPublishedTranslation`); an auto-translation pipeline (`ScheduleAutoTranslation`, `AutoTranslatePost`, `AutoTranslateMediaCascade`, `FillMissingTranslations`) fills missing languages, skips `doNotTranslate`, and is gated by the configured AI endpoint and airplane mode.
+- **AI** (ai.allium): endpoint add/remove rules, advisory model catalog with conditional refresh, provider detection, vision capability gating, chat context truncation, airplane-mode model swap. One-shot operations remain core; chat remains extension.
+- **Settings UI** (editor_settings.allium): settings gains a technology section (semantic similarity toggle; scripting runtime is fixed, no switch exposed), a data section (rebuild buttons for posts/media/scripts/templates/links/thumbnails/embedding + Open Data Folder), agent integrations (Claude Code and GitHub Copilot supported; others render disabled with a "not supported yet" note), image import concurrency (1–8, default 4), and default editor mode (markdown | preview). Settings opens in a separate tab.
+- **Tasks** (task.allium): `pending → cancelled` is a legal transition (cancel queued tasks, not only running ones).
+- **Frontmatter** (frontmatter.allium): timestamps are Unix **milliseconds**; keys are camelCase; `doNotTranslate` only written when true, `templateSlug`/`publishedAt` only when present. (Already implemented in `bds-core/util/frontmatter.rs`.)
+
+### New subsystems specified by bDS2 (extension scope)
+
+- `cli.allium` — workspace CLI (`rebuild | repair | render | upload | push | pull | post | media | gallery | config | project | tui | lua`) sharing the same database and settings as the GUI, no listeners/window.
+- `events.allium` — domain event bus: every entity mutation broadcasts `(entity, entity_id, action)` on the same topic/payload shape as the CLI sync watcher, so one subscription covers in-app and external changes.
+- `server.allium` — headless server mode with SSH transport (boot modes desktop | server | tui via env var; SSH key material in the private app-data dir).
+- `tui.allium` — terminal UI as a second renderer over the same shared UI core and post-editor workflow as the GUI.
+
+These map to extension Buckets G (CLI + events) and K/L (server, TUI) in RUST_PLAN_EXTENSION.md.
+
 ## Architecture Decisions
 
 - **Single process Rust app**: no Electron, no IPC boundary.
@@ -62,7 +99,7 @@ User-authored Python scripts are not compatible and are treated as legacy artifa
 - **Custom editor widget (bds-editor crate)**: syntax-highlighting markdown/Liquid/Lua editor built on ropey (rope buffer), syntect (syntax highlighting), and cosmic-text (font shaping and text layout). This is the highest-risk custom component and gets a proof-of-concept in Wave 0.
 - **rusqlite + embedded SQL migrations**: no ORM. SQL stays explicit. Migrations managed via `refinery`.
 - **tokio as the async runtime**: preview server (axum), SSH publishing, file watching, and rfd async dialogs all require an async executor. tokio is the standard choice and is used workspace-wide. Synchronous engine code in bds-core does not use tokio directly — it remains callable from both async (bds-ui) and sync (bds-cli) contexts.
-- **Plain-text markdown editor first**: no WYSIWYG in core. Live preview is required. This is an intentional regression from the current app's Milkdown WYSIWYG editor. A rich editor can be added as an extension bucket after core ships — and the bds-editor widget provides a natural foundation for it.
+- **Plain-text markdown editor first**: no WYSIWYG in core. Live preview is required. This is an intentional regression from the baseline app's rich editor. A rich editor can be added as an extension bucket after core ships — and the bds-editor widget provides a natural foundation for it.
 - **Lua for user-authored scripting**: `mlua` with Lua 5.4. Only user-authored macros, transforms, and utility scripts run through Lua. Built-in macros are native Rust — see the macro architecture section below.
 - **One-shot AI operations are core scope**: six operations use a simple OpenAI-compatible HTTP client (`reqwest` + `serde_json`): (1) translate post, (2) translate media metadata, (3) image description / alt text, (4) post analysis (title + excerpt + slug suggestion), (5) taxonomy analysis (tag + category suggestions), (6) language detection. Two configurable endpoints: one for online use, one for airplane/offline mode (local model). These are fire-and-forget request/response calls — no streaming, no tool use, no chat history. The AI chat UI, streaming responses, and tool execution remain in Extension Bucket C.
 
@@ -256,8 +293,8 @@ This means the Rust Liquid implementation only needs roughly 35% of the full spe
 
 The current app has two distinct macro systems that must not be conflated:
 
-1. **Built-in macros** (`gallery`, `youtube`, `vimeo`, `photo_archive`, `tag_cloud`) — implemented in JavaScript, rendered server-side during generation. Each has a corresponding `.liquid` template in `src/main/engine/templates/macros/`. These are **not** Python scripts and never were.
-2. **User-authored script macros** — implemented in Python (Pyodide), invoked via the `PythonMacroWorkerRuntime` worker thread. These are replaced by Lua in the Rust app.
+1. **Built-in macros** (`gallery`, `youtube`, `vimeo`, `photo_archive`, `tag_cloud`) — implemented in the host language of the baseline app, rendered server-side during generation, each with a corresponding `.liquid` macro template. These are **not** user scripts and never were.
+2. **User-authored script macros** — Lua in bDS2 and in the Rust app (the old TypeScript app used Python/Pyodide; those scripts are legacy artifacts). See script.allium for the sandbox and `bds.*` host API contract.
 
 In the Rust app:
 
@@ -268,7 +305,7 @@ Macro invocation syntax in content: `[[macro_name param1="value1" param2="value2
 
 ### Slug generation compatibility
 
-The current app uses the `transliteration` npm package for Unicode-to-ASCII conversion in slugs. The plan specifies `deunicode` for Rust. These libraries may produce different output for edge cases (CJK characters, Cyrillic, accented Latin, etc.). Add a slug compatibility test suite to M0 fixtures that runs both libraries against the project's actual content corpus and documents any divergences.
+The Rust app uses `deunicode` for Unicode-to-ASCII conversion in slugs; it must match the established bDS transliteration behaviour (especially German umlauts). The slug compatibility test suite in M0 fixtures covers this. Uniqueness per post.allium: try the base slug, then `{slug}-2`, `{slug}-3`, … with an **unbounded** numeric suffix (no 999 cap, no timestamp fallback).
 
 ### Two search systems
 
@@ -280,13 +317,13 @@ The app has two independent search systems — do not conflate them:
 
 ### Client-side search index (Pagefind)
 
-If the current TypeScript app generates a Pagefind search index as part of site generation, the Rust app must produce the same artifact. Pagefind publishes a Rust library (`pagefind` crate) with a programmatic API (`pagefind::api::PagefindIndex`). The generation pipeline feeds rendered HTML to `PagefindIndex::add_html_file()` and writes the resulting index files via `PagefindIndex::get_files()`. No external binary, no npm — this is a pure Rust library dependency, fully compatible with the no-JavaScript constraint.
+The baseline app generates a Pagefind search index as part of site generation, and the Rust app must produce the same artifact. Pagefind publishes a Rust library (`pagefind` crate) with a programmatic API (`pagefind::api::PagefindIndex`). The generation pipeline feeds rendered HTML to `PagefindIndex::add_html_file()` and writes the resulting index files via `PagefindIndex::get_files()`. No external binary, no npm — this is a pure Rust library dependency, fully compatible with the no-JavaScript constraint.
 
 Determine during the compatibility inventory (M0) whether Pagefind or another client-side search solution is used. If Pagefind: add it to the generation pipeline in Wave 4 via the `pagefind` crate. If a different solution: document it and plan accordingly.
 
 ### Image processing
 
-Media import requires thumbnail generation and potentially format conversion (e.g., to WEBP). The current TypeScript app uses `sharp` (libvips bindings). The Rust equivalent is the `image` crate for decoding/encoding and basic transforms (resize, crop). If WEBP encoding performance or advanced processing (EXIF handling, ICC profiles) proves insufficient with `image` alone, `libvips` Rust bindings (`libvips-rs`) are the fallback. Start with `image` — it covers the common cases and has no system dependencies.
+Media import requires thumbnail generation and potentially format conversion (e.g., to WEBP). The Rust choice is the `image` crate for decoding/encoding and basic transforms (resize, crop). If WEBP encoding performance or advanced processing (EXIF handling, ICC profiles) proves insufficient with `image` alone, `libvips` Rust bindings (`libvips-rs`) are the fallback. Start with `image` — it covers the common cases and has no system dependencies.
 
 ## Planned Crate Registry
 
@@ -565,7 +602,7 @@ Not all of these are needed in Wave 0 — this is the full foundation set. Wave-
 - round-trip tests for posts, translations, media, templates, and project metadata
 - rebuild tests using fixture projects
 - metadata diff tests proving no false negatives for known field changes
-- file-by-file golden comparisons against TypeScript output
+- file-by-file golden comparisons against baseline output
 
 ### Done when
 

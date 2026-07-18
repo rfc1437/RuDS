@@ -9,15 +9,49 @@
 use "./post.allium" as post
 use "./tag.allium" as tag
 
+surface EmbeddingModelSurface {
+    context model: EmbeddingModel
+
+    exposes:
+        model.model_id
+        model.dimensions
+}
+
+surface EmbeddingRuntimeSurface {
+    facing _: EmbeddingRuntime
+
+    provides:
+        PostCreated(post)
+        PostUpdated(post)
+        PostDeleted(post)
+}
+
+surface EmbeddingControlSurface {
+    facing _: EmbeddingOperator
+
+    provides:
+        ReindexAllRequested(project)
+        IndexUnindexedRequested(project)
+        FindSimilarRequested(post, limit)
+        ComputeSimilaritiesRequested(source_post, target_post_ids)
+        SuggestTagsRequested(post, input_text)
+        FindDuplicatesRequested(project)
+        DismissDuplicatePairRequested(post_a, post_b)
+}
+
 -- ─── Model ──────────────────────────────────────────────────
 
 value EmbeddingModel {
     -- multilingual-e5-small: 384-dimensional sentence embeddings
-    -- Loaded via ONNX runtime (ort crate), model files from Hugging Face Hub
+    -- Model files are obtained from an external model source and cached locally
     -- Downloaded on first use, cached in app data directory
     -- Lazy-loaded: pipeline created on first embedding request, not at startup
     -- Text preprocessing: prefix all input with "query: " (e5 convention)
     -- Pooling: mean pooling + L2 normalization
+    -- Loaded on-device via Bumblebee (EMLX/Apple GPU or EXLA-CPU, see
+    -- NativeAcceleratedExecution); the canonical e5 weights come from
+    -- the "intfloat/multilingual-e5-small" repository, surfaced under the
+    -- "Xenova/multilingual-e5-small" model_id identifier.
     model_id: String                    -- "Xenova/multilingual-e5-small"
     dimensions: Integer                 -- 384
 }
@@ -30,7 +64,7 @@ value EmbeddingVector {
 -- ─── Entities ───────────────────────────────────────────────
 
 entity EmbeddingKey {
-    label: Integer                      -- HNSW label for USearch
+    label: Integer                      -- HNSW node label / id
     post: post/Post
     content_hash: String                -- SHA-256 of "{title}\n\n{content}"
     vector: EmbeddingVector
@@ -42,9 +76,11 @@ entity DismissedDuplicatePair {
     -- IDs stored in canonical order (sorted) for dedup
 }
 
--- ─── USearch HNSW Index ─────────────────────────────────────
+-- ─── HNSW Index ─────────────────────────────────────────────
 
 config {
+    -- HNSW approximate-nearest-neighbour index (hnswlib). USearch has no Elixir
+    -- binding; hnswlib provides the same HNSW algorithm and parameters.
     model_id: String = "Xenova/multilingual-e5-small"
     embedding_dimensions: Integer = 384
     hnsw_metric: String = "cosine"
@@ -53,7 +89,10 @@ config {
     hnsw_expansion_search: Integer = 64 -- efSearch
     debounce_persist: Duration = 5.seconds
     -- Index file: {userData}/projects/{projectId}/embeddings.usearch
-    -- Key mapping in SQLite embedding_keys table (label, post_id, content_hash, vector BLOB)
+    -- Key mapping (label → post_id) persisted in a sidecar (.meta.json) next
+    -- to the index file, plus the source-of-truth rows in embedding_keys
+    batch_size: Integer = 16            -- texts per batched inference run
+    sequence_length: Integer = 256      -- max tokens per input (truncated)
 }
 
 -- ─── Gating ─────────────────────────────────────────────────
@@ -77,7 +116,7 @@ rule EmbedPost {
     let existing = EmbeddingKey{post: post}
     if not exists existing or existing.content_hash != hash:
         -- Compute embedding vector via local model
-        -- Upsert into USearch index + embedding_keys DB table
+        -- Upsert into HNSW index + embedding_keys DB table
         -- Debounced index save (5s)
         ensures: EmbeddingKeyUpdated(post)
 }
@@ -116,9 +155,9 @@ rule IndexUnindexed {
 rule FindSimilar {
     when: FindSimilarRequested(post, limit)
     requires: semantic_similarity_enabled
-    -- HNSW approximate nearest neighbor search via USearch
+    -- HNSW approximate nearest neighbor search (hnswlib)
     -- Searches index for (limit + 1) neighbors, excludes self
-    -- Converts USearch cosine distance to similarity: max(0, 1 - distance)
+    -- Converts HNSW cosine distance to similarity: max(0, 1 - distance)
     -- Returns ranked list sorted by descending similarity
     ensures: SimilarPostsResult(post, ranked_matches)
 }
@@ -127,7 +166,7 @@ rule ComputeSimilarities {
     when: ComputeSimilaritiesRequested(source_post, target_post_ids)
     requires: semantic_similarity_enabled
     -- Exact pairwise cosine similarity between source vector and each target vector
-    -- Uses in-memory vector cache, NOT USearch search
+    -- Uses in-memory vector cache, NOT the HNSW index
     -- Returns map of post_id -> similarity score
     -- Used by InsertPostLinkModal to rank FTS search results
     ensures: SimilarityScoresResult(source_post, scores)
@@ -172,7 +211,7 @@ invariant ContentHashSkipsUnchanged {
 }
 
 invariant DebouncedPersistence {
-    -- USearch index persistence is debounced at 5 seconds
+    -- HNSW index persistence is debounced at 5 seconds
     -- Prevents excessive disk I/O during bulk operations
     -- Index also force-saved on project switch and app shutdown
 }
@@ -183,6 +222,34 @@ invariant VectorCacheInDb {
     -- Enables instant reload without re-embedding
 }
 
+invariant RealNeuralModel {
+    -- Embeddings MUST be produced by the actual ONNX neural model (multilingual-e5-small),
+    -- not by lexical approximations (TF-IDF, bag-of-words, hash projections).
+    -- Cross-language semantic similarity is a primary requirement:
+    -- posts in different languages about the same topic must produce similar vectors.
+    -- This is only achievable with the trained multilingual transformer model.
+}
+
+invariant NativeAcceleratedExecution {
+    -- Model execution MUST use the platform's native hardware acceleration
+    -- where available (GPU/Metal/Neural Engine on Apple Silicon, CUDA on
+    -- NVIDIA, etc.), and otherwise fall back to optimised native CPU execution.
+    -- Inference MUST be batched: batch_size inputs are run per compiled
+    -- inference pass and inputs are truncated to a bounded sequence_length, so
+    -- (re)indexing many posts is not serialised one document at a time.
+    -- Current implementation: Bumblebee with a runtime-selected defn compiler.
+    -- On Apple Silicon the model runs on the Apple GPU via EMLX (MLX/Metal,
+    -- params placed on the EMLX.Backend GPU device); everywhere else, and as a
+    -- fallback when EMLX is unavailable, it runs on optimised native CPU via
+    -- EXLA. Selection is `accelerator: :auto | :emlx | :exla` (default :auto);
+    -- a request for an unavailable backend degrades to the other one.
+    -- Packaged releases ship only the backend their platform can run (runtime:
+    -- conditional deps): macOS releases exclude EXLA, Linux/Windows releases
+    -- exclude the Apple-only EMLX. The selected backend is started on demand
+    -- by the Neural backend, never assumed started at boot.
+    -- Neighbour search is HNSW (hnswlib).
+}
+
 invariant ModelCaching {
     -- Model files (~100 MB) downloaded from Hugging Face Hub on first use
     -- Cached in app data directory, persists across sessions
@@ -190,7 +257,7 @@ invariant ModelCaching {
 }
 
 invariant ProjectIsolation {
-    -- Each project has its own USearch index file and embedding_keys rows
+    -- Each project has its own HNSW index file and embedding_keys rows
     -- On project switch: save current index, load new project's index
     -- Model pipeline shared across projects (not reloaded)
 }

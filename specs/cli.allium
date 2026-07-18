@@ -1,0 +1,175 @@
+-- allium: 1
+-- Workspace CLI tool (issue #25)
+-- Scope: extension (Bucket G — MCP + Automation)
+-- Distilled from: lib/bds/cli.ex, lib/bds/cli/commands.ex, lib/bds/cli/install.ex,
+--   rel/overlays/cli/bin/bds-cli
+
+entity CliInvocation {
+    command: rebuild | repair | render | upload | push | pull | post | media
+        | gallery | config | project | tui | lua
+    incremental: Boolean
+    force: Boolean
+    exit_code: Integer
+    -- Parsed by Optimus: subcommands, options, flags, and auto-generated
+    -- help/version output. Unknown commands and invalid options exit 1
+    -- with formatted errors on stderr.
+}
+
+surface CliSurface {
+    facing _: CliRuntime
+
+    provides:
+        CliCommandExecuted(command)
+        CliInstallRequested()
+}
+
+invariant SharedDatabase {
+    -- The CLI boots the application in BDS_MODE=cli: the same repo,
+    -- settings, and cache database as the GUI/TUI app — but with no
+    -- HTTP listener, no SSH daemon, no window, and no sync watcher.
+    -- Console logging is redirected to the rotating log file so stdout
+    -- carries only command output.
+}
+
+invariant CliWritesNotify {
+    -- Every CLI mutation (post/media/gallery creation, config set,
+    -- project add/switch, bulk rebuild/repair) inserts DbNotification
+    -- rows (from_cli: true) so a concurrently running app picks the
+    -- change up through its sync watcher (see cli_sync.allium). Bulk
+    -- maintenance uses wildcard entity ids per entity type.
+}
+
+rule ExitCode {
+    when: CliCommandExecuted(command)
+    -- Success prints the result (stdout) and exits 0; any error prints
+    -- to stderr and exits 1.
+    requires: CliInvocation.command = command
+    ensures: CliInvocation.exit_code.updated()
+}
+
+rule RebuildFull {
+    when: CliCommandExecuted(command: rebuild)
+    requires: not CliInvocation.incremental
+    -- The same step sequence as the GUI "Rebuild Database"
+    -- (BDS.Maintenance.full_rebuild_steps — posts, media, scripts,
+    -- templates, post links, thumbnails, embedding index), run
+    -- synchronously with progress on stdout.
+    ensures: CacheDatabaseRebuilt()
+}
+
+rule RebuildIncremental {
+    when: CliCommandExecuted(command: rebuild)
+    requires: CliInvocation.incremental
+    -- Metadata diff, then auto-apply file→db for every difference and
+    -- import every orphan file.
+    ensures: CacheDatabaseRebuilt()
+}
+
+rule Repair {
+    when: CliCommandExecuted(command: repair)
+    -- Subcommand argument selects the repair part: post-links,
+    -- media-links, thumbnails, embeddings, or search — the standard
+    -- rebuild tasks outside the full rebuild.
+    ensures: RepairTaskCompleted()
+}
+
+rule Render {
+    when: CliCommandExecuted(command: render)
+    -- Default: render all site sections plus the search index.
+    -- --incremental: validate the generated output and apply only the
+    -- differences (targeted render + extra-file deletion + calendar).
+    -- --force: full re-render ignoring (but updating) content hashes.
+    requires: not (CliInvocation.incremental and CliInvocation.force)
+    ensures: SiteRendered()
+}
+
+rule Upload {
+    when: CliCommandExecuted(command: upload)
+    -- Uses the project publishing preferences (ssh host/user/path/mode)
+    -- exactly like the app's upload, and waits for the publish job.
+    ensures: SiteUploaded()
+}
+
+rule GitSync {
+    when: CliCommandExecuted(command: push | pull)
+    -- push: git push of the project repository to origin.
+    -- pull: git pull --ff-only, then the incremental cache update
+    -- (metadata diff auto-apply + orphan import) so the database
+    -- reflects the pulled files.
+    ensures: RepositorySynchronized()
+}
+
+rule CreatePost {
+    when: CliCommandExecuted(command: post)
+    -- Post data from parameters or JSON on stdin (LLM-friendly).
+    -- Language is auto-detected when missing: the configured AI
+    -- endpoint (airplane mode routes to the local model), falling back
+    -- to the offline heuristic with a printed notice — the CLI
+    -- equivalent of the airplane-mode toast. After creation the same
+    -- auto-translation as the GUI is scheduled and awaited; when
+    -- nothing can be scheduled the user is told.
+    ensures: PostCreated()
+}
+
+rule CreateMedia {
+    when: CliCommandExecuted(command: media)
+    -- Imports the image, then best-effort AI enrichment: generated
+    -- title, alt text, caption, and translations to all configured
+    -- blog languages (the gallery pipeline without post linking).
+    ensures: MediaImported()
+}
+
+rule CreateGallery {
+    when: CliCommandExecuted(command: gallery)
+    -- Creates the post, then runs the shared gallery import pipeline
+    -- for every referenced image: import, mandatory post link, AI
+    -- enrichment, translations; finally the post auto-translation.
+    ensures: PostCreated()
+    ensures: MediaImported()
+}
+
+rule Preferences {
+    when: CliCommandExecuted(command: config)
+    -- get/set/list of the global settings store shared with the app.
+    ensures: PreferencesAccessed()
+}
+
+rule Projects {
+    when: CliCommandExecuted(command: project)
+    -- list, add <path> (register a folder in the cache database), and
+    -- switch <id|slug|name> (change the active project).
+    ensures: ProjectRegistryUpdated()
+}
+
+rule Tui {
+    when: CliCommandExecuted(command: tui)
+    -- Handled by the launcher script: exec the release in BDS_MODE=tui
+    -- so the interactive terminal UI owns the terminal.
+    ensures: TuiStarted()
+}
+
+rule RunLuaTask {
+    when: CliCommandExecuted(command: lua)
+    -- Runs a utility ("task", long-running) script from the database by
+    -- slug in the active project, with the managed-job execution budget
+    -- (unlimited time/reductions) but synchronously. Macro and
+    -- transform scripts are rejected.
+    ensures: ScriptExecuted()
+}
+
+rule InstallLauncher {
+    when: CliInstallRequested()
+    -- Install buttons in the GUI settings (Data section) and the TUI
+    -- settings (data form action field) both call
+    -- BDS.UI.SettingsForm.run_action("install_cli"): a shim exec'ing
+    -- the release's cli/bin/bds-cli launcher is written to
+    -- ~/.local/bin/bds-cli. Outside a packaged release the action
+    -- reports that installing requires the packaged application.
+    ensures: LauncherInstalled()
+}
+
+invariant LauncherArgv {
+    -- bin/bds eval cannot forward arguments, so the launcher passes the
+    -- argv in BDS_CLI_ARGV joined with the ASCII unit separator (0x1f)
+    -- and the release evaluates BDS.CLI.main().
+}

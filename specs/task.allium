@@ -17,6 +17,7 @@ entity Task {
         running -> completed
         running -> failed
         running -> cancelled
+        pending -> cancelled
     }
 }
 
@@ -36,6 +37,7 @@ surface TaskRuntimeSurface {
         TaskWorkCompleted(task)
         TaskWorkFailed(task, error_message)
         ProgressReported(task, value, message)
+        FinishedTaskEvictionDue()
 }
 
 surface TaskSurface {
@@ -54,6 +56,8 @@ surface TaskSurface {
 config {
     max_concurrent: Integer = 3
     progress_throttle: Duration = 250.milliseconds
+    finished_task_ttl: Duration = 1.hour
+    recent_finished_limit: Integer = 10
 }
 
 invariant MaxConcurrency {
@@ -95,7 +99,7 @@ rule FailTask {
 rule CancelTask {
     when: CancelTaskRequested(task)
     requires: task.status = running or task.status = pending
-    -- AbortController-based cancellation
+    -- Cancellation uses a runtime-specific cancellation mechanism
     ensures: task.status = cancelled
     ensures: NextQueuedTaskStarted()
 }
@@ -110,6 +114,23 @@ rule ReportProgress {
 invariant ProgressThrottled {
     -- Progress update events are throttled to prevent UI flooding
     -- At most one progress event per 250ms per task
+}
+
+invariant FinishedTaskRetention {
+    -- The status snapshot surfaces only the most recent finished tasks:
+    -- completed/failed/cancelled tasks beyond config.recent_finished_limit
+    -- (newest first) are not shown.
+    let finished = Tasks where status in {completed, failed, cancelled}
+    -- At most config.recent_finished_limit finished tasks are reported.
+}
+
+rule EvictFinishedTasks {
+    when: FinishedTaskEvictionDue()
+    -- Periodic sweep (every config.finished_task_ttl). A finished task whose
+    -- finished_at is older than config.finished_task_ttl is dropped from state.
+    for task in Tasks where status in {completed, failed, cancelled}:
+        if now - task.finished_at >= config.finished_task_ttl:
+            ensures: not exists task
 }
 
 -- External tasks: lifecycle controlled by caller (e.g., renderer-side scripts)

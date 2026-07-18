@@ -35,9 +35,9 @@ surface UserNavigation {
 
 -- ─── 1. Sidebar -> Editor flows ──────────────────────────────
 
--- All UI coordination flows through a shared reactive store (Zustand in TS,
--- Iced subscriptions in Rust). There are no direct calls between sidebar
--- and editor. Both read from and write to the store; changes propagate
+-- All UI coordination flows through shared application state.
+-- There are no direct calls between sidebar and editor.
+-- Both read from and write to the same state model; changes propagate
 -- reactively.
 
 rule SidebarEntityClick {

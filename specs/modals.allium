@@ -192,7 +192,7 @@ surface ConfirmDialogSurface {
         modal.message
 }
 
--- Native confirm dialogs (via rfd crate) are NOT modelled as values.
+-- System confirm dialogs are NOT modelled as values.
 -- They are simple yes/no system dialogs with a message string.
 -- Used by: PostDelete, PostDiscard, TemplateDelete (with references).
 

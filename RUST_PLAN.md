@@ -1,10 +1,19 @@
 # bDS Rust Rewrite Plan
 
-bDS is a blogging desktop system that is currently in the following folder:
+bDS is a blogging desktop system. The behavioural baseline is **bDS2**, an Elixir (Phoenix LiveView) implementation living in:
 
-../bDS/
+../bDS2/
 
-this is to be rewritten with Rust and this is the plan. For any implementation detail, look into the ../bDS/ folder into the typescript code there. Assume the typescript code as "the truth" about the current implementation.
+This project (RuDS) rewrites it in Rust. For any implementation detail, look into ../bDS2/ — the Elixir code there is "the truth" about the current implementation. The old TypeScript app at ../bDS is historical and no longer the reference.
+
+## Spec Baseline
+
+The authoritative behaviour contract is the allium spec set in `specs/`, synced wholesale from `../bDS2/specs/` on 2026-07-18 (46 files, all pass `allium check`). Rules:
+
+- When spec and Rust code disagree, the spec wins; when the spec is ambiguous, the bDS2 Elixir code wins.
+- Five specs are new with the bDS2 sync and have **no Rust implementation yet**: `rendering.allium` (core scope — render assigns/filters/macros shared by preview and generation), `cli.allium`, `events.allium`, `server.allium`, `tui.allium` (all extension scope).
+- The concrete code-vs-spec gaps are tracked in RUST_EXECUTION_BACKLOG.md under "Milestone M6: bDS2 Spec Parity".
+- When re-syncing specs from bDS2, re-run `allium check specs/*.allium` and refresh the M6 gap list.
 
 This plan is split into multiple documents:
 
@@ -69,9 +78,8 @@ bds-rust/
 ## Distribution Characteristics
 
 - **Single static binary.** No external runtime dependencies (no GTK, no Electron, no Node.js). Lua and SQLite are compiled into the binary.
-- **Binary size:** ~15–25 MB (versus 150–200 MB for the current Electron app).
-- **Memory usage:** ~50–80% less RAM than the Electron app (no Chromium process).
-- **Startup:** Significantly faster (no V8/Chromium initialization).
+- **Binary size:** ~15–25 MB.
+- **Memory usage / startup:** no BEAM VM, no browser engine — a single native process.
 - **Zero install dependencies:** users download one binary. No Homebrew, no system packages.
 
 ## Split Rationale
@@ -80,7 +88,7 @@ The old single-file plan mixed three categories of work:
 
 - work required to ship a real replacement for the current app
 - work required for eventual feature parity
-- work that is valuable but not on the critical path to replacing TypeScript
+- work that is valuable but not on the critical path to replacing the baseline app
 
 The new split keeps the shipping path narrow. Core is only the work needed to replace the current app for everyday authoring and publishing. Extensions carry the rest.
 
@@ -88,7 +96,7 @@ The new split keeps the shipping path narrow. Core is only the work needed to re
 
 The Rust rewrite is not considered successful until the core release can do all of the following with existing bDS project data:
 
-1. Open a real project created by the TypeScript app.
+1. Open a real project created by the baseline app.
 2. Create and edit posts, translations, media, tags, templates, and settings.
 3. Preview drafts and published content locally.
 4. Generate a complete site whose output matches the current app modulo approved normalization differences.
@@ -101,31 +109,10 @@ The Rust rewrite is not considered successful until the core release can do all 
 Both plan documents assume the same verification baseline:
 
 1. Fixture projects exported from the current app are the compatibility corpus.
-2. Golden-file tests compare Rust-written files against TypeScript-written files.
+2. Golden-file tests compare Rust-written files against baseline-written files.
 3. Golden-output tests compare generated sites between the current app and the Rust app.
 4. No feature is complete until both UI behavior and underlying engine behavior are covered.
 
-## Recommended Repository Strategy
+## Repository Strategy
 
-Build the Rust rewrite as a separate parallel project, not inside the current TypeScript application tree.
-
-Why:
-
-1. The rewrite has a different language stack, build chain, packaging model, runtime model, and test harness.
-2. The compatibility target is the current app's behavior and data, not shared source code.
-3. Keeping the rewrite isolated avoids contaminating this repo with long-lived dual-toolchain complexity.
-4. The current app remains the stable reference implementation while the Rust app catches up.
-
-Recommended structure:
-
-- keep this repository as the reference implementation and fixture source
-- create a sibling repository such as `bds-rust`
-- pull compatibility fixtures from this repo into the Rust repo on a controlled cadence
-- compare generated output across repos in the Rust repo's CI
-
-Only use the same repository if you explicitly want a temporary umbrella monorepo and are willing to accept:
-
-- slower CI
-- mixed Node and Rust release pipelines
-- more complex contributor onboarding
-- higher risk of plan drift between the legacy app and the rewrite
+This repository (RuDS) is the Rust rewrite, kept separate from the baseline. `../bDS2` remains the stable reference implementation and fixture source; compatibility fixtures are pulled from it on a controlled cadence and generated output is compared here.

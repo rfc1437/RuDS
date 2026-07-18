@@ -1,0 +1,90 @@
+-- allium: 1
+-- Headless Server Mode (issue #26, phase 1)
+-- Scope: extension (client/server split — SSH transport for TUI and GUI)
+-- Distilled from: lib/bds/server.ex, lib/bds/application.ex, lib/bds/tui.ex
+
+entity BootMode {
+    kind: desktop | server | tui
+    -- Resolved from the BDS_MODE environment variable at application start.
+    -- "server" is headless; "tui" is the headless server plus a TUI on the
+    -- launching terminal; anything else is desktop.
+}
+
+entity SshKeyMaterial {
+    dir: String                     -- <data dir>/ssh, next to the database
+    host_key: String                -- ssh_host_rsa_key, generated on first boot
+    authorized_keys: String         -- created empty (mode 600) on first boot
+
+    -- Invariant: key material lives in the private app data dir,
+    -- never in the repo or an application priv dir.
+}
+
+surface ServerRuntimeSurface {
+    facing _: ServerRuntime
+
+    provides:
+        ApplicationStarted(mode)
+        SshClientConnected()
+        GuiConnectRequested()
+}
+
+rule ModeResolution {
+    when: ApplicationStarted(mode)
+    -- BDS_MODE environment variable decides the mode once per boot.
+    -- Fallback (issue #33): resolved desktop mode boots as tui when no
+    -- graphical session is available, so the app always opens a UI
+    -- rather than crashing wx; a log line records the switch. Headless
+    -- means: non-Darwin unix without DISPLAY/WAYLAND_DISPLAY (plain ssh
+    -- included; ssh -X with a forwarded display keeps the GUI), or macOS
+    -- inside an ssh session (SSH_CONNECTION/SSH_CLIENT/SSH_TTY — macOS
+    -- never sets DISPLAY). Explicit server/tui modes and Windows are
+    -- never rewritten. Because the :desktop dependency boots wx in its
+    -- own application start, config/runtime.exs sets NO_WX=1 for every
+    -- non-desktop effective mode (BDS.Server.prepare_boot_env) so the
+    -- dependency starts inert before any BDS supervisor runs. In tui
+    -- mode prepare_boot_env also silences every other terminal writer —
+    -- the default logger handler moves to a rotating file in the private
+    -- app dir and Bumblebee's model-download progress bar is disabled —
+    -- because the TUI owns the terminal and each stray console line
+    -- scrolls the alternate screen up one row. Desktop/server modes and
+    -- SSH-served TUI sessions keep normal console logging.
+    ensures: BootMode.created(kind: mode)
+}
+
+rule DesktopBoot {
+    when: ApplicationStarted(mode: desktop)
+    -- Unchanged behavior: wx window shell, loopback HTTP endpoint.
+    ensures: DesktopWindowStarted()
+}
+
+rule ServerBoot {
+    when: ApplicationStarted(mode: server)
+    -- Headless: no wx children at all. Works on macOS, Windows, Linux.
+    ensures: LoopbackEndpointStarted()
+        -- HTTP endpoint stays bound to 127.0.0.1; never exposed directly
+    ensures: CliSyncWatcherStarted()
+    ensures: SshDaemonStarted()
+        -- ExRatatui.SSH.Daemon: public-key auth only (no passwords),
+        -- tcpip_tunnel_out enabled so GUI clients tunnel to the loopback
+        -- endpoint through the same SSH connection and the same keys
+    ensures: SshKeyMaterial.created()
+        -- host key generated and authorized_keys touched on first boot only
+}
+
+rule GuiRemoteConnection {
+    when: GuiConnectRequested()
+    -- Desktop "Connect to Server…": ssh connect with the same public keys
+    -- (client identity + known_hosts in the private ssh dir), then an OTP
+    -- TCP/IP tunnel to the server's loopback endpoint; the webview loads
+    -- the local tunnel end. Disconnect returns to the local shell URL.
+    ensures: WebviewTunneledToServer()
+}
+
+rule TuiSession {
+    when: SshClientConnected()
+    -- Each SSH client gets its own TUI app instance on the server;
+    -- only terminal cells cross the wire.
+    ensures: TuiAppMounted()
+        -- UI locale comes from the server-side UI language setting,
+        -- identical for every client
+}

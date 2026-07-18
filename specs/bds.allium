@@ -1,7 +1,7 @@
 -- allium: 1
 -- bDS (Blogging Desktop Server) — Axiom Specification
--- Distilled from TypeScript implementation at ../bDS/
--- This is the behavioural baseline for the Rust rewrite (RuDS)
+-- Distilled from the existing bDS application at ../bDS2/
+-- This is the behavioural baseline for the rewrite effort.
 
 -- An offline-first desktop application for blog authoring with
 -- static site generation, SSH publishing, AI integration, and
@@ -20,6 +20,7 @@ use "./metadata.allium" as metadata         -- Project config, categories, publi
 
 -- Infrastructure
 use "./search.allium" as search             -- FTS5 full-text search with Snowball stemming
+use "./rendering.allium" as rendering       -- Template render assigns, filters, macros (preview + generation)
 use "./generation.allium" as generation     -- Static site generation (sections, routes, hashing)
 use "./preview.allium" as preview           -- Local HTTP preview server
 use "./publishing.allium" as publishing     -- SSH upload (SCP / rsync)
@@ -53,23 +54,24 @@ use "./embedding.allium" as embedding       -- Semantic similarity (HNSW vectors
 use "./cli_sync.allium" as cli_sync         -- CLI-to-app notification sync
 use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuild
 
--- Compatibility contract (from RUST_PLAN.md)
+-- Compatibility contract
 --
 -- MUST stay identical:
---   SQLite schema semantics, post markdown frontmatter,
+--   persistence semantics, post markdown frontmatter,
 --   translation file naming, media sidecars, thumbnail conventions,
 --   template file formats, menu OPML, generated routes/feeds/sitemaps,
---   FTS5 search behaviour, slug generation, metadata diff, rebuild-from-filesystem
+--   full-text search behaviour, slug generation, metadata diff,
+--   rebuild-from-filesystem
 --
 -- MAY change intentionally:
---   Implementation language (TS -> Rust), editor (WYSIWYG -> plain text + preview),
---   scripting runtime (Lua), process model (Electron -> native),
---   UI framework (React -> Iced)
+--   implementation language, desktop container, UI framework,
+--   editor implementation, internal process model, runtime libraries
 
 -- Resolved questions:
 --
 -- 1. Slug generation scope: only German and English letters are used.
---    Verify deunicode handles ä/ö/ü/ß/ÄÖÜ correctly against transliteration npm.
+--    Verify transliteration preserves the established bDS behaviour for
+--    ä/ö/ü/ß/ÄÖÜ.
 --
 -- 2. Liquid subset: see template.allium for the exact subset.
 --    Only 5 tags, 4 standard filters, 2 custom filters, 5 operators.
@@ -78,7 +80,6 @@ use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuil
 -- 3. Macro calling convention: [[macroslug param1=value1 ...]]
 --    Double-bracket syntax, not Liquid tags. Identical to current app.
 --
--- 4. AI provider model: Rust rewrite uses two configurable OpenAI-compatible
---    endpoints (online + airplane mode) instead of the TypeScript app's
---    4 named providers (OpenCode Zen, Mistral, Ollama, LM Studio).
+-- 4. AI provider model: the rewrite uses two configurable OpenAI-compatible
+--    endpoints (online + airplane mode) rather than a fixed named-provider set.
 --    See ai.allium for details.

@@ -49,18 +49,24 @@ rule StopPreview {
 }
 
 -- Route resolution
+-- Preview renders all posts (published + draft) on-demand via Liquid templates.
+-- Content priority: DB content (draft edits) over published .md file content.
+-- See invariant PreviewDraftOverlay below.
 
 rule ServePostPreview {
     when: PreviewRequest(path)
     requires: is_post_path(path)
         -- path matches "/{yyyy}/{mm}/{dd}/{slug}"
-    -- Renders post via Liquid template with full PageRenderer context
+    -- Finds post by slug+date regardless of status (published or draft).
+    -- Content resolved via editor_body: DB content if present, else .md file.
+    -- Renders via Liquid template with full PageRenderer context.
     ensures: PreviewResponse(rendered_html)
 }
 
 rule ServeDraftPreview {
     when: PreviewDraftRequest(path, post_id)
-    -- Renders draft content (from DB, not filesystem)
+    -- Explicit draft preview by post_id (used by editor preview pane).
+    -- Renders draft content (from DB, not filesystem).
     ensures: PreviewResponse(rendered_html)
 }
 
@@ -68,6 +74,7 @@ rule ServeArchivePreview {
     when: PreviewRequest(path)
     requires: is_archive_path(path)
         -- Category, tag, date archives with pagination
+    -- Includes both published and draft posts in listings.
     ensures: PreviewResponse(rendered_html)
 }
 
@@ -90,6 +97,28 @@ rule ServeLanguagePrefixedRoute {
         -- Detects language prefix from supported languages
         -- Renders with translation overlay for that language
     ensures: PreviewResponse(translated_html)
+}
+
+invariant PreviewDraftOverlay {
+    -- Preview is the draft workspace: it shows what the blog *will* look like,
+    -- not what it currently looks like on the published site.
+    --
+    -- Post universe: all posts with status in {published, draft}.
+    --   Archived posts are excluded.
+    --
+    -- Content priority (per post):
+    --   1. DB content field (draft edits not yet published)  → used when non-nil
+    --   2. Published .md file (last-published snapshot)      → used when DB content is nil
+    --   3. Empty string                                      → fallback if neither exists
+    --
+    -- This means:
+    --   - A purely draft post (never published) renders from DB content.
+    --   - A published-then-edited post renders from DB content (the draft edits).
+    --   - A published post with no pending edits renders from its .md file.
+    --
+    -- Contrast with generation (see generation.allium GenerationPublishedOnly):
+    --   Generation uses *only* published .md file content, never DB draft content,
+    --   and excludes posts that have never been published.
 }
 
 invariant ThemeSwitching {

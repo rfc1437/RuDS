@@ -1,7 +1,7 @@
 -- allium: 1
 -- bDS Liquid Template Context Specification
 -- Scope: core (Wave 4 — rendering parity)
--- Distilled from: ../bDS/src/main/engine/GenerationRouteRendererFactory.ts,
+-- Distilled from: ../bDS2/src/main/engine/GenerationRouteRendererFactory.ts,
 --   PageRenderer.ts, BlogGenerationEngine.ts
 --
 -- This document specifies the exact data structure passed to Liquid templates
@@ -62,7 +62,7 @@ value RenderContext {
     language: String                -- Current language code
     language_prefix: String?        -- "/de" or "" depending on language
     html_theme_attribute: String    -- Theme class for <html> element
-    page_title: String              -- Page title for <title> tag
+    page_title: String              -- Blog title (description, else name) for the <title> tag; archive-specific labels come from archive_context
     pico_stylesheet_href: String    -- Path to Pico CSS theme
     blog_languages: List<BlogLanguage>
     alternate_links: List<AlternateLink>
@@ -127,7 +127,7 @@ value PostContext {
     excerpt: String?
     author: String?
     language: String?
-    show_title: Boolean     -- Always true for post pages
+    show_title: Boolean     -- True for post pages; in list/archive pages it is false when any of the post's categories has "show title" disabled (e.g. asides)
     published_at: Timestamp
     created_at: Timestamp
     updated_at: Timestamp
@@ -181,7 +181,7 @@ value LinkContext {
 
 value ArchiveContext {
     kind: category | tag | date
-    name: String?
+    name: String?           -- Heading label: for categories the configured descriptive title (falls back to the category key), for tags the raw tag name
     month: Integer?
     year: Integer?
     day: Integer?
@@ -234,26 +234,26 @@ value PaginationContext {
 -- ============================================================================
 -- LIQUID FILTER SPECIFICATION
 -- Note: Allium does not have a 'filter' keyword. Filters are documented here
--- for reference but are implemented in the Liquid engine, not in Allium specs.
+-- for reference but are implemented in the template engine, not in Allium specs.
 -- ============================================================================
 
--- Built-in filters (from liquid-rust crate):
+-- Built-in filters:
 --   default: {{ value | default: "fallback" }}
 --   escape: {{ text | escape }}
 --   url_encode: {{ text | url_encode }}
 --   append: {{ text | append: suffix }}
 --
--- Custom filters (must be implemented in Rust Liquid engine):
+-- Custom filters:
 --   i18n: {{ "key" | i18n: language }} - translation lookup
 --   markdown: {{ content | markdown: ... }} - markdown rendering with macro expansion
 
 -- ============================================================================
 -- BUILT-IN MACROS
 -- Note: Allium does not have a 'macro' keyword. Macros are documented here
--- for reference but are implemented as Rust functions in bds-core/render.
+-- for reference but are implemented by the rendering subsystem.
 -- ============================================================================
 
--- Built-in macros (implemented as native Rust functions):
+-- Built-in macros:
 --   gallery: [[gallery images=post.linked_media columns=3]]
 --   youtube: [[youtube id=dQw4w9WgXcQ]]
 --   vimeo: [[vimeo id=123456789]]

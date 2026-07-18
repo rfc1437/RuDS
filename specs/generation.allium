@@ -24,7 +24,28 @@ surface GenerationRuntimeSurface {
 
     provides:
         PageRenderRequested(template, context)
+        GenerationProgressReported(current, total, label)
         GenerateSiteCompleted(generation)
+
+    @guarantee ProgressReporting
+        -- Generation, reindex, and site-validation run as background tasks and
+        -- emit progress via the task progress channel (see task.allium
+        -- ReportProgress / ProgressThrottled).
+        --
+        -- Rendering (both full generation and validation apply) streams one
+        -- message per written page — "<verb> /url (n/total)" where verb is
+        -- "Generated" for a full render and "Rewrote" for a validation apply —
+        -- and advances the bar by the number of URLs written.
+        --
+        -- Full generation and validation apply share the same structuring: a
+        -- task group containing one task per section (Render Site Core, Render
+        -- Single Posts, Render Category Archives, Render Tag Archives, Render
+        -- Date Archives) followed by a final Build Search Index task. The only
+        -- difference is that full generation renders every URL while apply
+        -- renders only the affected URLs.
+        --
+        -- Multi-phase work (validation) maps each phase onto a fixed fraction
+        -- of the 0.0..1.0 bar.
 }
 
 value GenerationSection {
@@ -63,6 +84,23 @@ surface GenerationStatusSurface {
         generation.generated_files.count
 }
 
+invariant GenerationPublishedOnly {
+    -- Generation renders the *published* state of the blog, never draft content.
+    --
+    -- Post universe: posts that have a published .md file on disk.
+    --   This includes status=published posts and status=draft posts that were
+    --   previously published (they still have a file_path with last-published content).
+    --   Posts that have never been published (no file_path) are excluded entirely.
+    --
+    -- Content source: always the .md file on disk (the last-published snapshot).
+    --   The DB content field (which holds draft edits) is never read during generation.
+    --   Snapshots set content=nil to ensure file-based resolution.
+    --
+    -- Contrast with preview (see preview.allium PreviewDraftOverlay):
+    --   Preview includes all drafts and prefers DB content over file content,
+    --   giving the author a live view of unpublished edits.
+}
+
 invariant IncrementalByContentHash {
     -- Files are only written when content_hash changes
     -- generatedFileHashes table tracks (projectId, relativePath, contentHash)
@@ -73,6 +111,17 @@ invariant MultiLanguageRoutes {
     -- Main language: flat routes (/{yyyy}/{mm}/{dd}/{slug})
     -- Additional languages: prefixed (/{lang}/{yyyy}/{mm}/{dd}/{slug})
     -- Each language subtree gets its own feeds and archives
+}
+
+invariant LanguageVariantSelection {
+    -- Every language tree renders each post in its own language when a
+    -- matching variant exists, falling back to the post's original language.
+    -- This applies uniformly to single pages, list pages (home/pagination,
+    -- category/tag/date archives), and feeds:
+    --   Main tree: a post whose language differs from main_language renders
+    --   its main_language translation when one exists (canonical variant).
+    --   Additional-language trees: posts resolve to that language's
+    --   translation; do_not_translate posts are excluded from those trees.
 }
 
 invariant CanonicalBaseUrlConfigured {
@@ -98,16 +147,19 @@ rule GenerateCoreSectionPages {
     ensures: FileGenerated("index.html")
     ensures: FileGenerated("sitemap.xml")
         -- Multi-language sitemap with hreflang alternates
-    ensures: FileGenerated("feed.xml")
-        -- RSS 2.0 feed
+    ensures: FileGenerated("rss.xml")
+        -- RSS 2.0 feed (same output name as the old bDS app; templates link /rss.xml)
     ensures: FileGenerated("atom.xml")
         -- Atom feed
     ensures: FileGenerated("calendar.json")
         -- Post dates for calendar widget
+    ensures: FileGenerated("404.html")
+        -- Not-found page rendered from the not-found template
     for lang in generation.blog_languages - {generation.language}:
         ensures: FileGenerated(format("{lang}/index.html", lang: lang))
-        ensures: FileGenerated(format("{lang}/feed.xml", lang: lang))
+        ensures: FileGenerated(format("{lang}/rss.xml", lang: lang))
         ensures: FileGenerated(format("{lang}/atom.xml", lang: lang))
+        ensures: FileGenerated(format("{lang}/404.html", lang: lang))
 }
 
 -- Single section: one HTML page per published post
@@ -143,26 +195,46 @@ rule GenerateTagPages {
     when: GenerateSiteRequested(generation)
     requires: tag in generation.sections
     for t in Tags where post_count > 0:
-        ensures: FileGenerated(format("tag/{slug}/index.html", slug: slugify(t.name)))
+        let slug = slugify(t.name)
+        let page_count = ceil(posts_with_tag(t).count / generation.max_posts_per_page)
+        ensures: FileGenerated(format("tag/{slug}/index.html", slug: slug))
+        for page in page_range(2, page_count):
+            ensures: FileGenerated(format("tag/{slug}/page/{page}/index.html",
+                slug: slug, page: page))
 }
 
--- Date section: year and month archives
+-- Date section: year, month, and day archives
 
 rule GenerateDateArchivePages {
     when: GenerateSiteRequested(generation)
     requires: date in generation.sections
     for year in distinct_years(Posts):
+        let yp = ceil(posts_in_year(year).count / generation.max_posts_per_page)
         ensures: FileGenerated(format("{year}/index.html", year: year))
+        for page in page_range(2, yp):
+            ensures: FileGenerated(format("{year}/page/{page}/index.html",
+                year: year, page: page))
         for month in distinct_months(Posts, year):
+            let mp = ceil(posts_in_month(year, month).count / generation.max_posts_per_page)
             ensures: FileGenerated(format("{year}/{month}/index.html",
                 year: year, month: month))
+            for page in page_range(2, mp):
+                ensures: FileGenerated(format("{year}/{month}/page/{page}/index.html",
+                    year: year, month: month, page: page))
+            for day in distinct_days(Posts, year, month):
+                let dp = ceil(posts_in_day(year, month, day).count / generation.max_posts_per_page)
+                ensures: FileGenerated(format("{year}/{month}/{day}/index.html",
+                    year: year, month: month, day: day))
+                for page in page_range(2, dp):
+                    ensures: FileGenerated(format("{year}/{month}/{day}/page/{page}/index.html",
+                        year: year, month: month, day: day, page: page))
 }
 
 -- Template rendering context
 
 rule RenderPage {
     when: PageRenderRequested(template, context)
-    -- LiquidJS rendering with full context:
+    -- Template rendering with full context:
     --   posts, pagination, menus, tags, categories,
     --   project metadata, i18n translations, theme settings
     -- Macro expansion: [[slug param1=value1 ...]] in post content
@@ -196,7 +268,7 @@ invariant ArchiveDayBlocks {
 -- ============================================================================
 
 -- Pagefind builds a client-side full-text search index from generated HTML.
--- Uses the `pagefind` crate (library API), not a CLI subprocess.
+-- Uses an embedded Pagefind library integration rather than a CLI subprocess.
 -- Runs as the final step of the generation pipeline, after all HTML is written.
 
 rule BuildSearchIndex {

@@ -134,10 +134,9 @@ Core must read menu documents for rendering compatibility, but editing them can 
 
 #### Scope
 
-- headless CLI maturation
-- MCP server
-- remote automation contracts
-- `NotificationWatcher` / `db_notifications` mechanism for CLI-to-app synchronization
+- workspace CLI per `cli.allium`: `rebuild | repair | render | upload | push | pull | post | media | gallery | config | project | lua` — boots the same repo, settings, and database as the desktop app, with no listeners and no window; logging to the rotating log file
+- MCP server per `mcp.allium` (translation tools, stats and media resources, proposal workflow)
+- domain event bus per `events.allium`: every successful entity mutation (posts, media, tags, templates, scripts) broadcasts `(entity, entity_id, action)`; global settings changes broadcast a settings event. One topic/payload shape covers in-app mutations and external CLI writes, replacing the old `db_notifications` polling design. The bus also feeds the TUI (Bucket L) and any future multi-client sync.
 
 #### Why extension
 
@@ -146,7 +145,7 @@ Useful ecosystem surface, not required to replace the desktop app itself.
 #### Done when
 
 - automation consumers can drive the Rust app safely and consistently
-- CLI changes are detected and surfaced to the running desktop app
+- CLI changes are detected and surfaced to the running desktop app via the event bus
 
 ### Bucket H: Blogmark And Transform Pipeline
 
@@ -170,13 +169,13 @@ Secondary content-capture workflow. Not required for core authoring with existin
 
 #### Scope
 
-- WYSIWYG or hybrid markdown editing (similar to current Milkdown editor)
+- WYSIWYG or hybrid markdown editing (comparable to the baseline app's rich editor)
 - macro syntax preview in editor
 - image insert dialog from linked media
 
 #### Why extension
 
-Core ships with the bds-editor syntax-highlighting plain-text editor and live preview. The current app defaults to a Milkdown WYSIWYG editor, so this is a user-facing regression that should be addressed after core stabilizes.
+Core ships with the bds-editor syntax-highlighting plain-text editor and live preview. The baseline app defaults to a rich editor, so this is a user-facing regression that should be addressed after core stabilizes.
 
 #### Architecture advantage
 
@@ -191,7 +190,44 @@ This is an evolution of the existing editor widget, not a separate technology de
 
 #### Done when
 
-- users can edit content with a rich editor comparable to the current app's Milkdown experience
+- users can edit content with a rich editor comparable to the baseline app's editing experience
+
+### Bucket K: Headless Server Mode
+
+#### Scope
+
+Per `server.allium`:
+
+- boot modes `desktop | server | tui` resolved from an environment variable at application start
+- headless server: full engine, no window, SSH transport for remote TUI/GUI clients
+- SSH key material (host key + authorized_keys, mode 600) generated on first boot into the private OS app-data dir — never the repo or the project folder
+- GUI "connect to server" flow
+
+#### Why extension
+
+Client/server split is new bDS2 capability, not needed to replace the desktop app for local use.
+
+#### Done when
+
+- the app can run headless and accept an SSH-transported client session against real project data
+
+### Bucket L: Terminal UI
+
+#### Scope
+
+Per `tui.allium` — a second renderer over the same shared UI core:
+
+- sidebar views (posts, media, templates, scripts, tags, settings, git) with sidebar/editor focus model and vim-style + arrow navigation that skips section headers
+- post editor driving the same workflow as the GUI: canonical-language edits update the post, other languages update translations, publish routes through the same pipeline
+- live updates via the domain event bus (Bucket G)
+
+#### Why extension
+
+Second renderer; requires the shared UI core and (for remote use) Bucket K.
+
+#### Done when
+
+- everyday authoring (browse, edit, publish) works in a terminal against the same project data as the GUI
 
 ### Bucket J: A2UI Server-Driven Surfaces
 
@@ -229,6 +265,10 @@ Bucket G MCP + Automation
 Bucket H Blogmark + Transforms
   ↓
 Bucket I Rich Editor (builds on bds-editor from core)
+  ↓
+Bucket K Headless Server Mode
+  ↓
+Bucket L Terminal UI (after Buckets G + K)
   ↓
 Bucket J A2UI Surfaces (after Bucket C)
 ```

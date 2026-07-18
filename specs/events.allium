@@ -1,0 +1,59 @@
+-- allium: 1
+-- Domain Event Bus (issue #26, phase 2)
+-- Scope: extension (multi-client synchronization over Phoenix.PubSub)
+-- Distilled from: lib/bds/events.ex, context broadcast call sites,
+--                 lib/bds/desktop/shell_live.ex, lib/bds/cli_sync/watcher.ex
+
+entity EntityChangedEvent {
+    entity: String                  -- post, media, tag, template, script
+    entity_id: String
+    action: created | updated | deleted
+    -- Same topic and payload shape as the CLI sync watcher, so one
+    -- subscription covers in-app mutations and external CLI writes.
+}
+
+entity SettingsChangedEvent {
+    key: String                     -- e.g. ui.language
+}
+
+surface EventBusSurface {
+    facing _: EventBus
+
+    provides:
+        ContextMutationSucceeded(entity, entity_id, action)
+        GlobalSettingWritten(key)
+        ClientSubscribed()
+}
+
+rule BroadcastEntityMutation {
+    when: ContextMutationSucceeded(entity, entity_id, action)
+    -- Posts, Media, Tags, Templates, Scripts broadcast after every
+    -- successful create/update/publish/delete (publish maps to updated).
+    ensures: EntityChangedEvent.created(
+        entity: entity,
+        entity_id: entity_id,
+        action: action
+    )
+}
+
+rule BroadcastSettingsChange {
+    when: GlobalSettingWritten(key)
+    ensures: SettingsChangedEvent.created(key: key)
+}
+
+rule ClientSynchronization {
+    when: ClientSubscribed()
+    -- Every shell (LiveView GUI or TUI session) subscribes on mount and
+    -- refreshes affected views on each event; deleted entities close
+    -- their open tabs. This keeps all connected clients synchronized
+    -- regardless of which client or pipeline originated the change.
+    ensures: ClientRefreshOnEvent()
+}
+
+rule ServerSideUiLanguage {
+    when: GlobalSettingWritten(key: "ui.language")
+    -- The UI language is a single server-side setting: changing it in any
+    -- client persists it and re-renders every connected client. The OS
+    -- locale is only the fallback when the setting is unset.
+    ensures: AllClientsRelocalized()
+}

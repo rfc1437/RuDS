@@ -5,12 +5,19 @@
 
 use "./metadata.allium" as meta
 
+enum PublishJobStatus {
+    pending
+    running
+    completed
+    failed
+}
+
 entity PublishJob {
     ssh_host: String
     ssh_user: String
     ssh_remote_path: String
     ssh_mode: scp | rsync
-    status: pending | running | completed | failed
+    status: PublishJobStatus
 
     transitions status {
         pending -> running
@@ -76,6 +83,7 @@ rule UploadSite {
 
 rule StartPublishJob {
     when: PublishJobStarted(project, job, credentials)
+    requires: job.status = pending
     ensures: job.status = running
     ensures: UploadTargetStarted(job, html, "html/", credentials.ssh_remote_path, credentials)
     ensures: UploadTargetStarted(job, thumbnails, "thumbnails/", credentials.ssh_remote_path + "/thumbnails", credentials)

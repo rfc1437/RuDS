@@ -1,28 +1,30 @@
 -- allium: 1
 -- bDS Navigation Menu
 -- Scope: core (read for rendering), extension Bucket F (menu editor UI)
--- Distilled from: src/main/engine/MenuEngine.ts
+-- File-only model: no DB table. Loaded from meta/menu.opml into a
+-- transient value, mutated in memory, written back to OPML on save.
 
 surface MenuManagementSurface {
     facing _: MenuOperator
 
     provides:
-        UpdateMenuRequested(menu, items)
+        MenuLoadRequested(project_id)
+        UpdateMenuRequested(items)
+        SyncMenuFromFilesystemRequested(project_id)
 }
 
 value MenuItem {
     kind: page | submenu | category_archive | home
     label: String
-    slug: String?
-    children: List<MenuItem>?       -- only for submenu kind
+    slug: String?                   -- pageSlug for page/home, categoryName for category_archive
+    children: List<MenuItem>?       -- present only for submenu kind
 }
 
-entity Menu {
+value Menu {
     items: List<MenuItem>
 
     -- Derived
-    home_items: items where kind = home
-    home_entry: home_items.first
+    home_entry: items.first         -- always home after normalization
 }
 
 surface MenuSurface {
@@ -30,27 +32,42 @@ surface MenuSurface {
 
     exposes:
         menu.items.count
-        menu.home_items.count
         menu.home_entry.label
 }
 
-invariant HomeAlwaysPresent {
-    -- The menu always has a Home entry, extracted and prepended
+invariant HomeAlwaysFirst {
+    -- Normalization guarantees home is always the first item.
+    -- UpdateMenu strips any home entries from input, then prepends one.
     for menu in Menus:
         menu.items.first.kind = home
 }
 
 invariant MenuPersistedAsOpml {
-    -- meta/menu.opml is the canonical storage format
-    -- Uses OPML with outline elements for each item
+    -- meta/menu.opml is the sole persistent store (no DB table).
+    -- OPML outline attributes: text (label), type (kind),
+    --   pageSlug (slug for page/home), categoryName (slug for category_archive).
+    -- Nested <outline> elements represent submenu children.
     parse_opml(read_file("meta/menu.opml")) = menu.items
 }
 
+rule LoadMenu {
+    when: MenuLoadRequested(project_id)
+    -- Reads meta/menu.opml; if file missing, returns default (home-only) menu.
+    -- Normalizes: strips home entries from body, prepends canonical home.
+    ensures: MenuLoaded(project_id, normalize(parse_opml_or_empty(project_id)))
+}
+
 rule UpdateMenu {
-    when: UpdateMenuRequested(menu, items)
-    -- Normalizes Home entry: extracts from items, prepends
+    when: UpdateMenuRequested(items)
+    -- Normalizes Home entry: strips all home items, prepends canonical home.
+    -- Writes normalized menu back to meta/menu.opml.
     let without_home = items where kind != home
-    let home = MenuItem{kind: home, label: "Home"}
-    ensures: menu.items = build_menu_items(home, without_home)
-    ensures: MenuFileWritten(menu)
+    ensures: MenuFileWritten(normalize(without_home))
+}
+
+rule SyncMenuFromFilesystem {
+    when: SyncMenuFromFilesystemRequested(project_id)
+    -- Reloads menu from OPML, normalizes, writes back (round-trip repair).
+    ensures: MenuLoaded(project_id, _)
+    ensures: MenuFileWritten(_)
 }

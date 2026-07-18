@@ -16,8 +16,10 @@ value SettingsView {
     editor_section: SettingsEditorSection?
     categories: List<SettingsCategoryRow>
     ai_section: SettingsAISection?
+    technology_section: SettingsTechnologySection?
     publishing_section: SettingsPublishingSection?
     mcp_section: SettingsMCPSection?
+    data_section: SettingsDataSection?
 }
 
 value SettingsProjectSection {
@@ -29,11 +31,12 @@ value SettingsProjectSection {
     blog_languages: List<String>        -- checkboxes (main language disabled)
     default_author: String              -- text input
     max_posts_per_page: Integer         -- number input (1-500, default 50)
+    image_import_concurrency: Integer   -- number input (1-8, default 4)
     blogmark_category: String           -- select from categories
 }
 
 value SettingsEditorSection {
-    default_mode: String                -- select: wysiwyg | markdown | preview
+    default_mode: String                -- select: markdown | preview
     diff_view_style: String             -- select: inline | side-by-side
     wrap_long_lines: Boolean            -- checkbox
     hide_unchanged_regions: Boolean     -- checkbox
@@ -61,6 +64,12 @@ value SettingsAISection {
     system_prompt: String               -- textarea (12 rows) + Save + Reset to Default
 }
 
+value SettingsTechnologySection {
+    semantic_similarity_enabled: Boolean -- checkbox: enable duplicate search + related-post embeddings
+    -- Scripting runtime is fixed at the application layer; no runtime switch is exposed.
+    -- Saved together with project metadata (settings_project form).
+}
+
 value SettingsPublishingSection {
     ssh_mode: String                    -- select: scp | rsync
     ssh_host: String                    -- text input
@@ -69,13 +78,19 @@ value SettingsPublishingSection {
 }
 
 value SettingsMCPSection {
-    status: String                      -- port number or "Not running"
     agents: List<MCPAgentRow>
 }
 
 value MCPAgentRow {
     agent_name: String                  -- Claude Code, Claude Desktop, GitHub Copilot, etc.
-    is_installed: Boolean               -- Add/Remove toggle
+    is_supported: Boolean               -- false agents show a disabled button + "not supported yet" note
+    is_installed: Boolean               -- toggle label: Remove when installed, else Add
+    config_path: String?                -- agent config file path (nil when unsupported)
+}
+
+value SettingsDataSection {
+    -- Action-only section: rebuild buttons + Open Data Folder. No persisted fields.
+    rebuild_targets: List<String>       -- posts | media | scripts | templates | links | thumbnails | embedding
 }
 
 invariant SettingsProtectedCategories {
@@ -87,11 +102,16 @@ invariant SettingsMCPAgents {
     -- MCP section has exactly 7 agent rows in this order:
     -- Claude Code, Claude Desktop, GitHub Copilot, Gemini CLI,
     -- OpenCode, Mistral Vibe, OpenAI Codex.
+    -- Only Claude Code and GitHub Copilot are supported; the rest render a
+    -- disabled toggle and a "not supported in the rewrite yet" note.
 }
 
 config {
     settings_max_posts_per_page: Integer = 500
     settings_default_posts_per_page: Integer = 50
+    settings_image_import_concurrency_default: Integer = 4
+    settings_image_import_concurrency_min: Integer = 1
+    settings_image_import_concurrency_max: Integer = 8
     settings_system_prompt_rows: Integer = 12
 }
 
@@ -116,9 +136,11 @@ surface SettingsViewSurface {
         SettingsAISystemPromptReset()
         SettingsPublishingSaved(publishing_data)
         SettingsPublishingCleared()
+        SettingsTechnologySaved(technology_data)
         SettingsMCPAgentToggled(agent_name)
         SettingsRebuildRequested(entity_type)
         SettingsRegenerateThumbnailsRequested()
+        SettingsEmbeddingIndexRebuildRequested()
         SettingsOpenDataFolderRequested()
         StyleThemeSelected(theme_name)
         StyleApplyRequested(theme_name)
@@ -131,14 +153,20 @@ surface SettingsViewSurface {
         -- Section 1: Project Name, Description (textarea 3 rows), Data Path (text + Browse + Reset),
         --   Public URL, Main Language (select), Blog Languages (checkbox grid, main disabled),
         --   Default Author, Max Posts Per Page (number 1-500),
+        --   Image Import Concurrency (number 1-8, default 4),
         --   Blogmark Category (select), Blogmark Bookmarklet (copy button), Save button.
 
     @guarantee BookmarkletCopy
-        -- Copy button copies bookmarklet JavaScript to clipboard.
-        -- Bookmarklet uses project's publicUrl to construct POST endpoint.
+        -- Copy button copies the generated bookmarklet JavaScript to the system
+        -- clipboard for pasting into a browser bookmark.
+        -- The bookmarklet captures the active tab's document.title and
+        -- location.href (each URI-encoded) and navigates to a
+        -- bds2://new-post?title=...&url=... deep link. When a project is active
+        -- its id is appended as &project_id=... so the link targets that
+        -- project regardless of which one is currently open.
 
     @guarantee EditorSection
-        -- Section 2: Default Editor Mode (select: WYSIWYG/Markdown/Preview),
+        -- Section 2: Default Editor Mode (select: Markdown/Preview),
         --   Diff View Style (select: Inline/Side-by-side),
         --   Wrap Long Lines (checkbox), Hide Unchanged Regions (checkbox).
 
@@ -169,22 +197,27 @@ surface SettingsViewSurface {
         -- Per-model info: max output tokens, context window (when available).
 
     @guarantee TechnologySection
-        -- Section 5: Lua is the only scripting runtime in the Rust app;
-        --   there is no scripting language selector.
-        --   Semantic Similarity toggle.
+        -- Section 5: Semantic Similarity toggle
+        --   ("Enable duplicate search and related-post embeddings").
+        --   Scripting Runtime row is read-only descriptive text: scripting capabilities
+        --   are configured at the application layer and expose no runtime switch here.
+        --   Save button persists with project metadata (settings_project form).
 
     @guarantee PublishingSection
         -- Section 6: SSH Mode (scp/rsync), Host, Username, Remote Path.
         --   Save + Clear buttons.
 
     @guarantee MCPSection
-        -- Section 7: Status badge (port or "Not running").
-        -- 7 agent rows with Add/Remove toggle each.
+        -- Section 7: 7 agent rows, each with the agent label, its config-file path
+        --   as a subtitle (or "not supported yet" note), and a toggle button.
+        -- Supported agents (Claude Code, GitHub Copilot) toggle Add/Remove,
+        --   writing/removing the bDS server entry in the agent config file.
+        -- Unsupported agents render a disabled button.
 
     @guarantee DataMaintenanceSection
-        -- Section 8: 6 rebuild buttons (Posts from Files, Media from Files,
+        -- Section 8: 7 rebuild buttons (Posts from Files, Media from Files,
         --   Scripts from Files, Templates from Files, Links,
-        --   Regenerate Missing Thumbnails).
+        --   Regenerate Missing Thumbnails, Rebuild Embedding Index).
         -- Open Data Folder button.
         -- Each rebuild executes immediately (no confirmation).
         -- Runs as background task with progress in Tasks panel.
@@ -198,7 +231,7 @@ surface SettingsViewSurface {
 
 rule SettingsRebuild {
     when: SettingsRebuildRequested(entity_type)
-    -- entity_type: posts | media | scripts | templates | links | thumbnails
+    -- entity_type: posts | media | scripts | templates | links | thumbnails | embedding
     -- Executes immediately (no confirmation dialog)
     -- Runs as background task with progress visible in Tasks panel
     -- On completion: wholesale replaces store data for that entity type
@@ -207,10 +240,16 @@ rule SettingsRebuild {
 
 -- ─── Style view ───────────────────────────────────────────────
 
+-- The Style view is its OWN singleton tab (tab type `style`, see tabs.allium),
+-- NOT one of the SettingsView collapsible sections. It is opened from the
+-- Style menu/tab entry and renders the Pico CSS theme editor, distinct from
+-- the `settings` tab. Shares the settings_editor code group only because both
+-- persist into project metadata.
+
 value StyleView {
-    themes: List<StyleTheme>
-    selected_theme: String?
-    applied_theme: String?
+    themes: List<StyleTheme>            -- 20 named Pico themes (see metadata.supported_pico_themes)
+    selected_theme: String?            -- local selection, defaults to applied_theme
+    applied_theme: String?             -- persisted picoTheme (default when none set)
     preview_mode: String                -- auto | light | dark
 }
 
@@ -240,9 +279,14 @@ surface StyleViewSurface {
             when style.selected_theme != style.applied_theme
         StylePreviewModeChanged(mode)
 
+    @guarantee SeparateTab
+        -- Rendered in its own `style` singleton tab (tabs.allium), never inline
+        -- in the settings view. Requires an active project; no project => no view.
+
     @guarantee ThemePicker
         -- Grid of theme buttons (one per Pico CSS theme).
         -- Each button: swatch with 3 colour tones (accent, light bg, dark bg) + theme name.
+        -- Theme name shown via display transform: "-" -> " ", first letter capitalised.
         -- Selected theme highlighted with aria-pressed.
 
     @guarantee ControlsRow

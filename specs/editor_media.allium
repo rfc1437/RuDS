@@ -116,7 +116,11 @@ surface MediaEditorSurface {
         --   Translate Metadata (globe icon).
 
     @guarantee PreviewArea
-        -- Images: rendered via bds-media:// protocol with cache-busting timestamp.
+        -- Images: rendered at full resolution via the /media-file/:id route
+        --   (serves the original file; falls back to the large thumbnail for
+        --   formats browsers cannot display inline) with cache-busting
+        --   timestamp. Never upscaled beyond natural size. The sidebar keeps
+        --   using small thumbnails.
         -- Non-images: SVG file icon placeholder + original filename text.
 
     @guarantee MetadataForm
@@ -130,8 +134,14 @@ surface MediaEditorSurface {
     @guarantee TranslationsSection
         -- Shown only when language is set.
         -- List of existing translations: flag emoji + language name + title.
-        -- Per-translation actions: click to edit inline, refresh button, delete button.
+        -- Per-translation actions: click to edit (opens modal), refresh button, delete button.
         -- "No translations" message when list is empty.
+
+    @guarantee TranslationEditModal
+        -- Editing a translation opens a modal dialog ("Edit Translation"), not
+        --   an inline form. Hidden language field plus Title, Alt Text, and
+        --   Caption (textarea) inputs. Footer: Cancel and Save buttons.
+        -- Save persists the translation; Cancel/close discards.
 
     @guarantee LinkedPostsSection
         -- "Link to Post" button opens inline post picker overlay.
@@ -214,8 +224,9 @@ rule MediaLinkToPost {
 
 rule MediaTranslationEdit {
     when: MediaTranslationEditClicked(media_id, language)
-    -- Loads translation fields inline (title, alt, caption) for that language
-    -- Edit in place, save persists to translated sidecar {path}.{lang}.meta
+    -- Opens the "Edit Translation" modal pre-filled with the translation's
+    --   title, alt, and caption for that language
+    -- Save persists to DB + translated sidecar {path}.{lang}.meta; Cancel discards
 }
 
 rule MediaTranslationRefresh {

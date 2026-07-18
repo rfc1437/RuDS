@@ -1,12 +1,12 @@
 -- allium: 1
 -- bDS Frontmatter Specifications
 -- Scope: core (Wave 1 — exact file format compatibility)
--- Distilled from: ../bDS/src/main/engine/postFileUtils.ts,
+-- Distilled from: ../bDS2/src/main/engine/postFileUtils.ts,
 --   TemplateEngine.ts, ScriptEngine.ts, MediaEngine.ts
 --
 -- This document specifies the exact YAML frontmatter format for all
--- file types. The Rust implementation must read and write these
--- formats byte-for-byte compatible with the TypeScript implementation.
+-- file types. The rewrite must read and write these formats compatibly
+-- with existing bDS content.
 
 surface FrontmatterPersistenceSurface {
     facing _: ContentPersistenceRuntime
@@ -25,7 +25,7 @@ surface PostFrontmatterSurface {
         frontmatter.title
         frontmatter.slug
         frontmatter.status
-        frontmatter.published_at
+        frontmatter.publishedAt
         frontmatter.tags
         frontmatter.categories
 }
@@ -35,11 +35,11 @@ surface MediaSidecarSurface {
 
     exposes:
         sidecar.id
-        sidecar.original_name
-        sidecar.mime_type
+        sidecar.originalName
+        sidecar.mimeType
         sidecar.width
         sidecar.height
-        sidecar.updated_at
+        sidecar.updatedAt
 }
 
 surface TemplateFrontmatterSurface {
@@ -70,12 +70,16 @@ surface MenuOpmlSurface {
 
     exposes:
         document.header.title
-        document.header.date_created
-        document.header.date_modified
+        document.header.dateCreated
+        document.header.dateModified
         for item in document.body:
             item.kind
             item.label
             item.slug
+}
+
+config {
+    script_extension: String = "lua"
 }
 
 -- ============================================================================
@@ -84,7 +88,7 @@ surface MenuOpmlSurface {
 
 value PostFrontmatter {
     -- File path: posts/{YYYY}/{MM}/{slug}.md
-    -- For translations: posts/{YYYY}/{MM}/{slug}.{language}.md
+    -- All keys serialized as camelCase in YAML frontmatter
     id: String              -- UUID v4
     title: String
     slug: String
@@ -92,13 +96,44 @@ value PostFrontmatter {
     status: draft | published | archived
     author: String?         -- Only written if present
     language: String?       -- Only written if present (ISO 639-1)
-    do_not_translate: Boolean -- Only written when true
-    template_slug: String?  -- Only written if present
-    created_at: Timestamp   -- Unix timestamp in milliseconds
-    updated_at: Timestamp   -- Unix timestamp in milliseconds
-    published_at: Timestamp? -- Only written if published
+    doNotTranslate: Boolean -- Only written when true
+    templateSlug: String?   -- Only written if present
+    createdAt: Timestamp    -- Unix timestamp in milliseconds
+    updatedAt: Timestamp    -- Unix timestamp in milliseconds
+    publishedAt: Timestamp? -- Only written if published
     tags: List<String>      -- Always written, even if empty
     categories: List<String> -- Always written, even if empty
+}
+
+value TranslationFrontmatter {
+    -- File path: posts/{YYYY}/{MM}/{slug}.{language}.md
+    -- Translation files carry their own publication state and timestamps
+    -- so that each translation can be rebuilt independently.
+    -- All keys serialized as camelCase in YAML frontmatter
+    id: String              -- UUID v4
+    translationFor: String  -- Canonical post UUID
+    language: String        -- ISO 639-1 language code
+    title: String           -- Translated title
+    excerpt: String?        -- Only written when the translated excerpt differs
+    status: draft | published
+    createdAt: Timestamp    -- Unix timestamp in milliseconds
+    updatedAt: Timestamp    -- Unix timestamp in milliseconds
+    publishedAt: Timestamp  -- Canonical post's publishedAt at time of publish
+}
+
+surface TranslationFrontmatterSurface {
+    context frontmatter: TranslationFrontmatter
+
+    exposes:
+        frontmatter.id
+        frontmatter.translationFor
+        frontmatter.language
+        frontmatter.title
+        frontmatter.excerpt when frontmatter.excerpt != null
+        frontmatter.status
+        frontmatter.createdAt
+        frontmatter.updatedAt
+        frontmatter.publishedAt
 }
 
 invariant PostFileLayout {
@@ -121,6 +156,14 @@ invariant PostTranslationFileLayout {
             lang: t.language)
 }
 
+invariant TranslationFrontmatterRoundtrip {
+    -- Translation files carry status and timestamps explicitly.
+    -- On rebuild, these fields are read back directly; fallback to canonical
+    -- post values applies only when fields are absent (legacy files).
+    for t in PostTranslations where file_path != "":
+        parse_frontmatter(read_file(t.file_path)) = translation_frontmatter_fields(t)
+}
+
 rule WritePostFile {
     when: PublishPostRequested(post)
     ensures: FileWritten(
@@ -138,11 +181,12 @@ rule WritePostFile {
 value MediaSidecar {
     -- File path: {binary_path}.meta (e.g., media/2024/03/a1b2c3d4.jpg.meta)
     -- Binary file at: media/{YYYY}/{MM}/{uuid}.{ext}
-    -- Format: YAML-like key-value (hand-built, not gray-matter frontmatter)
+    -- Format: YAML-like key-value wrapped in --- delimiters (gray-matter style, hand-built serializer)
     -- Note: 'filename' is NOT written to sidecar — it is implicit from the binary path
+    -- All keys serialized as camelCase
     id: String              -- UUID v4
-    original_name: String   -- Original uploaded filename
-    mime_type: String
+    originalName: String    -- Original uploaded filename
+    mimeType: String
     size: Integer           -- Bytes
     width: Integer?
     height: Integer?
@@ -152,8 +196,9 @@ value MediaSidecar {
     author: String?         -- Only written if present
     language: String?       -- Only written if present
     tags: List<String>      -- Always written, even if empty
-    created_at: Timestamp
-    updated_at: Timestamp
+    linkedPostIds: List<String> -- UUIDs of posts that reference this media
+    createdAt: Timestamp
+    updatedAt: Timestamp
 }
 
 invariant MediaSidecarLayout {
@@ -167,14 +212,16 @@ invariant MediaSidecarLayout {
 
 value TemplateFrontmatter {
     -- File path: templates/{slug}.liquid
+    -- All keys serialized as camelCase in YAML frontmatter
     id: String              -- UUID v4
+    projectId: String       -- Scoped to project
     slug: String
     title: String
     kind: post | list | not_found | partial
     enabled: Boolean
     version: Integer
-    created_at: Timestamp
-    updated_at: Timestamp
+    createdAt: Timestamp
+    updatedAt: Timestamp
 }
 
 rule WriteTemplateFile {
@@ -192,24 +239,26 @@ rule WriteTemplateFile {
 -- ============================================================================
 
 value ScriptFrontmatter {
-    -- File path: scripts/{slug}.lua
+    -- File path: scripts/{slug}.{extension}
     -- YAML frontmatter delimited by --- markers
+    -- All keys serialized as camelCase in YAML frontmatter
     id: String              -- UUID v4
+    projectId: String       -- Scoped to project
     slug: String
     title: String
     kind: macro | utility | transform
-    entrypoint: String      -- Default: "render"
+    entrypoint: String      -- Default: "render" for macros, "main" otherwise
     enabled: Boolean
     version: Integer
-    created_at: Timestamp
-    updated_at: Timestamp
+    createdAt: Timestamp
+    updatedAt: Timestamp
 }
 
 rule WriteScriptFile {
     when: PublishScriptRequested(script)
     requires: ValidateScript(script.content) = valid
     ensures: FileWritten(
-        path: format("scripts/{slug}.lua", slug: script.slug),
+        path: format("scripts/{slug}.{extension}", slug: script.slug, extension: config.script_extension),
         content: format_script_file(script)
     )
     ensures: script.content = null
@@ -219,24 +268,20 @@ rule WriteScriptFile {
 -- TAGS FILE FORMAT
 -- ============================================================================
 
-value TagsFile {
-    -- File path: meta/tags.json
-    -- Portable JSON format (no internal IDs)
-    tags: List<TagEntry>
-}
-
 value TagEntry {
+    -- File path: meta/tags.json
+    -- Stored as a bare JSON array (no wrapper object)
+    -- Portable JSON format (no internal IDs), camelCase keys
     name: String
     color: String?
-    post_template_slug: String?
+    postTemplateSlug: String?
 }
 
 invariant TagsFileFormat {
-    -- Tags are stored as a sorted JSON array
+    -- Tags are stored as a bare sorted JSON array
     -- Sorted alphabetically by name (case-insensitive)
-    parse_json(read_file("meta/tags.json")) = {
-        tags: sort_by(Tags, t => lowercase(t.name))
-    }
+    parse_json(read_file("meta/tags.json")) =
+        sort_by(tags, t => lowercase(t.name))
 }
 
 -- ============================================================================
@@ -245,16 +290,17 @@ invariant TagsFileFormat {
 
 value ProjectJson {
     -- File path: meta/project.json
+    -- All keys serialized as camelCase
     name: String
     description: String?
-    public_url: String?
-    main_language: String?
-    default_author: String?
-    max_posts_per_page: Integer
-    blogmark_category: String?
-    pico_theme: String?
-    semantic_similarity_enabled: Boolean
-    blog_languages: List<String>
+    publicUrl: String?
+    mainLanguage: String?
+    defaultAuthor: String?
+    maxPostsPerPage: Integer
+    blogmarkCategory: String?
+    picoTheme: String?
+    semanticSimilarityEnabled: Boolean
+    blogLanguages: List<String>
 }
 
 value CategoriesJson {
@@ -270,18 +316,19 @@ value CategoryMetaJson {
 }
 
 value CategorySettings {
-    render_in_lists: Boolean
-    show_title: Boolean
-    post_template_slug: String?
-    list_template_slug: String?
+    renderInLists: Boolean
+    showTitle: Boolean
+    postTemplateSlug: String?
+    listTemplateSlug: String?
 }
 
 value PublishingJson {
     -- File path: meta/publishing.json
-    ssh_host: String?
-    ssh_user: String?
-    ssh_remote_path: String?
-    ssh_mode: scp | rsync
+    -- All keys serialized as camelCase
+    sshHost: String?
+    sshUser: String?
+    sshRemotePath: String?
+    sshMode: scp | rsync
 }
 
 invariant MetadataFileLayout {
@@ -292,7 +339,7 @@ invariant MetadataFileLayout {
     meta/category-meta.json = serialize(CategoryMetaJson)
     meta/publishing.json = serialize(PublishingJson)
     meta/menu.opml = serialize(Menu)
-    meta/tags.json = serialize(TagsFile)
+    meta/tags.json = serialize(List<TagEntry>)
 }
 
 -- ============================================================================
@@ -308,8 +355,8 @@ value MenuOpml {
 
 value OpmlHeader {
     title: String
-    date_created: Timestamp
-    date_modified: Timestamp
+    dateCreated: Timestamp
+    dateModified: Timestamp
 }
 
 value MenuItem {
@@ -343,6 +390,11 @@ invariant YamlFormatting {
     -- Boolean values are lowercase: true/false
 }
 
+invariant CamelCaseKeys {
+    -- All serialized keys in YAML frontmatter and JSON metadata use camelCase.
+    -- Entity/DB fields use snake_case internally; the mapping happens at serialization.
+}
+
 invariant AtomicWrites {
     -- All file writes are atomic
     -- Write to temp file first, then rename
@@ -357,7 +409,7 @@ invariant RequiredPostFields {
     -- These fields are ALWAYS written for posts
     for p in Posts:
         required_fields(p) = {
-            id, title, slug, status, created_at, updated_at,
+            id, title, slug, status, createdAt, updatedAt,
             tags, categories
         }
 }
@@ -366,9 +418,9 @@ invariant ConditionalPostFields {
     -- These fields are ONLY written if truthy
     for p in Posts:
         conditional_fields(p) = {
-            excerpt, author, language, template_slug, published_at
+            excerpt, author, language, templateSlug, publishedAt
         }
-    -- do_not_translate is only written when true
+    -- doNotTranslate is only written when true
 }
 
 invariant RequiredMediaFields {
@@ -376,8 +428,8 @@ invariant RequiredMediaFields {
     -- Note: 'filename' is NOT a sidecar field — it is the binary path itself
     for m in Media:
         required_fields(m) = {
-            id, original_name, mime_type, size,
-            created_at, updated_at, tags
+            id, originalName, mimeType, size,
+            createdAt, updatedAt, tags
         }
 }
 

@@ -1,11 +1,31 @@
 -- allium: 1
--- bDS SQLite Database Schema
+-- bDS Persistence Data Contract
 -- Scope: core (Wave 1 — exact compatibility contract)
--- Distilled from: ../bDS/src/main/database/schema.ts
+-- Distilled from: ../bDS2/src/main/database/schema.ts
 --
--- This document specifies the exact SQLite schema that the Rust
--- implementation must be able to read and write. It is the ground truth
--- for database compatibility.
+-- This document specifies the persisted data model the rewrite must be able
+-- to read and write. It is the ground truth for storage compatibility.
+
+enum PostStatus {
+    draft
+    published
+    archived
+}
+
+enum PostTranslationStatus {
+    draft
+    published
+}
+
+enum TemplateStatus {
+    draft
+    published
+}
+
+enum ScriptStatus {
+    draft
+    published
+}
 
 -- ============================================================================
 -- CORE ENTITIES
@@ -29,7 +49,7 @@ entity Post {
     slug: String            -- URL-friendly identifier
     excerpt: String?        -- Optional summary
     content: String?        -- Draft body (null when published)
-    status: draft | published | archived
+    status: PostStatus
     author: String?         -- Author name
     created_at: Timestamp
     updated_at: Timestamp
@@ -58,7 +78,7 @@ entity PostTranslation {
     title: String
     excerpt: String?
     content: String?        -- Draft body (null when published)
-    status: draft | published
+    status: PostTranslationStatus
     created_at: Timestamp
     updated_at: Timestamp
     published_at: Timestamp?
@@ -119,7 +139,7 @@ entity Template {
     enabled: Boolean
     version: Integer        -- Incremented on each update
     file_path: String       -- templates/{slug}.liquid
-    status: draft | published
+    status: TemplateStatus
     content: String?        -- Draft body (null when published)
     created_at: Timestamp
     updated_at: Timestamp
@@ -131,11 +151,11 @@ entity Script {
     slug: String            -- URL-safe identifier
     title: String
     kind: macro | utility | transform
-    entrypoint: String      -- Default: "render" for macros
+    entrypoint: String      -- Default: "render" for macros, "main" otherwise
     enabled: Boolean
     version: Integer        -- Incremented on each update
-    file_path: String       -- scripts/{slug}.lua
-    status: draft | published
+    file_path: String       -- scripts/{slug}.{extension}
+    status: ScriptStatus
     content: String?        -- Draft body (null when published)
     created_at: Timestamp
     updated_at: Timestamp
@@ -184,8 +204,7 @@ entity GeneratedFileHash {
 -- ============================================================================
 
 entity PostSearchIndex {
-    -- SQLite FTS5 virtual table, not a real entity
-    -- Created via: CREATE VIRTUAL TABLE posts_fts USING fts5(...)
+    -- Full-text search index projection, not a user-authored entity
     -- Indexed fields: title, excerpt, content, tags, categories
     -- Plus all translation titles, excerpts, and content
     post: Post
@@ -193,8 +212,7 @@ entity PostSearchIndex {
 }
 
 entity MediaSearchIndex {
-    -- SQLite FTS5 virtual table
-    -- Created via: CREATE VIRTUAL TABLE media_fts USING fts5(...)
+    -- Full-text search index projection
     -- Indexed fields: title, alt, caption, original_name, tags
     -- Plus all translation titles, alts, and captions
     media: Media
@@ -221,16 +239,18 @@ entity ChatMessage {
     content: String?
     tool_call_id: String?   -- For tool responses
     tool_calls: String?     -- JSON array of tool calls
+    cache_read_tokens: Integer?
+    cache_write_tokens: Integer?
     created_at: Timestamp
 }
 
 entity AiProvider {
     -- Provider catalog, populated from upstream model registry.
-    -- Read-only in Rust core; TypeScript app manages inserts.
+    -- Managed by the application and treated as read-only during normal use.
     id: String              -- PRIMARY KEY
     name: String
     env: String?            -- Environment variable for API key
-    npm: String?            -- NPM package reference (legacy)
+    package_ref: String?    -- Legacy package reference
     api: String?            -- Base API URL
     doc: String?            -- Documentation URL
     updated_at: Timestamp
@@ -261,7 +281,6 @@ entity AiModel {
     max_output_tokens: Integer
     interleaved: String?    -- interleaved capability descriptor
     status: String?         -- active | deprecated | preview
-    provider_npm: String?   -- provider-specific NPM reference (legacy)
     updated_at: Timestamp
 }
 
@@ -270,7 +289,7 @@ entity AiModelModality {
     provider: AiProvider
     model_id: String
     direction: String       -- "input" | "output"
-    modality: String        -- "text" | "image" | "audio" | "video"
+    modality: String        -- "text" | "image" | "audio" | "file" | "tool"
 }
 
 entity AiCatalogMeta {
@@ -287,7 +306,7 @@ entity EmbeddingKey {
     post_id: String
     project_id: String
     content_hash: String    -- SHA-256 of title+content
-    vector: String          -- Base64-encoded Float32Array bytes (1536 bytes for 384-dim)
+    vector: String          -- Encoded vector payload (1536 bytes for 384-dim)
 }
 
 entity DismissedDuplicatePair {
@@ -325,6 +344,305 @@ entity DbNotification {
     from_cli: Boolean       -- 1 = written by CLI
     seen_at: Timestamp?     -- NULL = unprocessed
     created_at: Timestamp
+}
+
+surface ProjectRecordSurface {
+    context project: Project
+
+    exposes:
+        project.id
+        project.name
+        project.slug
+        project.description when project.description != null
+        project.data_path when project.data_path != null
+        project.created_at
+        project.updated_at
+        project.is_active
+}
+
+surface PostTranslationRecordSurface {
+    context translation: PostTranslation
+
+    exposes:
+        translation.id
+        translation.project_id
+        translation.translation_for
+        translation.language
+        translation.title
+        translation.excerpt when translation.excerpt != null
+        translation.content when translation.content != null
+        translation.status
+        translation.created_at
+        translation.updated_at
+        translation.published_at when translation.published_at != null
+        translation.file_path
+        translation.checksum when translation.checksum != null
+}
+
+surface MediaTranslationRecordSurface {
+    context translation: MediaTranslation
+
+    exposes:
+        translation.id
+        translation.project_id
+        translation.translation_for
+        translation.language
+        translation.title when translation.title != null
+        translation.alt when translation.alt != null
+        translation.caption when translation.caption != null
+        translation.created_at
+        translation.updated_at
+}
+
+surface TagRecordSurface {
+    context tag: Tag
+
+    exposes:
+        tag.id
+        tag.project_id
+        tag.name
+        tag.color when tag.color != null
+        tag.post_template_slug when tag.post_template_slug != null
+        tag.created_at
+        tag.updated_at
+}
+
+surface TemplateRecordSurface {
+    context template: Template
+
+    exposes:
+        template.id
+        template.project_id
+        template.slug
+        template.title
+        template.kind
+        template.enabled
+        template.version
+        template.file_path
+        template.status
+        template.content when template.content != null
+        template.created_at
+        template.updated_at
+}
+
+surface ScriptRecordSurface {
+    context script: Script
+
+    exposes:
+        script.id
+        script.project_id
+        script.slug
+        script.title
+        script.kind
+        script.entrypoint
+        script.enabled
+        script.version
+        script.file_path
+        script.status
+        script.content when script.content != null
+        script.created_at
+        script.updated_at
+}
+
+surface PostLinkRecordSurface {
+    context link: PostLink
+
+    exposes:
+        link.id
+        link.source_post_id
+        link.target_post_id
+        link.link_text when link.link_text != null
+        link.created_at
+}
+
+surface PostMediaLinkRecordSurface {
+    context link: PostMediaLink
+
+    exposes:
+        link.id
+        link.project_id
+        link.post_id
+        link.media_id
+        link.sort_order
+        link.created_at
+}
+
+surface SettingRecordSurface {
+    context setting: Setting
+
+    exposes:
+        setting.key
+        setting.value
+        setting.updated_at
+}
+
+surface GeneratedFileHashRecordSurface {
+    context record: GeneratedFileHash
+
+    exposes:
+        record.project_id
+        record.relative_path
+        record.content_hash
+        record.updated_at
+}
+
+surface PostSearchIndexRecordSurface {
+    context record: PostSearchIndex
+
+    exposes:
+        record.post
+        record.stemmed_content
+}
+
+surface MediaSearchIndexRecordSurface {
+    context record: MediaSearchIndex
+
+    exposes:
+        record.media
+        record.stemmed_content
+}
+
+surface ChatConversationRecordSurface {
+    context conversation: ChatConversation
+
+    exposes:
+        conversation.id
+        conversation.title
+        conversation.model when conversation.model != null
+        conversation.copilot_session_id when conversation.copilot_session_id != null
+        conversation.created_at
+        conversation.updated_at
+}
+
+surface ChatMessageRecordSurface {
+    context message: ChatMessage
+
+    exposes:
+        message.id
+        message.conversation_id
+        message.role
+        message.content when message.content != null
+        message.tool_call_id when message.tool_call_id != null
+        message.tool_calls when message.tool_calls != null
+        message.cache_read_tokens when message.cache_read_tokens != null
+        message.cache_write_tokens when message.cache_write_tokens != null
+        message.created_at
+}
+
+surface AiModelRecordSurface {
+    context model: AiModel
+
+    exposes:
+        model.provider
+        model.model_id
+        model.name
+        model.family when model.family != null
+        model.attachment
+        model.reasoning
+        model.tool_call
+        model.structured_output
+        model.temperature
+        model.knowledge when model.knowledge != null
+        model.release_date when model.release_date != null
+        model.last_updated_date when model.last_updated_date != null
+        model.open_weights
+        model.input_price when model.input_price != null
+        model.output_price when model.output_price != null
+        model.cache_read_price when model.cache_read_price != null
+        model.cache_write_price when model.cache_write_price != null
+        model.context_window
+        model.max_input_tokens
+        model.max_output_tokens
+        model.interleaved when model.interleaved != null
+        model.status when model.status != null
+        model.updated_at
+}
+
+surface AiModelModalityRecordSurface {
+    context modality: AiModelModality
+
+    exposes:
+        modality.provider
+        modality.model_id
+        modality.direction
+        modality.modality
+}
+
+surface AiCatalogMetaRecordSurface {
+    context meta: AiCatalogMeta
+
+    exposes:
+        meta.key
+        meta.value
+}
+
+surface EmbeddingKeyRecordSurface {
+    context key: EmbeddingKey
+
+    exposes:
+        key.label
+        key.post_id
+        key.project_id
+        key.content_hash
+        key.vector
+}
+
+surface DismissedDuplicatePairRecordSurface {
+    context pair: DismissedDuplicatePair
+
+    exposes:
+        pair.id
+        pair.project_id
+        pair.post_id_a
+        pair.post_id_b
+        pair.dismissed_at
+}
+
+surface ImportDefinitionRecordSurface {
+    context definition: ImportDefinition
+
+    exposes:
+        definition.id
+        definition.project_id
+        definition.name
+        definition.wxr_file_path when definition.wxr_file_path != null
+        definition.uploads_folder_path when definition.uploads_folder_path != null
+        definition.last_analysis_result when definition.last_analysis_result != null
+        definition.created_at
+        definition.updated_at
+}
+
+surface DbNotificationRecordSurface {
+    context notification: DbNotification
+
+    exposes:
+        notification.id
+        notification.entity_type
+        notification.entity_id
+        notification.action
+        notification.from_cli
+        notification.seen_at when notification.seen_at != null
+        notification.created_at
+}
+
+surface Fts5PostSchemaSurface {
+    context schema: Fts5PostSchema
+
+    exposes:
+        schema.fields
+        schema.stemmer_languages
+}
+
+surface Fts5MediaSchemaSurface {
+    context schema: Fts5MediaSchema
+
+    exposes:
+        schema.fields
+        schema.stemmer_languages
+}
+
+surface MigrationVersionSurface {
+    context _: MigrationVersion
 }
 
 -- ============================================================================

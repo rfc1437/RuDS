@@ -106,7 +106,7 @@ rule MediaMetadataTranslationCascade {
 
 -- Four distinct patterns used across the application:
 
--- Pattern 1: Native confirm dialog (rfd crate)
+-- Pattern 1: System confirm dialog
 --   Simple yes/no system dialog, no custom UI
 --   Used by: PostDelete, PostDiscard, TemplateDelete (when references exist)
 

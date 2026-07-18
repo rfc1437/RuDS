@@ -1,6 +1,6 @@
 -- allium: 1
 -- bDS Full-Text Search
--- Scope: core (Wave 1 — FTS5 in-app search with Snowball stemmers)
+-- Scope: core (Wave 1 — in-app full-text search with Snowball stemmers)
 -- Distilled from: src/main/engine/PostEngine.ts (FTS methods),
 --   MediaEngine.ts (FTS methods), stemmer.ts
 
@@ -12,7 +12,7 @@ surface SearchControlSurface {
 
     provides:
         SearchPostsRequested(query, filters)
-        SearchMediaRequested(query)
+        SearchMediaRequested(query, filters)
 }
 
 surface SearchIndexRuntimeSurface {
@@ -24,8 +24,9 @@ surface SearchIndexRuntimeSurface {
 }
 
 value StemmerLanguage {
-    -- Snowball stemmers for 24 languages
-    -- ISO 639-1 to Snowball mapping
+    -- Snowball stemmers via library (Stemex)
+    -- Languages with a Snowball algorithm get real stemming;
+    -- others pass through unstemmed
     -- Applied to both indexing and query processing
     code: String
 }
@@ -38,19 +39,29 @@ surface StemmerLanguageSurface {
 }
 
 entity PostSearchIndex {
-    -- SQLite FTS5 virtual table
-    -- Indexed fields: title, excerpt, content, tags, categories
-    -- Plus all translation titles, excerpts, and content
+    -- FTS5 virtual table with per-field stemmed columns
+    -- Each field is stemmed independently; translations are
+    -- stemmed with their own language stemmer and appended
+    -- to the corresponding field
     post: post/Post
-    stemmed_content: String
+    title: String
+    excerpt: String
+    content: String
+    tags: String
+    categories: String
 }
 
 entity MediaSearchIndex {
-    -- SQLite FTS5 virtual table
-    -- Indexed fields: title, alt, caption, original_name, tags
-    -- Plus all translation titles, alts, and captions
+    -- FTS5 virtual table with per-field stemmed columns
+    -- Each field is stemmed independently; translations are
+    -- stemmed with their own language stemmer and appended
+    -- to the corresponding field
     media: media/Media
-    stemmed_content: String
+    title: String
+    alt: String
+    caption: String
+    original_name: String
+    tags: String
 }
 
 invariant CrossLanguageStemming {
@@ -77,42 +88,80 @@ rule SearchPosts {
 }
 
 rule SearchMedia {
-    when: SearchMediaRequested(query)
+    when: SearchMediaRequested(query, filters)
+    -- Full-text search with optional filters:
+    --   language, tags, year, month, date range (from/to)
+    -- Returns paginated results with total count
     let stemmed_query = stem(query, detect_language(query))
-    let matched = search_fts(MediaSearchIndex, stemmed_query)
+    let matched = search_fts(MediaSearchIndex, stemmed_query, filters)
     ensures: SearchResults(
-        media: matched
+        media: matched,
+        total: matched.count,
+        offset: filters.offset,
+        limit: filters.limit
     )
 }
 
 rule IndexPost {
     when: SearchIndexUpdated(post)
-    -- Stems: title + excerpt + content + tags + categories
-    -- Plus all translations' title + excerpt + content
-    let all_text = concat_post_text(post)
-        -- Concatenates: post.title, post.excerpt, post.content,
-        -- join(post.tags, " "), join(post.categories, " "),
-        -- and all translations' title, excerpt, content
-    let index_entry = PostSearchIndex{post: post}
-    ensures:
-        if exists index_entry:
-            index_entry.stemmed_content = stem(all_text)
-        else:
-            PostSearchIndex.created(post: post, stemmed_content: stem(all_text))
+    -- Delete-and-reinsert: no in-place update for FTS5 rows
+    -- Each field is stemmed per-language; translations are stemmed
+    -- with their own language stemmer and joined into the same field
+    let lang = post.language
+    let translations = post.translations
+    let title = join_stemmed(
+        stem(post.title, lang),
+        for t in translations: stem(t.title, t.language)
+    )
+    let excerpt = join_stemmed(
+        stem(post.excerpt, lang),
+        for t in translations: stem(t.excerpt, t.language)
+    )
+    let content = join_stemmed(
+        stem(post.content, lang),
+        for t in translations: stem(t.content, t.language)
+    )
+    let tags = stem(join(post.tags, " "), lang)
+    let categories = stem(join(post.categories, " "), lang)
+    ensures: not exists PostSearchIndex{post: post}
+    ensures: PostSearchIndex.created(
+        post: post,
+        title: title,
+        excerpt: excerpt,
+        content: content,
+        tags: tags,
+        categories: categories
+    )
 }
 
 rule IndexMedia {
     when: SearchIndexUpdated(media)
-    -- Stems: title + alt + caption + original_name + tags
-    -- Plus all translations' title, alt, caption
-    let all_text = concat_media_text(media)
-        -- Concatenates: media.title, media.alt, media.caption,
-        -- media.original_name, join(media.tags, " "),
-        -- and all translations' title, alt, caption
-    let index_entry = MediaSearchIndex{media: media}
-    ensures:
-        if exists index_entry:
-            index_entry.stemmed_content = stem(all_text)
-        else:
-            MediaSearchIndex.created(media: media, stemmed_content: stem(all_text))
+    -- Delete-and-reinsert: no in-place update for FTS5 rows
+    -- Each field is stemmed per-language; translations are stemmed
+    -- with their own language stemmer and joined into the same field
+    let lang = media.language
+    let translations = media.translations
+    let title = join_stemmed(
+        stem(media.title, lang),
+        for t in translations: stem(t.title, t.language)
+    )
+    let alt = join_stemmed(
+        stem(media.alt, lang),
+        for t in translations: stem(t.alt, t.language)
+    )
+    let caption = join_stemmed(
+        stem(media.caption, lang),
+        for t in translations: stem(t.caption, t.language)
+    )
+    let original_name = stem(media.original_name, lang)
+    let tags = stem(join(media.tags, " "), lang)
+    ensures: not exists MediaSearchIndex{media: media}
+    ensures: MediaSearchIndex.created(
+        media: media,
+        title: title,
+        alt: alt,
+        caption: caption,
+        original_name: original_name,
+        tags: tags
+    )
 }

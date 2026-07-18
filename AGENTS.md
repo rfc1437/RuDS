@@ -1,9 +1,9 @@
 # Agents Instructions for Blogging Desktop Server (bDS)
 
-This is the Rust rewrite of an existing project bDS written in Typescript and living in ../bDS - if
-in doubt about behaviour, look at the original code to verify.
+This is the Rust rewrite of an existing project bDS. The baseline implementation is bDS2, written in Elixir and living in ../bDS2 - if
+in doubt about behaviour, look at the baseline code to verify.
 
-This project has an allium spec in the folder specs/ - use it to verify behaviour against expected behaviour. It is based on the typescript implementation. The command line utility is installed.
+This project has an allium spec in the folder specs/ - use it to verify behaviour against expected behaviour. It is synced from the bDS2 specs (../bDS2/specs). The command line utility is installed.
 
 Invariants and behaviours in the allium spec should be covered by unit tests of the application code, to make sure the spec is followed.
 

@@ -14,6 +14,7 @@ surface MetadataMaintenanceSurface {
     provides:
         MetadataDiffRequested(project)
         RebuildFromFilesystemRequested(project, entity_type)
+        RepairMetadataDiffItemRequested(project, direction, item)
 }
 
 value DiffField {
@@ -23,7 +24,8 @@ value DiffField {
 }
 
 value DiffReport {
-    entity_type: String             -- post, media, script, template
+    entity_type: String             -- post, post_translation, media,
+                                    --   media_translation, script, template, embedding
     entity_id: String
     differences: List<DiffField>
 }
@@ -46,13 +48,46 @@ rule RunMetadataDiff {
         if diffs.count > 0:
             ensures: DiffReport.created(entity_type: "post", entity_id: post.id, differences: diffs)
 
+    -- Translation files only carry language-specific metadata. Shared status and
+    -- timestamp fields come from the canonical post and must not be reported as
+    -- missing when they are absent from the translation file.
+    for translation in project.post_translations:
+        let translation_file_data = parse_post_file(translation.file_path)
+        let translation_diffs = compare_translation_specific_fields(translation, translation_file_data)
+        if translation_diffs.count > 0:
+            ensures:
+                DiffReport.created(
+                    entity_type: "post_translation",
+                    entity_id: translation.id,
+                    differences: translation_diffs
+                )
+
     -- Detect orphan files (on disk but not in DB)
-    for file in scan_directory(project.effective_data_dir + "/posts", "*.md"):
+    for file in scan_directory(project.public_dir + "/posts", "*.md"):
         let matching = Posts where file_path = file
         if matching.count = 0:
             ensures: OrphanReport.created(file_path: file)
 
-    -- Same pattern for media sidecar files, scripts, templates
+    -- Same pattern for media sidecars (media), media translation sidecars
+    --   (media_translation), scripts, templates, and embeddings.
+    -- Embedding diffs compare the stored content_hash against the live post
+    --   content to detect vectors that need recomputation.
+}
+
+rule RepairMetadataDiffItem {
+    when: RepairMetadataDiffItemRequested(project, direction, item)
+    -- Resolves a single diff in one direction.
+    -- direction = file_to_db (filesystem wins) | db_to_file (database wins)
+    -- Dispatched per item.entity_type:
+    --   project | categories | category_meta | publishing -> project metadata sync/flush
+    --   post              -> sync_post_from_file / rewrite_published_post
+    --   post_translation  -> sync_post_translation_from_file / rewrite_published_post_translation
+    --   media             -> sync_media_from_sidecar / sync_media_sidecar
+    --   media_translation -> sync_media_translation_from_sidecar / sync_media_translation_sidecar
+    --   script            -> sync_script_from_file / sync_published_script_file
+    --   template          -> sync_template_from_file / sync_published_template_file
+    --   embedding         -> sync_post (file_to_db) / refresh_snapshot (db_to_file)
+    -- Unknown entity_type or direction -> unsupported error.
 }
 
 rule RebuildFromFilesystem {

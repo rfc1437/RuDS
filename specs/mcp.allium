@@ -8,6 +8,11 @@ use "./media.allium" as media
 use "./script.allium" as script
 use "./template.allium" as template
 
+enum ProposalStatus {
+    pending
+    expired
+}
+
 entity McpServer {
     transport: http | stdio
     host: String                        -- 127.0.0.1 for HTTP
@@ -27,7 +32,7 @@ surface McpServerSurface {
 
 entity Proposal {
     kind: draft_post | propose_script | propose_template | propose_media_metadata | propose_post_metadata
-    status: pending | accepted | discarded | expired
+    status: ProposalStatus
     entity_id: String
     data: String
     created_at: Timestamp
@@ -42,8 +47,6 @@ entity Proposal {
     is_expired: expires_at <= now
 
     transitions status {
-        pending -> accepted
-        pending -> discarded
         pending -> expired
     }
 }
@@ -68,8 +71,7 @@ surface ProposalSurface {
 
 config {
     http_port: Integer = 4124
-    proposal_ttl_app: Duration = 30.minutes
-    proposal_ttl_cli: Duration = 8.hours
+    proposal_ttl: Duration = 30.minutes
 }
 
 surface McpAutomationSurface {
@@ -80,6 +82,9 @@ surface McpAutomationSurface {
         McpToolInvoked("search_posts", params)
         McpToolInvoked("count_posts", params)
         McpToolInvoked("read_post_by_slug", slug, language)
+        McpToolInvoked("get_post_translations", post_id)
+        McpToolInvoked("get_media_translations", media_id)
+        McpToolInvoked("upsert_media_translation", params)
         McpToolInvoked("draft_post", params)
         McpToolInvoked("propose_script", params)
         McpToolInvoked("propose_template", params)
@@ -87,8 +92,6 @@ surface McpAutomationSurface {
         McpToolInvoked("propose_post_metadata", params)
         AcceptProposalRequested(proposal)
         DiscardProposalRequested(proposal)
-        InstallAgentConfigRequested(agent_kind)
-        UninstallAgentConfigRequested(agent_kind)
 }
 
 invariant LocalhostOnlyHttp {
@@ -161,6 +164,46 @@ surface CategoriesResource {
         -- bds://categories
 }
 
+surface StatsResource {
+    facing viewer: McpClient
+    context blog: Blog
+    exposes:
+        blog.post_count
+        blog.media_count
+        blog.tag_count
+        blog.category_count
+    @guidance
+        -- bds://stats
+}
+
+surface PostMediaResource {
+    facing viewer: McpClient
+    context post: post/Post
+    exposes:
+        for m in post.media:
+            m.id
+            m.filename
+            m.title
+            m.alt
+            m.caption
+            m.tags
+    @guidance
+        -- bds://posts/{id}/media
+        -- Unknown post ids return not_found.
+}
+
+surface MediaImageResource {
+    facing viewer: McpClient
+    context media_item: media/Media
+    exposes:
+        media_item.mime_type
+        media_item.file_bytes
+    @guidance
+        -- bds://media/{id}/image
+        -- Returns blob content using the media MIME type.
+        -- Unknown media ids or missing files return not_found.
+}
+
 -- Read-only tools
 
 rule CheckTerm {
@@ -201,6 +244,30 @@ rule ReadPostBySlug {
     ensures: FullPostContent(post)
 }
 
+rule GetPostTranslations {
+    when: McpToolInvoked("get_post_translations", post_id)
+    -- Lists all available translations for a post.
+    ensures: PostTranslations(post_id)
+}
+
+rule GetMediaTranslations {
+    when: McpToolInvoked("get_media_translations", media_id)
+    -- Lists all available translated metadata for a media item.
+    ensures: MediaTranslations(media_id)
+}
+
+rule UpsertMediaTranslation {
+    when: McpToolInvoked("upsert_media_translation", params)
+    -- Creates or updates translated media metadata for a language.
+    ensures: media/UpsertMediaTranslationRequested(
+        params.media_id,
+        params.language,
+        params.title,
+        params.alt,
+        params.caption
+    )
+}
+
 -- Write tools (proposal-based)
 
 rule DraftPost {
@@ -218,7 +285,7 @@ rule DraftPost {
             entity_id: new_post.id,
             data: "",
             created_at: now,
-            expires_at: now + config.proposal_ttl_app,
+            expires_at: now + config.proposal_ttl,
             draft_post: new_post,
             proposed_script: null,
             proposed_template: null,
@@ -244,7 +311,7 @@ rule ProposeScript {
             entity_id: new_script.id,
             data: "",
             created_at: now,
-            expires_at: now + config.proposal_ttl_app,
+            expires_at: now + config.proposal_ttl,
             draft_post: null,
             proposed_script: new_script,
             proposed_template: null,
@@ -270,7 +337,7 @@ rule ProposeTemplate {
             entity_id: new_template.id,
             data: "",
             created_at: now,
-            expires_at: now + config.proposal_ttl_app,
+            expires_at: now + config.proposal_ttl,
             draft_post: null,
             proposed_script: null,
             proposed_template: new_template,
@@ -289,7 +356,7 @@ rule ProposeMediaMetadata {
             entity_id: params.media_id,
             data: serialize(params),
             created_at: now,
-            expires_at: now + config.proposal_ttl_app,
+            expires_at: now + config.proposal_ttl,
             draft_post: null,
             proposed_script: null,
             proposed_template: null,
@@ -308,7 +375,7 @@ rule ProposePostMetadata {
             entity_id: params.post_id,
             data: serialize(params),
             created_at: now,
-            expires_at: now + config.proposal_ttl_app,
+            expires_at: now + config.proposal_ttl,
             draft_post: null,
             proposed_script: null,
             proposed_template: null,
@@ -335,7 +402,6 @@ rule AcceptProposal {
             media/UpdateMediaRequested(proposal.target_media, deserialize_media_changes(proposal.data))
         if proposal.kind = propose_post_metadata:
             post/UpdatePostRequested(proposal.target_post, deserialize_post_changes(proposal.data))
-        proposal.status = accepted
         not exists proposal
 }
 
@@ -348,7 +414,6 @@ rule DiscardProposal {
             script/DeleteScriptRequested(proposal.proposed_script)
         if proposal.kind = propose_template:
             template/DeleteTemplateRequested(proposal.proposed_template)
-        proposal.status = discarded
         not exists proposal
 }
 
@@ -374,14 +439,25 @@ surface McpAgentKindSurface {
         agent_kind.kind
 }
 
+surface McpSettingsSurface {
+    provides:
+        SettingsMCPAgentToggled(agent_kind)
+
+    @guidance
+        -- Agent configuration install/remove is exposed by the settings UI,
+        -- not by the MCP automation surface.
+}
+
 rule InstallAgentConfig {
-    when: InstallAgentConfigRequested(agent_kind)
+    when: SettingsMCPAgentToggled(agent_kind)
+    requires: not AgentConfigInstalled(agent_kind)
     -- Writes stdio MCP server config into the agent's config file
     ensures: AgentConfigInstalled(agent_kind)
 }
 
 rule UninstallAgentConfig {
-    when: UninstallAgentConfigRequested(agent_kind)
+    when: SettingsMCPAgentToggled(agent_kind)
+    requires: AgentConfigInstalled(agent_kind)
     ensures: AgentConfigRemoved(agent_kind)
 }
 

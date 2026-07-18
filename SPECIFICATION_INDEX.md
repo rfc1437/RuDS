@@ -45,6 +45,16 @@ Diese Datei dient als Index zu allen Allium-Spezifikationen und Schema-Inventari
 | `cli_sync.allium` | Core (Wave 5) | ✅ Existiert | CLI-zu-App Notification Sync |
 | `metadata_diff.allium` | Core (Wave 1) | ✅ Existiert | DB/Dateisystem-Diff und Rebuild |
 
+### Von bDS2 übernommene Spezifikationen (Sync 2026-07)
+
+| Datei | Scope | Status | Beschreibung |
+|-------|-------|--------|--------------|
+| `rendering.allium` | Core | ✨ Neu | Render-Subsystem (Assigns, Filter, Makros für Preview + Generation) |
+| `cli.allium` | Extension G | ✨ Neu | Workspace-CLI-Tool (rebuild, repair, render, upload, …) |
+| `events.allium` | Extension | ✨ Neu | Domain Event Bus (Multi-Client-Synchronisation) |
+| `server.allium` | Extension | ✨ Neu | Headless Server Mode (SSH-Transport für TUI/GUI) |
+| `tui.allium` | Extension | ✨ Neu | Terminal UI (zweiter Renderer über gemeinsamem UI-Core) |
+
 ## Neuerstellte Spezifikationen (diese Session)
 
 ### 1. `schema.allium`

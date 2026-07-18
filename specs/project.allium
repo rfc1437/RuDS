@@ -8,6 +8,7 @@ surface ProjectControlSurface {
 
     provides:
         CreateProjectRequested(name, data_path)
+        OpenProjectRequested(folder_path)
         SetActiveProjectRequested(project)
         DeleteProjectRequested(project)
 }
@@ -27,11 +28,37 @@ entity Project {
     tags: Tag with project = this
 
     -- Derived
-    internal_base_dir: String
-        -- {user_data}/projects/{id}/
-        -- Contains: meta/, thumbnails/, tags.json
-    effective_data_dir: data_path ?? internal_base_dir
-        -- Custom data path overrides default
+    --
+    -- data_path is the project folder: the directory that CONTAINS
+    -- meta/project.json. It is DISCOVERED from the project.json location at
+    -- load time and is never written into project.json itself — so the folder
+    -- can be moved/renamed freely. The current location is remembered only as a
+    -- machine-local pointer (a project registry under private_dir), never
+    -- embedded in the portable project. See DataPathNotPersistedInProjectJson.
+    public_dir: data_path
+        -- All user-owned, portable, webserver-bound content lives here, under
+        -- the project folder:
+        --   posts (.md), media + thumbnails, templates/, scripts/,
+        --   meta/ (project.json, categories.json, category-meta.json,
+        --   publishing.json), tags.json, menu.opml, and generated html/ output.
+        -- See PublicContentLivesInProjectFolder.
+    private_dir: String
+        -- The OS per-user app-data directory. Holds app-internal,
+        -- machine-specific, regenerable artifacts ONLY — never inside the repo
+        -- or the project folder:
+        --   the SQLite database, the per-project embeddings index
+        --   (projects/{id}/embeddings.usearch + .meta.json sidecar), the
+        --   downloaded embedding-model cache, the project registry, and
+        --   window/UI state.
+        -- OS-specific base (resolved via :filename.basedir, app name "bds"):
+        --   macOS:   ~/Library/Application Support/bds   (:user_config)
+        --   Linux:   $XDG_CONFIG_HOME/bds  (default ~/.config/bds)
+        --   Windows: %APPDATA%\\bds
+        -- See PrivateArtifactsLiveInOsAppDir.
+    cache_dir: private_dir + "/projects/" + id
+        -- Per-project subtree of private_dir for that project's regenerable
+        -- artifacts (embeddings index + sidecar). Overridable in tests via the
+        -- :project_cache_root setting; never the repo or the project folder.
 }
 
 surface ProjectSurface {
@@ -48,8 +75,8 @@ surface ProjectSurface {
         project.posts.count
         project.media.count
         project.tags.count
-        project.internal_base_dir
-        project.effective_data_dir
+        project.public_dir
+        project.private_dir
 }
 
 invariant SingleActiveProject {
@@ -73,8 +100,52 @@ rule CreateProject {
         data_path: data_path,
         is_active: false
     )
-    ensures: StarterTemplatesCopied(project)
-        -- Bundled starter templates are copied into the new project
+    @guidance
+        -- data_path is the chosen project folder. CreateProject writes
+        -- meta/project.json into {data_path}/meta/ but never records data_path
+        -- inside it (DataPathNotPersistedInProjectJson). The default project's
+        -- folder is created at a per-user default content location on first
+        -- launch — never inside the application repo or private_dir.
+}
+
+rule DiscoverProjectDataPath {
+    -- Opening or loading a project folder deduces its data_path from the
+    -- on-disk location of meta/project.json rather than from any stored value,
+    -- keeping projects movable (DataPathNotPersistedInProjectJson).
+    when: OpenProjectRequested(folder_path)
+        -- folder_path contains meta/project.json
+    let project = Projects where data_path = folder_path
+    ensures: project.data_path = folder_path
+}
+
+invariant ProjectTemplatesDirectoryReservedForUserTemplates {
+    -- The project templates directory stores only user-managed templates.
+    -- Creating a project does not populate public_dir/templates with bundled defaults.
+}
+
+invariant PublicContentLivesInProjectFolder {
+    -- Every file the user owns or that must be served by the webserver lives
+    -- under public_dir (= the project folder containing meta/project.json):
+    -- posts, media + thumbnails, templates, scripts, the meta/ JSON files,
+    -- tags.json, menu.opml, and the generated html/ output. None of this
+    -- content is ever written to private_dir or into the application repo.
+}
+
+invariant PrivateArtifactsLiveInOsAppDir {
+    -- App-internal, machine-specific, regenerable artifacts — the SQLite
+    -- database, the per-project embeddings index and its sidecar, the
+    -- model cache, the project registry, and window/UI state — live ONLY
+    -- under private_dir (the OS per-user app-data directory). They are never
+    -- written into a project folder (public_dir) or into the application repo.
+    -- A regenerable artifact (e.g. the embeddings index) may be rebuilt from
+    -- the database when absent.
+}
+
+invariant DataPathNotPersistedInProjectJson {
+    -- meta/project.json never stores its own path or data_path. A project's
+    -- location is determined solely by where its meta/project.json file sits,
+    -- so the folder can be moved or renamed without editing any file. The app
+    -- remembers the current location as a machine-local pointer in private_dir.
 }
 
 rule SetActiveProject {

@@ -4,12 +4,18 @@
 -- Distilled from: src/main/engine/TemplateEngine.ts, PageRenderer.ts, schema.ts,
 --   bundled starter templates in src/main/engine/templates/
 
+enum TemplateStatus {
+    draft
+    published
+}
+
 entity Template {
+    project_id: String
     slug: String
     title: String
     kind: post | list | not_found | partial
     enabled: Boolean
-    status: draft | published
+    status: TemplateStatus
     content: String?
     version: Integer
     file_path: String
@@ -18,8 +24,8 @@ entity Template {
 
     -- Derived
     content_location: if status = published: file_path else: content
-    referencing_posts: Posts where template_slug = this.slug
-    referencing_tags: Tags where post_template_slug = this.slug
+    referencing_posts: Posts where template_slug = this.slug and project_id = this.project_id
+    referencing_tags: Tags where post_template_slug = this.slug and project_id = this.project_id
 
     transitions status {
         draft -> published
@@ -28,11 +34,11 @@ entity Template {
 }
 
 surface TemplateManagementSurface {
-    facing operator: TemplateOperator
+    facing _: TemplateOperator
 
     provides:
-        CreateTemplateRequested(title, kind, content)
-        CreateAndPublishTemplateRequested(title, kind, content)
+        CreateTemplateRequested(project, title, kind, content)
+        CreateAndPublishTemplateRequested(project, title, kind, content)
         UpdateTemplateRequested(template, changes)
         PublishTemplateRequested(template)
         DeleteTemplateRequested(template)
@@ -40,9 +46,10 @@ surface TemplateManagementSurface {
 }
 
 invariant UniqueTemplateSlug {
+    -- Slug uniqueness is scoped per project, not globally.
     for a in Templates:
         for b in Templates:
-            a != b implies a.slug != b.slug
+            a != b and a.project_id = b.project_id implies a.slug != b.slug
 }
 
 invariant TemplateFrontmatter {
@@ -57,30 +64,56 @@ invariant TemplateFileLayout {
         t.file_path = format("templates/{slug}.liquid", slug: t.slug)
 }
 
+invariant BundledDefaultTemplatesExistOutsideProjectData {
+    -- The application ships bundled default templates for:
+    --   single-post
+    --   post-list
+    --   not-found
+    -- plus supporting partials and macros.
+    -- These bundled templates are available for rendering even when the project
+    -- has no template files and no Template rows for those defaults.
+}
+
+invariant UserTemplateDirectoryOverridesBundledDefaults {
+    -- When a project template file or published Template row resolves the same slug
+    -- as a bundled template or partial, the project-owned template wins.
+    -- Bundled templates are fallback roots, not copied seed data.
+}
+
+invariant RebuildTemplatesIndexesOnlyProjectTemplates {
+    -- Rebuild-from-files scans only project.public_dir/templates.
+    -- Bundled defaults are render-time fallbacks and are not indexed into Templates
+    -- unless the user has created matching project files.
+}
+
 rule CreateTemplate {
-    when: CreateTemplateRequested(title, kind, content)
+    when: CreateTemplateRequested(project, title, kind, content)
     let slug = slugify(title)
     -- Creates a draft template: content stored in DB, no file written yet
-    ensures: Template.created(
-        slug: slug,
-        title: title,
-        kind: kind,
-        content: content,
-        status: draft,
-        enabled: true,
-        version: 1,
-        file_path: ""
-    )
+    ensures:
+        let new_template = Template.created(
+            project_id: project.id,
+            slug: slug,
+            title: title,
+            kind: kind,
+            content: content,
+            status: draft,
+            enabled: true,
+            version: 1,
+            file_path: ""
+        )
+        new_template.status = draft
 }
 
 rule CreateAndPublishTemplate {
     -- Alternative creation path: create + immediately publish (file written)
-    -- TypeScript: createTemplate() does this in one step
-    when: CreateAndPublishTemplateRequested(title, kind, content)
+    -- Some implementations may expose this as a single user action
+    when: CreateAndPublishTemplateRequested(project, title, kind, content)
     let slug = slugify(title)
     requires: ValidateLiquid(content) = valid
     ensures:
         let new_template = Template.created(
+            project_id: project.id,
             slug: slug,
             title: title,
             kind: kind,
@@ -100,10 +133,18 @@ rule UpdateTemplate {
     ensures: template.version = template.version + 1
 }
 
+rule ReopenPublishedTemplate {
+    when: UpdateTemplateRequested(template, changes)
+    requires: template.status = published
+    requires: template_changes_affect_rendered_output(changes)
+    ensures: template.status = draft
+}
+
 rule PublishTemplate {
     when: PublishTemplateRequested(template)
+    requires: template.status = draft
     requires: ValidateLiquid(template.content) = valid
-        -- LiquidJS parser must accept the template
+        -- The template parser must accept the template
     ensures: template.status = published
     ensures: TemplateFileWritten(template)
         -- Writes frontmatter + liquid to templates/{slug}.liquid
@@ -130,10 +171,16 @@ rule CascadeSlugUpdate {
 
 rule RebuildTemplatesFromFiles {
     when: RebuildTemplatesFromFilesRequested(project)
-    for file in scan_directory(project.effective_data_dir + "/templates", "*.liquid"):
+    for file in scan_directory(project.public_dir + "/templates", "*.liquid"):
         let parsed = parse_template_file(file)
         ensures: Template.created(parsed)
             -- or updated if slug already exists
+    -- Prune stale published templates: a published Template whose file_path is
+    -- neither among the scanned files nor present on disk is deleted, clearing
+    -- its references first (posts' template_slug, tags' post_template_slug).
+    for template in project.templates where status = published and file_path != "":
+        if template.file_path not in scanned_files and not file_exists(template.file_path):
+            ensures: not exists template
 }
 
 -- Exact Liquid subset required (distilled from bundled starter templates)
@@ -158,11 +205,16 @@ invariant LiquidFilterSubset {
     --   | default: fallback_value
     --   | append: suffix_string
     --
-    -- Custom filters (2):
+    -- Custom filters (3):
     --   | i18n: language          — translates a key string for given language
     --   | markdown: post_id, post_data_json_by_id, canonical_post_path_by_slug,
     --              canonical_media_path_by_source_path, language, language_prefix
     --     — renders Markdown to HTML with link rewriting (6 arguments)
+    --   | slugify                 — slugifies a string (used for tag/category URLs)
+    --
+    -- Enforced at publish/validation time (LiquidParser.validate); any other
+    -- filter is rejected even though Liquex would otherwise apply it as a
+    -- built-in standard filter.
     --
     -- NOT used: date, strip_html, truncate, split, join, size (as filter),
     --   upcase, downcase, replace, remove, sort, map, where, first, last,
@@ -177,6 +229,10 @@ invariant LiquidOperatorSubset {
     -- Special values: blank (nil/empty comparison)
     -- Property access: dot notation (object.property), .size on arrays,
     --   bracket notation for map lookups (map[key])
+    --
+    -- Enforced at publish/validation time (LiquidParser.validate); any other
+    -- comparison operator (!=, <, >=, <=, contains) is rejected even though
+    -- Liquex would otherwise evaluate it.
 }
 
 invariant LiquidRenderContext {

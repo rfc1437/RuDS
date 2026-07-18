@@ -1,7 +1,7 @@
 -- allium: 1
 -- bDS Media Processing Specification
 -- Scope: core (Wave 1 — media import and processing)
--- Distilled from: ../bDS/src/main/engine/MediaEngine.ts,
+-- Distilled from: ../bDS2/src/main/engine/MediaEngine.ts,
 --   mediaProcessing.ts, thumbnail generation logic
 --
 -- This document specifies the exact media processing behavior:
@@ -14,10 +14,11 @@ surface MediaProcessingControlSurface {
     facing _: MediaProcessingOperator
 
     provides:
-        ImportMediaRequested(source_path, project)
+        ImportMediaRequested(source_path, project, metadata)
         TagMediaRequested(media, tags)
         DeleteMediaRequested(media)
         ValidateMediaRequested(project)
+        RegenerateMissingThumbnailsRequested(project)
 }
 
 surface MediaProcessingRuntimeSurface {
@@ -91,8 +92,10 @@ config {
     thumbnail_medium_width: Integer = 400
     thumbnail_large_width: Integer = 800
     thumbnail_ai_size: Integer = 448       -- 448x448 square crop, JPEG
-    thumbnail_format: String = "webp"      -- All sizes except AI (encoder default quality)
+    thumbnail_format: String = "webp"      -- All sizes except AI
+    thumbnail_quality: Integer = 80         -- WebP quality for small/medium/large
     thumbnail_ai_format: String = "jpeg"   -- AI thumbnail only
+    thumbnail_ai_quality: Integer = 85      -- JPEG quality for AI thumbnail
 }
 
 rule GenerateThumbnails {
@@ -103,26 +106,42 @@ rule GenerateThumbnails {
         source: media.file_path,
         destination: media.thumbnails.small,
         width: config.thumbnail_small_width,
-        format: config.thumbnail_format
+        format: config.thumbnail_format,
+        quality: config.thumbnail_quality
     )
     ensures: ThumbnailGenerated(
         source: media.file_path,
         destination: media.thumbnails.medium,
         width: config.thumbnail_medium_width,
-        format: config.thumbnail_format
+        format: config.thumbnail_format,
+        quality: config.thumbnail_quality
     )
     ensures: ThumbnailGenerated(
         source: media.file_path,
         destination: media.thumbnails.large,
         width: config.thumbnail_large_width,
-        format: config.thumbnail_format
+        format: config.thumbnail_format,
+        quality: config.thumbnail_quality
     )
     ensures: ThumbnailGenerated(
         source: media.file_path,
         destination: media.thumbnails.ai,
         size: config.thumbnail_ai_size,
-        format: config.thumbnail_ai_format
+        format: config.thumbnail_ai_format,
+        quality: config.thumbnail_ai_quality
     )
+}
+
+rule RegenerateMissingThumbnails {
+    when: RegenerateMissingThumbnailsRequested(project)
+    -- Maintenance sweep over the project's raster images (images, excluding SVG),
+    -- oldest first. For each, any thumbnail file absent from disk is regenerated
+    -- from the original binary; images with a full set are skipped.
+    -- Runs as a background task reporting progress (current/total).
+    -- Returns counts: processed, generated, failed.
+    for media in project.media where is_image(media.mime_type) and not is_svg(media.mime_type):
+        if any_thumbnail_missing(media):
+            ensures: ThumbnailsRegenerated(media)
 }
 
 -- Thumbnail generation algorithm
@@ -131,8 +150,8 @@ value ThumbnailGeneration {
     -- 2. Apply EXIF orientation correction (rotation, flip) so thumbnails display correctly
     -- 3. Resize: small/medium/large preserve aspect ratio (width-constrained)
     --    AI thumbnail is a 448x448 center crop (letterboxed on black background)
-    -- 4. Encode as WebP (encoder default quality) for small/medium/large
-    --    Encode as JPEG for AI thumbnail
+    -- 4. Encode as WebP quality 80 for small/medium/large
+    --    Encode as JPEG quality 85 for AI thumbnail
     -- 5. Write to bucketed thumbnail path: thumbnails/{id[0:2]}/{id}-{size}.{ext}
     --
     -- No _source copy is made. Thumbnails regenerated from the original binary.
@@ -167,8 +186,8 @@ value ImageProcessing {
     }
 
     -- Processing rules:
-    -- 1. All thumbnails (except AI) are encoded as WebP (encoder default quality)
-    -- 2. AI thumbnail is encoded as JPEG (for vision model compatibility)
+    -- 1. All thumbnails (except AI) are encoded as WebP quality 80
+    -- 2. AI thumbnail is encoded as JPEG quality 85 (for vision model compatibility)
     -- 3. Original format is preserved for full-size assets (no conversion)
     -- 4. EXIF data is not stripped (thumbnails are re-encoded, so EXIF is naturally absent)
 }
@@ -233,11 +252,13 @@ invariant MediaTranslationFileLayout {
 -- ============================================================================
 
 rule ImportMedia {
-    when: ImportMediaRequested(source_path, project)
+    when: ImportMediaRequested(source_path, project, metadata)
+    -- metadata is optional import context: title, alt, caption, author,
+    -- language, and tags may be supplied by the caller.
     -- 1. Validate file type (must be supported image)
     -- 2. Generate UUID v4 filename
     -- 3. Copy to media/{YYYY}/{MM}/{uuid}.{ext}
-    -- 4. Write sidecar {binary_path}.meta
+    -- 4. Apply optional metadata and write sidecar {binary_path}.meta
     -- 5. Generate four thumbnail sizes
     -- 6. Index for search (FTS5)
     ensures: media/Media.created(
@@ -247,6 +268,12 @@ rule ImportMedia {
         size: file_size(source_path),
         width: extract_width_from_header(source_path),
         height: extract_height_from_header(source_path),
+        title: metadata.title,
+        alt: metadata.alt,
+        caption: metadata.caption,
+        author: metadata.author,
+        language: metadata.language,
+        tags: metadata.tags,
         file_path: format("media/{yyyy}/{mm}/{uuid}.{ext}"),
         sidecar_path: format("media/{yyyy}/{mm}/{uuid}.{ext}.meta"),
         checksum: sha256(source_path)
@@ -345,7 +372,7 @@ invariant MediaSidecarFormat {
 -- ============================================================================
 
 config {
-    -- No file size limit on import (TypeScript app has no max_original_size check)
+    -- No file size limit on import
     -- Original files are stored as-is (no compression, no resize)
     -- Only thumbnails are generated from the original
     strip_exif: Boolean = false  -- Not explicitly stripped; re-encoding naturally omits it

@@ -9,6 +9,15 @@ Rules:
 1. Do not pull work forward from a later milestone unless it directly unblocks the current milestone.
 2. Keep tasks vertically sliced where possible: engine + UI + tests.
 3. Compatibility tasks outrank polish tasks.
+4. The allium specs in `specs/` (synced from `../bDS2/specs/` on 2026-07-18) are the behaviour contract. When a task references a spec file, implement what the spec says and cover its invariants with unit tests.
+
+## Status (2026-07-18)
+
+- M0–M2: complete (items marked DONE below).
+- M3: implemented (all views and the editor exist in `crates/bds-ui/src/views/`); items below are not individually ticked — verify against tests before re-doing anything.
+- M4: in progress per git history ("M4 closing" commits). `bds-core/src/render/` exists (generation, macros, markdown, page renderer, routes, site, template lookup). `bds-core/src/ai/` does **not** exist yet — the one-shot AI client is unstarted.
+- M5: not started (`bds-core/src/scripting/` is an empty stub; no PublishEngine).
+- M6 (below): new — code-vs-spec gaps introduced by the bDS2 spec sync. Fold these in as the milestones they touch come up; none of them should wait for "later" if the code they touch is being written now.
 
 ## Milestone M0: Compatibility Baseline
 
@@ -263,6 +272,60 @@ Rules:
 - built-in macro compatibility tests
 - docs sync tests
 
+## Milestone M6: bDS2 Spec Parity
+
+Code-vs-spec gaps from the 2026-07-18 spec sync. Each task names its authoritative spec. Schema changes go through proper refinery migrations, and every new metadata field must be wired into publishing, metadata-diff, and rebuild-from-filesystem together.
+
+### `bds-core/util`
+
+- slug uniqueness: unbounded numeric suffix `{slug}-2, -3, …` — remove the 999 cap and timestamp fallback in `util/slug.rs` (post.allium)
+
+### `bds-core/db`
+
+- migration: add `cache_read_tokens` and `cache_write_tokens` (nullable integers) to `ai_usage` (schema.allium)
+- migration: rename `npm` → `package_ref` and align `provider_npm` naming (schema.allium)
+- media FTS search: accept structured `filters` alongside the query (search.allium `SearchMediaRequested(query, filters)`)
+
+### `bds-core/engine`
+
+- project open: discover `data_path` from the location of `meta/project.json`; never persist it in project.json; keep a machine-local project registry under the OS app-data dir (project.allium `DiscoverProjectDataPath`, `DataPathNotPersistedInProjectJson`)
+- verify public/private data placement matches project.allium (`PublicContentLivesInProjectFolder`, `PrivateArtifactsLiveInOsAppDir`): DB, embeddings index, model cache, registry, and window state in the OS app-data dir; everything user-owned in the project folder
+- menu: file-only model (no DB table), `HomeAlwaysFirst` normalization, `SyncMenuFromFilesystem` flow (menu.allium)
+- media: optional import metadata (title, alt, caption, author, language, tags), `ReplaceMediaFile` flow, batch-import linked-image processing (media.allium)
+- metadata diff: compare only translation-specific fields for translation files; per-item repair direction; `embedding` entity type (metadata_diff.allium)
+- translations: `ReopenPublishedTranslation` on edit; `TranslationFilesCarryFullMetadata` (translation.allium)
+- auto-translation pipeline: `ScheduleAutoTranslation`, `AutoTranslatePost`, `AutoTranslateMediaCascade`, `FillMissingTranslations` — gated by configured AI endpoint and airplane mode, skips `doNotTranslate`, fills only missing languages (translation.allium; depends on M4 AI client)
+- task manager: allow cancelling `pending` (queued) tasks, not only running ones (task.allium)
+
+### `bds-core/render` (fold into M4)
+
+- implement rendering.allium as the shared render-assigns contract for preview and generation; content language only, never UI locale
+- expose `slugify` as a custom Liquid filter alongside `i18n` and `markdown` (rendering.allium)
+- generation task structure: task group with one task per section (Site Core, Single Posts, Category/Tag/Date Archives) + final Build Search Index task; stream one progress message per written page — "Generated /url (n/total)" or "Rewrote …" for validation apply (generation.allium)
+- enforce `GenerationPublishedOnly` and the specified language variant selection (generation.allium)
+
+### `bds-core/ai` (fold into M4)
+
+- honour ai.allium invariants in the one-shot client and settings: endpoint add/remove rules, advisory model catalog with conditional refresh, provider detection, vision capability gate, airplane-mode model swap
+- record cache token usage in `ai_usage` (schema.allium)
+
+### `bds-core/scripting` (fold into M5)
+
+- configurable `script_extension` (default "lua"): file path `scripts/{slug}.{extension}`; entrypoint default "render" for macros, "main" otherwise (script.allium, frontmatter.allium)
+- sandboxed Lua runtime: no filesystem mutation, process control, or package loading; host capabilities only via explicit `bds.*` API (script.allium `SandboxedExecution`, `ExplicitHostCapabilities`)
+- enforce config limits: macro timeout 10s; transform toasts max 5/script, 20 total, 300 chars; blogmark title ≤ 200, URL ≤ 2048 (script.allium)
+
+### `bds-ui`
+
+- settings: technology section (semantic similarity toggle), data section (rebuild buttons: posts/media/scripts/templates/links/thumbnails/embedding + Open Data Folder), agent integrations (Claude Code + GitHub Copilot; others disabled with "not supported yet" note), image import concurrency (1–8, default 4), default editor mode, settings in a separate tab (editor_settings.allium)
+- media search filter UI wired to the filtered media search
+- auto-translation and repair-direction UI hooks for the engine flows above
+
+### Validation
+
+- unit tests for every invariant and rule named above, per AGENTS.md spec-coverage requirement
+- re-run `allium check specs/*.allium` after any spec edit
+
 ## Extension Backlog
 
 ### Bucket A: Git And Validation
@@ -345,9 +408,29 @@ Rules:
 
 #### `bds-cli`
 
-- headless commands
-- MCP server surface
-- CLI-to-app notification mechanism (`db_notifications` / `NotificationWatcher`)
+- CLI command set per cli.allium: `rebuild | repair | render | upload | push | pull | post | media | gallery | config | project | lua` — same database, settings, and cache as the GUI; no listeners, no window; logging redirected to the rotating log file
+- MCP server surface per mcp.allium (incl. translation tools, stats/media resources, proposal status)
+- CLI-to-app synchronization via the domain event bus (events.allium): entity mutations broadcast `(entity, entity_id, action)` on one topic shape covering in-app and external writes
+
+#### `bds-core`
+
+- domain event bus (events.allium): broadcast after every successful mutation of posts, media, tags, templates, scripts; `SettingsChangedEvent` for global settings
+
+### Bucket K: Headless Server Mode (server.allium)
+
+#### `bds-core` / `bds-cli`
+
+- boot modes desktop | server | tui resolved from an env var at start
+- headless server: no window; SSH transport for remote TUI/GUI clients
+- SSH key material generated on first boot in the private app-data dir (host key + empty authorized_keys, mode 600) — never in the repo or project folder
+
+### Bucket L: Terminal UI (tui.allium)
+
+#### new crate `bds-tui` (or feature in `bds-cli`)
+
+- TUI as a second renderer over the same shared UI core: sidebar views (posts/media/templates/scripts/tags/settings/git), sidebar/editor focus model, vim-style + arrow navigation skipping section headers
+- post editor drives the same workflow as the GUI: canonical-language edits update the post, other languages update translations; publish routes through the same pipeline
+- subscribes to the domain event bus (Bucket G) for live updates
 
 ### Bucket H: Blogmark And Transforms
 
@@ -384,4 +467,4 @@ Rules:
 
 ## Exit Rule
 
-Do not start extension buckets until Milestone M5 is complete and the Rust app is already a credible replacement for the current authoring and publishing workflow.
+Do not start extension buckets until Milestones M5 and M6 are complete and the Rust app is already a credible replacement for the baseline authoring and publishing workflow.

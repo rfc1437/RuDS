@@ -1,6 +1,6 @@
 # bDS Rust Rewrite — Research Findings
 
-Research completed during M0 from the TypeScript codebase at `../bDS/`.
+Research completed during M0 from the TypeScript codebase at `../bDS2/`.
 
 ## Database Schema (16 migrations, 0000–0015)
 

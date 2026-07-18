@@ -5,6 +5,28 @@
 
 use "./project.allium" as project
 
+surface MetadataControlSurface {
+    facing _: MetadataOperator
+
+    provides:
+        UpdateProjectMetadataRequested(project, changes)
+        AddCategoryRequested(project, name)
+        RemoveCategoryRequested(project, name)
+        UpdateCategorySettingsRequested(project, category, settings)
+        SetPublishingPreferencesRequested(project, prefs)
+        AppStarted(project)
+}
+
+surface PublishingPreferencesSurface {
+    context prefs: PublishingPreferences
+
+    exposes:
+        prefs.ssh_host when prefs.ssh_host != null
+        prefs.ssh_user when prefs.ssh_user != null
+        prefs.ssh_remote_path when prefs.ssh_remote_path != null
+        prefs.ssh_mode
+}
+
 value CategoryRenderSettings {
     render_in_lists: Boolean
     show_title: Boolean

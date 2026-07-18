@@ -15,6 +15,14 @@ entity DbNotification {
     is_processed: seen_at != null
 }
 
+surface CliSyncRuntimeSurface {
+    facing _: CliSyncRuntime
+
+    provides:
+        CliMutationPerformed(entity_type, entity_id, action)
+        DbFileChangeDetected()
+}
+
 rule CliWriteNotification {
     when: CliMutationPerformed(entity_type, entity_id, action)
     -- CLI inserts notification row; app watches for it
@@ -29,7 +37,7 @@ rule CliWriteNotification {
 
 rule AppWatchNotifications {
     when: DbFileChangeDetected()
-    -- Watches SQLite DB file + WAL via filesystem watcher
+    -- Watches the persisted notification store for external mutations
     -- Debounced at 100ms
     let unseen = DbNotifications where seen_at = null and from_cli = true
     for n in unseen:
@@ -54,7 +62,7 @@ rule PruneUnprocessedNotifications {
 }
 
 invariant AppNoopNotifier {
-    -- The Electron app uses a no-op notifier for its own writes
+    -- The desktop application uses a no-op notifier for its own writes
     -- It already knows about its own mutations
     -- Only CLI writes produce notification rows
 }

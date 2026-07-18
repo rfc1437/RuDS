@@ -9,8 +9,9 @@ surface MediaControlSurface {
     facing _: MediaOperator
 
     provides:
-        ImportMediaRequested(project, source_file)
+        ImportMediaRequested(source_path, project, metadata)
         UpdateMediaRequested(media, changes)
+        ReplaceMediaFileRequested(media, new_source_path)
         DeleteMediaRequested(media)
         UpsertMediaTranslationRequested(media, language, title, alt, caption)
         RebuildMediaFromFilesRequested(project)
@@ -121,22 +122,29 @@ invariant DateBasedMediaLayout {
 }
 
 rule ImportMedia {
-    when: ImportMediaRequested(project, source_file)
-    let uuid_name = generate_uuid() + extension(source_file)
+    when: ImportMediaRequested(source_path, project, metadata)
+    -- metadata is optional import context: title, alt, caption, author,
+    -- language, and tags may be supplied by the caller.
+    let uuid_name = generate_uuid() + extension(source_path)
     let dest = format("media/{yyyy}/{mm}/{uuid_name}",
         yyyy: now.year, mm: now.month_padded)
     ensures: Media.created(
         project: project,
         filename: uuid_name,
-        original_name: source_file.name,
-        mime_type: detect_mime(source_file),
-        size: source_file.size,
-        width: detect_width(source_file),
-        height: detect_height(source_file),
+        original_name: basename(source_path),
+        mime_type: detect_mime(source_path),
+        size: file_size(source_path),
+        width: detect_width(source_path),
+        height: detect_height(source_path),
+        title: metadata.title,
+        alt: metadata.alt,
+        caption: metadata.caption,
+        author: metadata.author,
+        language: metadata.language,
         file_path: dest,
-        tags: {}
+        tags: metadata.tags
     )
-    ensures: FileCopied(source_file, dest)
+    ensures: FileCopied(source_path, dest)
     ensures: SidecarWritten(media)
     ensures: ThumbnailsGenerated(media)
     ensures: SearchIndexUpdated(media)
@@ -149,6 +157,28 @@ rule UpdateMedia {
     ensures: SidecarWritten(media)
         -- Metadata changes flush to .meta sidecar
     ensures: SearchIndexUpdated(media)
+}
+
+rule ReplaceMediaFile {
+    when: ReplaceMediaFileRequested(media, new_source_path)
+    -- Replaces the binary at media.file_path with the new source file,
+    -- keeping the same path/id. Sidecar metadata (title/alt/etc.) is preserved.
+    let checksum = md5(read(new_source_path))
+    -- Identical content (checksum = media.checksum): no-op, nothing rewritten.
+    -- Otherwise the old file is backed up to {path}.bak (restored on failure,
+    --   removed on success) and the row is updated from the new file:
+    if checksum != media.checksum:
+        ensures: media.checksum = checksum
+        ensures: media.size = file_size(new_source_path)
+        ensures: media.updated_at = now
+        ensures: MediaDimensionsUpdated(media)
+            -- width/height re-read from the new image
+        ensures: SidecarWritten(media)
+        if media.is_image:
+            ensures: ThumbnailsRegenerated(media)
+                -- Synchronous (awaited), not fire-and-forget
+        ensures: SearchIndexUpdated(media)
+        -- See engine_side_effects.allium ReplaceMediaFileSideEffects
 }
 
 rule DeleteMedia {
@@ -179,7 +209,7 @@ rule UpsertMediaTranslation {
 rule RebuildMediaFromFiles {
     when: RebuildMediaFromFilesRequested(project)
     -- Scans media directory for .meta sidecars, reimports to DB
-    for sidecar in scan_directory(project.effective_data_dir + "/media", "*.meta"):
+    for sidecar in scan_directory(project.public_dir + "/media", "*.meta"):
         let parsed = parse_sidecar(sidecar)
         ensures: Media.created(parsed)
             -- or updated if already exists
@@ -195,4 +225,28 @@ invariant SidecarRoundtrip {
         parse_sidecar(m.sidecar_path).alt = m.alt
         parse_sidecar(m.sidecar_path).caption = m.caption
         parse_sidecar(m.sidecar_path).tags = m.tags
+}
+
+rule BatchImportProcessLinkImages {
+    when: BatchImportImagesRequested(project, post, file_paths, language)
+    requires: not OfflineMode
+    for source_path in file_paths where is_image(source_path):
+        let media = ImportMedia(source_path, project)
+        let analysis = AnalyzeImage(media, language)
+        ensures: MediaUpdated(media, analysis)
+        ensures: PostMediaLinked(media, post)
+    @guidance
+        -- Triggered from post editor quick action "Add Gallery Images".
+        -- AI results auto-applied without user confirmation.
+        -- After metadata is set, media is auto-translated to all configured blog languages.
+        -- Non-image files skipped entirely.
+        -- Concurrency limit from project metadata image_import_concurrency (default 4, min 1, max 8).
+        -- Toast per completed image + final summary toast.
+        -- On completion: [[gallery]] macro inserted into post content and post editor refreshed.
+}
+
+config {
+    batch_image_import_concurrency_default: Integer = 4
+    batch_image_import_concurrency_min: Integer = 1
+    batch_image_import_concurrency_max: Integer = 8
 }

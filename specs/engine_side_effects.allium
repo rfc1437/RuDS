@@ -114,7 +114,7 @@ rule ImportMediaSideEffects {
     if media.is_image:
         ensures: ThumbnailsGenerated(media)
         -- small=150px, medium=400px, large=800px, ai=448x448
-        -- Asynchronous, emits thumbnailsGenerated on completion
+        -- Synchronous (awaited), logged on error
     ensures: FTSIndexUpdated(media)
 }
 
@@ -185,7 +185,7 @@ rule DeleteTemplateSideEffects {
 -- ─── Script operations ───────────────────────────────────
 
 -- Same pattern as templates:
---   Create: write .lua file, insert DB
+--   Create: write published script file, insert DB
 --   Update: bump version, rewrite file, update DB
 --   Publish: write file, clear DB content
 --   Delete: delete file, delete DB row
@@ -299,7 +299,7 @@ rule DeleteMediaTranslationSideEffects {
 -- updatePost         | rename only* | yes  | if Δ  | no     | no      | yes   | no
 -- publishPost        | .md + trans  | yes  | yes   | no     | no      | yes   | no
 -- deletePost         | delete .md   | del  | del   | no     | Δ media | del   | no
--- importMedia        | copy file    | yes  | no    | async  | write   | no    | no
+-- importMedia        | copy file    | yes  | no    | sync   | write   | no    | no
 -- updateMedia        | no           | yes  | no    | no     | rewrite | no    | no
 -- replaceMediaFile   | overwrite    | no   | no    | regen  | no      | no    | no
 -- deleteMedia        | delete all   | del  | no    | del    | del all | no    | no

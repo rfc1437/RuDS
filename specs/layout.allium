@@ -126,8 +126,9 @@ rule ToggleAssistantSidebar {
 
 value WindowTitleBar {
     -- Platform-adaptive
-    -- menu_bar: rendered only on non-Mac platforms (6 groups: App, File, Edit, View, Window, Help)
-    --   macOS: native menu bar via muda crate (same 6 groups)
+    -- menu_bar: rendered only on non-Mac platforms (5 groups: File, Edit, View, Blog, Help)
+    --   macOS: native menu bar (same groups plus Window between Blog and Help;
+    --   wx auto Window menu disabled, app supplies its own for a stable order)
     --   Keyboard: Alt opens mnemonics, Alt+letter opens group
     --   Arrow keys navigate groups and items, Enter/Space activates
     --   View group hides devTools toggle when not in dev mode
@@ -248,6 +249,8 @@ invariant PanelTabFallback {
 -- Tasks tab: last 10 tasks, newest first, with progress/cancel.
 --   Tasks with shared group_id are collapsible groups showing aggregate progress.
 -- Output tab: log entries with copy-all button.
+--   The panel opens on Output automatically when a blogmark transform fails
+--   or a transform script writes output.
 -- Post Links tab: backlinks (posts linking here) + outlinks (posts linked from here).
 --   Each entry clickable, opens linked post as pinned tab.
 -- Git Log tab: file-level git history for active post/media (up to 50 entries).

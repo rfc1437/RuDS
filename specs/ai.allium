@@ -3,9 +3,8 @@
 -- Scope: core (one-shot operations), extension Bucket C (chat + streaming)
 -- Distilled from: src/main/engine/ChatEngine.ts, ai/providers.ts,
 --   ai/chat.ts, ai/tasks.ts, SecureKeyStore.ts
--- Note: Rust rewrite simplifies providers to two configurable
---   OpenAI-compatible endpoints (online + airplane mode),
---   replacing the TypeScript app's 4 named providers.
+-- The rewrite models AI access as two configurable OpenAI-compatible
+-- endpoints (online + airplane mode) instead of a fixed named-provider set.
 
 use "./post.allium" as post
 use "./media.allium" as media
@@ -19,6 +18,61 @@ entity AiEndpoint {
     -- airplane: local model (Ollama, LM Studio, etc.)
 }
 
+entity AiCatalogProvider {
+    id: String
+    name: String
+    env_keys: Set<String>
+    package_ref: String?
+    api_url: String?
+    doc_url: String?
+    updated_at: Timestamp
+}
+
+entity AiModel {
+    provider: AiCatalogProvider
+    model_id: String
+    name: String
+    family: String?
+    supports_attachment: Boolean
+    supports_reasoning: Boolean
+    supports_tool_calls: Boolean
+    supports_structured_output: Boolean
+    supports_temperature: Boolean
+    knowledge: String?
+    release_date: String?
+    last_updated_date: String?
+    open_weights: Boolean
+    input_price: Integer?
+    output_price: Integer?
+    cache_read_price: Integer?
+    cache_write_price: Integer?
+    context_window: Integer
+    max_input_tokens: Integer
+    max_output_tokens: Integer
+    interleaved: String?
+    status: String?
+    updated_at: Timestamp
+
+    -- Relationships
+    modalities: AiModelModality with provider = this.provider and model_id = this.model_id
+
+    -- Derived
+    input_modalities: modalities where direction = input -> modality
+    output_modalities: modalities where direction = output -> modality
+}
+
+entity AiModelModality {
+    provider: AiCatalogProvider
+    model_id: String
+    direction: input | output
+    modality: text | image | audio | file | tool
+}
+
+entity AiCatalogMeta {
+    key: String
+    value: String
+}
+
 surface AiEndpointSurface {
     context endpoint: AiEndpoint
 
@@ -29,10 +83,40 @@ surface AiEndpointSurface {
         endpoint.model
 }
 
+    surface AiModelSurface {
+        context catalog_model: AiModel
+
+        exposes:
+            catalog_model.provider
+            catalog_model.model_id
+            catalog_model.name
+            catalog_model.family when catalog_model.family != null
+            catalog_model.supports_attachment
+            catalog_model.supports_reasoning
+            catalog_model.supports_tool_calls
+            catalog_model.supports_structured_output
+            catalog_model.supports_temperature
+            catalog_model.knowledge when catalog_model.knowledge != null
+            catalog_model.release_date when catalog_model.release_date != null
+            catalog_model.last_updated_date when catalog_model.last_updated_date != null
+            catalog_model.open_weights
+            catalog_model.input_price when catalog_model.input_price != null
+            catalog_model.output_price when catalog_model.output_price != null
+            catalog_model.cache_read_price when catalog_model.cache_read_price != null
+            catalog_model.cache_write_price when catalog_model.cache_write_price != null
+            catalog_model.context_window
+            catalog_model.max_input_tokens
+            catalog_model.max_output_tokens
+            catalog_model.interleaved when catalog_model.interleaved != null
+            catalog_model.status when catalog_model.status != null
+            catalog_model.input_modalities
+            catalog_model.output_modalities
+            catalog_model.updated_at
+    }
+
 entity SecureKeyStore {
-    -- Encrypts API keys using OS keychain
-    --   macOS: Keychain, Windows: DPAPI, Linux: libsecret
-    -- Stored as base64 in settings table with __encrypted_ prefix
+    -- Encrypts API keys using the host operating system's secure storage.
+    -- Stored in application settings in encrypted form.
     -- No plain-text fallback
 }
 
@@ -64,8 +148,12 @@ entity ChatMessage {
     conversation: ChatConversation
     role: system | user | assistant | tool
     content: String
+    tool_call_id: String?
+    tool_calls: String?
     token_usage_input: Integer?
     token_usage_output: Integer?
+    cache_read_tokens: Integer?
+    cache_write_tokens: Integer?
     created_at: Timestamp
 }
 
@@ -76,9 +164,22 @@ surface ChatMessageSurface {
         message.conversation
         message.role
         message.content
+        message.tool_call_id when message.tool_call_id != null
+        message.tool_calls when message.tool_calls != null
         message.token_usage_input when message.token_usage_input != null
         message.token_usage_output when message.token_usage_output != null
+        message.cache_read_tokens when message.cache_read_tokens != null
+        message.cache_write_tokens when message.cache_write_tokens != null
         message.created_at
+}
+
+surface AiConfigurationSurface {
+    facing _: AiOperator
+
+    provides:
+        SetAiEndpointRequested(kind, url, api_key, model)
+        RemoveAiEndpointRequested(kind)
+        RefreshModelCatalogRequested(source)
 }
 
 surface OneShotAiSurface {
@@ -99,7 +200,31 @@ surface AiChatSurface {
     provides:
         StartChatRequested(model)
         SendChatMessageRequested(conversation, content)
-        RefreshModelCatalogRequested(endpoint)
+        CancelChatRequested(conversation)
+}
+
+config {
+    model_catalog_ttl: Duration = 5.minutes
+    chat_max_tool_rounds: Integer = 10
+    default_max_output_tokens: Integer = 16384
+}
+
+rule SetAiEndpoint {
+    when: SetAiEndpointRequested(kind, url, api_key, model)
+    ensures:
+        let endpoint = AiEndpoint.created(
+            kind: kind,
+            url: url,
+            api_key: api_key,
+            model: model
+        )
+        endpoint.kind = kind
+}
+
+rule RemoveAiEndpoint {
+    when: RemoveAiEndpointRequested(kind)
+    for endpoint in AiEndpoints where endpoint.kind = kind:
+        ensures: not exists endpoint
 }
 
 -- One-shot AI tasks (core scope, no streaming)
@@ -174,18 +299,25 @@ rule SendChatMessage {
     )
     ensures: conversation.updated_at = now
     ensures: AiStreamingResponse(conversation)
-        -- AI SDK v6 streamText() with tool-call loop (max 10 rounds)
-        -- Blog data tools for post/media querying during chat
-        -- Token usage tracking (input, output, cache read/write)
+        -- Streaming response with bounded tool-call loop.
+        -- Blog data tools for post/media querying and mutation during chat.
+        -- Render tools may emit structured chart/table/form payloads.
+        -- Token usage tracking includes input, output, cache read, cache write.
+}
+
+rule CancelChat {
+    when: CancelChatRequested(conversation)
+    ensures: AiStreamingResponseCancelled(conversation)
 }
 
 -- Model catalog
 
 rule RefreshModelCatalog {
-    when: RefreshModelCatalogRequested(endpoint)
-    -- Queries the endpoint's model list API
-    -- 5-minute cache TTL
-    ensures: ModelCatalogUpdated(endpoint)
+    when: RefreshModelCatalogRequested(source)
+    -- Refreshes advisory provider/model metadata used for capability checks,
+    -- default token budgeting, and model selection UX.
+    -- Uses conditional GET with ETag where supported.
+    ensures: ModelCatalogUpdated()
 }
 
 invariant AirplaneModeGating {
@@ -198,12 +330,86 @@ invariant AirplaneModeGating {
     --   show toast "AI unavailable — configure {online|airplane} endpoint in Settings"
 }
 
+invariant AirplaneModeModelSwap {
+    -- In airplane mode, cloud models are never contacted.
+    -- Chat uses the configured offline chat model when needed.
+    -- Image analysis uses the configured offline vision-capable model when needed.
+    -- If no suitable offline model is configured, the operation fails with
+    --   actionable guidance instead of silently falling back to the online endpoint.
+}
+
 invariant TwoEndpointModel {
     -- Two configurable OpenAI-compatible endpoints:
     --   online: for cloud providers (requires API key)
     --   airplane: for local models (no API key required)
     -- Both use the OpenAI Chat Completions wire format.
-    -- This replaces the TypeScript app's 4 named provider model.
+    -- Endpoint selection is configurable rather than tied to hard-coded providers.
+}
+
+invariant AdvisoryModelCatalog {
+    -- Model metadata is stored separately from runtime endpoint configuration.
+    -- It supplies capability hints such as context window, tool-call support,
+    -- structured output support, vision/input modalities, and pricing metadata.
+    -- The catalog remains usable offline after the last successful refresh.
+}
+
+invariant ConditionalCatalogRefresh {
+    -- Model catalog refresh uses conditional HTTP requests when possible.
+    -- The latest ETag and fetch timestamp are persisted in AiCatalogMeta.
+    -- A 304 response updates freshness metadata without rewriting model rows.
+    exists meta in AiCatalogMeta where meta.key = "etag" or meta.key = "last_fetched_at"
+}
+
+invariant ProviderDetection {
+    -- Runtime provider selection may be inferred from model identifiers,
+    -- local-endpoint registration, or explicit endpoint configuration.
+    -- The system does not rely on a single hard-coded provider list for routing.
+}
+
+invariant VisionCapabilityGate {
+    -- AnalyzeImage only runs against models that accept image input.
+    -- Local/offline models must advertise or be configured with image capability
+    -- before the runtime sends multimodal requests to them.
+}
+
+invariant ChatContextTruncation {
+    -- Chat requests are trimmed to fit within the selected model's context window.
+    -- Oldest user/assistant pairs are dropped first.
+    -- The system prompt, tool schema budget, and output-token reserve are preserved.
+}
+
+invariant BoundedToolLoop {
+    -- Chat tool execution is bounded by config.chat_max_tool_rounds.
+    -- Tool-capable models may call blog-domain tools and render tools.
+    -- Non-tool-capable models skip tool exposure entirely.
+}
+
+invariant TokenUsageAccounting {
+    -- Chat turn accounting tracks input, output, cache-read, and cache-write tokens.
+    -- Usage is reported per turn and accumulated per conversation.
+    -- Cache token accounting is surfaced when the underlying provider reports it.
+}
+
+invariant ChatCancellation {
+    -- Each in-flight chat turn can be aborted independently.
+    -- Cancellation stops streaming and tool execution for that request only.
+}
+
+invariant StructuredRenderTools {
+    -- Chat may emit structured render payloads via tool calls prefixed "render_".
+    -- 9 inline surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
+    -- Render tool names: render_card, render_chart, render_form, render_list,
+    --   render_metric, render_mindmap, render_table, render_tabs.
+    -- Unrecognized render tool names render as JSON (raw dump).
+    -- Tab content may nest any surface type including plain text.
+    -- These payloads are data contracts, not arbitrary HTML strings.
+    -- Surface data contracts are defined in editor_chat.allium InlineSurface value.
+}
+
+invariant BlogStatsPromptAugmentation {
+    -- The base system prompt may be augmented with current blog statistics
+    -- such as post counts, media counts, tag/category totals, and date ranges
+    -- so long as the augmentation reflects current project state.
 }
 
 invariant AiSpecPartitioning {
@@ -215,5 +421,5 @@ invariant AiSpecPartitioning {
 
 invariant SecureKeyStorage {
     -- API keys are never stored in plain text
-    -- Always encrypted via OS keychain before DB storage
+    -- Always encrypted via host secure storage before persistence
 }

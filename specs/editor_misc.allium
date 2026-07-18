@@ -148,6 +148,16 @@ surface DashboardSurface {
         -- Single-click: preview tab. Double-click: pin tab.
 }
 
+rule ComputeDashboardData {
+    when: DashboardRequested(project)
+    -- stats: post counts grouped by status (total = sum of all statuses),
+    --   plus media/image counts, total media size, tag and category counts.
+    -- timeline: posts grouped by (year, month) of created_at, newest first,
+    --   limited to the most recent config.dashboard_timeline_months with data.
+    -- tag_cloud / category_cloud / recent_posts populated per their guarantees.
+    ensures: Dashboard
+}
+
 -- ─── Menu editor view ────────────────────────────────────────
 
 -- Visual editor for the OPML navigation menu (meta/menu.opml).
@@ -448,10 +458,11 @@ rule SiteValidationScan {
 rule SiteValidationApply {
     when: SiteValidationApplyRequested(report)
     -- Classifies affected paths into generation sections (core, single, category, tag, date)
-    -- Renders only affected sections in parallel
+    -- Renders only affected routes (a post's own single page plus only its own
+    --   categories, tags, and date archives); unaffected routes are left untouched
     -- Deletes extra HTML files, removes empty directories
-    -- Regenerates calendar if anything changed
-    -- Rebuilds search index if anything rendered or deleted
+    -- Regenerates calendar if anything changed (feed/atom/404/sitemap/search
+    --   index are NOT rebuilt on apply)
     ensures: ApplyValidationRequested(report.project_id, report.affected_sections)
 }
 
@@ -697,7 +708,7 @@ value ImportYearDistribution {
 value ImportConflict {
     item_type: String                   -- post | page | media
     item_name: String
-    resolution: String                  -- import | skip | merge
+    resolution: String                  -- ignore | overwrite | import
 }
 
 value ImportMacro {
@@ -745,8 +756,8 @@ surface ImportAnalysisSurface {
         -- Year-by-year bar charts for posts + media.
 
     @guarantee ConflictsSection
-        -- Collapsible. Per-item dropdown: Import/Skip/Merge.
-        -- Default: Import for new items, Skip for existing matches.
+        -- Collapsible. Per-item dropdown: Ignore/Overwrite/Import.
+        -- Default: Import for new items, Ignore for existing matches.
 
     @guarantee TaxonomySection
         -- Collapsible. Category + tag pills.
