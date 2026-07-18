@@ -1,0 +1,4 @@
+[alias]
+bundle-macos = "packager --release --packages bds-ui --formats app --formats dmg"
+bundle-windows = "packager --release --packages bds-ui --formats nsis"
+bundle-linux = "packager --release --packages bds-ui --formats deb --formats appimage"

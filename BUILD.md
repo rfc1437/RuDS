@@ -1,5 +1,25 @@
 # RuDS — Build Prerequisites
 
+## Native desktop packages
+
+Install the pinned Cargo Packager CLI once:
+
+```sh
+cargo install cargo-packager --locked --version 0.11.8
+```
+
+Build packages on their native operating system from the repository root:
+
+```sh
+cargo bundle-macos    # Blogging Desktop Server.app and .dmg
+cargo bundle-windows  # NSIS .exe installer
+cargo bundle-linux    # .deb and .AppImage
+```
+
+Packages are written below `target/release`. The macOS bundle uses the ICNS icon, Windows embeds the ICO in the application executable and installer, and Linux packages install the 1024×1024 PNG with their desktop entry.
+
+Windows packaging requires the MSVC Rust toolchain, Visual Studio Build Tools with C++ support, and the Windows SDK. Build each package on its target operating system; these commands do not cross-package installers.
+
 ## macOS system requirements
 
 - macOS 13 (Ventura) or later
@@ -12,7 +32,7 @@
 
 ```sh
 # Debian/Ubuntu
-sudo apt install build-essential cmake pkg-config libgtk-3-dev libxdo-dev libdbus-1-dev
+sudo apt install build-essential cmake pkg-config libgtk-3-dev libxdo-dev libdbus-1-dev libwebkit2gtk-4.1-dev
 ```
 
 ## Install Homebrew packages (macOS)

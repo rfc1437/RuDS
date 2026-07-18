@@ -67,7 +67,7 @@ impl Database {
         let mut conn = SqliteConnection::establish(database_url)?;
         // SQLite connection configuration is backend-specific and not expressible in Diesel's DSL.
         conn.batch_execute(if wal {
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;"
+            "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;"
         } else {
             "PRAGMA foreign_keys=ON;"
         })?;

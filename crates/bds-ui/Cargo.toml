@@ -29,3 +29,24 @@ objc2-app-kit = "0.3"
 fluent-syntax = "0.12"
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
+
+[build-dependencies]
+winresource = "0.1"
+
+[package.metadata.packager]
+product-name = "Blogging Desktop Server"
+identifier = "de.rfc1437.bds2"
+description = "A desktop application for writing and publishing static blogs."
+before-packaging-command = "cargo build --release -p bds-ui"
+icons = [
+    "assets/app-icons/bds.icns",
+    "assets/app-icons/bds.ico",
+    "assets/app-icons/bds.png",
+]
+
+[package.metadata.packager.macos]
+minimum-system-version = "13.0"
+signing-identity = "-"
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/app-icons/bds.ico"
