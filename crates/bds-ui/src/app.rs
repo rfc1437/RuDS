@@ -1050,7 +1050,9 @@ impl BdsApp {
                 // Per metadata.allium StartupSync: sync metadata from filesystem
                 if let Some(data_dir) = self.data_dir.clone() {
                     if let Err(e) = engine::meta::startup_sync(&data_dir) {
-                        self.add_output(&format!("Metadata sync failed: {e}"));
+                        let message =
+                            self.operation_failed_text("common.metadataSync", e.to_string());
+                        self.add_output(&message);
                     }
                     // Extract content language from project metadata
                     if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
@@ -1331,58 +1333,81 @@ impl BdsApp {
                     ))
                 },
             ),
-            Message::ReindexText => self.spawn_engine_task(
-                "engine.reindexStarted",
-                |db_path, project_id, data_dir, tm, tid| {
-                    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                    tm.report_progress(tid, Some(0.0), Some("Reading project config...".into()));
-                    let main_lang = engine::meta::read_project_json(&data_dir)
-                        .ok()
-                        .and_then(|m| m.main_language)
-                        .unwrap_or_else(|| "en".to_string());
-                    let tm2 = Arc::clone(&tm);
-                    let on_item: engine::search::ItemProgressFn =
-                        Box::new(move |current, total, name| {
-                            let pct = if total > 0 {
-                                current as f32 / total as f32
-                            } else {
-                                1.0
-                            };
-                            let msg = format!("Indexing: {current}/{total} \u{2014} {name}");
-                            tm2.report_progress(tid, Some(pct), Some(msg));
-                        });
-                    let report = engine::search::reindex_all_with_progress(
-                        db.conn(),
-                        &project_id,
-                        &main_lang,
-                        Some(on_item),
-                    )
-                    .map_err(|e| e.to_string())?;
-                    Ok(format!(
-                        "posts={}, media={}",
-                        report.posts_indexed, report.media_indexed
-                    ))
-                },
-            ),
-            Message::RegenerateCalendar => self.spawn_engine_task(
-                "engine.calendarStarted",
-                |db_path, project_id, data_dir, tm, tid| {
-                    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                    tm.report_progress(tid, Some(0.20), Some("Loading posts...".into()));
-                    engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
+            Message::ReindexText => {
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.reindexStarted",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(0.0),
+                            Some(t(locale, "engine.readingProjectConfig")),
+                        );
+                        let main_lang = engine::meta::read_project_json(&data_dir)
+                            .ok()
+                            .and_then(|m| m.main_language)
+                            .unwrap_or_else(|| "en".to_string());
+                        let tm2 = Arc::clone(&tm);
+                        let on_item: engine::search::ItemProgressFn =
+                            Box::new(move |current, total, name| {
+                                let pct = if total > 0 {
+                                    current as f32 / total as f32
+                                } else {
+                                    1.0
+                                };
+                                let msg = tw(
+                                    locale,
+                                    "engine.indexingItem",
+                                    &[
+                                        ("current", &current.to_string()),
+                                        ("total", &total.to_string()),
+                                        ("name", name),
+                                    ],
+                                );
+                                tm2.report_progress(tid, Some(pct), Some(msg));
+                            });
+                        let report = engine::search::reindex_all_with_progress(
+                            db.conn(),
+                            &project_id,
+                            &main_lang,
+                            Some(on_item),
+                        )
                         .map_err(|e| e.to_string())?;
-                    tm.report_progress(tid, Some(0.90), Some("Writing calendar JSON...".into()));
-                    Ok("done".to_string())
-                },
-            ),
+                        Ok(format!(
+                            "posts={}, media={}",
+                            report.posts_indexed, report.media_indexed
+                        ))
+                    },
+                )
+            }
+            Message::RegenerateCalendar => {
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.calendarStarted",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        tm.report_progress(tid, Some(0.20), Some(t(locale, "engine.loadingPosts")));
+                        engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
+                            .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(0.90),
+                            Some(t(locale, "engine.writingCalendar")),
+                        );
+                        Ok("done".to_string())
+                    },
+                )
+            }
             Message::ValidateTranslations => {
+                let locale = self.ui_locale;
                 self.open_singleton_tab(
                     TabType::TranslationValidation,
                     "tabBar.translationValidation",
                 );
                 self.spawn_engine_task(
                     "engine.validateTranslationsStarted",
-                    |db_path, project_id, data_dir, tm, tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
                         let meta = engine::meta::read_project_json(&data_dir)
                             .map_err(|e| e.to_string())?;
@@ -1396,7 +1421,15 @@ impl BdsApp {
                                 } else {
                                     1.0
                                 };
-                                let msg = format!("Checking: {current}/{total} \u{2014} {name}");
+                                let msg = tw(
+                                    locale,
+                                    "engine.checkingItem",
+                                    &[
+                                        ("current", &current.to_string()),
+                                        ("total", &total.to_string()),
+                                        ("name", name),
+                                    ],
+                                );
                                 tm2.report_progress(tid, Some(pct), Some(msg));
                             });
                         let report =
@@ -1417,96 +1450,122 @@ impl BdsApp {
                     },
                 )
             }
-            Message::ValidateMedia => self.spawn_engine_task(
-                "engine.validateMediaStarted",
-                |db_path, project_id, _data_dir, tm, tid| {
-                    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                    let on_item: engine::validate_media::ProgressFn =
-                        Box::new(move |current, total, name| {
-                            let pct = if total > 0 {
-                                current as f32 / total as f32
-                            } else {
-                                1.0
-                            };
-                            let msg = format!("Checking: {current}/{total} \u{2014} {name}");
-                            tm.report_progress(tid, Some(pct), Some(msg));
-                        });
-                    let report = engine::validate_media::validate_media(
-                        db.conn(),
-                        &_data_dir,
-                        &project_id,
-                        Some(on_item),
-                    )
-                    .map_err(|e| e.to_string())?;
-                    Ok(format!(
-                        "checked={}, issues={}",
-                        report.total_checked,
-                        report.issues.len()
-                    ))
-                },
-            ),
-            Message::GenerateSite => self.spawn_engine_task(
-                "engine.generateSiteStarted",
-                |db_path, project_id, data_dir, tm, tid| {
-                    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                    let metadata =
-                        engine::meta::read_project_json(&data_dir).map_err(|e| e.to_string())?;
-                    if metadata
-                        .public_url
-                        .as_deref()
-                        .unwrap_or("")
-                        .trim()
-                        .is_empty()
-                    {
-                        return Err("public URL is required before generating the site".to_string());
-                    }
-                    let main_language = metadata
-                        .main_language
-                        .clone()
-                        .unwrap_or_else(|| "en".to_string());
-                    let all_posts =
-                        bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
+            Message::ValidateMedia => {
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.validateMediaStarted",
+                    move |db_path, project_id, _data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let on_item: engine::validate_media::ProgressFn =
+                            Box::new(move |current, total, name| {
+                                let pct = if total > 0 {
+                                    current as f32 / total as f32
+                                } else {
+                                    1.0
+                                };
+                                let msg = tw(
+                                    locale,
+                                    "engine.checkingItem",
+                                    &[
+                                        ("current", &current.to_string()),
+                                        ("total", &total.to_string()),
+                                        ("name", name),
+                                    ],
+                                );
+                                tm.report_progress(tid, Some(pct), Some(msg));
+                            });
+                        let report = engine::validate_media::validate_media(
+                            db.conn(),
+                            &_data_dir,
+                            &project_id,
+                            Some(on_item),
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "checked={}, issues={}",
+                            report.total_checked,
+                            report.issues.len()
+                        ))
+                    },
+                )
+            }
+            Message::GenerateSite => {
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.generateSiteStarted",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let metadata = engine::meta::read_project_json(&data_dir)
                             .map_err(|e| e.to_string())?;
-                    let published_posts = all_posts
-                        .into_iter()
-                        .filter(engine::generation::has_published_snapshot)
-                        .collect::<Vec<_>>();
-                    let total = published_posts.len().max(1) as f32;
-                    let mut sources = Vec::new();
-                    for (index, post) in published_posts.into_iter().enumerate() {
+                        if metadata
+                            .public_url
+                            .as_deref()
+                            .unwrap_or("")
+                            .trim()
+                            .is_empty()
+                        {
+                            return Err(
+                                "public URL is required before generating the site".to_string()
+                            );
+                        }
+                        let main_language = metadata
+                            .main_language
+                            .clone()
+                            .unwrap_or_else(|| "en".to_string());
+                        let all_posts = bds_core::db::queries::post::list_posts_by_project(
+                            db.conn(),
+                            &project_id,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let published_posts = all_posts
+                            .into_iter()
+                            .filter(engine::generation::has_published_snapshot)
+                            .collect::<Vec<_>>();
+                        let total = published_posts.len().max(1) as f32;
+                        let mut sources = Vec::new();
+                        for (index, post) in published_posts.into_iter().enumerate() {
+                            tm.report_progress(
+                                tid,
+                                Some(((index as f32) / total) * 0.7),
+                                Some(tw(locale, "engine.renderingPost", &[("post", &post.slug)])),
+                            );
+                            if let Some(source) =
+                                engine::generation::load_published_post_source(&data_dir, post)
+                                    .map_err(|error| error.to_string())?
+                            {
+                                sources.push(source);
+                            }
+                        }
+                        let output_dir = data_dir.join("html");
+                        std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
                         tm.report_progress(
                             tid,
-                            Some(((index as f32) / total) * 0.7),
-                            Some(format!("Rendering {}", post.slug)),
+                            Some(0.85),
+                            Some(t(locale, "engine.writingGeneratedFiles")),
                         );
-                        if let Some(source) =
-                            engine::generation::load_published_post_source(&data_dir, post)
-                                .map_err(|error| error.to_string())?
-                        {
-                            sources.push(source);
-                        }
-                    }
-                    let output_dir = data_dir.join("html");
-                    std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
-                    tm.report_progress(tid, Some(0.85), Some("Writing generated files".into()));
-                    let report = engine::generation::generate_starter_site(
-                        db.conn(),
-                        &output_dir,
-                        &project_id,
-                        &metadata,
-                        &sources,
-                        &main_language,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    tm.report_progress(tid, Some(1.0), Some("Site generation complete".into()));
-                    Ok(format!(
-                        "written={}, skipped={}, output={}",
-                        report.written_paths.len(),
-                        report.skipped_paths.len(),
-                        output_dir.display(),
-                    ))
-                },
-            ),
+                        let report = engine::generation::generate_starter_site(
+                            db.conn(),
+                            &output_dir,
+                            &project_id,
+                            &metadata,
+                            &sources,
+                            &main_language,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(t(locale, "engine.generationComplete")),
+                        );
+                        Ok(format!(
+                            "written={}, skipped={}, output={}",
+                            report.written_paths.len(),
+                            report.skipped_paths.len(),
+                            output_dir.display(),
+                        ))
+                    },
+                )
+            }
             Message::RunMetadataDiff => {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 Task::none()
@@ -1525,7 +1584,12 @@ impl BdsApp {
                     }
                     Err(err) => {
                         self.task_manager.fail(task_id, err.clone());
-                        self.notify(ToastLevel::Error, &format!("{label} failed: {err}"));
+                        let message = tw(
+                            self.ui_locale,
+                            "common.operationFailed",
+                            &[("operation", &label), ("error", &err)],
+                        );
+                        self.notify(ToastLevel::Error, &message);
                     }
                 }
                 let sidebar_task = self.refresh_counts();
@@ -1543,12 +1607,24 @@ impl BdsApp {
                         self.site_validation_state.stale_files = report.stale_pages;
                         self.notify(
                             ToastLevel::Success,
-                            &format!(
-                                "{}: missing={}, extra={}, stale={}",
-                                t(self.ui_locale, "tabBar.siteValidation"),
-                                self.site_validation_state.missing_files.len(),
-                                self.site_validation_state.extra_files.len(),
-                                self.site_validation_state.stale_files.len(),
+                            &tw(
+                                self.ui_locale,
+                                "siteValidation.summary",
+                                &[
+                                    ("label", &t(self.ui_locale, "tabBar.siteValidation")),
+                                    (
+                                        "missing",
+                                        &self.site_validation_state.missing_files.len().to_string(),
+                                    ),
+                                    (
+                                        "extra",
+                                        &self.site_validation_state.extra_files.len().to_string(),
+                                    ),
+                                    (
+                                        "stale",
+                                        &self.site_validation_state.stale_files.len().to_string(),
+                                    ),
+                                ],
                             ),
                         );
                     }
@@ -2124,10 +2200,7 @@ impl BdsApp {
                                 &post_id,
                                 &media_id,
                             ) {
-                                self.notify(
-                                    ToastLevel::Error,
-                                    &format!("Failed to unlink media: {err}"),
-                                );
+                                self.notify_operation_failed("editor.unlinkMedia", err);
                                 return Task::none();
                             }
                             self.refresh_post_relationships(&post_id);
@@ -2867,10 +2940,7 @@ impl BdsApp {
                 self.refresh_counts()
             }
             Err(error) => {
-                self.notify(
-                    ToastLevel::Error,
-                    &format!("Failed to create post: {error}"),
-                );
+                self.notify_operation_failed("modal.postInsertLink.createPost", error);
                 Task::none()
             }
         }
@@ -2910,10 +2980,7 @@ impl BdsApp {
                 self.refresh_counts()
             }
             Err(error) => {
-                self.notify(
-                    ToastLevel::Error,
-                    &format!("Failed to create script: {error}"),
-                );
+                self.notify_operation_failed("common.createScript", error);
                 Task::none()
             }
         }
@@ -2952,10 +3019,7 @@ impl BdsApp {
                 self.refresh_counts()
             }
             Err(error) => {
-                self.notify(
-                    ToastLevel::Error,
-                    &format!("Failed to create template: {error}"),
-                );
+                self.notify_operation_failed("common.createTemplate", error);
                 Task::none()
             }
         }
@@ -3020,9 +3084,24 @@ impl BdsApp {
 
         for post_id in due_ids {
             if let Err(error) = self.persist_post_editor_state(&post_id) {
-                self.notify(ToastLevel::Error, &format!("Auto-save failed: {error}"));
+                self.notify_operation_failed("common.autoSave", error);
             }
         }
+    }
+
+    fn operation_failed_text(&self, operation_key: &str, error: impl std::fmt::Display) -> String {
+        let operation = t(self.ui_locale, operation_key);
+        let error = error.to_string();
+        tw(
+            self.ui_locale,
+            "common.operationFailed",
+            &[("operation", &operation), ("error", &error)],
+        )
+    }
+
+    fn notify_operation_failed(&mut self, operation_key: &str, error: impl std::fmt::Display) {
+        let message = self.operation_failed_text(operation_key, error);
+        self.notify(ToastLevel::Error, &message);
     }
 
     fn add_output(&mut self, text: &str) {
@@ -3832,14 +3911,14 @@ impl BdsApp {
     fn save_post_editor(&mut self, post_id: &str) -> Task<Message> {
         match self.persist_post_editor_state(post_id) {
             Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
-            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+            Err(e) => self.notify_operation_failed("common.save", e),
         }
         Task::none()
     }
 
     fn publish_post_editor(&mut self, post_id: &str) -> Task<Message> {
         if let Err(e) = self.persist_post_editor_state(post_id) {
-            self.notify(ToastLevel::Error, &format!("Publish failed: {e}"));
+            self.notify_operation_failed("editor.publish", e);
             return Task::none();
         }
         let Some(ref db) = self.db else {
@@ -3863,7 +3942,7 @@ impl BdsApp {
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.published"));
             }
             Err(e) => {
-                self.notify(ToastLevel::Error, &format!("Publish failed: {e}"));
+                self.notify_operation_failed("editor.publish", e);
             }
         }
         Task::none()
@@ -4265,7 +4344,7 @@ impl BdsApp {
     fn save_media_editor(&mut self, media_id: &str) -> Task<Message> {
         match self.persist_media_editor_state(media_id) {
             Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
-            Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+            Err(e) => self.notify_operation_failed("common.save", e),
         }
         Task::none()
     }
@@ -4323,7 +4402,7 @@ impl BdsApp {
                     self.refresh_post_relationships(post_id);
                 }
                 Err(error) => {
-                    self.notify(ToastLevel::Error, &format!("Failed to link post: {error}"));
+                    self.notify_operation_failed("editor.linkToPost", error);
                 }
             }
         }
@@ -4343,10 +4422,7 @@ impl BdsApp {
                     self.refresh_post_relationships(post_id);
                 }
                 Err(error) => {
-                    self.notify(
-                        ToastLevel::Error,
-                        &format!("Failed to unlink post: {error}"),
-                    );
+                    self.notify_operation_failed("editor.unlinkMedia", error);
                 }
             }
         }
@@ -4380,7 +4456,7 @@ impl BdsApp {
                 if let Some(s) = self.template_editors.get_mut(template_id) {
                     s.validation_error = Some(e.clone());
                 }
-                self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
+                self.notify_operation_failed("common.save", e);
             }
         }
         Task::none()
@@ -4414,7 +4490,7 @@ impl BdsApp {
                 if let Some(s) = self.script_editors.get_mut(script_id) {
                     s.validation_error = Some(e.clone());
                 }
-                self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
+                self.notify_operation_failed("common.save", e);
             }
         }
         Task::none()
@@ -4573,7 +4649,7 @@ impl BdsApp {
                 self.close_entity_tab(post_id);
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
         }
         Task::none()
     }
@@ -4613,7 +4689,7 @@ impl BdsApp {
                 self.refresh_post_relationships(post_id);
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Discard failed: {e}")),
+            Err(e) => self.notify_operation_failed("editor.discard", e),
         }
         Task::none()
     }
@@ -4643,7 +4719,7 @@ impl BdsApp {
                 self.sync_menu_state();
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Duplicate failed: {e}")),
+            Err(e) => self.notify_operation_failed("editor.duplicate", e),
         }
         Task::none()
     }
@@ -4661,7 +4737,7 @@ impl BdsApp {
                 self.close_entity_tab(media_id);
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
         }
         Task::none()
     }
@@ -4679,7 +4755,7 @@ impl BdsApp {
                 self.close_entity_tab(template_id);
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
         }
         Task::none()
     }
@@ -4744,7 +4820,7 @@ impl BdsApp {
                 self.close_entity_tab(script_id);
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
         }
         Task::none()
     }
@@ -4827,7 +4903,7 @@ impl BdsApp {
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Delete failed: {e}")),
+            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
         }
         Task::none()
     }
@@ -4853,7 +4929,7 @@ impl BdsApp {
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
             }
-            Err(e) => self.notify(ToastLevel::Error, &format!("Merge failed: {e}")),
+            Err(e) => self.notify_operation_failed("tags.merge", e),
         }
         Task::none()
     }
@@ -5085,7 +5161,7 @@ impl BdsApp {
                                 template_slug: tag.post_template_slug.unwrap_or_default(),
                             });
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
                 if let Some(editing_tag) = created_editing {
@@ -5147,7 +5223,7 @@ impl BdsApp {
                             self.reload_tags_state();
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5217,7 +5293,7 @@ impl BdsApp {
                             self.reload_tags_state();
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Discover failed: {e}")),
+                        Err(e) => self.notify_operation_failed("tags.discoverButton", e),
                     }
                 }
             }
@@ -5304,7 +5380,10 @@ impl BdsApp {
                     let max_posts = match state.max_posts_per_page.trim().parse::<i32>() {
                         Ok(value) => value,
                         Err(_) => {
-                            self.notify(ToastLevel::Error, "Invalid max posts per page");
+                            self.notify(
+                                ToastLevel::Error,
+                                &t(self.ui_locale, "settings.maxPostsPerPageInvalid"),
+                            );
                             return Task::none();
                         }
                     };
@@ -5355,7 +5434,7 @@ impl BdsApp {
                     meta.blog_languages = state.blog_languages.clone();
                     meta.semantic_similarity_enabled = state.semantic_similarity_enabled;
                     if let Err(e) = meta.validate() {
-                        self.notify(ToastLevel::Error, &format!("Save failed: {e}"));
+                        self.notify_operation_failed("common.save", e);
                         return Task::none();
                     }
                     project.name = state.project_name.clone();
@@ -5381,8 +5460,8 @@ impl BdsApp {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        (Err(e), _) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
-                        (_, Err(e)) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        (Err(e), _) => self.notify_operation_failed("common.save", e),
+                        (_, Err(e)) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5404,7 +5483,7 @@ impl BdsApp {
                         Ok(_) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5414,7 +5493,10 @@ impl BdsApp {
             SettingsMsg::AddCategory => {
                 let category_name = state.new_category_name.trim();
                 if category_name.is_empty() {
-                    self.notify(ToastLevel::Error, "Category name required");
+                    self.notify(
+                        ToastLevel::Error,
+                        &t(self.ui_locale, "settings.categoryNameRequired"),
+                    );
                     return Task::none();
                 }
                 if state
@@ -5422,7 +5504,10 @@ impl BdsApp {
                     .iter()
                     .any(|row| row.name.eq_ignore_ascii_case(category_name))
                 {
-                    self.notify(ToastLevel::Error, "Category already exists");
+                    self.notify(
+                        ToastLevel::Error,
+                        &t(self.ui_locale, "settings.categoryAlreadyExists"),
+                    );
                     return Task::none();
                 }
                 if let Some(data_dir) = &self.data_dir {
@@ -5435,7 +5520,7 @@ impl BdsApp {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5486,7 +5571,7 @@ impl BdsApp {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5498,7 +5583,7 @@ impl BdsApp {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5531,9 +5616,7 @@ impl BdsApp {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        (Err(e), _) | (_, Err(e)) => {
-                            self.notify(ToastLevel::Error, &format!("Save failed: {e}"))
-                        }
+                        (Err(e), _) | (_, Err(e)) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5577,7 +5660,7 @@ impl BdsApp {
                         Ok(()) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5620,9 +5703,7 @@ impl BdsApp {
                         Ok(()) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }
-                        Err(error) => {
-                            self.notify(ToastLevel::Error, &format!("Save failed: {error}"))
-                        }
+                        Err(error) => self.notify_operation_failed("common.save", error),
                     }
                 }
             }
@@ -5632,9 +5713,7 @@ impl BdsApp {
                         Ok(()) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }
-                        Err(error) => {
-                            self.notify(ToastLevel::Error, &format!("Save failed: {error}"))
-                        }
+                        Err(error) => self.notify_operation_failed("common.save", error),
                     }
                 }
             }
@@ -5647,7 +5726,7 @@ impl BdsApp {
                         Ok(()) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }
-                        Err(e) => self.notify(ToastLevel::Error, &format!("Save failed: {e}")),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -5753,9 +5832,10 @@ impl BdsApp {
                 );
             }
             SettingsMsg::RegenerateThumbnails => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.regenerateThumbnails",
-                    |db_path, project_id, data_dir, tm, tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
                         let regenerated = Self::regenerate_project_thumbnails(
                             &db,
@@ -5770,7 +5850,7 @@ impl BdsApp {
                                 tm.report_progress(
                                     tid,
                                     Some(progress),
-                                    Some(format!("Regenerating: {name}")),
+                                    Some(tw(locale, "engine.regeneratingItem", &[("name", name)])),
                                 );
                             },
                         )?;
@@ -5949,7 +6029,7 @@ impl BdsApp {
                             );
                         }
                         Err(e) => {
-                            self.notify(ToastLevel::Error, &format!("Failed to load post: {e}"));
+                            self.notify_operation_failed("activity.posts", e);
                         }
                     }
                 }
@@ -5973,7 +6053,7 @@ impl BdsApp {
                             );
                         }
                         Err(e) => {
-                            self.notify(ToastLevel::Error, &format!("Failed to load media: {e}"));
+                            self.notify_operation_failed("activity.media", e);
                         }
                     }
                 }
@@ -6001,10 +6081,7 @@ impl BdsApp {
                             );
                         }
                         Err(e) => {
-                            self.notify(
-                                ToastLevel::Error,
-                                &format!("Failed to load template: {e}"),
-                            );
+                            self.notify_operation_failed("activity.templates", e);
                         }
                     }
                 }
@@ -6029,7 +6106,7 @@ impl BdsApp {
                                 .insert(script.id.clone(), ScriptEditorState::from_script(&script));
                         }
                         Err(e) => {
-                            self.notify(ToastLevel::Error, &format!("Failed to load script: {e}"));
+                            self.notify_operation_failed("activity.scripts", e);
                         }
                     }
                 }
@@ -6355,7 +6432,10 @@ impl BdsApp {
 
     fn run_post_ai_analysis(&mut self, post_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
@@ -6409,7 +6489,10 @@ impl BdsApp {
 
     fn run_post_taxonomy_analysis(&mut self, post_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
@@ -6457,7 +6540,10 @@ impl BdsApp {
 
     fn detect_post_language(&mut self, post_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
@@ -6522,11 +6608,17 @@ impl BdsApp {
     fn translate_post_to(&mut self, post_id: &str, target_language: &str) -> Task<Message> {
         self.active_modal = None;
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(data_dir) = &self.data_dir else {
-            self.notify(ToastLevel::Error, "project data directory unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "engine.previewDataDirUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
@@ -6598,11 +6690,17 @@ impl BdsApp {
 
     fn run_media_ai_analysis(&mut self, media_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(data_dir) = &self.data_dir else {
-            self.notify(ToastLevel::Error, "project data directory unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "engine.previewDataDirUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.media_editors.get(media_id).cloned() else {
@@ -6671,7 +6769,10 @@ impl BdsApp {
 
     fn detect_media_language(&mut self, media_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.media_editors.get(media_id).cloned() else {
@@ -6733,7 +6834,10 @@ impl BdsApp {
     fn translate_media_to(&mut self, media_id: &str, target_language: &str) -> Task<Message> {
         self.active_modal = None;
         let Some(db) = &self.db else {
-            self.notify(ToastLevel::Error, "database unavailable");
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "common.databaseUnavailable"),
+            );
             return Task::none();
         };
         let Some(state) = self.media_editors.get(media_id).cloned() else {
