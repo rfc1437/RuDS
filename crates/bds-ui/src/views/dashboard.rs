@@ -5,7 +5,7 @@ use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
 use crate::components::inputs;
-use crate::i18n::t;
+use crate::i18n::{t, tw};
 use crate::state::tabs::{Tab, TabType};
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,8 @@ pub struct DashboardTag {
     pub name: String,
     pub count: usize,
     pub color: Option<String>,
+    /// 11–22 px, scaled relative to the min/max counts of the displayed tags.
+    pub font_size: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +59,6 @@ pub struct DashboardState {
     pub stats: DashboardStats,
     pub timeline: Vec<DashboardTimelineMonth>,
     pub tag_cloud: Vec<DashboardTag>,
-    pub tag_overflow_count: usize,
     pub category_cloud: Vec<DashboardCategory>,
     pub recent_posts: Vec<DashboardRecentPost>,
 }
@@ -80,7 +81,6 @@ impl DashboardState {
             },
             timeline: Vec::new(),
             tag_cloud: Vec::new(),
-            tag_overflow_count: 0,
             category_cloud: Vec::new(),
             recent_posts: Vec::new(),
         }
@@ -146,34 +146,37 @@ pub fn view<'a>(state: &'a DashboardState, locale: UiLocale) -> Element<'a, Mess
     ]
     .spacing(16);
 
-    let timeline = timeline_chart(&state.timeline, locale);
-    let tags = tag_cloud(&state.tag_cloud, state.tag_overflow_count, locale);
-    let categories = category_cloud(&state.category_cloud, locale);
-    let recent = recent_posts(&state.recent_posts, locale);
+    let mut content = column![header, project_label, Space::with_height(16), counts_row].spacing(8);
 
-    scrollable(container(
-        column![
-            header,
-            project_label,
-            Space::with_height(16),
-            inputs::section_header(&t(locale, "dashboard.statCards")),
-            counts_row,
-            Space::with_height(20),
-            inputs::section_header(&t(locale, "dashboard.timeline")),
-            timeline,
-            Space::with_height(20),
-            row![tags, categories].spacing(16),
-            Space::with_height(20),
-            inputs::section_header(&t(locale, "dashboard.recentPosts")),
-            recent,
-        ]
-        .spacing(8)
-        .padding(24)
-        .width(Length::Fill),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    if !state.timeline.is_empty() {
+        content = content
+            .push(Space::with_height(20))
+            .push(inputs::section_header(&t(locale, "dashboard.timeline")))
+            .push(timeline_chart(&state.timeline, locale));
+    }
+    if !state.tag_cloud.is_empty() {
+        content = content
+            .push(Space::with_height(20))
+            .push(inputs::section_header(&t(locale, "dashboard.tags")))
+            .push(tag_cloud(&state.tag_cloud, locale));
+    }
+    if !state.category_cloud.is_empty() {
+        content = content
+            .push(Space::with_height(20))
+            .push(inputs::section_header(&t(locale, "dashboard.categories")))
+            .push(category_cloud(&state.category_cloud, locale));
+    }
+    if !state.recent_posts.is_empty() {
+        content = content
+            .push(Space::with_height(20))
+            .push(inputs::section_header(&t(locale, "dashboard.recentPosts")))
+            .push(recent_posts(&state.recent_posts, locale));
+    }
+
+    scrollable(container(content.padding(24).width(Length::Fill)))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn stat_card<'a>(label: &str, value: String, details: Vec<String>) -> Element<'a, Message> {
@@ -258,78 +261,41 @@ fn timeline_chart<'a>(
     .into()
 }
 
-fn tag_cloud<'a>(
-    tags: &'a [DashboardTag],
-    overflow_count: usize,
-    locale: UiLocale,
-) -> Element<'a, Message> {
-    let cloud = if tags.is_empty() {
-        row![
-            text(t(locale, "dashboard.noTags"))
-                .size(13)
-                .color(Color::from_rgb(0.6, 0.62, 0.68))
-        ]
-        .spacing(8)
-        .wrap()
-    } else {
-        let words = tags
-            .iter()
-            .map(|tag| {
-                let bg =
-                    parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
-                let fg = contrast_color(bg);
-                tooltip(
-                    container(text(tag.name.clone()).size(scale_font(tag.count)).color(fg))
-                        .padding([6, 10])
-                        .style(move |_: &Theme| container::Style {
-                            background: Some(Background::Color(bg)),
-                            border: iced::Border {
-                                radius: 999.0.into(),
-                                ..iced::Border::default()
-                            },
-                            ..container::Style::default()
-                        }),
-                    text(format!("{} {}", tag.name, tag.count)).size(12),
-                    tooltip::Position::Top,
-                )
-                .into()
-            })
-            .collect::<Vec<_>>();
-        row(words).spacing(8).wrap()
-    };
-
-    let content = if overflow_count > 0 {
-        column![
-            inputs::section_header(&t(locale, "dashboard.tagCloud")),
-            cloud,
-            text(format!("{} {}", t(locale, "dashboard.and"), overflow_count))
-                .size(12)
-                .color(Color::from_rgb(0.6, 0.62, 0.68)),
-        ]
-        .spacing(8)
-    } else {
-        column![
-            inputs::section_header(&t(locale, "dashboard.tagCloud")),
-            cloud
-        ]
-        .spacing(8)
-    };
-
-    container(content).width(Length::FillPortion(1)).into()
+fn tag_cloud<'a>(tags: &'a [DashboardTag], locale: UiLocale) -> Element<'a, Message> {
+    let words = tags
+        .iter()
+        .map(|tag| {
+            let bg =
+                parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
+            let fg = contrast_color(bg);
+            tooltip(
+                container(text(tag.name.clone()).size(tag.font_size).color(fg))
+                    .padding([6, 10])
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(bg)),
+                        border: iced::Border {
+                            radius: 999.0.into(),
+                            ..iced::Border::default()
+                        },
+                        ..container::Style::default()
+                    }),
+                text(post_count_label(locale, tag.count)).size(12),
+                tooltip::Position::Top,
+            )
+            .into()
+        })
+        .collect::<Vec<_>>();
+    row(words).spacing(8).wrap().into()
 }
 
 fn category_cloud<'a>(
     categories: &'a [DashboardCategory],
     locale: UiLocale,
 ) -> Element<'a, Message> {
-    let items = categories.iter().fold(
-        column![inputs::section_header(&t(
-            locale,
-            "dashboard.categoryCloud"
-        ))]
-        .spacing(8),
-        |column, category| {
-            column.push(
+    let badges = categories
+        .iter()
+        .map(|category| {
+            tooltip(
                 container(
                     row![
                         text(category.name.clone()).size(13).color(Color::WHITE),
@@ -348,20 +314,20 @@ fn category_cloud<'a>(
                     },
                     ..container::Style::default()
                 }),
+                text(post_count_label(locale, category.count)).size(12),
+                tooltip::Position::Top,
             )
-        },
-    );
-    container(items).width(Length::FillPortion(1)).into()
+            .into()
+        })
+        .collect::<Vec<_>>();
+    row(badges).spacing(8).wrap().into()
+}
+
+fn post_count_label(locale: UiLocale, count: usize) -> String {
+    tw(locale, "dashboard.postCount", &[("count", &count.to_string())])
 }
 
 fn recent_posts<'a>(posts: &'a [DashboardRecentPost], locale: UiLocale) -> Element<'a, Message> {
-    if posts.is_empty() {
-        return text(t(locale, "dashboard.noRecentPosts"))
-            .size(13)
-            .color(Color::from_rgb(0.6, 0.62, 0.68))
-            .into();
-    }
-
     column(
         posts
             .iter()
@@ -433,11 +399,6 @@ fn status_badge<'a>(status: &str) -> Element<'a, Message> {
             ..container::Style::default()
         })
         .into()
-}
-
-fn scale_font(count: usize) -> u16 {
-    let clamped = count.min(20) as f32;
-    (11.0 + (clamped / 20.0) * 11.0).round() as u16
 }
 
 fn parse_color(value: Option<&str>) -> Option<Color> {

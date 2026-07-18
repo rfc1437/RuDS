@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use bds_core::db::DbQueryError as SqlError;
-use chrono::Datelike;
 use iced::{Element, Subscription, Task, window};
 use rayon::prelude::*;
 use serde_json::json;
@@ -2658,10 +2657,16 @@ impl BdsApp {
             *monthly_counts.entry((year, month)).or_insert(0) += 1;
 
             for category in &post.categories {
-                *category_counts.entry(category.clone()).or_insert(0) += 1;
+                let trimmed = category.trim();
+                if !trimmed.is_empty() {
+                    *category_counts.entry(trimmed.to_string()).or_insert(0) += 1;
+                }
             }
             for tag in &post.tags {
-                *tag_counts.entry(tag.to_lowercase()).or_insert(0) += 1;
+                let trimmed = tag.trim();
+                if !trimmed.is_empty() {
+                    *tag_counts.entry(trimmed.to_string()).or_insert(0) += 1;
+                }
             }
         }
 
@@ -2671,48 +2676,62 @@ impl BdsApp {
             .count();
         let total_media_size = media.iter().map(|item| item.size).sum::<i64>();
 
-        let now = chrono::Utc::now();
-        let current_year = now.year();
-        let current_month = now.month() as i32;
-        let timeline = (0..12)
+        // Per bDS2: only the most recent 12 months that actually have posts.
+        let timeline = monthly_counts
+            .iter()
             .rev()
-            .map(|offset| {
-                let total_month_index = current_year * 12 + (current_month - 1) - offset;
-                let year = total_month_index.div_euclid(12);
-                let month = total_month_index.rem_euclid(12) + 1;
-                let count = monthly_counts
-                    .get(&(year, month as u32))
-                    .copied()
-                    .unwrap_or(0);
-
-                DashboardTimelineMonth {
-                    label: month_abbreviation(month as u32),
-                    year,
-                    count,
-                }
+            .take(12)
+            .map(|(&(year, month), &count)| DashboardTimelineMonth {
+                label: month_abbreviation(month),
+                year,
+                count,
             })
+            .rev()
             .collect::<Vec<_>>();
 
-        let mut tag_cloud = tags
+        let tag_colors = tags
             .into_iter()
-            .map(|tag| DashboardTag {
-                count: tag_counts
-                    .get(&tag.name.to_lowercase())
-                    .copied()
-                    .unwrap_or(0),
-                name: tag.name,
-                color: tag.color,
+            .filter_map(|tag| match tag.color {
+                Some(color) if !color.is_empty() => Some((tag.name, color)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let distinct_tag_count = tag_counts.len();
+
+        // Per bDS2: top 40 tags by count, font scaled 11-22px relative to the
+        // min/max counts of the visible set, then sorted alphabetically.
+        let mut tag_items = tag_counts.into_iter().collect::<Vec<_>>();
+        tag_items.sort_by(|left, right| {
+            right
+                .1
+                .cmp(&left.1)
+                .then_with(|| left.0.to_lowercase().cmp(&right.0.to_lowercase()))
+        });
+        tag_items.truncate(40);
+        let max_count = tag_items.iter().map(|item| item.1).max().unwrap_or(1).max(1);
+        let min_count = tag_items.iter().map(|item| item.1).min().unwrap_or(max_count);
+        let range = (max_count - min_count).max(1) as f32;
+        let mut tag_cloud = tag_items
+            .into_iter()
+            .map(|(name, count)| DashboardTag {
+                font_size: 11.0 + (count - min_count) as f32 / range * 11.0,
+                color: tag_colors.get(&name).cloned(),
+                name,
+                count,
             })
             .collect::<Vec<_>>();
-        tag_cloud.sort_by_key(|left| left.name.to_lowercase());
-        let tag_overflow_count = tag_cloud.len().saturating_sub(40);
-        tag_cloud.truncate(40);
+        tag_cloud.sort_by_key(|tag| tag.name.to_lowercase());
 
         let mut category_cloud = category_counts
             .into_iter()
             .map(|(name, count)| DashboardCategory { name, count })
             .collect::<Vec<_>>();
-        category_cloud.sort_by_key(|left| left.name.to_lowercase());
+        category_cloud.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+        });
 
         let mut sorted_posts = posts;
         sorted_posts.sort_by_key(|post| std::cmp::Reverse(post.updated_at));
@@ -2745,12 +2764,11 @@ impl BdsApp {
                 media_count: media.len(),
                 image_count,
                 total_media_size: format_bytes(total_media_size),
-                tag_count: tag_counts.len(),
+                tag_count: distinct_tag_count,
                 category_count: category_cloud.len(),
             },
             timeline,
             tag_cloud,
-            tag_overflow_count,
             category_cloud,
             recent_posts,
         }
@@ -6963,7 +6981,7 @@ mod tests {
         assert_eq!(dash.stats.published_count, 1);
         assert_eq!(dash.stats.media_count, 1);
         assert_eq!(dash.stats.tag_count, 2);
-        assert_eq!(dash.timeline.len(), 12);
+        assert_eq!(dash.timeline.len(), 1);
         assert_eq!(
             dash.timeline.last().map(|month| month.year),
             Some(now.year())
@@ -6980,6 +6998,83 @@ mod tests {
         assert!(!dash.category_cloud.is_empty());
         assert_eq!(dash.recent_posts[0].title, "Second");
         assert_eq!(first.title, "First");
+
+        // TagCloud guarantee: alphabetical display order, font size relative
+        // to the min/max counts of the visible set (equal counts -> 11px).
+        let names = dash
+            .tag_cloud
+            .iter()
+            .map(|tag| tag.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["lua", "rust"]);
+        assert!(dash.tag_cloud.iter().all(|tag| tag.font_size == 11.0));
+    }
+
+    #[test]
+    fn dashboard_tag_cloud_takes_most_used_tags_and_scales_fonts() {
+        let (db, project, tmp) = setup();
+        // 42 distinct tags; "big" appears on 3 posts, "mid" on 2, the rest once.
+        for index in 0..3 {
+            post::create_post(
+                db.conn(),
+                tmp.path(),
+                &project.id,
+                &format!("Post {index}"),
+                Some("Body"),
+                vec![
+                    "big".to_string(),
+                    format!("solo-{index:02}"),
+                    format!("solo-x{index:02}"),
+                ],
+                vec![],
+                None,
+                Some("en"),
+                None,
+            )
+            .unwrap();
+        }
+        for index in 3..20 {
+            post::create_post(
+                db.conn(),
+                tmp.path(),
+                &project.id,
+                &format!("Post {index}"),
+                Some("Body"),
+                vec![
+                    format!("solo-{index:02}"),
+                    format!("solo-x{index:02}"),
+                    if index < 5 { "mid" } else { "big" }.to_string(),
+                ],
+                vec![],
+                None,
+                Some("en"),
+                None,
+            )
+            .unwrap();
+        }
+
+        let app = make_app(db, project, &tmp);
+        let dash = app.hydrate_dashboard_state();
+
+        // 42 distinct tags overall, but only the 40 most-used are displayed.
+        assert_eq!(dash.stats.tag_count, 42);
+        assert_eq!(dash.tag_cloud.len(), 40);
+        let big = dash.tag_cloud.iter().find(|tag| tag.name == "big").unwrap();
+        let mid = dash.tag_cloud.iter().find(|tag| tag.name == "mid").unwrap();
+        assert_eq!(big.count, 18);
+        assert_eq!(mid.count, 2);
+        // Relative scaling over the visible set: max count -> 22px, min -> 11px.
+        assert_eq!(big.font_size, 22.0);
+        assert!(dash.tag_cloud.iter().any(|tag| tag.font_size == 11.0));
+        // Display order is alphabetical.
+        let mut sorted = dash
+            .tag_cloud
+            .iter()
+            .map(|tag| tag.name.to_lowercase())
+            .collect::<Vec<_>>();
+        let displayed = sorted.clone();
+        sorted.sort();
+        assert_eq!(displayed, sorted);
     }
 
     #[test]
@@ -7018,19 +7113,13 @@ mod tests {
 
         let app = make_app(db, project, &tmp);
         let dash = app.hydrate_dashboard_state();
-        let march = dash
-            .timeline
-            .iter()
-            .find(|month| month.year == 2026 && month.label == "Mar")
-            .expect("march bucket should exist");
-        let april = dash
-            .timeline
-            .iter()
-            .find(|month| month.year == 2026 && month.label == "Apr")
-            .expect("april bucket should exist");
-
+        // Only months with posts appear in the timeline: the created_at month
+        // (March), not the updated_at month (April).
+        assert_eq!(dash.timeline.len(), 1);
+        let march = &dash.timeline[0];
+        assert_eq!(march.year, 2026);
+        assert_eq!(march.label, "Mar");
         assert_eq!(march.count, 1);
-        assert_eq!(april.count, 0);
     }
 
     #[test]
