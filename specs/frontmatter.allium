@@ -78,10 +78,6 @@ surface MenuOpmlSurface {
             item.slug
 }
 
-config {
-    script_extension: String = "lua"
-}
-
 -- ============================================================================
 -- POST FILE FORMAT
 -- ============================================================================
@@ -239,7 +235,7 @@ rule WriteTemplateFile {
 -- ============================================================================
 
 value ScriptFrontmatter {
-    -- File path: scripts/{slug}.{extension}
+    -- File path: scripts/{slug}.lua
     -- YAML frontmatter delimited by --- markers
     -- All keys serialized as camelCase in YAML frontmatter
     id: String              -- UUID v4
@@ -258,7 +254,7 @@ rule WriteScriptFile {
     when: PublishScriptRequested(script)
     requires: ValidateScript(script.content) = valid
     ensures: FileWritten(
-        path: format("scripts/{slug}.{extension}", slug: script.slug, extension: config.script_extension),
+        path: format("scripts/{slug}.lua", slug: script.slug),
         content: format_script_file(script)
     )
     ensures: script.content = null

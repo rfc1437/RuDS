@@ -240,8 +240,7 @@ pub fn view<'a>(
         vec![
             button(text(t(locale, "editor.quickActions")).size(13))
                 .on_press_maybe(
-                    ai_enabled
-                        .then_some(Message::MediaEditor(MediaEditorMsg::ToggleQuickActions)),
+                    ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::ToggleQuickActions)),
                 )
                 .style(inputs::secondary_button)
                 .padding([6, 16])
@@ -549,7 +548,11 @@ pub fn view<'a>(
         .into()
 }
 
-fn quick_action_item<'a>(label: String, msg: MediaEditorMsg, enabled: bool) -> Element<'a, Message> {
+fn quick_action_item<'a>(
+    label: String,
+    msg: MediaEditorMsg,
+    enabled: bool,
+) -> Element<'a, Message> {
     button(text(label).size(12).shaping(Shaping::Advanced))
         .on_press_maybe(enabled.then_some(Message::MediaEditor(msg)))
         .padding([6, 12])
@@ -612,7 +615,8 @@ mod tests {
 
     #[test]
     fn quick_actions_menu_starts_closed() {
-        let state = MediaEditorState::from_media(&make_media(), &["en".to_string()], &[], Vec::new());
+        let state =
+            MediaEditorState::from_media(&make_media(), &["en".to_string()], &[], Vec::new());
         assert!(!state.quick_actions_open);
     }
 

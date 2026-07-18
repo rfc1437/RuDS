@@ -32,7 +32,7 @@ Status in this document describes the current source code as of 2026-07-18. It d
 
 ## Current Core Status
 
-### Project, persistence, and integrity — Mostly done
+### Project, persistence, and integrity — Done
 
 Available:
 
@@ -45,11 +45,9 @@ Available:
 - Database rebuild from filesystem and directional metadata diff/repair.
 - Structured site, media, and translation validation.
 - Unbounded unique slug allocation.
-
-Open:
-
-- Watch project files for external changes and reconcile open editors, preview, and database state.
-- Make the script file extension project-configurable instead of hard-coding `.lua`.
+- Explicit rebuild-from-filesystem paths for manual file changes. bDS2 does
+  not live-watch arbitrary project files; its external-change watcher is the
+  extension CLI/database-notification contract.
 
 ### Native desktop shell — Done
 
@@ -75,11 +73,11 @@ Available:
 - Template and Lua script creation, editing, validation, publication, and deletion.
 - Rope-based editing with syntax highlighting, selection, clipboard, undo/redo, word/line/page movement, line numbers, soft wrapping, mouse selection, and committed IME input.
 - Automatic translation flows with airplane-mode gating and media translation propagation.
+- Functional post-links panel with backlinks, outlinks, and navigation to linked posts.
 
 Open:
 
-- Replace the post-links placeholder with the specified functional linked-post view.
-- Add the specified batch workflow for images linked from post content.
+- Add the specified post-editor "Add Gallery Images" batch workflow.
 
 ### Rendering, preview, and generation — Mostly done
 
@@ -107,26 +105,26 @@ Available:
 - Model catalog discovery and model selection.
 - Post translation, media translation, image alt text, post analysis, taxonomy analysis, and language detection.
 - Explicit offline gating and user-visible errors.
+- SQLite fields for input, output, cache-read, and cache-write token usage.
 
 Open:
 
-- Persist actual input, output, cache-read, and cache-write token usage where the schema provides those fields.
+- Parse actual input, output, cache-read, and cache-write token usage from AI
+  responses and return it with each one-shot result. Chat persistence of those
+  counters belongs to the extension chat workflow.
 
 Interactive chat, tools, agents, and MCP belong to the extension plan.
 
-### Publishing — Mostly done
+### Publishing — Done
 
 Available:
 
 - SCP and rsync publishing through system commands.
 - SSH-agent-only authentication with no password prompts.
 - Separate HTML, thumbnail, and media targets.
-- `.meta` exclusion, changed-file skipping for SCP, progress reporting, cancellation, and UI commands.
-
-Open:
-
-- Run the three upload targets as parallel tasks instead of processing them sequentially.
-- Integrate external-file watching with publish/integrity workflows.
+- `.meta` exclusion, changed-file skipping for SCP, progress reporting, and UI commands.
+- One managed publish job processes the HTML, thumbnail, and media targets in
+  sequence, matching bDS2. Parallel target uploads are not a parity requirement.
 
 ### Lua scripting — Partly done
 
@@ -136,20 +134,19 @@ Available:
 - Application log, progress, and toast functions.
 - User macro and transform execution, including Blogmark transforms.
 - Lua script persistence, rebuild, metadata diff, validation, and editor support.
+- Fixed `.lua` script file contract.
 
 Open:
 
-- Expose the specified `bds.*` API for post, media, tag, project, and other script-visible data.
+- Expose the bDS2-compatible core `bds.*` API for post, media, tag, project, and other script-visible data.
 - Generate and bundle the Lua API reference, canonical type reference, and macro/transform/utility examples under `docs/scripting/`.
 - Add a documentation-sync check tied to the exposed API.
 
 ## Remaining Core Blocks
 
 1. Complete the Lua host API and scripting documentation.
-2. Add filesystem change watching and reconciliation.
-3. Parallelize publishing targets.
-4. Finish the linked-post and linked-image authoring workflows.
-5. Add generation section-task grouping and AI token accounting.
-6. Remove the hard-coded Lua script extension.
+2. Finish the linked-image authoring workflow.
+3. Add generation section-task grouping.
+4. Return normalized token accounting from one-shot AI calls.
 
 Core is feature-complete when these blocks are closed and the implementation continues to satisfy the Allium and bDS2 compatibility contracts.

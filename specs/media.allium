@@ -17,6 +17,24 @@ surface MediaControlSurface {
         RebuildMediaFromFilesRequested(project)
 }
 
+surface PostEditorGalleryImportSurface {
+    facing _: MediaOperator
+
+    provides:
+        BatchImportImagesRequested(project, post, file_paths, language)
+
+    @guarantee NativeImageSelection
+        -- The post-editor "Add Gallery Images" quick action opens the native
+        -- multi-file picker restricted to images. Cancelling the picker is a
+        -- no-op; picker failures are reported in the Output panel.
+
+    @guarantee AirplaneModeGate
+        -- Online mode uses the configured online endpoint. Airplane mode may
+        -- proceed only when its local endpoint is configured. If it is not,
+        -- no picker opens and the Output panel explains that automatic AI
+        -- actions remain gated by airplane mode.
+}
+
 value ThumbnailSet {
     small: String       -- 150px width (binary path)
     medium: String      -- 400px width (binary path)
@@ -229,20 +247,33 @@ invariant SidecarRoundtrip {
 
 rule BatchImportProcessLinkImages {
     when: BatchImportImagesRequested(project, post, file_paths, language)
-    requires: not OfflineMode
     for source_path in file_paths where is_image(source_path):
         let media = ImportMedia(source_path, project)
-        let analysis = AnalyzeImage(media, language)
-        ensures: MediaUpdated(media, analysis)
         ensures: PostMediaLinked(media, post)
+            -- Import and linking are mandatory and happen before enrichment.
+        if ActiveAiEndpointConfigured:
+            let analysis = AnalyzeImage(media, language)
+            ensures: MediaUpdated(media, analysis)
+            for target_language in unique(
+                {project.main_language} + project.blog_languages - {language}
+            ):
+                ensures: MediaTranslationUpserted(media, target_language)
+        if not ActiveAiEndpointConfigured or AiEnrichmentFailed(media):
+            ensures: PostMediaLinked(media, post)
+                -- AI analysis, metadata update, and translation are
+                -- best-effort and never undo a successful import/link.
     @guidance
         -- Triggered from post editor quick action "Add Gallery Images".
         -- AI results auto-applied without user confirmation.
-        -- After metadata is set, media is auto-translated to all configured blog languages.
-        -- Non-image files skipped entirely.
+        -- After metadata is set, media is auto-translated to the project main
+        -- language and all configured blog languages except the source
+        -- language, with duplicate targets removed.
+        -- Non-image files are not linked or enriched.
         -- Concurrency limit from project metadata image_import_concurrency (default 4, min 1, max 8).
-        -- Toast per completed image + final summary toast.
-        -- On completion: [[gallery]] macro inserted into post content and post editor refreshed.
+        -- Each successful image and each failed image emits its own Output
+        -- panel entry. The final entry reports the selected image count.
+        -- After every worker has finished, including partial failures,
+        -- \n[[gallery]]\n is inserted into post content and the editor refreshes.
 }
 
 config {

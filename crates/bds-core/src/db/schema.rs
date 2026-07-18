@@ -80,6 +80,8 @@ diesel::table! {
         created_at -> BigInt,
         cache_read_tokens -> Nullable<Integer>,
         cache_write_tokens -> Nullable<Integer>,
+        token_usage_input -> Nullable<Integer>,
+        token_usage_output -> Nullable<Integer>,
     }
 }
 

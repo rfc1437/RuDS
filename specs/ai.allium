@@ -192,6 +192,17 @@ surface OneShotAiSurface {
         DetectLanguageRequested(text)
         TranslatePostRequested(post, target_language)
         TranslateMediaRequested(media, target_language)
+
+    @guarantee UsageReturnedWithSuccessfulResult
+        -- Every successful one-shot result includes a usage value with nullable
+        -- input_tokens, output_tokens, cache_read_tokens, and
+        -- cache_write_tokens. Missing provider counters remain null. One-shot
+        -- calls return this accounting to their caller; they do not create a
+        -- chat conversation or persist a ChatMessage.
+        -- OpenAI-compatible responses normalize prompt_tokens to input_tokens,
+        -- completion_tokens to output_tokens, prompt_tokens_details.cached_tokens
+        -- to cache_read_tokens, and completion_tokens_details.cached_tokens to
+        -- cache_write_tokens.
 }
 
 surface AiChatSurface {
@@ -236,7 +247,7 @@ rule AnalyzeTaxonomy {
     when: AnalyzeTaxonomyRequested(post)
     requires: active_endpoint_configured
     -- Suggests tags and categories for a post
-    ensures: TaxonomySuggestion(tags, categories)
+    ensures: TaxonomySuggestion(tags, categories, usage)
 }
 
 rule AnalyzeImage {
@@ -244,34 +255,34 @@ rule AnalyzeImage {
     requires: active_endpoint_configured
     requires: is_image(media.mime_type)
     -- Vision model generates alt text and caption
-    ensures: ImageAnalysisResult(alt, caption)
+    ensures: ImageAnalysisResult(title, alt, caption, usage)
 }
 
 rule AnalyzePost {
     when: AnalyzePostRequested(post)
     requires: active_endpoint_configured
     -- Generates title, excerpt, slug suggestions
-    ensures: PostAnalysisResult(title, excerpt, slug)
+    ensures: PostAnalysisResult(title, excerpt, slug, usage)
 }
 
 rule DetectLanguage {
     when: DetectLanguageRequested(text)
     requires: active_endpoint_configured
-    ensures: LanguageDetectionResult(language_code)
+    ensures: LanguageDetectionResult(language_code, usage)
 }
 
 rule TranslatePost {
     when: TranslatePostRequested(post, target_language)
     requires: active_endpoint_configured
     -- Translates title, excerpt, content to target language
-    ensures: TranslationResult(title, excerpt, content)
+    ensures: TranslationResult(title, excerpt, content, usage)
 }
 
 rule TranslateMedia {
     when: TranslateMediaRequested(media, target_language)
     requires: active_endpoint_configured
     -- Translates title, alt, caption to target language
-    ensures: MediaTranslationResult(title, alt, caption)
+    ensures: MediaTranslationResult(title, alt, caption, usage)
 }
 
 -- Chat (extension Bucket C scope, with streaming and tool use)
@@ -303,6 +314,10 @@ rule SendChatMessage {
         -- Blog data tools for post/media querying and mutation during chat.
         -- Render tools may emit structured chart/table/form payloads.
         -- Token usage tracking includes input, output, cache read, cache write.
+    ensures: AssistantChatMessagesPersistNormalizedUsage(conversation)
+        -- Each persisted assistant response stores its normalized input,
+        -- output, cache-read, and cache-write counters. User and tool messages
+        -- leave those nullable fields empty.
 }
 
 rule CancelChat {

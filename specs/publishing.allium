@@ -65,6 +65,12 @@ surface PublishingRuntimeSurface {
     provides:
         PublishJobStarted(project, job, credentials)
         PublishTargetFailed(job, target, error)
+
+    @guarantee SequentialTargetProcessing
+        -- One managed publish job processes html, thumbnails, then media in
+        -- that order, matching bDS2. It reports progress at each target and
+        -- stops on the first failed target. Parallel target upload is not part
+        -- of the compatibility contract.
 }
 
 rule UploadSite {

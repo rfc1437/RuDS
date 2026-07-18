@@ -35,7 +35,7 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 1);
+        assert_eq!(applied, 2);
     }
 
     #[test]
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn migrations_expose_current_ai_catalog_and_usage_columns() {
         let db = migrated_database();
-        let (provider_ref, model_ref, cache_tokens) = db
+        let (provider_ref, model_ref, usage_tokens) = db
             .conn()
             .with(|conn| {
                 diesel::insert_into(ai_providers::table)
@@ -124,6 +124,8 @@ mod tests {
                         chat_messages::conversation_id.eq("conversation"),
                         chat_messages::role.eq("assistant"),
                         chat_messages::created_at.eq(1_i64),
+                        chat_messages::token_usage_input.eq(Some(56)),
+                        chat_messages::token_usage_output.eq(Some(78)),
                         chat_messages::cache_read_tokens.eq(Some(12)),
                         chat_messages::cache_write_tokens.eq(Some(34)),
                     ))
@@ -138,16 +140,18 @@ mod tests {
                         .first::<Option<String>>(conn)?,
                     chat_messages::table
                         .select((
+                            chat_messages::token_usage_input,
+                            chat_messages::token_usage_output,
                             chat_messages::cache_read_tokens,
                             chat_messages::cache_write_tokens,
                         ))
-                        .first::<(Option<i32>, Option<i32>)>(conn)?,
+                        .first::<(Option<i32>, Option<i32>, Option<i32>, Option<i32>)>(conn)?,
                 ))
             })
             .unwrap();
 
         assert_eq!(provider_ref.as_deref(), Some("provider-package"));
         assert_eq!(model_ref.as_deref(), Some("model-package"));
-        assert_eq!(cache_tokens, (Some(12), Some(34)));
+        assert_eq!(usage_tokens, (Some(56), Some(78), Some(12), Some(34)));
     }
 }

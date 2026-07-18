@@ -7,7 +7,6 @@
 -- only the behavioural contract is normative here.
 
 config {
-    script_extension: String = "lua"
     macro_timeout: Duration = 10.seconds
     transform_max_toasts_per_script: Integer = 5
     transform_max_toasts_total: Integer = 20
@@ -94,6 +93,71 @@ surface ScriptRuntimeSurface {
         -- Host-provided functions are exposed only through an explicit bds.*
         -- capability table, never through ambient global access.
 
+    @guarantee CoreHostApiCompatibility
+        -- The core API matches the bDS2 capability names below. Methods are
+        -- bound to the active project unless an explicit project id is part of
+        -- the method. Arguments and return tables use the canonical types in
+        -- the generated scripting reference.
+        --
+        -- bds.app: copy_to_clipboard, get_data_paths,
+        -- get_blogmark_bookmarklet, get_system_language,
+        -- get_default_project_path, get_title_bar_metrics, log,
+        -- notify_renderer_ready, open_folder, read_project_metadata,
+        -- select_folder, set_preview_post_target, show_item_in_folder,
+        -- trigger_menu_action.
+        -- bds.projects: create, delete, delete_with_data, get, get_all,
+        -- get_active, set_active, update.
+        -- bds.meta: get_project_metadata, update_project_metadata,
+        -- set_project_metadata, add_category, remove_category, add_tag,
+        -- remove_tag, get_categories, get_tags,
+        -- get_publishing_preferences, set_publishing_preferences,
+        -- clear_publishing_preferences, sync_on_startup.
+        -- bds.posts: create, discard, filter, generate_unique_slug,
+        -- get_by_status, get_by_year_month, get_dashboard_stats,
+        -- get_linked_by, get_links_to, get_preview_url, update, delete, get,
+        -- get_all, get_by_slug, get_categories, get_categories_with_counts,
+        -- get_tags, get_tags_with_counts, get_translation, get_translations,
+        -- has_published_version, is_slug_available, publish,
+        -- publish_translation, rebuild_from_files, rebuild_links,
+        -- reindex_text, search.
+        -- bds.media: delete_translation, filter, import, get_by_year_month,
+        -- get_file_path, update, delete, get, get_all, get_tags,
+        -- get_tags_with_counts, get_thumbnail, get_translation,
+        -- get_translations, get_url, rebuild_from_files,
+        -- regenerate_missing_thumbnails, regenerate_thumbnails, reindex_text,
+        -- replace_file, search, upsert_translation.
+        -- bds.scripts: create, update, delete, get, get_all, publish,
+        -- rebuild_from_files.
+        -- bds.templates: create, update, delete, get, get_all, publish,
+        -- get_enabled_by_kind, rebuild_from_files, validate.
+        -- bds.tags: create, update, delete, get, get_all, get_by_name,
+        -- get_posts_with_tag, get_with_counts, merge, rename,
+        -- sync_from_posts.
+        -- bds.tasks: get, status_snapshot, cancel, get_all, get_running,
+        -- clear_completed.
+        -- bds.publish: upload_site.
+        -- bds.chat: detect_post_language, analyze_post, translate_post,
+        -- analyze_media_image, detect_media_language,
+        -- translate_media_metadata. Despite its historical namespace, this is
+        -- the core one-shot AI bridge; conversational chat remains extension.
+        -- bds.report_progress(payload) reports managed-job progress. The Rust
+        -- host may retain bds.app.progress and bds.app.toast as additive APIs.
+        -- bds.sync and bds.embeddings belong to the extension contract.
+
+    @guarantee HostApiFailureValues
+        -- Host failures do not expose implementation exceptions across the Lua
+        -- boundary. Lookup/create/update methods return nil on failure and
+        -- boolean command methods return false, as declared by the generated
+        -- method signature. Returned records contain only serializable public
+        -- fields; timestamps are ISO-8601 strings and enum atoms are strings.
+
+    @guarantee GeneratedApiReferenceStaysInSync
+        -- One machine-readable method/type manifest generates the bundled Lua
+        -- API reference and editor completion data. A verification test fails
+        -- when the exposed capability table, manifest, or generated reference
+        -- diverge. Canonical macro, transform, and utility examples are bundled
+        -- under docs/scripting/ and execute against the same host API.
+
     @guarantee MacroTimeout
         -- Macro execution has a short timeout budget of config.macro_timeout.
 
@@ -130,7 +194,7 @@ invariant UniqueScriptSlug {
 
 invariant ScriptFileLayout {
     for s in Scripts where file_path != "":
-        s.file_path = format("scripts/{slug}.{extension}", slug: s.slug, extension: config.script_extension)
+        s.file_path = format("scripts/{slug}.lua", slug: s.slug)
 }
 -- Script files use standard --- YAML frontmatter
 
@@ -185,7 +249,7 @@ rule CreateAndPublishScript {
             status: published,
             enabled: true,
             version: 1,
-            file_path: format("scripts/{slug}.{extension}", slug: slug, extension: config.script_extension)
+            file_path: format("scripts/{slug}.lua", slug: slug)
         )
         ScriptFileWritten(new_script)
 }
@@ -311,7 +375,7 @@ rule ExecuteTransform {
 
 rule RebuildScriptsFromFiles {
     when: RebuildScriptsFromFilesRequested(project)
-    for file in scan_directory(project.public_dir + "/scripts", "*." + config.script_extension):
+    for file in scan_directory(project.public_dir + "/scripts", "*.lua"):
         let parsed = parse_script_file(file)
         ensures: Script.created(parsed)
 }
