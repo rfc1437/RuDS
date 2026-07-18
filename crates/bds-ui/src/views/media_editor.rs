@@ -220,6 +220,7 @@ pub enum MediaEditorMsg {
     OpenLinkedPost(String),
     UnlinkPost(String),
     Save,
+    ReplaceFile,
     Delete,
 }
 
@@ -261,6 +262,11 @@ pub fn view<'a>(
             button(text(t(locale, "common.save")).size(13))
                 .on_press(Message::MediaEditor(MediaEditorMsg::Save))
                 .style(inputs::primary_button)
+                .padding([6, 16])
+                .into(),
+            button(text(t(locale, "editor.replaceFile")).size(13))
+                .on_press(Message::MediaEditor(MediaEditorMsg::ReplaceFile))
+                .style(inputs::secondary_button)
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "modal.confirmDelete.delete")).size(13))

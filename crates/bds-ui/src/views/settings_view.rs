@@ -111,6 +111,7 @@ pub struct SettingsViewState {
     pub available_languages: Vec<String>,
     pub default_author: String,
     pub max_posts_per_page: String,
+    pub image_import_concurrency: String,
     pub blogmark_category: String,
     // Editor
     pub default_mode: String,
@@ -167,6 +168,7 @@ impl Clone for SettingsViewState {
             available_languages: self.available_languages.clone(),
             default_author: self.default_author.clone(),
             max_posts_per_page: self.max_posts_per_page.clone(),
+            image_import_concurrency: self.image_import_concurrency.clone(),
             blogmark_category: self.blogmark_category.clone(),
             default_mode: self.default_mode.clone(),
             diff_view_style: self.diff_view_style.clone(),
@@ -218,6 +220,7 @@ impl Default for SettingsViewState {
             ],
             default_author: String::new(),
             max_posts_per_page: "50".to_string(),
+            image_import_concurrency: "4".to_string(),
             blogmark_category: String::new(),
             default_mode: "markdown".to_string(),
             diff_view_style: "inline".to_string(),
@@ -287,6 +290,7 @@ pub enum SettingsMsg {
     ToggleBlogLanguage(String),
     DefaultAuthorChanged(String),
     MaxPostsPerPageChanged(String),
+    ImageImportConcurrencyChanged(String),
     BlogmarkCategoryChanged(String),
     SaveProject,
     // Editor
@@ -524,6 +528,12 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         &state.max_posts_per_page,
         |s| Message::Settings(SettingsMsg::MaxPostsPerPageChanged(s)),
     );
+    let image_import_concurrency = inputs::labeled_input(
+        &t(locale, "settings.imageImportConcurrency"),
+        "4",
+        &state.image_import_concurrency,
+        |s| Message::Settings(SettingsMsg::ImageImportConcurrencyChanged(s)),
+    );
     let blogmark_category = inputs::labeled_select(
         &t(locale, "settings.blogmarkCategory"),
         &state.categories,
@@ -554,6 +564,7 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         .spacing(4),
         author,
         max_posts,
+        image_import_concurrency,
         blogmark_category,
         save,
     ]
@@ -563,11 +574,7 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
 }
 
 fn section_editor<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
-    let mode_options = vec![
-        "wysiwyg".to_string(),
-        "markdown".to_string(),
-        "preview".to_string(),
-    ];
+    let mode_options = vec!["markdown".to_string(), "preview".to_string()];
     let diff_options = vec!["inline".to_string(), "side-by-side".to_string()];
     let mode = inputs::labeled_select(
         &t(locale, "settings.defaultMode"),

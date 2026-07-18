@@ -78,7 +78,7 @@ pub fn rebuild_templates_from_filesystem(
 
 /// Rebuild a single template from a `.liquid` file.
 /// Returns `true` if created, `false` if updated.
-fn rebuild_single_template(
+pub(crate) fn rebuild_single_template(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,

@@ -30,7 +30,7 @@ fn parse_script_kind(s: &str) -> Result<ScriptKind, String> {
 
 /// Rebuild scripts from the filesystem into the database.
 ///
-/// Walks the `scripts/` directory for `*.lua` and `*.py` files, parses each
+/// Walks the `scripts/` directory for `*.lua` files, parses each
 /// via frontmatter, and either creates or updates the corresponding DB row.
 /// Published scripts (those present on disk) have `content = None` in the DB.
 pub fn rebuild_scripts_from_filesystem(
@@ -54,7 +54,7 @@ pub fn rebuild_scripts_from_filesystem(
             continue;
         }
         let ext = path.extension().and_then(|e| e.to_str());
-        if ext != Some("lua") && ext != Some("py") {
+        if ext != Some("lua") {
             continue;
         }
 
@@ -75,9 +75,9 @@ pub fn rebuild_scripts_from_filesystem(
     Ok(report)
 }
 
-/// Rebuild a single script from a `.lua` or `.py` file.
+/// Rebuild a single script from a `.lua` file.
 /// Returns `true` if created, `false` if updated.
-fn rebuild_single_script(
+pub(crate) fn rebuild_single_script(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
@@ -195,46 +195,6 @@ end
             "published script should have content=None in DB"
         );
         assert_eq!(script.file_path, "scripts/my-macro.lua");
-    }
-
-    #[test]
-    fn rebuild_creates_script_from_py() {
-        let (db, dir) = setup();
-        let scripts_dir = dir.path().join("scripts");
-        fs::create_dir_all(&scripts_dir).unwrap();
-
-        let content = "\"\"\"\n\
----
-id: \"py-script-1\"
-slug: \"my-utility\"
-title: \"My Utility\"
-kind: \"utility\"
-entrypoint: \"main\"
-enabled: true
-version: 1
-createdAt: \"2024-01-01T00:00:00.000Z\"
-updatedAt: \"2024-01-01T00:00:00.000Z\"
----
-\"\"\"
-def main():
-    print(\"hello\")
-";
-        fs::write(scripts_dir.join("my-utility.py"), content).unwrap();
-
-        let report = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
-
-        assert_eq!(report.created, 1);
-        assert_eq!(report.updated, 0);
-        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
-
-        let script = qs::get_script_by_id(db.conn(), "py-script-1").unwrap();
-        assert_eq!(script.slug, "my-utility");
-        assert_eq!(script.title, "My Utility");
-        assert_eq!(script.kind, ScriptKind::Utility);
-        assert_eq!(script.entrypoint, "main");
-        assert_eq!(script.status, ScriptStatus::Published);
-        assert!(script.content.is_none());
-        assert_eq!(script.file_path, "scripts/my-utility.py");
     }
 
     #[test]

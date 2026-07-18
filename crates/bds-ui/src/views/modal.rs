@@ -65,6 +65,11 @@ pub enum ModalState {
     },
     SearchIndexRepair,
     SearchIndexRebuilding,
+    FindReplace {
+        query: String,
+        replacement: String,
+        show_replace: bool,
+    },
     /// Per modals.allium InsertPostLinkModal: Ctrl+K link insertion.
     PostInsertLink {
         post_id: String,
@@ -368,6 +373,60 @@ pub fn view(
                 .width(Length::Fixed(420.0))
                 .style(modal_box_style)
                 .into()
+        }
+        ModalState::FindReplace {
+            query,
+            replacement,
+            show_replace,
+        } => {
+            let find = text_input(&t(locale, "find.query"), &query)
+                .on_input(Message::FindQueryChanged)
+                .on_submit(Message::FindNext)
+                .style(inputs::field_style);
+            let mut fields = column![find].spacing(8);
+            if show_replace {
+                fields = fields.push(
+                    text_input(&t(locale, "find.replacement"), &replacement)
+                        .on_input(Message::ReplaceQueryChanged)
+                        .style(inputs::field_style),
+                );
+            }
+            let mut actions = row![
+                button(text(t(locale, "find.next")))
+                    .on_press(Message::FindNext)
+                    .style(inputs::primary_button),
+            ]
+            .spacing(8);
+            if show_replace {
+                actions = actions
+                    .push(
+                        button(text(t(locale, "find.replace")))
+                            .on_press(Message::ReplaceCurrent)
+                            .style(inputs::secondary_button),
+                    )
+                    .push(
+                        button(text(t(locale, "find.replaceAll")))
+                            .on_press(Message::ReplaceAll)
+                            .style(inputs::secondary_button),
+                    );
+            }
+            container(
+                column![
+                    text(if show_replace {
+                        t(locale, "find.titleReplace")
+                    } else {
+                        t(locale, "find.titleFind")
+                    })
+                    .size(16),
+                    fields,
+                    actions,
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fixed(440.0))
+            .padding(20)
+            .style(modal_box_style)
+            .into()
         }
 
         ModalState::SearchIndexRebuilding => container(

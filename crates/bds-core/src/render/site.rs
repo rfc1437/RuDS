@@ -11,13 +11,14 @@ use serde_json::{Value, json};
 use crate::db::queries;
 use crate::engine::menu::{self, MenuItemKind};
 use crate::model::{
-    CategorySettings, Media, Post, ProjectMetadata, Tag, Template, TemplateKind, TemplateStatus,
+    CategorySettings, Media, Post, ProjectMetadata, ScriptKind, Tag, Template, TemplateKind,
+    TemplateStatus,
 };
 use crate::render::{
     RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
     render_liquid_template, resolve_post_template,
 };
-use crate::util::frontmatter::{read_template_file, read_translation_file};
+use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
 use crate::util::slugify;
 
 const STARTER_SINGLE_POST_TEMPLATE: &str =
@@ -69,6 +70,7 @@ struct TemplateBundle {
     default_list_template: String,
     not_found_template: String,
     partials: HashMap<String, String>,
+    macro_scripts: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +99,24 @@ pub fn build_site_render_artifacts(
     project_id: &str,
     metadata: &ProjectMetadata,
     published_posts: &[(Post, String)],
+) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
+    build_site_render_artifacts_with_mode(
+        conn,
+        data_dir,
+        project_id,
+        metadata,
+        published_posts,
+        false,
+    )
+}
+
+fn build_site_render_artifacts_with_mode(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    published_posts: &[(Post, String)],
+    is_preview: bool,
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let main_language = main_language(metadata).to_string();
@@ -136,6 +156,7 @@ pub fn build_site_render_artifacts(
                     &menu_items,
                     &post_data_json_by_id,
                     &bundle,
+                    is_preview,
                 )
                 .map(|html| SitePage {
                     language: language.clone(),
@@ -173,6 +194,7 @@ pub fn build_site_render_artifacts(
                 &menu_items,
                 &post_data_json_by_id,
                 &bundle,
+                is_preview,
             )?;
             let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
             let relative_path = format!("{}/index.html", canonical_path.trim_start_matches('/'));
@@ -202,8 +224,14 @@ pub fn build_preview_response(
     published_posts: &[(Post, String)],
     requested_path: &str,
 ) -> Result<PreviewRenderResult, Box<dyn Error + Send + Sync>> {
-    let artifacts =
-        build_site_render_artifacts(conn, data_dir, project_id, metadata, published_posts)?;
+    let artifacts = build_site_render_artifacts_with_mode(
+        conn,
+        data_dir,
+        project_id,
+        metadata,
+        published_posts,
+        true,
+    )?;
     let normalized = normalize_request_path(requested_path);
     if let Some(page) = artifacts
         .pages
@@ -239,6 +267,30 @@ fn load_template_bundle(
     let mut partials = starter_partials();
     let mut default_list_template = STARTER_POST_LIST_TEMPLATE.to_string();
     let mut not_found_template = STARTER_NOT_FOUND_TEMPLATE.to_string();
+    let mut macro_scripts = HashMap::new();
+
+    for script in queries::script::list_scripts_by_project(conn, project_id).unwrap_or_default() {
+        if script.kind != ScriptKind::Macro
+            || !script.enabled
+            || script.entrypoint.trim().is_empty()
+        {
+            continue;
+        }
+        let source = if let Some(content) = script.content {
+            content
+        } else if script.file_path.is_empty() {
+            String::new()
+        } else {
+            fs::read_to_string(data_dir.join(&script.file_path))
+                .ok()
+                .and_then(|raw| read_script_file(&raw).ok().map(|(_, body)| body))
+                .unwrap_or_default()
+        };
+        macro_scripts.insert(
+            script.slug,
+            json!({ "source": source, "entrypoint": script.entrypoint }),
+        );
+    }
 
     for template in templates {
         if !template.enabled {
@@ -315,6 +367,7 @@ fn load_template_bundle(
         default_list_template,
         not_found_template,
         partials,
+        macro_scripts,
     })
 }
 
@@ -557,6 +610,7 @@ fn render_list_route(
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
     bundle: &TemplateBundle,
+    is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let main_language = main_language(metadata);
     let canonical_map = canonical_post_path_by_slug(posts, language, main_language);
@@ -569,6 +623,9 @@ fn render_list_route(
     let context = json!({
         "language": language,
         "language_prefix": language_prefix(language, main_language),
+        "main_language": main_language,
+        "is_preview": is_preview,
+        "macro_scripts": bundle.macro_scripts,
         "html_theme_attribute": serde_json::Value::Null,
         "page_title": route.page_title,
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
@@ -626,6 +683,7 @@ fn render_post_route(
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
     bundle: &TemplateBundle,
+    is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let render_categories = category_settings
         .iter()
@@ -683,6 +741,9 @@ fn render_post_route(
     let context = json!({
         "language": language,
         "language_prefix": language_prefix(language, main_language),
+        "main_language": main_language,
+        "is_preview": is_preview,
+        "macro_scripts": bundle.macro_scripts,
         "page_title": record.post.title,
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
         "html_theme_attribute": serde_json::Value::Null,

@@ -32,13 +32,17 @@ pub fn create_script(
 
     let now = now_unix_ms();
     let id = Uuid::new_v4().to_string();
+    let entrypoint = entrypoint.unwrap_or(match &kind {
+        ScriptKind::Macro => "render",
+        ScriptKind::Utility | ScriptKind::Transform => "main",
+    });
     let script = Script {
         id,
         project_id: project_id.to_string(),
         slug,
         title: title.to_string(),
         kind,
-        entrypoint: entrypoint.unwrap_or("render").to_string(),
+        entrypoint: entrypoint.to_string(),
         enabled: true,
         version: 1,
         file_path: String::new(),
@@ -127,9 +131,7 @@ pub fn save_script(conn: &Connection, script_id: &str, content: &str) -> EngineR
 
 /// Validate Lua script syntax. Returns Ok(()) or a parse error message.
 pub fn validate_script_syntax(content: &str) -> Result<(), String> {
-    // Basic validation: balanced block structures
-    validate_lua_blocks(content)?;
-    Ok(())
+    crate::scripting::validate(content)
 }
 
 /// Discover entrypoint function names from Lua source.
@@ -260,41 +262,6 @@ fn script_kind_to_frontmatter(kind: &ScriptKind) -> String {
         ScriptKind::Utility => "utility".to_string(),
         ScriptKind::Transform => "transform".to_string(),
     }
-}
-
-fn validate_lua_blocks(content: &str) -> Result<(), String> {
-    // Track block-level nesting for function/end, if/end, for/end, while/end, do/end
-    let mut depth: i32 = 0;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        // Skip comments
-        if trimmed.starts_with("--") {
-            continue;
-        }
-
-        // Count block openers
-        for word in trimmed.split_whitespace() {
-            match word {
-                "function" | "if" | "for" | "while" | "do" => depth += 1,
-                "end" | "end," | "end;" => {
-                    depth -= 1;
-                    if depth < 0 {
-                        return Err("unexpected 'end' without matching block opener".to_string());
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Handle "then" on if lines (don't double-count)
-        // Handle inline "function() ... end"
-    }
-
-    if depth > 0 {
-        return Err(format!("{depth} unclosed block(s) — missing 'end'"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

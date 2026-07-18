@@ -17,6 +17,7 @@ use crate::views::{
     activity_bar,
     dashboard::DashboardState,
     media_editor::{self, MediaEditorState},
+    metadata_diff::{self, MetadataDiffState},
     modal, panel,
     post_editor::{self, PostEditorState},
     project_selector,
@@ -27,7 +28,9 @@ use crate::views::{
     status_bar, tab_bar,
     tags_view::{self, TagsViewState},
     template_editor::{self, TemplateEditorState},
-    toast, welcome,
+    toast,
+    translation_validation::{self, TranslationValidationState},
+    welcome,
 };
 
 /// Main content area background.
@@ -117,6 +120,8 @@ pub fn view<'a>(
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
+    metadata_diff_state: &'a MetadataDiffState,
+    translation_validation_state: &'a TranslationValidationState,
 ) -> Element<'a, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
@@ -140,6 +145,8 @@ pub fn view<'a>(
         settings_state,
         dashboard_state,
         site_validation_state,
+        metadata_diff_state,
+        translation_validation_state,
     );
 
     // Right column: tab bar + content + panel
@@ -368,6 +375,8 @@ fn route_content_area<'a>(
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
+    metadata_diff_state: &'a MetadataDiffState,
+    translation_validation_state: &'a TranslationValidationState,
 ) -> Element<'a, Message> {
     match route_kind(
         tabs,
@@ -439,6 +448,10 @@ fn route_content_area<'a>(
             }
         }
         ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
+        ContentRoute::MetadataDiff => metadata_diff::view(metadata_diff_state, locale),
+        ContentRoute::TranslationValidation => {
+            translation_validation::view(translation_validation_state, locale)
+        }
         ContentRoute::Placeholder(title) => welcome::tab_placeholder(locale, title, None),
     }
 }
@@ -455,6 +468,8 @@ enum ContentRoute<'a> {
     Tags,
     Settings,
     SiteValidation,
+    MetadataDiff,
+    TranslationValidation,
     Placeholder(&'a str),
 }
 
@@ -529,16 +544,16 @@ fn route_kind<'a>(
             }
         }
         TabType::SiteValidation => ContentRoute::SiteValidation,
+        TabType::MetadataDiff => ContentRoute::MetadataDiff,
         TabType::Style
         | TabType::Chat
         | TabType::Import
         | TabType::MenuEditor
-        | TabType::MetadataDiff
         | TabType::GitDiff
         | TabType::Documentation
         | TabType::ApiDocumentation
-        | TabType::TranslationValidation
         | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
+        TabType::TranslationValidation => ContentRoute::TranslationValidation,
     }
 }
 
@@ -598,11 +613,9 @@ mod tests {
             TabType::Chat,
             TabType::Import,
             TabType::MenuEditor,
-            TabType::MetadataDiff,
             TabType::GitDiff,
             TabType::Documentation,
             TabType::ApiDocumentation,
-            TabType::TranslationValidation,
             TabType::FindDuplicates,
         ];
 
@@ -624,6 +637,44 @@ mod tests {
                 ContentRoute::Placeholder(title) => assert_eq!(title, "Tool"),
                 _ => panic!("expected placeholder route for {tab_type:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn validation_tabs_route_to_real_views() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
+
+        for (tab_type, expected) in [
+            (TabType::MetadataDiff, "metadata diff"),
+            (TabType::TranslationValidation, "translation validation"),
+        ] {
+            let tabs = vec![tab("tool", tab_type, "Tool")];
+            let route = route_kind(
+                &tabs,
+                Some("tool"),
+                &empty_posts,
+                &empty_media,
+                &empty_templates,
+                &empty_scripts,
+                None,
+                None,
+                None,
+                &site_validation_state,
+            );
+
+            let matches_expected = matches!(
+                (route, expected),
+                (ContentRoute::MetadataDiff, "metadata diff")
+                    | (
+                        ContentRoute::TranslationValidation,
+                        "translation validation"
+                    )
+            );
+            assert!(matches_expected, "expected {expected} route");
         }
     }
 

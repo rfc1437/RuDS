@@ -168,7 +168,27 @@ pub fn view(
             .into(),
     );
 
-    // New project button
+    // Open and create project actions
+    items.push(
+        button(
+            row![
+                text("↗")
+                    .size(14)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.55, 0.75, 0.95)),
+                text(t(locale, "projectSelector.openProject"))
+                    .size(12)
+                    .shaping(Shaping::Advanced),
+            ]
+            .spacing(6),
+        )
+        .on_press(Message::RequestOpenProject)
+        .padding([4, 8])
+        .width(Length::Fill)
+        .style(new_project_btn)
+        .into(),
+    );
+
     items.push(
         button(
             row![

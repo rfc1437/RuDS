@@ -1,6 +1,7 @@
 pub mod activity_bar;
 pub mod dashboard;
 pub mod media_editor;
+pub mod metadata_diff;
 pub mod modal;
 pub mod panel;
 pub mod post_editor;
@@ -14,5 +15,6 @@ pub mod tab_bar;
 pub mod tags_view;
 pub mod template_editor;
 pub mod toast;
+pub mod translation_validation;
 pub mod welcome;
 pub mod workspace;

@@ -177,6 +177,18 @@ pub fn update_project_metadata(data_dir: &Path, changes: &serde_json::Value) -> 
     if let Some(max) = changes.get("maxPostsPerPage").and_then(|v| v.as_i64()) {
         meta.max_posts_per_page = max as i32;
     }
+    if let Some(concurrency) = changes.get("imageImportConcurrency") {
+        meta.image_import_concurrency = concurrency
+            .as_i64()
+            .map(|value| value as i32)
+            .or_else(|| {
+                concurrency
+                    .as_str()
+                    .and_then(|value| value.parse::<i32>().ok())
+            })
+            .unwrap_or(4)
+            .clamp(1, 8);
+    }
     if let Some(cat) = changes.get("blogmarkCategory") {
         meta.blogmark_category = cat.as_str().map(|s| s.to_string());
     }
@@ -218,6 +230,7 @@ pub fn startup_sync(data_dir: &Path) -> EngineResult<()> {
             main_language: None,
             default_author: None,
             max_posts_per_page: 50,
+            image_import_concurrency: 4,
             blogmark_category: None,
             pico_theme: None,
             semantic_similarity_enabled: false,
@@ -286,6 +299,7 @@ mod tests {
             main_language: Some("en".into()),
             default_author: None,
             max_posts_per_page: 25,
+            image_import_concurrency: 4,
             blogmark_category: None,
             pico_theme: None,
             semantic_similarity_enabled: false,

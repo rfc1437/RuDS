@@ -156,6 +156,57 @@ impl EditorBuffer {
         }
     }
 
+    /// Select the next exact match after the current selection/cursor, wrapping once.
+    pub fn find_next(&mut self, query: &str) -> bool {
+        if query.is_empty() {
+            return false;
+        }
+        let text = self.text();
+        let start_char = self
+            .selection
+            .as_ref()
+            .map(|selection| {
+                let (_, end) = selection.ordered();
+                self.pos_to_char_idx(end.0, end.1)
+            })
+            .unwrap_or_else(|| self.cursor_char_idx());
+        let start_byte = text
+            .char_indices()
+            .nth(start_char)
+            .map(|(index, _)| index)
+            .unwrap_or(text.len());
+        let match_byte = text[start_byte..]
+            .find(query)
+            .map(|offset| start_byte + offset)
+            .or_else(|| text[..start_byte].find(query));
+        let Some(match_byte) = match_byte else {
+            return false;
+        };
+        let start = text[..match_byte].chars().count();
+        let end = start + query.chars().count();
+        let start_pos = self.char_idx_to_pos(start);
+        let end_pos = self.char_idx_to_pos(end);
+        self.set_selection(start_pos.0, start_pos.1, end_pos.0, end_pos.1);
+        self.cursor_line = end_pos.0;
+        self.cursor_col = end_pos.1;
+        true
+    }
+
+    /// Replace every exact match and return the replacement count.
+    pub fn replace_all(&mut self, query: &str, replacement: &str) -> usize {
+        if query.is_empty() {
+            return 0;
+        }
+        let count = self.text().matches(query).count();
+        if count == 0 {
+            return 0;
+        }
+        self.select_all();
+        let replaced = self.text().replace(query, replacement);
+        self.insert(&replaced);
+        count
+    }
+
     /// Delete the selected text and place cursor at start of selection.
     /// Returns the deleted text.
     pub fn delete_selection(&mut self) -> String {
@@ -963,6 +1014,25 @@ mod tests {
         buf.select_right();
         buf.insert("hi");
         assert_eq!(buf.text(), "hi world");
+    }
+
+    #[test]
+    fn find_next_selects_and_wraps_matches() {
+        let mut buffer = EditorBuffer::new("one two one");
+        assert!(buffer.find_next("one"));
+        assert_eq!(buffer.selected_text(), "one");
+        assert!(buffer.find_next("one"));
+        assert_eq!(buffer.selection().unwrap().ordered(), ((0, 8), (0, 11)));
+        assert!(buffer.find_next("one"));
+        assert_eq!(buffer.selection().unwrap().ordered(), ((0, 0), (0, 3)));
+    }
+
+    #[test]
+    fn replace_all_updates_buffer_and_reports_count() {
+        let mut buffer = EditorBuffer::new("one two one");
+        assert_eq!(buffer.replace_all("one", "three"), 2);
+        assert_eq!(buffer.text(), "three two three");
+        assert!(buffer.is_dirty());
     }
 
     #[test]

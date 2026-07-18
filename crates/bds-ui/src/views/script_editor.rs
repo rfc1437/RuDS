@@ -205,12 +205,8 @@ pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, M
         .align_y(iced::Alignment::End)
         .width(Length::Fill);
 
-    // Content editor (CodeEditor with syntax highlighting based on file extension)
-    let syntax_ext = if state.file_path.ends_with(".py") {
-        "py"
-    } else {
-        "lua"
-    };
+    // Content editor (Lua is the only scripting runtime).
+    let syntax_ext = "lua";
     let content_section: Element<'a, Message> = inputs::card(
         column![
             inputs::section_header(&t(locale, "editor.content")),

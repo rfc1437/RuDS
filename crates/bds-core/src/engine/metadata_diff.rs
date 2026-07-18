@@ -7,16 +7,23 @@ use walkdir::WalkDir;
 
 use crate::db::from_row::{script_kind_to_str, template_kind_to_str};
 use crate::db::queries::media as qm;
+use crate::db::queries::media_translation as qmt;
 use crate::db::queries::post as qp;
 use crate::db::queries::post_translation as qt;
+use crate::db::queries::project as qproject;
 use crate::db::queries::script as qs;
 use crate::db::queries::template as qtpl;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Media, Post, PostStatus, PostTranslation, Script, Template};
+use crate::model::{Media, MediaTranslation, Post, PostStatus, PostTranslation, Script, Template};
 use crate::util::frontmatter::{
-    read_post_file, read_script_file, read_template_file, read_translation_file,
+    ScriptFrontmatter, TemplateFrontmatter, read_post_file, read_script_file, read_template_file,
+    read_translation_file, write_post_file, write_script_file, write_template_file,
+    write_translation_file,
 };
-use crate::util::sidecar::read_sidecar;
+use crate::util::sidecar::{
+    MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar,
+};
+use crate::util::{atomic_write_str, media_translation_sidecar_path};
 
 /// A single field difference.
 #[derive(Debug, Clone)]
@@ -43,11 +50,17 @@ pub struct OrphanFile {
 }
 
 /// Complete diff report.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DiffReport {
     pub diffs: Vec<EntityDiff>,
     pub orphans: Vec<OrphanFile>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairDirection {
+    FileToDatabase,
+    DatabaseToFile,
 }
 
 /// Compare DB state vs filesystem files and report all differences.
@@ -59,6 +72,14 @@ pub fn compute_metadata_diff(
     project_id: &str,
 ) -> EngineResult<DiffReport> {
     let mut report = DiffReport::default();
+
+    if let Ok(project) = qproject::get_project_by_id(conn, project_id) {
+        match diff_project(data_dir, &project) {
+            Ok(Some(diff)) => report.diffs.push(diff),
+            Ok(None) => {}
+            Err(error) => report.errors.push(format!("project {project_id}: {error}")),
+        }
+    }
 
     // 1. Diff posts
     let posts = qp::list_posts_by_project(conn, project_id)?;
@@ -93,6 +114,17 @@ pub fn compute_metadata_diff(
     for m in &media_items {
         if m.sidecar_path.is_empty() {
             continue;
+        }
+
+        let translations = qmt::list_media_translations_by_media(conn, &m.id)?;
+        for translation in &translations {
+            match diff_media_translation(data_dir, m, translation) {
+                Ok(Some(diff)) => report.diffs.push(diff),
+                Ok(None) => {}
+                Err(error) => report
+                    .errors
+                    .push(format!("media translation {}: {error}", translation.id)),
+            }
         }
         match diff_media(data_dir, m) {
             Ok(Some(d)) => report.diffs.push(d),
@@ -132,6 +164,255 @@ pub fn compute_metadata_diff(
     report.orphans = orphans;
 
     Ok(report)
+}
+
+/// Resolve one reported difference in the selected direction.
+pub fn repair_metadata_diff_item(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    direction: RepairDirection,
+    item: &EntityDiff,
+) -> EngineResult<()> {
+    match direction {
+        RepairDirection::FileToDatabase => {
+            let path = data_dir.join(&item.file_path);
+            match item.entity_type.as_str() {
+                "project" => sync_project_from_file(conn, data_dir, project_id)?,
+                "post" => {
+                    crate::engine::post::rebuild_canonical_post(conn, data_dir, project_id, &path)?;
+                }
+                "post_translation" => {
+                    crate::engine::post::rebuild_translation(conn, data_dir, project_id, &path)?;
+                }
+                "media" => {
+                    crate::engine::media::rebuild_canonical_media(
+                        conn, data_dir, project_id, &path,
+                    )?;
+                }
+                "media_translation" => {
+                    crate::engine::media::rebuild_translation_sidecar(
+                        conn, data_dir, project_id, &path,
+                    )?;
+                }
+                "script" => {
+                    crate::engine::script_rebuild::rebuild_single_script(
+                        conn, data_dir, project_id, &path,
+                    )?;
+                }
+                "template" => {
+                    crate::engine::template_rebuild::rebuild_single_template(
+                        conn, data_dir, project_id, &path,
+                    )?;
+                }
+                other => return unsupported_repair(other),
+            }
+        }
+        RepairDirection::DatabaseToFile => match item.entity_type.as_str() {
+            "project" => rewrite_project_from_database(conn, data_dir, project_id)?,
+            "post" => rewrite_post_from_database(conn, data_dir, &item.entity_id)?,
+            "post_translation" => {
+                rewrite_post_translation_from_database(conn, data_dir, &item.entity_id)?
+            }
+            "media" => rewrite_media_from_database(conn, data_dir, &item.entity_id)?,
+            "media_translation" => rewrite_media_translation_from_database(
+                conn,
+                data_dir,
+                project_id,
+                &item.entity_id,
+            )?,
+            "script" => rewrite_script_from_database(conn, data_dir, &item.entity_id)?,
+            "template" => rewrite_template_from_database(conn, data_dir, &item.entity_id)?,
+            other => return unsupported_repair(other),
+        },
+    }
+    Ok(())
+}
+
+fn diff_project(
+    data_dir: &Path,
+    project: &crate::model::Project,
+) -> EngineResult<Option<EntityDiff>> {
+    let metadata = crate::engine::meta::read_project_json(data_dir)?;
+    let mut fields = Vec::new();
+    compare_field(&mut fields, "name", &project.name, &metadata.name);
+    compare_field(
+        &mut fields,
+        "description",
+        project.description.as_deref().unwrap_or(""),
+        metadata.description.as_deref().unwrap_or(""),
+    );
+    Ok((!fields.is_empty()).then_some(EntityDiff {
+        entity_type: "project".into(),
+        entity_id: project.id.clone(),
+        file_path: "meta/project.json".into(),
+        fields,
+    }))
+}
+
+fn sync_project_from_file(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    let metadata = crate::engine::meta::read_project_json(data_dir)?;
+    let mut project = qproject::get_project_by_id(conn, project_id)?;
+    project.name = metadata.name;
+    project.description = metadata.description;
+    project.updated_at = crate::util::now_unix_ms();
+    qproject::update_project(conn, &project)?;
+    Ok(())
+}
+
+fn rewrite_project_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    let project = qproject::get_project_by_id(conn, project_id)?;
+    let mut metadata = crate::engine::meta::read_project_json(data_dir)?;
+    metadata.name = project.name;
+    metadata.description = project.description;
+    crate::engine::meta::write_project_json(data_dir, &metadata)
+}
+
+fn unsupported_repair<T>(entity_type: &str) -> EngineResult<T> {
+    Err(EngineError::Validation(format!(
+        "unsupported metadata diff entity type: {entity_type}"
+    )))
+}
+
+fn rewrite_post_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let post = qp::get_post_by_id(conn, entity_id)?;
+    let path = data_dir.join(&post.file_path);
+    let body = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| read_post_file(&content).ok().map(|(_, body)| body))
+        .unwrap_or_default();
+    atomic_write_str(&path, &write_post_file(&post, &body))?;
+    Ok(())
+}
+
+fn rewrite_post_translation_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let translation = qt::get_post_translation_by_id(conn, entity_id)?;
+    let path = data_dir.join(&translation.file_path);
+    let body = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| read_translation_file(&content).ok().map(|(_, body)| body))
+        .unwrap_or_default();
+    atomic_write_str(&path, &write_translation_file(&translation, &body))?;
+    Ok(())
+}
+
+fn rewrite_media_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let media = qm::get_media_by_id(conn, entity_id)?;
+    let linked = crate::db::queries::post_media::list_post_media_by_media(conn, entity_id)
+        .unwrap_or_default();
+    let post_ids = linked
+        .into_iter()
+        .map(|link| link.post_id)
+        .collect::<Vec<_>>();
+    atomic_write_str(
+        &data_dir.join(&media.sidecar_path),
+        &MediaSidecar::from_media(&media, &post_ids).to_string(),
+    )?;
+    Ok(())
+}
+
+fn rewrite_media_translation_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let media_items = qm::list_media_by_project(conn, project_id)?;
+    for media in media_items {
+        if let Some(translation) = qmt::list_media_translations_by_media(conn, &media.id)?
+            .into_iter()
+            .find(|translation| translation.id == entity_id)
+        {
+            let sidecar = MediaTranslationSidecar {
+                translation_for: translation.translation_for,
+                language: translation.language.clone(),
+                title: translation.title,
+                alt: translation.alt,
+                caption: translation.caption,
+            };
+            let path = media_translation_sidecar_path(&media.file_path, &translation.language);
+            atomic_write_str(&data_dir.join(path), &sidecar.to_string())?;
+            return Ok(());
+        }
+    }
+    Err(EngineError::NotFound(format!(
+        "media translation {entity_id}"
+    )))
+}
+
+fn rewrite_script_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let script = qs::get_script_by_id(conn, entity_id)?;
+    let path = data_dir.join(&script.file_path);
+    let body = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| read_script_file(&content).ok().map(|(_, body)| body))
+        .or(script.content.clone())
+        .unwrap_or_default();
+    let frontmatter = ScriptFrontmatter {
+        id: script.id,
+        project_id: Some(script.project_id),
+        slug: script.slug,
+        title: script.title,
+        kind: script_kind_to_str(&script.kind).to_owned(),
+        entrypoint: script.entrypoint,
+        enabled: script.enabled,
+        version: script.version,
+        created_at: script.created_at,
+        updated_at: script.updated_at,
+    };
+    atomic_write_str(&path, &write_script_file(&frontmatter, &body))?;
+    Ok(())
+}
+
+fn rewrite_template_from_database(
+    conn: &Connection,
+    data_dir: &Path,
+    entity_id: &str,
+) -> EngineResult<()> {
+    let template = qtpl::get_template_by_id(conn, entity_id)?;
+    let path = data_dir.join(&template.file_path);
+    let body = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| read_template_file(&content).ok().map(|(_, body)| body))
+        .or(template.content.clone())
+        .unwrap_or_default();
+    let frontmatter = TemplateFrontmatter {
+        id: template.id,
+        project_id: Some(template.project_id),
+        slug: template.slug,
+        title: template.title,
+        kind: template_kind_to_str(&template.kind).to_owned(),
+        enabled: template.enabled,
+        version: template.version,
+        created_at: template.created_at,
+        updated_at: template.updated_at,
+    };
+    atomic_write_str(&path, &write_template_file(&frontmatter, &body))?;
+    Ok(())
 }
 
 // --- Internal helpers ---
@@ -361,6 +642,58 @@ fn diff_media(data_dir: &Path, media: &Media) -> EngineResult<Option<EntityDiff>
     }
 }
 
+fn diff_media_translation(
+    data_dir: &Path,
+    media: &Media,
+    translation: &MediaTranslation,
+) -> EngineResult<Option<EntityDiff>> {
+    let relative_path = media_translation_sidecar_path(&media.file_path, &translation.language);
+    let absolute_path = data_dir.join(&relative_path);
+    if !absolute_path.is_file() {
+        return Ok(None);
+    }
+    let sidecar = read_translation_sidecar(&fs::read_to_string(&absolute_path)?)
+        .map_err(EngineError::Parse)?;
+    let mut fields = Vec::new();
+    compare_field(
+        &mut fields,
+        "translationFor",
+        &translation.translation_for,
+        &sidecar.translation_for,
+    );
+    compare_field(
+        &mut fields,
+        "language",
+        &translation.language,
+        &sidecar.language,
+    );
+    compare_field(
+        &mut fields,
+        "title",
+        &opt_to_str(&translation.title),
+        &opt_to_str(&sidecar.title),
+    );
+    compare_field(
+        &mut fields,
+        "alt",
+        &opt_to_str(&translation.alt),
+        &opt_to_str(&sidecar.alt),
+    );
+    compare_field(
+        &mut fields,
+        "caption",
+        &opt_to_str(&translation.caption),
+        &opt_to_str(&sidecar.caption),
+    );
+
+    Ok((!fields.is_empty()).then_some(EntityDiff {
+        entity_type: "media_translation".into(),
+        entity_id: translation.id.clone(),
+        file_path: relative_path,
+        fields,
+    }))
+}
+
 fn diff_template(data_dir: &Path, tpl: &Template) -> EngineResult<Option<EntityDiff>> {
     let abs_path = data_dir.join(&tpl.file_path);
     if !abs_path.exists() {
@@ -484,6 +817,12 @@ fn detect_orphan_files(
         if !m.sidecar_path.is_empty() {
             db_file_paths.insert(m.sidecar_path.clone());
         }
+        for translation in qmt::list_media_translations_by_media(conn, &m.id)? {
+            db_file_paths.insert(media_translation_sidecar_path(
+                &m.file_path,
+                &translation.language,
+            ));
+        }
     }
 
     let templates = qtpl::list_templates_by_project(conn, project_id)?;
@@ -574,6 +913,15 @@ fn detect_orphan_files(
             if !abs.exists() {
                 orphans.push(OrphanFile {
                     file_path: m.sidecar_path.clone(),
+                    reason: "db_entry_without_file".to_string(),
+                });
+            }
+        }
+        for translation in qmt::list_media_translations_by_media(conn, &m.id)? {
+            let path = media_translation_sidecar_path(&m.file_path, &translation.language);
+            if !data_dir.join(&path).is_file() {
+                orphans.push(OrphanFile {
+                    file_path: path,
                     reason: "db_entry_without_file".to_string(),
                 });
             }
@@ -717,6 +1065,89 @@ mod tests {
         assert_eq!(title_diffs.len(), 1);
         assert_eq!(title_diffs[0].db_value, "Original Title");
         assert_eq!(title_diffs[0].file_value, "Tampered Title");
+    }
+
+    #[test]
+    fn repairs_one_post_diff_from_file_to_database() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Database Title",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let path = dir.path().join(&published.file_path);
+        let content = fs::read_to_string(&path).unwrap();
+        fs::write(&path, content.replace("Database Title", "Filesystem Title")).unwrap();
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+        let item = report
+            .diffs
+            .iter()
+            .find(|item| item.entity_type == "post")
+            .unwrap();
+
+        repair_metadata_diff_item(
+            db.conn(),
+            dir.path(),
+            "p1",
+            RepairDirection::FileToDatabase,
+            item,
+        )
+        .unwrap();
+
+        assert_eq!(
+            qp::get_post_by_id(db.conn(), &post.id).unwrap().title,
+            "Filesystem Title"
+        );
+    }
+
+    #[test]
+    fn repairs_one_post_diff_from_database_to_file_without_losing_body() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Database Title",
+            Some("body that must survive"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let path = dir.path().join(&published.file_path);
+        let content = fs::read_to_string(&path).unwrap();
+        fs::write(&path, content.replace("Database Title", "Filesystem Title")).unwrap();
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+        let item = report
+            .diffs
+            .iter()
+            .find(|item| item.entity_type == "post")
+            .unwrap();
+
+        repair_metadata_diff_item(
+            db.conn(),
+            dir.path(),
+            "p1",
+            RepairDirection::DatabaseToFile,
+            item,
+        )
+        .unwrap();
+
+        let repaired = fs::read_to_string(path).unwrap();
+        assert!(repaired.contains("title: Database Title"));
+        assert!(repaired.contains("body that must survive"));
     }
 
     #[test]

@@ -73,6 +73,26 @@ pub fn generate_starter_site(
     posts: &[PublishedPostSource],
     _language: &str,
 ) -> EngineResult<GenerationReport> {
+    generate_starter_site_with_progress(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        posts,
+        _language,
+        |_current, _total, _path| {},
+    )
+}
+
+pub fn generate_starter_site_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    _language: &str,
+    mut on_page: impl FnMut(usize, usize, &str),
+) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
     let data_dir = project_data_dir(output_dir);
     let category_settings = load_category_settings(&data_dir);
@@ -85,7 +105,8 @@ pub fn generate_starter_site(
         build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
             .map_err(|error| EngineError::Parse(error.to_string()))?;
 
-    for page in &artifacts.pages {
+    let total_pages = artifacts.pages.len();
+    for (index, page) in artifacts.pages.iter().enumerate() {
         write_out(
             conn,
             output_dir,
@@ -94,6 +115,7 @@ pub fn generate_starter_site(
             &page.html,
             &mut report,
         )?;
+        on_page(index + 1, total_pages, &page.url_path);
     }
 
     write_bundled_site_assets(conn, output_dir, project_id, &mut report)?;

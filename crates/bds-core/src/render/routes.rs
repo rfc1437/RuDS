@@ -492,6 +492,7 @@ mod tests {
             main_language: Some("en".into()),
             default_author: None,
             max_posts_per_page: 50,
+            image_import_concurrency: 4,
             blogmark_category: None,
             pico_theme: None,
             semantic_similarity_enabled: false,

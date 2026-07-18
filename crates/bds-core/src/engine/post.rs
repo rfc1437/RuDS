@@ -662,6 +662,30 @@ pub fn delete_translation(
     Ok(())
 }
 
+/// Publish one draft translation without republishing its canonical post.
+pub fn publish_post_translation(
+    conn: &Connection,
+    data_dir: &Path,
+    translation_id: &str,
+) -> EngineResult<PostTranslation> {
+    let mut translation = qt::get_post_translation_by_id(conn, translation_id)?;
+    if translation.status == PostStatus::Published {
+        return Ok(translation);
+    }
+    let post = qp::get_post_by_id(conn, &translation.translation_for)?;
+    conn.begin_savepoint()?;
+    match publish_translation(conn, data_dir, &mut translation, &post) {
+        Ok(()) => {
+            conn.release_savepoint()?;
+            Ok(translation)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
+}
+
 /// Rebuild posts from filesystem. Walk posts/ dir, parse .md files, upsert into DB.
 pub fn rebuild_posts_from_filesystem(
     conn: &Connection,
@@ -943,7 +967,7 @@ fn is_translation_filename(stem: &str) -> bool {
 }
 
 /// Rebuild a canonical post from a .md file. Returns true if created, false if updated.
-fn rebuild_canonical_post(
+pub(crate) fn rebuild_canonical_post(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
@@ -1033,7 +1057,7 @@ fn rebuild_canonical_post(
 }
 
 /// Rebuild a translation from a .{lang}.md file. Returns true if created, false if updated.
-fn rebuild_translation(
+pub(crate) fn rebuild_translation(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,

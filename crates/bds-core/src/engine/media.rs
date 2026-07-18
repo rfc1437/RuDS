@@ -198,6 +198,128 @@ pub fn update_media(
     Ok(media)
 }
 
+/// Replace a media item's binary while preserving its identity, public path,
+/// metadata, translations, and post links. Returns `None` when the new file is
+/// byte-for-byte identical to the stored binary.
+pub fn replace_media_file(
+    conn: &Connection,
+    data_dir: &Path,
+    media_id: &str,
+    new_source_path: &Path,
+) -> EngineResult<Option<Media>> {
+    let mut media = qm::get_media_by_id(conn, media_id)
+        .map_err(|_| EngineError::NotFound(format!("media {media_id}")))?;
+    if !new_source_path.is_file() {
+        return Err(EngineError::Validation(format!(
+            "replacement file does not exist: {}",
+            new_source_path.display()
+        )));
+    }
+
+    let replacement_checksum = crate::util::file_hash(new_source_path)?;
+    if media.checksum.as_deref() == Some(replacement_checksum.as_str()) {
+        return Ok(None);
+    }
+
+    let destination = data_dir.join(&media.file_path);
+    if !destination.is_file() {
+        return Err(EngineError::NotFound(format!(
+            "stored media file {}",
+            destination.display()
+        )));
+    }
+
+    let (width, height) = image_dimensions(new_source_path)
+        .map(|(w, h)| (Some(w as i32), Some(h as i32)))
+        .map_err(|error| {
+            EngineError::Validation(format!(
+                "replacement is not a readable image '{}': {error}",
+                new_source_path.display(),
+            ))
+        })?;
+    let replacement_size = fs::metadata(new_source_path)?.len() as i64;
+
+    // Generate all derived files before touching the canonical binary.
+    let staged_thumbnails = data_dir
+        .join("thumbnails")
+        .join(format!(".replace-{media_id}"));
+    if staged_thumbnails.exists() {
+        fs::remove_dir_all(&staged_thumbnails)?;
+    }
+    let staged_paths = generate_all_thumbnails(new_source_path, &staged_thumbnails, media_id)
+        .map_err(EngineError::Parse)?;
+
+    let backup = destination.with_extension(format!(
+        "{}.bak",
+        destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("media")
+    ));
+    if backup.exists() {
+        fs::remove_file(&backup)?;
+    }
+    fs::rename(&destination, &backup)?;
+    if let Err(error) = fs::copy(new_source_path, &destination) {
+        let _ = fs::rename(&backup, &destination);
+        let _ = fs::remove_dir_all(&staged_thumbnails);
+        return Err(error.into());
+    }
+
+    let previous_media = media.clone();
+    let previous_sidecar = fs::read_to_string(data_dir.join(&media.sidecar_path)).ok();
+    media.size = replacement_size;
+    media.width = width;
+    media.height = height;
+    media.checksum = Some(replacement_checksum);
+    media.updated_at = now_unix_ms();
+
+    let apply_result = (|| -> EngineResult<()> {
+        conn.begin_savepoint()?;
+        qm::update_media(conn, &media)?;
+        let linked = qpm::list_post_media_by_media(conn, media_id).unwrap_or_default();
+        let linked_post_ids: Vec<String> = linked.iter().map(|item| item.post_id.clone()).collect();
+        let sidecar = MediaSidecar::from_media(&media, &linked_post_ids);
+        atomic_write_str(&data_dir.join(&media.sidecar_path), &sidecar.to_string())?;
+        fts_index_media(conn, &media)?;
+
+        for staged in &staged_paths {
+            let staged = Path::new(staged);
+            let relative = staged.strip_prefix(&staged_thumbnails).map_err(|error| {
+                EngineError::Validation(format!("invalid staged thumbnail path: {error}"))
+            })?;
+            let target = data_dir.join("thumbnails").join(relative);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(staged, target)?;
+        }
+        conn.release_savepoint()?;
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&staged_thumbnails);
+    match apply_result {
+        Ok(()) => {
+            fs::remove_file(backup)?;
+            Ok(Some(media))
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            let _ = fs::remove_file(&destination);
+            let _ = fs::rename(&backup, &destination);
+            let _ = qm::update_media(conn, &previous_media);
+            if let Some(previous_sidecar) = previous_sidecar {
+                let _ = atomic_write_str(
+                    &data_dir.join(&previous_media.sidecar_path),
+                    &previous_sidecar,
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
 /// Delete a media item and all related artifacts.
 pub fn delete_media(conn: &Connection, data_dir: &Path, media_id: &str) -> EngineResult<()> {
     let media = qm::get_media_by_id(conn, media_id)?;
@@ -499,7 +621,7 @@ fn is_translation_sidecar(file_name: &str) -> bool {
 }
 
 /// Rebuild a canonical media from its sidecar file. Returns true if created, false if updated.
-fn rebuild_canonical_media(
+pub(crate) fn rebuild_canonical_media(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
@@ -612,7 +734,7 @@ fn rebuild_canonical_media(
 }
 
 /// Rebuild a translation from a `*.{lang}.meta` sidecar. Returns true if created, false if updated.
-fn rebuild_translation_sidecar(
+pub(crate) fn rebuild_translation_sidecar(
     conn: &Connection,
     _data_dir: &Path,
     project_id: &str,
@@ -798,6 +920,89 @@ mod tests {
         let sc = read_sidecar(&new_content).unwrap();
         assert_eq!(sc.title.as_deref(), Some("New Title"));
         assert_eq!(sc.tags, vec!["updated-tag"]);
+    }
+
+    #[test]
+    fn replace_media_file_preserves_identity_and_regenerates_artifacts() {
+        let (db, dir) = setup();
+        let source = create_test_png(dir.path());
+        let media = import_media(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &source,
+            "photo.png",
+            Some("Kept title"),
+            None,
+            None,
+            None,
+            None,
+            vec!["kept".into()],
+        )
+        .unwrap();
+        let replacement = dir.path().join("replacement.png");
+        DynamicImage::new_rgb8(320, 180).save(&replacement).unwrap();
+        let old_checksum = media.checksum.clone();
+
+        let updated = replace_media_file(db.conn(), dir.path(), &media.id, &replacement)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(updated.id, media.id);
+        assert_eq!(updated.file_path, media.file_path);
+        assert_eq!(updated.original_name, media.original_name);
+        assert_eq!(updated.title, media.title);
+        assert_eq!(updated.tags, media.tags);
+        assert_eq!((updated.width, updated.height), (Some(320), Some(180)));
+        assert_ne!(updated.checksum, old_checksum);
+        assert!(!dir.path().join(format!("{}.bak", media.file_path)).exists());
+
+        let sidecar =
+            read_sidecar(&fs::read_to_string(dir.path().join(&updated.sidecar_path)).unwrap())
+                .unwrap();
+        assert_eq!((sidecar.width, sidecar.height), (Some(320), Some(180)));
+
+        let prefix = &media.id[..2];
+        let ai_thumb = dir
+            .path()
+            .join("thumbnails")
+            .join(prefix)
+            .join(format!("{}-ai.jpg", media.id));
+        assert!(ai_thumb.is_file());
+    }
+
+    #[test]
+    fn replace_media_file_is_noop_for_identical_content() {
+        let (db, dir) = setup();
+        let source = create_test_png(dir.path());
+        let media = import_media(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &source,
+            "photo.png",
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let stored = dir.path().join(&media.file_path);
+        let updated_at = media.updated_at;
+
+        assert!(
+            replace_media_file(db.conn(), dir.path(), &media.id, &stored)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            qm::get_media_by_id(db.conn(), &media.id)
+                .unwrap()
+                .updated_at,
+            updated_at
+        );
     }
 
     #[test]

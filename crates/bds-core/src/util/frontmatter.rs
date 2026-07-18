@@ -17,26 +17,6 @@ pub fn split_frontmatter(input: &str) -> Option<(&str, &str)> {
     Some((yaml, body))
 }
 
-/// Split content at Python docstring `"""` delimiters (for legacy .py scripts).
-/// The YAML frontmatter is inside: `"""\n---\n{yaml}\n---\n"""`
-pub fn split_docstring_frontmatter(input: &str) -> Option<(&str, &str)> {
-    let trimmed = input.trim_start_matches('\u{feff}');
-    if !trimmed.starts_with("\"\"\"") {
-        return None;
-    }
-    let after_open = &trimmed[3..];
-    let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
-    // Find closing """
-    let close_pos = after_open.find("\"\"\"")?;
-    let inside = &after_open[..close_pos].trim();
-    // Inside should be ---\n{yaml}\n---
-    let yaml_content = split_frontmatter(inside)?;
-    let body_start = close_pos + 3;
-    let rest = &after_open[body_start..];
-    let body = rest.strip_prefix('\n').unwrap_or(rest);
-    Some((yaml_content.0, body))
-}
-
 /// Format frontmatter + body into a complete file string.
 pub fn format_frontmatter(yaml: &str, body: &str) -> String {
     format!("---\n{yaml}\n---\n{body}")
@@ -485,14 +465,8 @@ impl ScriptFrontmatter {
     }
 }
 
-/// Read a script file. Supports both `---` (Lua) and `"""` (Python) delimiters.
+/// Read a Lua script file with standard YAML frontmatter.
 pub fn read_script_file(content: &str) -> Result<(ScriptFrontmatter, String), String> {
-    // Try docstring format first (Python scripts)
-    if let Some((yaml, body)) = split_docstring_frontmatter(content) {
-        let fm = ScriptFrontmatter::from_yaml(yaml)?;
-        return Ok((fm, body.to_string()));
-    }
-    // Fall back to standard --- format (Lua scripts)
     let (yaml, body) = split_frontmatter(content).ok_or("no frontmatter delimiters found")?;
     let fm = ScriptFrontmatter::from_yaml(yaml)?;
     Ok((fm, body.to_string()))
@@ -575,14 +549,6 @@ mod tests {
     #[test]
     fn split_no_frontmatter() {
         assert!(split_frontmatter("no frontmatter here").is_none());
-    }
-
-    #[test]
-    fn split_docstring() {
-        let input = "\"\"\"\n---\nfoo: bar\n---\n\"\"\"\nbody\n";
-        let (yaml, body) = split_docstring_frontmatter(input).unwrap();
-        assert_eq!(yaml, "foo: bar");
-        assert_eq!(body, "body\n");
     }
 
     #[test]
@@ -820,34 +786,6 @@ mod tests {
             actual, expected,
             "golden output mismatch for testvorlage.liquid"
         );
-    }
-
-    // --- Script frontmatter tests ---
-
-    #[test]
-    fn parse_fixture_script_bgg() {
-        let path = fixture_dir().join("scripts/bgg_link.py");
-        let content = fs::read_to_string(path).unwrap();
-        let (fm, body) = read_script_file(&content).unwrap();
-        assert_eq!(fm.id, "2b393cae-84b9-426f-b4cf-4902aea79d7d");
-        assert_eq!(fm.slug, "bgg_link");
-        assert_eq!(fm.title, "bgg link");
-        assert_eq!(fm.kind, "transform");
-        assert_eq!(fm.entrypoint, "normalize_blogmark");
-        assert!(fm.enabled);
-        assert_eq!(fm.version, 12);
-        assert!(body.contains("def normalize_blogmark"));
-    }
-
-    #[test]
-    fn parse_fixture_script_test() {
-        let path = fixture_dir().join("scripts/test_script.py");
-        let content = fs::read_to_string(path).unwrap();
-        let (fm, body) = read_script_file(&content).unwrap();
-        assert_eq!(fm.slug, "test_script");
-        assert_eq!(fm.kind, "utility");
-        assert_eq!(fm.entrypoint, "main");
-        assert!(body.contains("print"));
     }
 
     #[test]

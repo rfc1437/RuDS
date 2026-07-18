@@ -28,7 +28,7 @@ pub fn create_project(
     });
 
     let now = now_unix_ms();
-    let project = Project {
+    let mut project = Project {
         id: id.clone(),
         name: name.to_string(),
         slug: slug.clone(),
@@ -49,9 +49,95 @@ pub fn create_project(
     // Create directory structure
     create_directory_structure(&data_dir)?;
 
+    // Store a stable, absolute machine-local pointer after the folder exists.
+    if data_path.is_some() {
+        project.data_path = Some(data_dir.canonicalize()?.to_string_lossy().to_string());
+        q::update_project(conn, &project)?;
+    }
+
     // Write default meta files
     write_default_meta_files(&data_dir, name)?;
 
+    Ok(project)
+}
+
+/// Open an existing portable project folder and remember its current location
+/// in the machine-local project registry (the application database).
+///
+/// The folder itself is authoritative: `data_path` is derived from the
+/// location of `meta/project.json` and is never written into that file.
+pub fn open_project(conn: &Connection, folder_path: &Path) -> EngineResult<Project> {
+    let folder_path = folder_path.canonicalize().map_err(|error| {
+        EngineError::Validation(format!(
+            "cannot open project folder '{}': {error}",
+            folder_path.display()
+        ))
+    })?;
+    let metadata_path = folder_path.join("meta/project.json");
+    if !metadata_path.is_file() {
+        return Err(EngineError::Validation(format!(
+            "project folder must contain meta/project.json: {}",
+            folder_path.display()
+        )));
+    }
+
+    let metadata: ProjectMetadata = serde_json::from_str(&fs::read_to_string(&metadata_path)?)?;
+    metadata.validate().map_err(EngineError::Validation)?;
+    let resolved_path = folder_path.to_string_lossy().to_string();
+    let projects = q::list_projects(conn)?;
+
+    // Reopening a registered folder is idempotent. If a registered folder no
+    // longer exists and its portable metadata name matches uniquely, treat the
+    // selected folder as that project's new location.
+    let exact = projects.iter().find(|project| {
+        project.data_path.as_deref().is_some_and(|path| {
+            Path::new(path)
+                .canonicalize()
+                .map(|registered| registered == folder_path)
+                .unwrap_or(false)
+        })
+    });
+    let moved_matches: Vec<&Project> = projects
+        .iter()
+        .filter(|project| {
+            project.name == metadata.name
+                && project
+                    .data_path
+                    .as_deref()
+                    .is_some_and(|path| !Path::new(path).join("meta/project.json").is_file())
+        })
+        .collect();
+
+    let moved = if moved_matches.len() == 1 {
+        Some(moved_matches[0])
+    } else {
+        None
+    };
+    if let Some(existing) = exact.or(moved) {
+        let mut project = existing.clone();
+        project.name = metadata.name;
+        project.description = metadata.description;
+        project.data_path = Some(resolved_path);
+        project.updated_at = now_unix_ms();
+        q::update_project(conn, &project)?;
+        return Ok(project);
+    }
+
+    let now = now_unix_ms();
+    let base_slug = slugify(&metadata.name);
+    let project = Project {
+        id: Uuid::new_v4().to_string(),
+        name: metadata.name,
+        slug: ensure_unique(&base_slug, |candidate| {
+            q::get_project_by_slug(conn, candidate).is_ok()
+        }),
+        description: metadata.description,
+        data_path: Some(resolved_path),
+        is_active: false,
+        created_at: now,
+        updated_at: now,
+    };
+    q::insert_project(conn, &project)?;
     Ok(project)
 }
 
@@ -182,6 +268,7 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
         main_language: None,
         default_author: None,
         max_posts_per_page: 50,
+        image_import_concurrency: 4,
         blogmark_category: None,
         pico_theme: None,
         semantic_similarity_enabled: false,
@@ -210,66 +297,8 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
     let default_opml = crate::engine::menu::default_menu_opml();
     atomic_write_str(&meta_dir.join("menu.opml"), &default_opml)?;
 
-    // Starter templates — per project.allium StarterTemplatesCopied
-    copy_starter_templates(data_dir)?;
     copy_bundled_site_assets(data_dir)?;
 
-    Ok(())
-}
-
-/// Copy bundled starter templates into the project templates directory.
-/// Per project.allium: "Bundled starter templates are copied into the new project."
-fn copy_starter_templates(data_dir: &Path) -> EngineResult<()> {
-    let templates_dir = data_dir.join("templates");
-    let partials_dir = templates_dir.join("partials");
-    fs::create_dir_all(&partials_dir)?;
-
-    // Starter templates embedded at compile time from assets/starter-templates/
-    let templates: &[(&str, &str)] = &[
-        (
-            "single-post.liquid",
-            include_str!("../../../../assets/starter-templates/single-post.liquid"),
-        ),
-        (
-            "post-list.liquid",
-            include_str!("../../../../assets/starter-templates/post-list.liquid"),
-        ),
-        (
-            "not-found.liquid",
-            include_str!("../../../../assets/starter-templates/not-found.liquid"),
-        ),
-    ];
-    let partials: &[(&str, &str)] = &[
-        (
-            "head.liquid",
-            include_str!("../../../../assets/starter-templates/partials/head.liquid"),
-        ),
-        (
-            "menu.liquid",
-            include_str!("../../../../assets/starter-templates/partials/menu.liquid"),
-        ),
-        (
-            "menu-items.liquid",
-            include_str!("../../../../assets/starter-templates/partials/menu-items.liquid"),
-        ),
-        (
-            "language-switcher.liquid",
-            include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid"),
-        ),
-    ];
-
-    for (name, content) in templates {
-        let path = templates_dir.join(name);
-        if !path.exists() {
-            atomic_write_str(&path, content)?;
-        }
-    }
-    for (name, content) in partials {
-        let path = partials_dir.join(name);
-        if !path.exists() {
-            atomic_write_str(&path, content)?;
-        }
-    }
     Ok(())
 }
 
@@ -308,6 +337,15 @@ mod tests {
         assert!(data_path.join("assets/pico.min.css").is_file());
         assert!(data_path.join("assets/tag-cloud.js").is_file());
 
+        // Bundled defaults stay in the application. Project templates are
+        // reserved for user-managed overrides.
+        assert!(
+            fs::read_dir(data_path.join("templates"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+
         // Verify meta files
         let project_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(data_path.join("meta/project.json")).unwrap())
@@ -341,6 +379,54 @@ mod tests {
         let p2_path = dir.path().join("blog2");
         let p2 = create_project(db.conn(), "Blog", Some(p2_path.to_str().unwrap())).unwrap();
         assert_eq!(p2.slug, "blog-2");
+    }
+
+    #[test]
+    fn open_project_registers_existing_folder_without_rewriting_metadata() {
+        let (db, dir) = setup();
+        let data_path = dir.path().join("portable-blog");
+        fs::create_dir_all(data_path.join("meta")).unwrap();
+        let metadata = r#"{"name":"Portable Blog","description":"Moved safely"}"#;
+        fs::write(data_path.join("meta/project.json"), metadata).unwrap();
+
+        let project = open_project(db.conn(), &data_path).unwrap();
+
+        assert_eq!(project.name, "Portable Blog");
+        assert_eq!(project.description.as_deref(), Some("Moved safely"));
+        assert_eq!(
+            project.data_path.as_deref(),
+            data_path.canonicalize().unwrap().to_str()
+        );
+        assert_eq!(
+            fs::read_to_string(data_path.join("meta/project.json")).unwrap(),
+            metadata
+        );
+    }
+
+    #[test]
+    fn open_project_updates_moved_matching_project_location() {
+        let (db, dir) = setup();
+        let old_path = dir.path().join("old-location");
+        let project =
+            create_project(db.conn(), "Movable Blog", Some(old_path.to_str().unwrap())).unwrap();
+        let new_path = dir.path().join("new-location");
+        fs::rename(&old_path, &new_path).unwrap();
+
+        let reopened = open_project(db.conn(), &new_path).unwrap();
+
+        assert_eq!(reopened.id, project.id);
+        assert_eq!(
+            reopened.data_path.as_deref(),
+            new_path.canonicalize().unwrap().to_str()
+        );
+        assert_eq!(list_projects(db.conn()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn open_project_rejects_folder_without_project_metadata() {
+        let (db, dir) = setup();
+        let error = open_project(db.conn(), dir.path()).unwrap_err();
+        assert!(error.to_string().contains("meta/project.json"));
     }
 
     #[test]

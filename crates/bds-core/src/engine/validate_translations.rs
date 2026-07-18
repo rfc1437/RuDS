@@ -44,7 +44,7 @@ pub enum TranslationIssueKind {
 }
 
 /// Result of translation validation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TranslationValidationReport {
     pub db_issues: Vec<TranslationIssue>,
     pub fs_issues: Vec<TranslationIssue>,

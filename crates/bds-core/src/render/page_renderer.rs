@@ -172,7 +172,19 @@ impl Filter for MarkdownFilter {
 fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {
     let mut roots = JsonMap::new();
 
-    for key in ["post", "post_tags", "tag_color_by_name", "project", "Tags"] {
+    for key in [
+        "post",
+        "post_tags",
+        "tag_color_by_name",
+        "project",
+        "Tags",
+        "macro_scripts",
+        "language",
+        "language_prefix",
+        "main_language",
+        "is_preview",
+        "translations",
+    ] {
         if let Some(value) = runtime.try_get(&[ScalarCow::new(key)]) {
             roots.insert(key.to_string(), liquid_value_to_json(value.as_view()));
         }

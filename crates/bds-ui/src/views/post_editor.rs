@@ -1200,7 +1200,7 @@ mod tests {
     fn unsupported_default_mode_falls_back_to_markdown() {
         let mut state = sample_state();
 
-        state.set_editor_mode("wysiwyg");
+        state.set_editor_mode("visual");
         assert_eq!(state.editor_mode, "markdown");
 
         state.set_editor_mode("preview");

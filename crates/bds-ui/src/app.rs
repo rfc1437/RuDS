@@ -6,6 +6,7 @@ use base64::Engine as _;
 use bds_core::db::DbQueryError as SqlError;
 use chrono::Datelike;
 use iced::{Element, Subscription, Task, window};
+use rayon::prelude::*;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -34,6 +35,7 @@ use crate::views::{
         DashboardTimelineMonth,
     },
     media_editor::{LinkedPostItem, MediaEditorMsg, MediaEditorState},
+    metadata_diff::MetadataDiffState,
     modal,
     post_editor::{LinkedMediaItem, PostEditorMsg, PostEditorState, ResolvedPostLink},
     script_editor::{ScriptEditorMsg, ScriptEditorState},
@@ -78,6 +80,7 @@ pub enum Message {
     SwitchProject(String),
     ProjectSwitched(Result<String, String>),
     RequestCreateProject,
+    RequestOpenProject,
     CreateProject {
         name: String,
         data_path: Option<PathBuf>,
@@ -88,7 +91,20 @@ pub enum Message {
 
     // Dialogs
     FolderPicked(Option<PathBuf>),
+    ProjectFolderPicked(Option<PathBuf>),
     MediaFilesPicked(Option<Vec<PathBuf>>),
+    MediaImportFinished {
+        imported: Vec<Media>,
+        errors: Vec<String>,
+    },
+    MediaReplacementPicked {
+        media_id: String,
+        path: Option<PathBuf>,
+    },
+    MediaReplacementFinished {
+        media_id: String,
+        result: Result<Option<Media>, String>,
+    },
 
     // Tasks
     TaskTick,
@@ -96,6 +112,7 @@ pub enum Message {
     // macOS lifecycle
     FileOpenRequested(PathBuf),
     UrlOpenRequested(String),
+    BlogmarkImported(Result<engine::blogmark::BlogmarkImportResult, String>),
     MainWindowLoaded(Option<window::Id>),
     EmbeddedPreviewReady(Result<(), String>),
 
@@ -136,6 +153,11 @@ pub enum Message {
     ShowModal(modal::ModalState),
     DismissModal,
     ConfirmModal(modal::ConfirmAction),
+    FindQueryChanged(String),
+    ReplaceQueryChanged(String),
+    FindNext,
+    ReplaceCurrent,
+    ReplaceAll,
     ToggleAiSuggestionField(usize, bool),
     ApplyAiSuggestions(modal::AiEntityTarget, Vec<modal::AiSuggestionField>),
 
@@ -144,9 +166,18 @@ pub enum Message {
     ReindexText,
     RegenerateCalendar,
     ValidateTranslations,
+    TranslationValidationLoaded(
+        Result<engine::validate_translations::TranslationValidationReport, String>,
+    ),
     ValidateMedia,
     GenerateSite,
     RunMetadataDiff,
+    MetadataDiffLoaded(Result<engine::metadata_diff::DiffReport, String>),
+    RepairMetadataDiffItem {
+        index: usize,
+        direction: engine::metadata_diff::RepairDirection,
+    },
+    MetadataDiffItemRepaired(Result<(), String>),
     RunSiteValidation,
     ApplySiteValidation,
     EngineTaskDone {
@@ -485,6 +516,22 @@ fn default_post_editor_mode(settings_state: Option<&SettingsViewState>) -> &str 
         .unwrap_or("markdown")
 }
 
+fn replace_current_in_buffer(
+    buffer: &mut bds_editor::EditorBuffer,
+    query: &str,
+    replacement: &str,
+) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    if buffer.selected_text() != query && !buffer.find_next(query) {
+        return false;
+    }
+    buffer.insert(replacement);
+    let _ = buffer.find_next(query);
+    true
+}
+
 fn referenced_media_ids(content: &str) -> Vec<String> {
     let mut ids = Vec::new();
     let mut rest = content;
@@ -728,6 +775,8 @@ pub struct BdsApp {
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
     site_validation_state: SiteValidationState,
+    metadata_diff_state: MetadataDiffState,
+    translation_validation_state: crate::views::translation_validation::TranslationValidationState,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -777,10 +826,9 @@ impl BdsApp {
         // If no projects exist, ensure the default project per spec
         let init_task = if projects.is_empty() {
             if let Some(ref db) = db {
-                let default_data = dirs::data_dir()
+                let default_data = dirs::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join("bds")
-                    .join("projects")
                     .join("my-blog");
                 match engine::project::ensure_default_project(db.conn(), Some(&default_data)) {
                     Ok(project) => Task::done(Message::ProjectsLoaded(vec![project])),
@@ -863,6 +911,8 @@ impl BdsApp {
                 settings_state: None,
                 dashboard_state: None,
                 site_validation_state: SiteValidationState::default(),
+                metadata_diff_state: MetadataDiffState::default(),
+                translation_validation_state: Default::default(),
             },
             init_task,
         )
@@ -924,6 +974,8 @@ impl BdsApp {
             settings_state: None,
             dashboard_state: None,
             site_validation_state: SiteValidationState::default(),
+            metadata_diff_state: MetadataDiffState::default(),
+            translation_validation_state: Default::default(),
         }
     }
 
@@ -1150,6 +1202,10 @@ impl BdsApp {
             Message::RequestCreateProject => {
                 crate::platform::dialog::pick_folder(t(self.ui_locale, "dialog.selectFolder"))
             }
+            Message::RequestOpenProject => crate::platform::dialog::pick_project_folder(t(
+                self.ui_locale,
+                "dialog.openProject",
+            )),
             Message::CreateProject { name, data_path } => {
                 if let Some(ref db) = self.db {
                     let path_str = data_path.as_ref().map(|p| p.to_string_lossy().to_string());
@@ -1239,9 +1295,187 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            Message::MediaFilesPicked(_paths) => {
-                // Media import will be expanded in later milestones
+            Message::ProjectFolderPicked(path) => {
+                if let (Some(path), Some(db)) = (path, self.db.as_ref()) {
+                    match engine::project::open_project(db.conn(), &path) {
+                        Ok(project) => {
+                            let _ = engine::project::set_active_project(db.conn(), &project.id);
+                            self.projects =
+                                engine::project::list_projects(db.conn()).unwrap_or_default();
+                            self.active_project = Some(project.clone());
+                            self.data_dir = project.data_path.as_ref().map(PathBuf::from);
+                            self.preview_session = None;
+                            self.hide_embedded_preview();
+                            self.notify(
+                                ToastLevel::Success,
+                                &tw(
+                                    self.ui_locale,
+                                    "projectSelector.toast.opened",
+                                    &[("name", &project.name)],
+                                ),
+                            );
+                            self.sync_menu_state();
+                            return self.refresh_counts();
+                        }
+                        Err(error) => self.notify(
+                            ToastLevel::Error,
+                            &tw(
+                                self.ui_locale,
+                                "projectSelector.toast.openFailed",
+                                &[("error", &error.to_string())],
+                            ),
+                        ),
+                    }
+                }
                 Task::none()
+            }
+            Message::MediaFilesPicked(paths) => {
+                let (Some(paths), Some(project), Some(data_dir)) =
+                    (paths, self.active_project.as_ref(), self.data_dir.as_ref())
+                else {
+                    return Task::none();
+                };
+                let db_path = self.db_path.clone();
+                let project_id = project.id.clone();
+                let data_dir = data_dir.clone();
+                let language = self.content_language.clone();
+                let concurrency = engine::meta::read_project_json(&data_dir)
+                    .map(|metadata| metadata.image_import_concurrency.clamp(1, 8) as usize)
+                    .unwrap_or(4);
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let pool = match rayon::ThreadPoolBuilder::new()
+                                .num_threads(concurrency)
+                                .build()
+                            {
+                                Ok(pool) => pool,
+                                Err(error) => return (Vec::new(), vec![error.to_string()]),
+                            };
+                            let results = pool.install(|| {
+                                paths
+                                    .into_par_iter()
+                                    .map(|path| {
+                                        let original_name = path
+                                            .file_name()
+                                            .map(|name| name.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "image".to_string());
+                                        let db = Database::open(&db_path).map_err(|error| {
+                                            format!("{}: {error}", path.display())
+                                        })?;
+                                        engine::media::import_media(
+                                            db.conn(),
+                                            &data_dir,
+                                            &project_id,
+                                            &path,
+                                            &original_name,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            Some(&language),
+                                            Vec::new(),
+                                        )
+                                        .map_err(|error| format!("{}: {error}", path.display()))
+                                    })
+                                    .collect::<Vec<Result<Media, String>>>()
+                            });
+                            let mut imported = Vec::new();
+                            let mut errors = Vec::new();
+                            for result in results {
+                                match result {
+                                    Ok(media) => imported.push(media),
+                                    Err(error) => errors.push(error),
+                                }
+                            }
+                            (imported, errors)
+                        })
+                        .await
+                        .unwrap_or_else(|error| (Vec::new(), vec![error.to_string()]))
+                    },
+                    |(imported, errors)| Message::MediaImportFinished { imported, errors },
+                )
+            }
+            Message::MediaImportFinished { imported, errors } => {
+                if !imported.is_empty() {
+                    self.sidebar_view = SidebarView::Media;
+                    self.notify(
+                        ToastLevel::Success,
+                        &tw(
+                            self.ui_locale,
+                            "media.toast.imported",
+                            &[("count", &imported.len().to_string())],
+                        ),
+                    );
+                }
+                if !errors.is_empty() {
+                    self.notify(
+                        ToastLevel::Error,
+                        &tw(
+                            self.ui_locale,
+                            "media.toast.importFailed",
+                            &[("error", &errors.join("; "))],
+                        ),
+                    );
+                }
+                self.refresh_sidebar_media()
+            }
+            Message::MediaReplacementPicked { media_id, path } => {
+                let (Some(path), Some(data_dir)) = (path, self.data_dir.as_ref()) else {
+                    return Task::none();
+                };
+                let db_path = self.db_path.clone();
+                let data_dir = data_dir.clone();
+                let result_media_id = media_id.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                            engine::media::replace_media_file(
+                                db.conn(),
+                                &data_dir,
+                                &media_id,
+                                &path,
+                            )
+                            .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    move |result| Message::MediaReplacementFinished {
+                        media_id: result_media_id.clone(),
+                        result,
+                    },
+                )
+            }
+            Message::MediaReplacementFinished { media_id, result } => {
+                match result {
+                    Ok(Some(media)) => {
+                        if let Some(state) = self.media_editors.get_mut(&media_id) {
+                            state.size = media.size;
+                            state.width = media.width;
+                            state.height = media.height;
+                            state.updated_at = media.updated_at;
+                        }
+                        self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "media.toast.replaced"),
+                        );
+                    }
+                    Ok(None) => self.notify(
+                        ToastLevel::Info,
+                        &t(self.ui_locale, "media.toast.unchanged"),
+                    ),
+                    Err(error) => self.notify(
+                        ToastLevel::Error,
+                        &tw(
+                            self.ui_locale,
+                            "media.toast.replaceFailed",
+                            &[("error", &error)],
+                        ),
+                    ),
+                }
+                self.refresh_sidebar_media()
             }
             Message::MainWindowLoaded(window_id) => {
                 self.main_window_id = window_id;
@@ -1280,14 +1514,135 @@ impl BdsApp {
             }
 
             // ── macOS lifecycle ──
-            Message::FileOpenRequested(_path) => {
-                // File open handling deferred to later milestones
-                Task::none()
+            Message::FileOpenRequested(path) => {
+                let folder = if path.is_dir() {
+                    Some(path)
+                } else if path.file_name().is_some_and(|name| name == "project.json")
+                    && path.parent().is_some_and(|parent| parent.ends_with("meta"))
+                {
+                    path.parent().and_then(Path::parent).map(PathBuf::from)
+                } else {
+                    None
+                };
+                folder.map_or_else(Task::none, |path| {
+                    Task::done(Message::ProjectFolderPicked(Some(path)))
+                })
             }
             Message::UrlOpenRequested(url) => {
-                let _ = open::that(url);
-                Task::none()
+                let candidate = match engine::blogmark::parse_deep_link(&url) {
+                    Ok(candidate) => candidate,
+                    Err(error) => {
+                        self.notify(
+                            ToastLevel::Error,
+                            &tw(
+                                self.ui_locale,
+                                "blogmark.invalid",
+                                &[("error", &error.to_string())],
+                            ),
+                        );
+                        return Task::none();
+                    }
+                };
+                let target = if let Some(project_id) = candidate.project_id.as_deref() {
+                    let Some(project) = self
+                        .projects
+                        .iter()
+                        .find(|project| project.id == project_id)
+                        .cloned()
+                    else {
+                        self.notify(
+                            ToastLevel::Error,
+                            &t(self.ui_locale, "blogmark.unknownProject"),
+                        );
+                        return Task::none();
+                    };
+                    project
+                } else if let Some(project) = self.active_project.clone() {
+                    project
+                } else {
+                    self.notify(
+                        ToastLevel::Warning,
+                        &t(self.ui_locale, "blogmark.noProject"),
+                    );
+                    return Task::none();
+                };
+                let Some(data_dir) = target.data_path.as_ref().map(PathBuf::from) else {
+                    self.notify(ToastLevel::Error, &t(self.ui_locale, "blogmark.noProject"));
+                    return Task::none();
+                };
+                if self.active_project.as_ref().map(|project| &project.id) != Some(&target.id) {
+                    if let Some(db) = self.db.as_ref()
+                        && let Err(error) =
+                            engine::project::set_active_project(db.conn(), &target.id)
+                    {
+                        self.notify(ToastLevel::Error, &error.to_string());
+                        return Task::none();
+                    }
+                    self.active_project = Some(target.clone());
+                    self.data_dir = Some(data_dir.clone());
+                    self.preview_session = None;
+                    self.hide_embedded_preview();
+                    if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
+                        let main_language = meta.main_language.unwrap_or_else(|| "en".into());
+                        self.content_language = main_language.clone();
+                        self.blog_languages = meta.blog_languages;
+                        if !self.blog_languages.contains(&main_language) {
+                            self.blog_languages.insert(0, main_language);
+                        }
+                    }
+                    self.sync_menu_state();
+                }
+                let db_path = self.db_path.clone();
+                let project_id = target.id;
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                            engine::blogmark::receive_deep_link(
+                                db.conn(),
+                                &data_dir,
+                                &project_id,
+                                &url,
+                            )
+                            .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+                    },
+                    Message::BlogmarkImported,
+                )
             }
+            Message::BlogmarkImported(result) => match result {
+                Ok(result) => {
+                    for message in result.toasts {
+                        self.notify(ToastLevel::Info, &message);
+                    }
+                    for error in result.transform_errors {
+                        self.add_output(&error);
+                    }
+                    let tab = Tab {
+                        id: result.post.id.clone(),
+                        tab_type: TabType::Post,
+                        title: result.post.title.clone(),
+                        is_transient: false,
+                        is_dirty: false,
+                    };
+                    let index = tabs::open_tab(&mut self.tabs, tab);
+                    self.active_tab = self.tabs.get(index).map(|tab| tab.id.clone());
+                    if let Some(tab) = self.tabs.get(index).cloned() {
+                        self.load_editor_for_tab(&tab);
+                    }
+                    self.notify(ToastLevel::Success, &t(self.ui_locale, "blogmark.imported"));
+                    self.refresh_counts()
+                }
+                Err(error) => {
+                    self.notify(
+                        ToastLevel::Error,
+                        &tw(self.ui_locale, "blogmark.failed", &[("error", &error)]),
+                    );
+                    Task::none()
+                }
+            },
 
             // ── Panel ──
             Message::SetPanelTab(tab) => {
@@ -1373,39 +1728,28 @@ impl BdsApp {
                 )
             }
             Message::ValidateTranslations => {
-                let locale = self.ui_locale;
                 self.open_singleton_tab(
                     TabType::TranslationValidation,
                     "tabBar.translationValidation",
                 );
-                self.spawn_engine_task(
-                    "engine.validateTranslationsStarted",
-                    move |db_path, project_id, data_dir, tm, tid| {
-                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let meta = engine::meta::read_project_json(&data_dir)
-                            .map_err(|e| e.to_string())?;
-                        let main_lang = meta.main_language.as_deref().unwrap_or("en");
-                        let blog_langs = meta.blog_languages.clone();
-                        let tm2 = Arc::clone(&tm);
-                        let on_item: engine::validate_translations::ItemProgressFn =
-                            Box::new(move |current, total, name| {
-                                let pct = if total > 0 {
-                                    current as f32 / total as f32
-                                } else {
-                                    1.0
-                                };
-                                let msg = tw(
-                                    locale,
-                                    "engine.checkingItem",
-                                    &[
-                                        ("current", &current.to_string()),
-                                        ("total", &total.to_string()),
-                                        ("name", name),
-                                    ],
-                                );
-                                tm2.report_progress(tid, Some(pct), Some(msg));
-                            });
-                        let report =
+                let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+                    return Task::none();
+                };
+                self.translation_validation_state.is_running = true;
+                self.translation_validation_state.error_message = None;
+                let db_path = self.db_path.clone();
+                let project_id = project.id.clone();
+                let data_dir = data_dir.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                            let meta = engine::meta::read_project_json(&data_dir)
+                                .map_err(|e| e.to_string())?;
+                            let main_lang = meta.main_language.as_deref().unwrap_or("en");
+                            let blog_langs = meta.blog_languages.clone();
+                            let on_item: engine::validate_translations::ItemProgressFn =
+                                Box::new(move |_current, _total, _name| {});
                             engine::validate_translations::validate_translations_with_progress(
                                 db.conn(),
                                 &data_dir,
@@ -1414,14 +1758,24 @@ impl BdsApp {
                                 main_lang,
                                 Some(on_item),
                             )
-                            .map_err(|e| e.to_string())?;
-                        Ok(format!(
-                            "db_issues={}, fs_issues={}",
-                            report.db_issues.len(),
-                            report.fs_issues.len()
-                        ))
+                            .map_err(|e| e.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
                     },
+                    Message::TranslationValidationLoaded,
                 )
+            }
+            Message::TranslationValidationLoaded(result) => {
+                self.translation_validation_state.is_running = false;
+                match result {
+                    Ok(report) => {
+                        self.translation_validation_state.report = Some(report);
+                        self.translation_validation_state.error_message = None;
+                    }
+                    Err(error) => self.translation_validation_state.error_message = Some(error),
+                }
+                Task::none()
             }
             Message::ValidateMedia => {
                 let locale = self.ui_locale;
@@ -1516,13 +1870,36 @@ impl BdsApp {
                             Some(0.85),
                             Some(t(locale, "engine.writingGeneratedFiles")),
                         );
-                        let report = engine::generation::generate_starter_site(
+                        let progress_start = 0.70_f32;
+                        let progress_span = 0.28_f32;
+                        let task_manager = Arc::clone(&tm);
+                        let report = engine::generation::generate_starter_site_with_progress(
                             db.conn(),
                             &output_dir,
                             &project_id,
                             &metadata,
                             &sources,
                             &main_language,
+                            move |current, total, path| {
+                                let fraction = if total == 0 {
+                                    1.0
+                                } else {
+                                    current as f32 / total as f32
+                                };
+                                task_manager.report_progress(
+                                    tid,
+                                    Some(progress_start + fraction * progress_span),
+                                    Some(tw(
+                                        locale,
+                                        "engine.generatedPage",
+                                        &[
+                                            ("url", path),
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                        ],
+                                    )),
+                                );
+                            },
                         )
                         .map_err(|e| e.to_string())?;
                         tm.report_progress(
@@ -1541,7 +1918,72 @@ impl BdsApp {
             }
             Message::RunMetadataDiff => {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
+                self.start_metadata_diff()
+            }
+            Message::MetadataDiffLoaded(result) => {
+                self.metadata_diff_state.is_running = false;
+                match result {
+                    Ok(report) => {
+                        self.metadata_diff_state.report = Some(report);
+                        self.metadata_diff_state.error_message = None;
+                    }
+                    Err(error) => self.metadata_diff_state.error_message = Some(error),
+                }
                 Task::none()
+            }
+            Message::RepairMetadataDiffItem { index, direction } => {
+                let Some(item) = self
+                    .metadata_diff_state
+                    .report
+                    .as_ref()
+                    .and_then(|report| report.diffs.get(index))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                let (Some(project), Some(data_dir)) =
+                    (self.active_project.as_ref(), self.data_dir.as_ref())
+                else {
+                    return Task::none();
+                };
+                self.metadata_diff_state.is_repairing = true;
+                let db_path = self.db_path.clone();
+                let project_id = project.id.clone();
+                let data_dir = data_dir.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                            engine::metadata_diff::repair_metadata_diff_item(
+                                db.conn(),
+                                &data_dir,
+                                &project_id,
+                                direction,
+                                &item,
+                            )
+                            .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    Message::MetadataDiffItemRepaired,
+                )
+            }
+            Message::MetadataDiffItemRepaired(result) => {
+                self.metadata_diff_state.is_repairing = false;
+                match result {
+                    Ok(()) => {
+                        self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "metadataDiff.repaired"),
+                        );
+                        self.start_metadata_diff()
+                    }
+                    Err(error) => {
+                        self.notify(ToastLevel::Error, &error);
+                        Task::none()
+                    }
+                }
             }
             Message::RunSiteValidation => self.start_site_validation(),
             Message::ApplySiteValidation => self.apply_site_validation(),
@@ -1847,6 +2289,60 @@ impl BdsApp {
                         self.merge_tags(&sources, &target)
                     }
                 }
+            }
+            Message::FindQueryChanged(value) => {
+                if let Some(modal::ModalState::FindReplace { query, .. }) =
+                    self.active_modal.as_mut()
+                {
+                    *query = value;
+                }
+                Task::none()
+            }
+            Message::ReplaceQueryChanged(value) => {
+                if let Some(modal::ModalState::FindReplace { replacement, .. }) =
+                    self.active_modal.as_mut()
+                {
+                    *replacement = value;
+                }
+                Task::none()
+            }
+            Message::FindNext => {
+                let query = match &self.active_modal {
+                    Some(modal::ModalState::FindReplace { query, .. }) => query.clone(),
+                    _ => return Task::none(),
+                };
+                if !self.find_next_in_active_editor(&query) && !query.is_empty() {
+                    self.notify(ToastLevel::Info, &t(self.ui_locale, "find.noMatches"));
+                }
+                Task::none()
+            }
+            Message::ReplaceCurrent => {
+                let (query, replacement) = match &self.active_modal {
+                    Some(modal::ModalState::FindReplace {
+                        query, replacement, ..
+                    }) => (query.clone(), replacement.clone()),
+                    _ => return Task::none(),
+                };
+                self.replace_current_in_active_editor(&query, &replacement);
+                Task::none()
+            }
+            Message::ReplaceAll => {
+                let (query, replacement) = match &self.active_modal {
+                    Some(modal::ModalState::FindReplace {
+                        query, replacement, ..
+                    }) => (query.clone(), replacement.clone()),
+                    _ => return Task::none(),
+                };
+                let count = self.replace_all_in_active_editor(&query, &replacement);
+                self.notify(
+                    ToastLevel::Info,
+                    &tw(
+                        self.ui_locale,
+                        "find.replacedCount",
+                        &[("count", &count.to_string())],
+                    ),
+                );
+                Task::none()
             }
             Message::ToggleAiSuggestionField(index, accepted) => {
                 if let Some(modal::ModalState::AISuggestions { fields, .. }) =
@@ -2290,6 +2786,7 @@ impl BdsApp {
                         post_id: String,
                     },
                     Save(String),
+                    Replace(String),
                     Delete {
                         tab_id: String,
                         name: String,
@@ -2383,6 +2880,9 @@ impl BdsApp {
                         MediaEditorMsg::Save => {
                             deferred = DeferredMediaAction::Save(tab_id.clone());
                         }
+                        MediaEditorMsg::ReplaceFile => {
+                            deferred = DeferredMediaAction::Replace(tab_id.clone());
+                        }
                         MediaEditorMsg::Delete => {
                             deferred = DeferredMediaAction::Delete {
                                 tab_id: tab_id.clone(),
@@ -2442,6 +2942,13 @@ impl BdsApp {
                         self.unlink_media_from_post(&media_id, &post_id)
                     }
                     DeferredMediaAction::Save(tab_id) => self.save_media_editor(&tab_id),
+                    DeferredMediaAction::Replace(media_id) => {
+                        crate::platform::dialog::pick_media_replacement(
+                            media_id,
+                            t(self.ui_locale, "dialog.replaceMedia"),
+                            t(self.ui_locale, "dialog.imageFilter"),
+                        )
+                    }
                     DeferredMediaAction::Delete { tab_id, name } => {
                         Task::done(Message::ShowModal(modal::ModalState::ConfirmDelete {
                             entity_name: name,
@@ -2504,6 +3011,7 @@ impl BdsApp {
                 Task::none()
             }
             Message::ScriptEditor(msg) => {
+                let mut run_request = None;
                 if let Some(tab_id) = self.active_tab.clone()
                     && let Some(state) = self.script_editors.get_mut(&tab_id)
                 {
@@ -2550,10 +3058,11 @@ impl BdsApp {
                             }
                         }
                         ScriptEditorMsg::Run => {
-                            self.notify(
-                                ToastLevel::Info,
-                                &t(self.ui_locale, "editor.scriptRunNotYet"),
-                            );
+                            run_request = Some((
+                                state.content.clone(),
+                                state.entrypoint.clone(),
+                                state.kind.clone(),
+                            ));
                         }
                         ScriptEditorMsg::Delete => {
                             let name = state.title.clone();
@@ -2571,6 +3080,56 @@ impl BdsApp {
                     {
                         tab.is_dirty = st.is_dirty;
                     }
+                }
+                if let Some((source, entrypoint, kind)) = run_request {
+                    return self.spawn_engine_task(
+                        "engine.runScript",
+                        move |_db_path, _project_id, _data_dir, task_manager, task_id| {
+                            let execution_kind = match kind {
+                                bds_core::model::ScriptKind::Macro => {
+                                    bds_core::scripting::ExecutionKind::Macro
+                                }
+                                bds_core::model::ScriptKind::Utility => {
+                                    bds_core::scripting::ExecutionKind::Utility
+                                }
+                                bds_core::model::ScriptKind::Transform => {
+                                    bds_core::scripting::ExecutionKind::Transform
+                                }
+                            };
+                            let result = bds_core::scripting::execute(
+                                &source,
+                                &entrypoint,
+                                &serde_json::json!({}),
+                                execution_kind,
+                                &bds_core::scripting::ExecutionControl::default(),
+                            )?;
+                            for progress in &result.progress {
+                                let percent = progress.total.and_then(|total| {
+                                    (total > 0.0).then_some((progress.current / total) as f32)
+                                });
+                                task_manager.report_progress(
+                                    task_id,
+                                    percent,
+                                    progress.message.clone(),
+                                );
+                            }
+                            let mut lines = result.output;
+                            lines.extend(
+                                result
+                                    .toasts
+                                    .into_iter()
+                                    .map(|message| format!("toast: {message}")),
+                            );
+                            if result.value != serde_json::Value::Null {
+                                lines.push(result.value.to_string());
+                            }
+                            Ok(if lines.is_empty() {
+                                "completed".to_string()
+                            } else {
+                                lines.join("\n")
+                            })
+                        },
+                    );
                 }
                 Task::none()
             }
@@ -2731,6 +3290,8 @@ impl BdsApp {
             self.settings_state.as_ref(),
             self.dashboard_state.as_ref(),
             &self.site_validation_state,
+            &self.metadata_diff_state,
+            &self.translation_validation_state,
         )
     }
 
@@ -2777,7 +3338,15 @@ impl BdsApp {
                 t(self.ui_locale, "dialog.importMedia"),
                 t(self.ui_locale, "dialog.imageFilter"),
             ),
-            MenuAction::Save => Task::none(), // Disabled in M2
+            MenuAction::Save => match self.active_tab_type() {
+                Some(TabType::Post) => Task::done(Message::PostEditor(PostEditorMsg::Save)),
+                Some(TabType::Media) => Task::done(Message::MediaEditor(MediaEditorMsg::Save)),
+                Some(TabType::Templates) => {
+                    Task::done(Message::TemplateEditor(TemplateEditorMsg::Save))
+                }
+                Some(TabType::Scripts) => Task::done(Message::ScriptEditor(ScriptEditorMsg::Save)),
+                _ => Task::none(),
+            },
             MenuAction::OpenInBrowser => self.preview_active_post(),
             MenuAction::OpenDataFolder => {
                 if let Some(ref dir) = self.data_dir {
@@ -2786,8 +3355,22 @@ impl BdsApp {
                 Task::none()
             }
             // Edit
-            MenuAction::Find => Task::none(),
-            MenuAction::Replace => Task::none(),
+            MenuAction::Find => {
+                self.active_modal = Some(modal::ModalState::FindReplace {
+                    query: String::new(),
+                    replacement: String::new(),
+                    show_replace: false,
+                });
+                Task::none()
+            }
+            MenuAction::Replace => {
+                self.active_modal = Some(modal::ModalState::FindReplace {
+                    query: String::new(),
+                    replacement: String::new(),
+                    show_replace: true,
+                });
+                Task::none()
+            }
             MenuAction::EditPreferences => {
                 self.open_singleton_tab(TabType::Settings, "common.settings");
                 Task::none()
@@ -2798,7 +3381,10 @@ impl BdsApp {
             MenuAction::ToggleSidebar => Task::done(Message::ToggleSidebar),
             MenuAction::TogglePanel => Task::done(Message::TogglePanel),
             // Blog
-            MenuAction::PublishSelected => Task::none(), // Disabled in M2
+            MenuAction::PublishSelected => match self.active_tab_type() {
+                Some(TabType::Post) => Task::done(Message::PostEditor(PostEditorMsg::Publish)),
+                _ => Task::none(),
+            },
             MenuAction::PreviewPost => self.preview_active_post(),
             MenuAction::EditMenu => {
                 self.open_singleton_tab(TabType::MenuEditor, "tabBar.menuEditor");
@@ -2810,18 +3396,43 @@ impl BdsApp {
             MenuAction::RegenerateCalendar => Task::done(Message::RegenerateCalendar),
             MenuAction::ValidateTranslations => Task::done(Message::ValidateTranslations),
             MenuAction::FillMissingTranslations => {
-                if self.offline_mode {
-                    self.notify(
-                        ToastLevel::Warning,
-                        &t(self.ui_locale, "engine.fillMissingTranslationsOffline"),
-                    );
-                } else {
-                    self.notify(
-                        ToastLevel::Warning,
-                        &t(self.ui_locale, "engine.fillMissingTranslationsNoAi"),
-                    );
-                }
-                Task::none()
+                let offline_mode = self.offline_mode;
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.fillMissingTranslationsStarted",
+                    move |db_path, project_id, data_dir, task_manager, task_id| {
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        let meta = engine::meta::read_project_json(&data_dir)
+                            .map_err(|error| error.to_string())?;
+                        let main_language = meta.main_language.as_deref().unwrap_or("en");
+                        let task_manager_for_progress = Arc::clone(&task_manager);
+                        let report = engine::auto_translation::fill_missing_translations(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            main_language,
+                            &meta.blog_languages,
+                            offline_mode,
+                            move |progress, _message| {
+                                task_manager_for_progress.report_progress(
+                                    task_id,
+                                    Some(progress),
+                                    Some(t(locale, "engine.translatingContent")),
+                                );
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(tw(
+                            locale,
+                            "engine.fillMissingTranslationsComplete",
+                            &[
+                                ("posts", &report.translated_posts.to_string()),
+                                ("media", &report.translated_media.to_string()),
+                                ("failed", &report.failed_count.to_string()),
+                            ],
+                        ))
+                    },
+                )
             }
             MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
             MenuAction::ValidateSite => {
@@ -2834,6 +3445,7 @@ impl BdsApp {
                         ToastLevel::Warning,
                         &t(self.ui_locale, "engine.uploadOffline"),
                     );
+                    return Task::none();
                 } else if let Some(data_dir) = &self.data_dir {
                     let pub_prefs = engine::meta::read_publishing_json(data_dir).ok();
                     let has_creds = pub_prefs
@@ -2848,11 +3460,45 @@ impl BdsApp {
                             ToastLevel::Warning,
                             &t(self.ui_locale, "engine.uploadMissingCredentials"),
                         );
-                    } else {
-                        self.notify(ToastLevel::Info, &t(self.ui_locale, "engine.uploadStarted"));
+                        return Task::none();
                     }
                 }
-                Task::none()
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.uploadStarted",
+                    move |db_path, _project_id, data_dir, task_manager, task_id| {
+                        let preferences = engine::meta::read_publishing_json(&data_dir)
+                            .map_err(|error| error.to_string())?;
+                        let cache_dir = db_path.parent().map(PathBuf::from).ok_or_else(|| {
+                            "private application directory unavailable".to_string()
+                        })?;
+                        let job = engine::publishing::upload_site(
+                            &data_dir,
+                            &cache_dir,
+                            &preferences,
+                            |current, total, kind| {
+                                let target = match kind {
+                                    engine::publishing::UploadTargetKind::Html => "html",
+                                    engine::publishing::UploadTargetKind::Thumbnails => {
+                                        "thumbnails"
+                                    }
+                                    engine::publishing::UploadTargetKind::Media => "media",
+                                };
+                                task_manager.report_progress(
+                                    task_id,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.uploadingTarget",
+                                        &[("target", target)],
+                                    )),
+                                );
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(format!("{} targets uploaded", job.completed_targets.len()))
+                    },
+                )
             }
             // Help
             MenuAction::About => {
@@ -3145,6 +3791,33 @@ impl BdsApp {
                     .map_err(|error| error.to_string())
             },
             Message::SiteValidationLoaded,
+        )
+    }
+
+    fn start_metadata_diff(&mut self) -> Task<Message> {
+        let (Some(project), Some(data_dir)) =
+            (self.active_project.as_ref(), self.data_dir.as_ref())
+        else {
+            self.metadata_diff_state.error_message =
+                Some(t(self.ui_locale, "engine.generateSiteNoProject"));
+            return Task::none();
+        };
+        self.metadata_diff_state.is_running = true;
+        self.metadata_diff_state.error_message = None;
+        let db_path = self.db_path.clone();
+        let project_id = project.id.clone();
+        let data_dir = data_dir.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    engine::metadata_diff::compute_metadata_diff(db.conn(), &data_dir, &project_id)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            Message::MetadataDiffLoaded,
         )
     }
 
@@ -3907,6 +4580,106 @@ impl BdsApp {
         }
     }
 
+    fn active_tab_type(&self) -> Option<TabType> {
+        self.active_tab.as_ref().and_then(|id| {
+            self.tabs
+                .iter()
+                .find(|tab| tab.id == *id)
+                .map(|tab| tab.tab_type.clone())
+        })
+    }
+
+    fn find_next_in_active_editor(&mut self, query: &str) -> bool {
+        let Some(id) = self.active_tab.clone() else {
+            return false;
+        };
+        match self.active_tab_type() {
+            Some(TabType::Post) => self
+                .post_editors
+                .get_mut(&id)
+                .is_some_and(|state| state.editor_buffer.borrow_mut().find_next(query)),
+            Some(TabType::Templates) => self
+                .template_editors
+                .get_mut(&id)
+                .is_some_and(|state| state.editor_buffer.borrow_mut().find_next(query)),
+            Some(TabType::Scripts) => self
+                .script_editors
+                .get_mut(&id)
+                .is_some_and(|state| state.editor_buffer.borrow_mut().find_next(query)),
+            _ => false,
+        }
+    }
+
+    fn replace_current_in_active_editor(&mut self, query: &str, replacement: &str) -> bool {
+        let Some(id) = self.active_tab.clone() else {
+            return false;
+        };
+        let replaced = match self.active_tab_type() {
+            Some(TabType::Post) => self.post_editors.get_mut(&id).is_some_and(|state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let replaced = replace_current_in_buffer(&mut buffer, query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= replaced;
+                replaced
+            }),
+            Some(TabType::Templates) => self.template_editors.get_mut(&id).is_some_and(|state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let replaced = replace_current_in_buffer(&mut buffer, query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= replaced;
+                replaced
+            }),
+            Some(TabType::Scripts) => self.script_editors.get_mut(&id).is_some_and(|state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let replaced = replace_current_in_buffer(&mut buffer, query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= replaced;
+                replaced
+            }),
+            _ => false,
+        };
+        if replaced && let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.is_dirty = true;
+        }
+        replaced
+    }
+
+    fn replace_all_in_active_editor(&mut self, query: &str, replacement: &str) -> usize {
+        let Some(id) = self.active_tab.clone() else {
+            return 0;
+        };
+        let count = match self.active_tab_type() {
+            Some(TabType::Post) => self.post_editors.get_mut(&id).map_or(0, |state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let count = buffer.replace_all(query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= count > 0;
+                count
+            }),
+            Some(TabType::Templates) => self.template_editors.get_mut(&id).map_or(0, |state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let count = buffer.replace_all(query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= count > 0;
+                count
+            }),
+            Some(TabType::Scripts) => self.script_editors.get_mut(&id).map_or(0, |state| {
+                let mut buffer = state.editor_buffer.borrow_mut();
+                let count = buffer.replace_all(query, replacement);
+                state.content = buffer.text();
+                state.is_dirty |= count > 0;
+                count
+            }),
+            _ => 0,
+        };
+        if count > 0
+            && let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id)
+        {
+            tab.is_dirty = true;
+        }
+        count
+    }
+
     /// Synchronise menu enabled/disabled state with current app state.
     ///
     /// Called after state-changing operations (project switch, tab open/close,
@@ -3918,27 +4691,36 @@ impl BdsApp {
             .active_tab
             .as_ref()
             .and_then(|id| self.tabs.iter().find(|t| t.id == *id).map(|t| &t.tab_type));
-        let has_tab = active_tab_type.is_some() && interactions_enabled;
         let has_post_tab = active_tab_type == Some(&TabType::Post);
+        let has_savable_tab = matches!(
+            active_tab_type,
+            Some(TabType::Post | TabType::Media | TabType::Templates | TabType::Scripts)
+        );
 
         // File group: need active project for most, need open tab for Save
         self.menu_registry
             .set_enabled(MenuAction::NewPost, has_project);
         self.menu_registry
             .set_enabled(MenuAction::ImportMedia, has_project);
-        self.menu_registry.set_enabled(MenuAction::Save, has_tab);
+        self.menu_registry
+            .set_enabled(MenuAction::Save, has_savable_tab && interactions_enabled);
         self.menu_registry
             .set_enabled(MenuAction::OpenInBrowser, has_project && has_post_tab);
         self.menu_registry
             .set_enabled(MenuAction::OpenDataFolder, has_project);
 
-        // Edit: Find/Replace need an open tab
-        self.menu_registry.set_enabled(MenuAction::Find, has_tab);
-        self.menu_registry.set_enabled(MenuAction::Replace, has_tab);
+        let has_text_editor = matches!(
+            active_tab_type,
+            Some(TabType::Post | TabType::Templates | TabType::Scripts)
+        );
+        self.menu_registry
+            .set_enabled(MenuAction::Find, has_text_editor && interactions_enabled);
+        self.menu_registry
+            .set_enabled(MenuAction::Replace, has_text_editor && interactions_enabled);
 
         // Blog group: need active project
         self.menu_registry
-            .set_enabled(MenuAction::PublishSelected, has_project && has_tab);
+            .set_enabled(MenuAction::PublishSelected, has_project && has_post_tab);
         self.menu_registry
             .set_enabled(MenuAction::PreviewPost, has_project && has_post_tab);
         self.menu_registry
@@ -3953,10 +4735,8 @@ impl BdsApp {
             .set_enabled(MenuAction::RegenerateCalendar, has_project);
         self.menu_registry
             .set_enabled(MenuAction::ValidateTranslations, has_project);
-        self.menu_registry.set_enabled(
-            MenuAction::FillMissingTranslations,
-            has_project && !self.offline_mode,
-        );
+        self.menu_registry
+            .set_enabled(MenuAction::FillMissingTranslations, has_project);
         self.menu_registry
             .set_enabled(MenuAction::GenerateSitemap, has_project);
         self.menu_registry
@@ -3969,7 +4749,10 @@ impl BdsApp {
 
     fn save_post_editor(&mut self, post_id: &str) -> Task<Message> {
         match self.persist_post_editor_state(post_id) {
-            Ok(()) => self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved")),
+            Ok(()) => {
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                return self.schedule_post_auto_translation(post_id);
+            }
             Err(e) => self.notify_operation_failed("common.save", e),
         }
         Task::none()
@@ -3999,12 +4782,47 @@ impl BdsApp {
                     }
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.published"));
+                return self.schedule_post_auto_translation(post_id);
             }
             Err(e) => {
                 self.notify_operation_failed("editor.publish", e);
             }
         }
         Task::none()
+    }
+
+    fn schedule_post_auto_translation(&mut self, post_id: &str) -> Task<Message> {
+        let Some(db) = self.db.as_ref() else {
+            return Task::none();
+        };
+        if engine::ai::active_endpoint(db.conn(), self.offline_mode).is_err() {
+            return Task::none();
+        }
+        let post_id = post_id.to_string();
+        let offline_mode = self.offline_mode;
+        let locale = self.ui_locale;
+        self.spawn_engine_task(
+            "engine.autoTranslationStarted",
+            move |db_path, _project_id, data_dir, _task_manager, _task_id| {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let meta = engine::meta::read_project_json(&data_dir)
+                    .map_err(|error| error.to_string())?;
+                let report = engine::auto_translation::translate_missing_for_post(
+                    db.conn(),
+                    &data_dir,
+                    &post_id,
+                    meta.main_language.as_deref().unwrap_or("en"),
+                    &meta.blog_languages,
+                    offline_mode,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(tw(
+                    locale,
+                    "engine.autoTranslationComplete",
+                    &[("count", &report.translated_posts.to_string())],
+                ))
+            },
+        )
     }
 
     fn insert_link_modal(&mut self, post_id: &str) -> Task<Message> {
@@ -5010,6 +5828,7 @@ impl BdsApp {
                     .unwrap_or_else(|| self.content_language.clone());
                 state.default_author = meta.default_author.unwrap_or_default();
                 state.max_posts_per_page = meta.max_posts_per_page.to_string();
+                state.image_import_concurrency = meta.image_import_concurrency.to_string();
                 state.blogmark_category = meta.blogmark_category.unwrap_or_default();
                 state.blog_languages = if meta.blog_languages.is_empty() {
                     vec![state.main_language.clone()]
@@ -5429,6 +6248,9 @@ impl BdsApp {
             SettingsMsg::MaxPostsPerPageChanged(s) => {
                 state.max_posts_per_page = s;
             }
+            SettingsMsg::ImageImportConcurrencyChanged(s) => {
+                state.image_import_concurrency = s;
+            }
             SettingsMsg::BlogmarkCategoryChanged(s) => {
                 state.blogmark_category = s;
             }
@@ -5446,6 +6268,17 @@ impl BdsApp {
                             return Task::none();
                         }
                     };
+                    let image_import_concurrency =
+                        match state.image_import_concurrency.trim().parse::<i32>() {
+                            Ok(value) => value.clamp(1, 8),
+                            Err(_) => {
+                                self.notify(
+                                    ToastLevel::Error,
+                                    &t(self.ui_locale, "settings.imageImportConcurrencyInvalid"),
+                                );
+                                return Task::none();
+                            }
+                        };
                     let mut meta = engine::meta::read_project_json(data_dir).unwrap_or(
                         bds_core::model::metadata::ProjectMetadata {
                             name: state.project_name.clone(),
@@ -5454,6 +6287,7 @@ impl BdsApp {
                             main_language: None,
                             default_author: None,
                             max_posts_per_page: 50,
+                            image_import_concurrency: 4,
                             blogmark_category: None,
                             pico_theme: None,
                             semantic_similarity_enabled: false,
@@ -5485,6 +6319,7 @@ impl BdsApp {
                         Some(state.default_author.clone())
                     };
                     meta.max_posts_per_page = max_posts;
+                    meta.image_import_concurrency = image_import_concurrency;
                     meta.blogmark_category = if state.blogmark_category.trim().is_empty() {
                         None
                     } else {
@@ -6229,6 +7064,7 @@ impl BdsApp {
                         state.public_url = meta.public_url.unwrap_or_default();
                         state.default_author = meta.default_author.unwrap_or_default();
                         state.max_posts_per_page = meta.max_posts_per_page.to_string();
+                        state.image_import_concurrency = meta.image_import_concurrency.to_string();
                     }
                     if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
                         state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();

@@ -44,6 +44,8 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 diesel = { version = "2.3.11", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = "2.3.2"
 libsqlite3-sys = { version = "0.37.0", features = ["bundled"] }
+mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
+url = "2.5"
 
 # UI framework
 iced = { version = "0.13", features = ["wgpu", "advanced", "image", "svg", "tokio"] }

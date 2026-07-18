@@ -52,7 +52,44 @@ fn render_macro(invocation: &str, context: &MacroRenderContext) -> Option<String
         "vimeo" => Some(render_vimeo(&args)),
         "photo_archive" => Some(render_photo_archive(&args, context)),
         "tag_cloud" => Some(render_tag_cloud(&args, context)),
-        _ => None,
+        _ => render_script_macro(name, &args, context),
+    }
+}
+
+fn render_script_macro(
+    name: &str,
+    args: &HashMap<String, JsonValue>,
+    context: &MacroRenderContext,
+) -> Option<String> {
+    let definition = context.roots.get("macro_scripts")?.get(name)?;
+    let source = definition.get("source")?.as_str()?;
+    let entrypoint = definition
+        .get("entrypoint")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("render");
+    let env = serde_json::json!({
+        "isPreview": context.roots.get("is_preview").and_then(JsonValue::as_bool).unwrap_or(false),
+        "mainLanguage": context.roots.get("main_language").and_then(JsonValue::as_str).unwrap_or("en"),
+        "language": context.roots.get("language").and_then(JsonValue::as_str).unwrap_or("en"),
+        "languagePrefix": context.roots.get("language_prefix").and_then(JsonValue::as_str).unwrap_or(""),
+        "hook": "markdown",
+        "source": { "kind": if context.post_id.is_some() { "post" } else { "page" } },
+        "translations": context.roots.get("translations").cloned().unwrap_or(JsonValue::Array(Vec::new())),
+    });
+    let params = serde_json::to_value(args).ok()?;
+    match crate::scripting::execute_many(
+        source,
+        entrypoint,
+        &[params, env],
+        crate::scripting::ExecutionKind::Macro,
+        &crate::scripting::ExecutionControl::default(),
+    ) {
+        Ok(result) => Some(match result.value {
+            JsonValue::Null => String::new(),
+            JsonValue::String(value) => value,
+            value => value.to_string(),
+        }),
+        Err(_) => Some(String::new()),
     }
 }
 
@@ -498,5 +535,28 @@ mod tests {
             expand_builtin_macros(markdown, &MacroRenderContext::default()),
             markdown
         );
+    }
+
+    #[test]
+    fn script_macro_receives_named_params_and_environment() {
+        let mut roots = serde_json::Map::new();
+        roots.insert(
+            "macro_scripts".into(),
+            serde_json::json!({
+                "notice": {
+                    "source": "function render(params, env) return '<aside>' .. params.text .. ':' .. env.language .. '</aside>' end",
+                    "entrypoint": "render"
+                }
+            }),
+        );
+        roots.insert("language".into(), serde_json::Value::String("de".into()));
+        let rendered = expand_builtin_macros(
+            "[[notice text=Hallo]]",
+            &MacroRenderContext {
+                roots,
+                post_id: Some("post-1".into()),
+            },
+        );
+        assert_eq!(rendered, "<aside>Hallo:de</aside>");
     }
 }
