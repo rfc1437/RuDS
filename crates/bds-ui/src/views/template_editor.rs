@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -107,10 +107,7 @@ pub enum TemplateEditorMsg {
 }
 
 /// Render the template editor view.
-pub fn view<'a>(
-    state: &'a TemplateEditorState,
-    locale: UiLocale,
-) -> Element<'a, Message> {
+pub fn view<'a>(state: &'a TemplateEditorState, locale: UiLocale) -> Element<'a, Message> {
     let header = inputs::toolbar(
         vec![
             text(state.title.clone()).size(18).into(),
@@ -147,7 +144,9 @@ pub fn view<'a>(
         &state.slug,
         |s| Message::TemplateEditor(TemplateEditorMsg::SlugChanged(s)),
     );
-    let meta_row1 = row![title_input, slug_input].spacing(16).width(Length::Fill);
+    let meta_row1 = row![title_input, slug_input]
+        .spacing(16)
+        .width(Length::Fill);
 
     // Metadata row 2: kind (select), enabled (checkbox)
     let kind_options = vec![
@@ -163,25 +162,27 @@ pub fn view<'a>(
         selected_kind.as_ref(),
         |k| Message::TemplateEditor(TemplateEditorMsg::KindChanged(k)),
     );
-    let enabled_check = inputs::labeled_checkbox(
-        &t(locale, "editor.enabled"),
-        state.enabled,
-        |b| Message::TemplateEditor(TemplateEditorMsg::EnabledChanged(b)),
-    );
-    let meta_row2 = row![kind_select, enabled_check].spacing(16).width(Length::Fill);
+    let enabled_check =
+        inputs::labeled_checkbox(&t(locale, "editor.enabled"), state.enabled, |b| {
+            Message::TemplateEditor(TemplateEditorMsg::EnabledChanged(b))
+        });
+    let meta_row2 = row![kind_select, enabled_check]
+        .spacing(16)
+        .width(Length::Fill);
 
     // Content editor (CodeEditor with Liquid/HTML syntax highlighting)
     let content_section: Element<'a, Message> = column![
         inputs::section_header(&t(locale, "editor.content")),
         Element::from(
-            CodeEditor::new(
-                &state.editor_buffer,
-                highlighter(),
-                "liquid",
-            )
-            .on_change(|msg| match msg {
-                EditorMessage::ContentChanged(s) => Message::TemplateEditor(TemplateEditorMsg::ContentChanged(s)),
-                EditorMessage::SaveRequested => Message::TemplateEditor(TemplateEditorMsg::Save),
+            CodeEditor::new(&state.editor_buffer, highlighter(), "liquid",).on_change(|msg| {
+                match msg {
+                    EditorMessage::ContentChanged(s) => {
+                        Message::TemplateEditor(TemplateEditorMsg::ContentChanged(s))
+                    }
+                    EditorMessage::SaveRequested => {
+                        Message::TemplateEditor(TemplateEditorMsg::Save)
+                    }
+                }
             })
         ),
     ]
@@ -213,29 +214,20 @@ pub fn view<'a>(
 
     // Top pane: header + metadata (scrollable for overflow)
     let top_pane = scrollable(
-        column![
-            header,
-            meta_row1,
-            meta_row2,
-        ]
-        .spacing(12)
-        .padding(16)
-        .width(Length::Fill)
+        column![header, meta_row1, meta_row2,]
+            .spacing(12)
+            .padding(16)
+            .width(Length::Fill),
     )
     .height(Length::Shrink);
 
     // Full layout: top pane (shrink), content (fill), validation + footer (shrink)
-    column![
-        top_pane,
-        content_section,
-        validation,
-        footer,
-    ]
-    .spacing(4)
-    .padding([0, 16])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    column![top_pane, content_section, validation, footer,]
+        .spacing(4)
+        .padding([0, 16])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn status_badge<'a>(status: &TemplateStatus) -> Element<'a, Message> {

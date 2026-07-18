@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use iced::Subscription;
-use muda::accelerator::{Accelerator, Code, Modifiers, CMD_OR_CTRL};
-use muda::{Menu, MenuEvent, MenuItem, MenuId, PredefinedMenuItem, Submenu};
+use muda::accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers};
+use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
-use bds_core::i18n::{translate, UiLocale};
 use crate::app::Message;
+use bds_core::i18n::{UiLocale, translate};
 
 /// Every custom menu item that the application handles.
 ///
@@ -210,12 +210,24 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
 
     // -- File --
     let file_menu = Submenu::new(translate(locale, "menu.group.file"), true);
-    let _ = file_menu.append(&item(&mut reg, MenuAction::NewPost, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyN))));
-    let _ = file_menu.append(&item(&mut reg, MenuAction::ImportMedia, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyI))));
-    let _ = file_menu.append(&item(&mut reg, MenuAction::Save, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyS))));
+    let _ = file_menu.append(&item(
+        &mut reg,
+        MenuAction::NewPost,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyN)),
+    ));
+    let _ = file_menu.append(&item(
+        &mut reg,
+        MenuAction::ImportMedia,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyI)),
+    ));
+    let _ = file_menu.append(&item(
+        &mut reg,
+        MenuAction::Save,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyS)),
+    ));
     let _ = file_menu.append(&PredefinedMenuItem::separator());
     let _ = file_menu.append(&item(&mut reg, MenuAction::OpenInBrowser, locale, None));
     let _ = file_menu.append(&item(&mut reg, MenuAction::OpenDataFolder, locale, None));
@@ -232,34 +244,76 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = edit_menu.append(&PredefinedMenuItem::paste(None));
     let _ = edit_menu.append(&PredefinedMenuItem::select_all(None));
     let _ = edit_menu.append(&PredefinedMenuItem::separator());
-    let _ = edit_menu.append(&item(&mut reg, MenuAction::Find, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyF))));
-    let _ = edit_menu.append(&item(&mut reg, MenuAction::Replace, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyH))));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Find,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyF)),
+    ));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Replace,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyH)),
+    ));
     let _ = edit_menu.append(&PredefinedMenuItem::separator());
-    let _ = edit_menu.append(&item(&mut reg, MenuAction::EditPreferences, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Comma))));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::EditPreferences,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Comma)),
+    ));
 
     // -- View --
     let view_menu = Submenu::new(translate(locale, "menu.group.view"), true);
-    let _ = view_menu.append(&item(&mut reg, MenuAction::ViewPosts, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Digit1))));
-    let _ = view_menu.append(&item(&mut reg, MenuAction::ViewMedia, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Digit2))));
+    let _ = view_menu.append(&item(
+        &mut reg,
+        MenuAction::ViewPosts,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Digit1)),
+    ));
+    let _ = view_menu.append(&item(
+        &mut reg,
+        MenuAction::ViewMedia,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::Digit2)),
+    ));
     let _ = view_menu.append(&PredefinedMenuItem::separator());
-    let _ = view_menu.append(&item(&mut reg, MenuAction::ToggleSidebar, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyB))));
-    let _ = view_menu.append(&item(&mut reg, MenuAction::TogglePanel, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyJ))));
+    let _ = view_menu.append(&item(
+        &mut reg,
+        MenuAction::ToggleSidebar,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyB)),
+    ));
+    let _ = view_menu.append(&item(
+        &mut reg,
+        MenuAction::TogglePanel,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyJ)),
+    ));
     let _ = view_menu.append(&PredefinedMenuItem::separator());
     let _ = view_menu.append(&PredefinedMenuItem::fullscreen(None));
 
     // -- Blog --
     let blog_menu = Submenu::new(translate(locale, "menu.group.blog"), true);
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::PublishSelected, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyP))));
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::PreviewPost, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyV))));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::PublishSelected,
+        locale,
+        Some(Accelerator::new(
+            Some(CMD_OR_CTRL | Modifiers::SHIFT),
+            Code::KeyP,
+        )),
+    ));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::PreviewPost,
+        locale,
+        Some(Accelerator::new(
+            Some(CMD_OR_CTRL | Modifiers::SHIFT),
+            Code::KeyV,
+        )),
+    ));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
     let _ = blog_menu.append(&item(&mut reg, MenuAction::EditMenu, locale, None));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
@@ -267,16 +321,49 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = blog_menu.append(&item(&mut reg, MenuAction::ReindexText, locale, None));
     let _ = blog_menu.append(&item(&mut reg, MenuAction::MetadataDiff, locale, None));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::RegenerateCalendar, locale, None));
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::ValidateTranslations, locale, None));
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::FillMissingTranslations, locale, None));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::RegenerateCalendar,
+        locale,
+        None,
+    ));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::ValidateTranslations,
+        locale,
+        None,
+    ));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::FillMissingTranslations,
+        locale,
+        None,
+    ));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::GenerateSitemap, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyR))));
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::ValidateSite, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyL))));
-    let _ = blog_menu.append(&item(&mut reg, MenuAction::UploadSite, locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyU))));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::GenerateSitemap,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyR)),
+    ));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::ValidateSite,
+        locale,
+        Some(Accelerator::new(
+            Some(CMD_OR_CTRL | Modifiers::SHIFT),
+            Code::KeyL,
+        )),
+    ));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::UploadSite,
+        locale,
+        Some(Accelerator::new(
+            Some(CMD_OR_CTRL | Modifiers::SHIFT),
+            Code::KeyU,
+        )),
+    ));
 
     // -- Help --
     let help_menu = Submenu::new(translate(locale, "menu.group.help"), true);
@@ -303,7 +390,7 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
 /// init task or first update), not during `build_menu_bar`.
 #[cfg(target_os = "macos")]
 pub fn init_menu_for_nsapp(menu: &Menu) {
-    let _ = menu.init_for_nsapp();
+    menu.init_for_nsapp();
 }
 
 /// Re-translate every registered menu item for a new locale.

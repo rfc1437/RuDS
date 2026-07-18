@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, scrollable, text, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, column, container, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -64,6 +64,10 @@ fn close_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are independent panel state slices"
+)]
 pub fn view(
     panel_tab: PanelTab,
     task_snapshots: &[TaskSnapshot],
@@ -79,39 +83,68 @@ pub fn view(
     // Tab header — per layout.allium: tasks, output, post_links (only when
     // active editor tab is a post), git_log (only when active tab is post or
     // media).
-    let tasks_btn = button(text(t(locale, "common.tasks")).size(12).shaping(Shaping::Advanced))
-        .on_press(Message::SetPanelTab(PanelTab::Tasks))
-        .padding([4, 8])
-        .style(if panel_tab == PanelTab::Tasks { tab_active } else { tab_inactive });
+    let tasks_btn = button(
+        text(t(locale, "common.tasks"))
+            .size(12)
+            .shaping(Shaping::Advanced),
+    )
+    .on_press(Message::SetPanelTab(PanelTab::Tasks))
+    .padding([4, 8])
+    .style(if panel_tab == PanelTab::Tasks {
+        tab_active
+    } else {
+        tab_inactive
+    });
 
-    let output_btn = button(text(t(locale, "panel.output")).size(12).shaping(Shaping::Advanced))
-        .on_press(Message::SetPanelTab(PanelTab::Output))
-        .padding([4, 8])
-        .style(if panel_tab == PanelTab::Output { tab_active } else { tab_inactive });
+    let output_btn = button(
+        text(t(locale, "panel.output"))
+            .size(12)
+            .shaping(Shaping::Advanced),
+    )
+    .on_press(Message::SetPanelTab(PanelTab::Output))
+    .padding([4, 8])
+    .style(if panel_tab == PanelTab::Output {
+        tab_active
+    } else {
+        tab_inactive
+    });
 
     let close_btn = button(text("\u{2715}").size(12).shaping(Shaping::Advanced))
         .on_press(Message::TogglePanel)
         .padding([4, 6])
         .style(close_btn_style);
 
-    let mut tab_row: Vec<Element<'static, Message>> = vec![
-        tasks_btn.into(),
-        output_btn.into(),
-    ];
+    let mut tab_row: Vec<Element<'static, Message>> = vec![tasks_btn.into(), output_btn.into()];
 
     if active_tab_is_post {
-        let post_links_btn = button(text(t(locale, "panel.postLinks")).size(12).shaping(Shaping::Advanced))
-            .on_press(Message::SetPanelTab(PanelTab::PostLinks))
-            .padding([4, 8])
-            .style(if panel_tab == PanelTab::PostLinks { tab_active } else { tab_inactive });
+        let post_links_btn = button(
+            text(t(locale, "panel.postLinks"))
+                .size(12)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::SetPanelTab(PanelTab::PostLinks))
+        .padding([4, 8])
+        .style(if panel_tab == PanelTab::PostLinks {
+            tab_active
+        } else {
+            tab_inactive
+        });
         tab_row.push(post_links_btn.into());
     }
 
     if active_tab_is_post_or_media {
-        let git_log_btn = button(text(t(locale, "panel.gitLog")).size(12).shaping(Shaping::Advanced))
-            .on_press(Message::SetPanelTab(PanelTab::GitLog))
-            .padding([4, 8])
-            .style(if panel_tab == PanelTab::GitLog { tab_active } else { tab_inactive });
+        let git_log_btn = button(
+            text(t(locale, "panel.gitLog"))
+                .size(12)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::SetPanelTab(PanelTab::GitLog))
+        .padding([4, 8])
+        .style(if panel_tab == PanelTab::GitLog {
+            tab_active
+        } else {
+            tab_inactive
+        });
         tab_row.push(git_log_btn.into());
     }
 
@@ -127,9 +160,14 @@ pub fn view(
     let content: Element<'static, Message> = match panel_tab {
         PanelTab::Tasks => {
             if task_snapshots.is_empty() {
-                container(text(t(locale, "tasks.noActive")).size(12).shaping(Shaping::Advanced).color(muted))
-                    .padding(8)
-                    .into()
+                container(
+                    text(t(locale, "tasks.noActive"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(muted),
+                )
+                .padding(8)
+                .into()
             } else {
                 // Per layout.allium: last 10 tasks, newest first
                 let items: Vec<Element<'static, Message>> = task_snapshots
@@ -137,21 +175,24 @@ pub fn view(
                     .rev()
                     .take(10)
                     .map(|snap| {
-                        let progress_str = snap.progress
+                        let progress_str = snap
+                            .progress
                             .map(|p| format!(" ({:.0}%)", p * 100.0))
                             .unwrap_or_default();
-                        let phase_str = snap.message
+                        let phase_str = snap
+                            .message
                             .as_deref()
                             .map(|m| format!(" \u{2014} {m}"))
                             .unwrap_or_default();
                         let status_text = format!(
                             "{} \u{2014} {}{}{}",
-                            snap.label,
-                            snap.status,
-                            progress_str,
-                            phase_str,
+                            snap.label, snap.status, progress_str, phase_str,
                         );
-                        text(status_text).size(11).shaping(Shaping::Advanced).color(Color::from_rgb(0.70, 0.70, 0.75)).into()
+                        text(status_text)
+                            .size(11)
+                            .shaping(Shaping::Advanced)
+                            .color(Color::from_rgb(0.70, 0.70, 0.75))
+                            .into()
                     })
                     .collect();
                 scrollable(
@@ -164,9 +205,14 @@ pub fn view(
         }
         PanelTab::Output => {
             if output_entries.is_empty() {
-                container(text(t(locale, "panel.noOutput")).size(12).shaping(Shaping::Advanced).color(muted))
-                    .padding(8)
-                    .into()
+                container(
+                    text(t(locale, "panel.noOutput"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(muted),
+                )
+                .padding(8)
+                .into()
             } else {
                 let items: Vec<Element<'static, Message>> = output_entries
                     .iter()
@@ -188,9 +234,14 @@ pub fn view(
         }
         PanelTab::PostLinks => {
             if post_outlinks.is_empty() && post_backlinks.is_empty() {
-                container(text(t(locale, "panel.postLinksPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
-                    .padding(8)
-                    .into()
+                container(
+                    text(t(locale, "panel.postLinksPlaceholder"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(muted),
+                )
+                .padding(8)
+                .into()
             } else {
                 let mut items: Vec<Element<'static, Message>> = vec![
                     text(t(locale, "editor.outlinks"))
@@ -201,7 +252,12 @@ pub fn view(
                 ];
 
                 if post_outlinks.is_empty() {
-                    items.push(text(t(locale, "panel.postLinksPlaceholder")).size(11).color(muted).into());
+                    items.push(
+                        text(t(locale, "panel.postLinksPlaceholder"))
+                            .size(11)
+                            .color(muted)
+                            .into(),
+                    );
                 } else {
                     for link in post_outlinks {
                         items.push(post_link_button(locale, link));
@@ -218,7 +274,12 @@ pub fn view(
                 );
 
                 if post_backlinks.is_empty() {
-                    items.push(text(t(locale, "panel.postLinksPlaceholder")).size(11).color(muted).into());
+                    items.push(
+                        text(t(locale, "panel.postLinksPlaceholder"))
+                            .size(11)
+                            .color(muted)
+                            .into(),
+                    );
                 } else {
                     for link in post_backlinks {
                         items.push(post_link_button(locale, link));
@@ -235,19 +296,22 @@ pub fn view(
         }
         PanelTab::GitLog => {
             // Git Log content populated in extension bucket A (git integration)
-            container(text(t(locale, "panel.gitLogPlaceholder")).size(12).shaping(Shaping::Advanced).color(muted))
-                .padding(8)
-                .into()
+            container(
+                text(t(locale, "panel.gitLogPlaceholder"))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted),
+            )
+            .padding(8)
+            .into()
         }
     };
 
-    container(
-        column![tab_header, content].spacing(0),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(200.0))
-    .style(panel_style)
-    .into()
+    container(column![tab_header, content].spacing(0))
+        .width(Length::Fill)
+        .height(Length::Fixed(200.0))
+        .style(panel_style)
+        .into()
 }
 
 fn post_link_button(locale: UiLocale, link: &ResolvedPostLink) -> Element<'static, Message> {

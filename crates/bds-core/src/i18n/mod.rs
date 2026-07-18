@@ -133,10 +133,10 @@ pub fn translate(locale: UiLocale, key: &str) -> String {
     if let Some(val) = catalog_for(locale).get(key) {
         return val.clone();
     }
-    if locale != UiLocale::En {
-        if let Some(val) = CATALOG_EN.get(key) {
-            return val.clone();
-        }
+    if locale != UiLocale::En
+        && let Some(val) = CATALOG_EN.get(key)
+    {
+        return val.clone();
     }
     key.to_string()
 }
@@ -163,10 +163,10 @@ pub fn translate_render(language: &str, key: &str) -> String {
     if let Some(val) = catalog.get(key) {
         return val.clone();
     }
-    if !language.starts_with("en") {
-        if let Some(val) = RENDER_EN.get(key) {
-            return val.clone();
-        }
+    if !language.starts_with("en")
+        && let Some(val) = RENDER_EN.get(key)
+    {
+        return val.clone();
     }
     key.to_string()
 }
@@ -302,7 +302,10 @@ mod tests {
 
     #[test]
     fn translate_render_missing_key_returns_key() {
-        assert_eq!(translate_render("en", "render.nonexistent"), "render.nonexistent");
+        assert_eq!(
+            translate_render("en", "render.nonexistent"),
+            "render.nonexistent"
+        );
     }
 
     #[test]

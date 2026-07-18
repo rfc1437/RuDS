@@ -1,5 +1,5 @@
-use iced::widget::{button, container, row, text, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -110,6 +110,10 @@ pub fn dropdown_bg(_theme: &Theme) -> container::Style {
 // View
 // ---------------------------------------------------------------------------
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are independent status values"
+)]
 pub fn view(
     active_project_name: Option<&str>,
     post_count: usize,
@@ -132,12 +136,11 @@ pub fn view(
         .collect();
     let task_indicator: Element<'static, Message> = if !running.is_empty() {
         let first = &running[0];
-        let progress_str = first.progress
+        let progress_str = first
+            .progress
             .map(|p| format!(" {:.0}%", p * 100.0))
             .unwrap_or_default();
-        let phase_str = first.message
-            .as_deref()
-            .unwrap_or("");
+        let phase_str = first.message.as_deref().unwrap_or("");
         let extra = if running.len() > 1 {
             format!(" (+{})", running.len() - 1)
         } else {
@@ -148,7 +151,11 @@ pub fn view(
         } else {
             format!("{phase_str}{progress_str}{extra}")
         };
-        text(display).size(11).shaping(Shaping::Advanced).color(label_color).into()
+        text(display)
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(label_color)
+            .into()
     } else {
         Space::with_width(0).into()
     };
@@ -162,27 +169,41 @@ pub fn view(
     // Post status indicator dot (per layout.allium StatusBarRight.post_status)
     let post_status_el: Element<'static, Message> = if let Some(status) = active_post_status {
         let (dot, color) = match status {
-            "draft" => ("\u{25CB}", Color::from_rgb(0.60, 0.60, 0.65)),      // hollow circle
-            "published" => ("\u{25CF}", Color::from_rgb(0.30, 0.75, 0.40)),   // green filled
-            "archived" => ("\u{25A0}", Color::from_rgb(0.60, 0.60, 0.65)),    // square
+            "draft" => ("\u{25CB}", Color::from_rgb(0.60, 0.60, 0.65)), // hollow circle
+            "published" => ("\u{25CF}", Color::from_rgb(0.30, 0.75, 0.40)), // green filled
+            "archived" => ("\u{25A0}", Color::from_rgb(0.60, 0.60, 0.65)), // square
             _ => ("\u{25CF}", Color::from_rgb(0.60, 0.60, 0.65)),
         };
-        text(dot).size(11).shaping(Shaping::Advanced).color(color).into()
+        text(dot)
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(color)
+            .into()
     } else {
         Space::with_width(0).into()
     };
 
     // Post + media counts
-    let posts_label = tw(locale, "statusBar.posts", &[("count", &post_count.to_string())]);
-    let media_label = tw(locale, "statusBar.media", &[("count", &media_count.to_string())]);
+    let posts_label = tw(
+        locale,
+        "statusBar.posts",
+        &[("count", &post_count.to_string())],
+    );
+    let media_label = tw(
+        locale,
+        "statusBar.media",
+        &[("count", &media_count.to_string())],
+    );
 
     // Airplane mode toggle — ✈ icon
-    let airplane_btn = button(
-        text("\u{2708}").size(13).shaping(Shaping::Advanced),
-    )
+    let airplane_btn = button(text("\u{2708}").size(13).shaping(Shaping::Advanced))
         .on_press(Message::SetOfflineMode(!offline_mode))
         .padding([2, 4])
-        .style(if offline_mode { airplane_active } else { airplane_inactive });
+        .style(if offline_mode {
+            airplane_active
+        } else {
+            airplane_inactive
+        });
 
     // Language selector — current flag as trigger
     let trigger_flag = text(locale.flag_emoji())
@@ -196,24 +217,32 @@ pub fn view(
 
     let right = row![
         post_status_el,
-        text(posts_label).size(11).shaping(Shaping::Advanced).color(label_color),
-        text(media_label).size(11).shaping(Shaping::Advanced).color(label_color),
-        text(theme_badge.to_string()).size(11).shaping(Shaping::Advanced).color(label_color),
+        text(posts_label)
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(label_color),
+        text(media_label)
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(label_color),
+        text(theme_badge.to_string())
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(label_color),
         airplane_btn,
         locale_trigger,
-        text("bDS").size(11).shaping(Shaping::Advanced).color(Color::from_rgb(0.45, 0.45, 0.50)),
+        text("bDS")
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .color(Color::from_rgb(0.45, 0.45, 0.50)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
     container(
-        row![
-            left,
-            Space::with_width(Length::Fill),
-            right,
-        ]
-        .align_y(Alignment::Center)
-        .padding([0, 8]),
+        row![left, Space::with_width(Length::Fill), right,]
+            .align_y(Alignment::Center)
+            .padding([0, 8]),
     )
     .width(Length::Fill)
     .height(Length::Fixed(24.0))

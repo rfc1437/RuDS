@@ -4,11 +4,11 @@ use std::sync::Arc;
 use rusqlite::Connection;
 
 use crate::db::fts;
+use crate::engine::EngineResult;
 use crate::engine::media;
 use crate::engine::post;
 use crate::engine::script_rebuild;
 use crate::engine::template_rebuild;
-use crate::engine::EngineResult;
 
 /// Report from a full rebuild operation.
 #[derive(Debug, Default)]
@@ -68,7 +68,11 @@ pub fn rebuild_from_filesystem_with_progress(
     let post_item_cb: Option<post::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: post::ItemProgressFn = Box::new(move |current, total, name| {
-            let phase_pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+            let phase_pct = if total > 0 {
+                current as f32 / total as f32
+            } else {
+                1.0
+            };
             let global_pct = 0.01 + phase_pct * 0.34;
             let msg = format!("Posts: {current}/{total} \u{2014} {name}");
             cb(global_pct, &msg);
@@ -76,7 +80,10 @@ pub fn rebuild_from_filesystem_with_progress(
         f
     });
     let post_report = post::rebuild_posts_from_filesystem_with_progress(
-        conn, data_dir, project_id, post_item_cb,
+        conn,
+        data_dir,
+        project_id,
+        post_item_cb,
     )?;
     report.posts_created = post_report.posts_created;
     report.posts_updated = post_report.posts_updated;
@@ -89,7 +96,11 @@ pub fn rebuild_from_filesystem_with_progress(
     let media_item_cb: Option<media::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: media::ItemProgressFn = Box::new(move |current, total, name| {
-            let phase_pct = if total > 0 { current as f32 / total as f32 } else { 1.0 };
+            let phase_pct = if total > 0 {
+                current as f32 / total as f32
+            } else {
+                1.0
+            };
             let global_pct = 0.35 + phase_pct * 0.35;
             let msg = format!("Media: {current}/{total} \u{2014} {name}");
             cb(global_pct, &msg);
@@ -97,7 +108,10 @@ pub fn rebuild_from_filesystem_with_progress(
         f
     });
     let media_report = media::rebuild_media_from_filesystem_with_progress(
-        conn, data_dir, project_id, media_item_cb,
+        conn,
+        data_dir,
+        project_id,
+        media_item_cb,
     )?;
     report.media_created = media_report.media_created;
     report.media_updated = media_report.media_updated;
@@ -133,12 +147,12 @@ pub fn rebuild_from_filesystem_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::queries::media as qm;
     use crate::db::queries::post as qp;
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::queries::script as qs;
     use crate::db::queries::template as qtpl;
-    use crate::db::Database;
     use std::fs;
     use tempfile::TempDir;
 
@@ -276,11 +290,7 @@ updatedAt: 2024-01-15T12:00:00.000Z
 tags: []
 ---
 ";
-        fs::write(
-            media_dir.join("test-media-1.jpg.meta"),
-            sidecar_content,
-        )
-        .unwrap();
+        fs::write(media_dir.join("test-media-1.jpg.meta"), sidecar_content).unwrap();
 
         // Template
         let tpl_dir = dir.path().join("templates");

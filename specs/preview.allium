@@ -23,6 +23,7 @@ surface PreviewControlSurface {
     provides:
         StartPreviewRequested(project)
         StopPreviewRequested(server)
+        OpenPreviewInBrowserRequested(project)
 }
 
 surface PreviewHttpSurface {
@@ -46,6 +47,14 @@ rule StopPreview {
     when: StopPreviewRequested(server)
     -- Graceful shutdown with inflight request tracking
     ensures: server.is_running = false
+}
+
+rule OpenPreviewInBrowser {
+    when: OpenPreviewInBrowserRequested(project)
+    -- Starts or reuses the project's localhost preview server, then opens its
+    -- base URL in the external system browser. This is separate from the
+    -- post editor's internal preview pane (editor_post.allium EditorModes).
+    ensures: ExternalBrowserOpened(url: preview_base_url(project))
 }
 
 -- Route resolution

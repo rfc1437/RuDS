@@ -32,10 +32,34 @@ pub enum ThumbnailFit {
 /// Standard thumbnail sizes matching spec: small/medium/large are
 /// width-constrained aspect-preserving; AI is letterboxed on black.
 pub const THUMBNAIL_SIZES: &[ThumbnailSize] = &[
-    ThumbnailSize { name: "small", width: 150, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "medium", width: 400, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "large", width: 800, height: u32::MAX, format: ThumbnailFormat::Webp, fit: ThumbnailFit::Inside },
-    ThumbnailSize { name: "ai", width: 448, height: 448, format: ThumbnailFormat::Jpeg, fit: ThumbnailFit::Contain },
+    ThumbnailSize {
+        name: "small",
+        width: 150,
+        height: u32::MAX,
+        format: ThumbnailFormat::Webp,
+        fit: ThumbnailFit::Inside,
+    },
+    ThumbnailSize {
+        name: "medium",
+        width: 400,
+        height: u32::MAX,
+        format: ThumbnailFormat::Webp,
+        fit: ThumbnailFit::Inside,
+    },
+    ThumbnailSize {
+        name: "large",
+        width: 800,
+        height: u32::MAX,
+        format: ThumbnailFormat::Webp,
+        fit: ThumbnailFit::Inside,
+    },
+    ThumbnailSize {
+        name: "ai",
+        width: 448,
+        height: 448,
+        format: ThumbnailFormat::Jpeg,
+        fit: ThumbnailFit::Contain,
+    },
 ];
 
 /// Generate a single thumbnail from a source image file.
@@ -57,9 +81,7 @@ pub fn generate_thumbnail(
                 img.resize(size.width, size.height, FilterType::Lanczos3)
             }
         }
-        ThumbnailFit::Cover => {
-            img.resize_to_fill(size.width, size.height, FilterType::Lanczos3)
-        }
+        ThumbnailFit::Cover => img.resize_to_fill(size.width, size.height, FilterType::Lanczos3),
         ThumbnailFit::Contain => {
             // Resize to fit, then place on black background
             let resized = img.resize(size.width, size.height, FilterType::Lanczos3);
@@ -118,7 +140,11 @@ pub fn generate_all_thumbnails(
         let dest = thumbnails_dir
             .join(prefix)
             .join(format!("{media_id}-{}.{ext}", size.name));
-        let quality = if size.format == ThumbnailFormat::Jpeg { 85 } else { 80 };
+        let quality = if size.format == ThumbnailFormat::Jpeg {
+            85
+        } else {
+            80
+        };
         generate_thumbnail(source, &dest, size, quality)?;
         paths.push(dest.to_string_lossy().to_string());
     }
@@ -136,10 +162,10 @@ fn load_and_orient(path: &Path) -> Result<DynamicImage, String> {
     let mut img = reader.decode().map_err(|e| format!("decode image: {e}"))?;
 
     // Try to read EXIF orientation from JPEG files
-    if let Ok(data) = fs::read(path) {
-        if let Some(orientation) = read_exif_orientation(&data) {
-            img = apply_orientation(img, orientation);
-        }
+    if let Ok(data) = fs::read(path)
+        && let Some(orientation) = read_exif_orientation(&data)
+    {
+        img = apply_orientation(img, orientation);
     }
 
     Ok(img)
@@ -180,7 +206,9 @@ fn parse_tiff_orientation(data: &[u8], tiff_start: usize) -> Option<u16> {
     }
     let is_le = data[tiff_start] == b'I' && data[tiff_start + 1] == b'I';
     let read_u16 = |offset: usize| -> Option<u16> {
-        if offset + 2 > data.len() { return None; }
+        if offset + 2 > data.len() {
+            return None;
+        }
         if is_le {
             Some(u16::from_le_bytes([data[offset], data[offset + 1]]))
         } else {
@@ -188,11 +216,23 @@ fn parse_tiff_orientation(data: &[u8], tiff_start: usize) -> Option<u16> {
         }
     };
     let read_u32 = |offset: usize| -> Option<u32> {
-        if offset + 4 > data.len() { return None; }
+        if offset + 4 > data.len() {
+            return None;
+        }
         if is_le {
-            Some(u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]))
+            Some(u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]))
         } else {
-            Some(u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]))
+            Some(u32::from_be_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]))
         }
     };
 
@@ -202,7 +242,9 @@ fn parse_tiff_orientation(data: &[u8], tiff_start: usize) -> Option<u16> {
 
     for i in 0..entry_count {
         let entry_pos = ifd_pos + 2 + i * 12;
-        if entry_pos + 12 > data.len() { break; }
+        if entry_pos + 12 > data.len() {
+            break;
+        }
         let tag = read_u16(entry_pos)?;
         if tag == 0x0112 {
             // Orientation tag
@@ -214,14 +256,14 @@ fn parse_tiff_orientation(data: &[u8], tiff_start: usize) -> Option<u16> {
 
 fn apply_orientation(img: DynamicImage, orientation: u16) -> DynamicImage {
     match orientation {
-        1 => img,                                          // Normal
-        2 => img.fliph(),                                  // Mirrored horizontal
-        3 => img.rotate180(),                              // Rotated 180
-        4 => img.flipv(),                                  // Mirrored vertical
-        5 => img.rotate90().fliph(),                       // Mirrored horizontal + 270 CW
-        6 => img.rotate90(),                               // Rotated 90 CW
-        7 => img.rotate270().fliph(),                      // Mirrored horizontal + 90 CW
-        8 => img.rotate270(),                              // Rotated 270 CW
+        1 => img,                     // Normal
+        2 => img.fliph(),             // Mirrored horizontal
+        3 => img.rotate180(),         // Rotated 180
+        4 => img.flipv(),             // Mirrored vertical
+        5 => img.rotate90().fliph(),  // Mirrored horizontal + 270 CW
+        6 => img.rotate90(),          // Rotated 90 CW
+        7 => img.rotate270().fliph(), // Mirrored horizontal + 90 CW
+        8 => img.rotate270(),         // Rotated 270 CW
         _ => img,
     }
 }

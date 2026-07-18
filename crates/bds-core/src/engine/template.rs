@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::db::queries::template as qt;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Template, TemplateKind, TemplateStatus};
-use crate::util::frontmatter::{write_template_file, TemplateFrontmatter};
+use crate::util::frontmatter::{TemplateFrontmatter, write_template_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 /// Create a new draft template. Content stored in DB, no file written.
@@ -51,6 +51,10 @@ pub fn create_template(
 }
 
 /// Update a template's metadata and/or content. Bumps version.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "optional arguments represent independent template field changes"
+)]
 pub fn update_template(
     conn: &Connection,
     template_id: &str,
@@ -64,14 +68,13 @@ pub fn update_template(
     let mut tpl = qt::get_template_by_id(conn, template_id)?;
 
     // Slug uniqueness check
-    if let Some(new_slug) = slug {
-        if new_slug != tpl.slug {
-            if qt::get_template_by_slug(conn, project_id, new_slug).is_ok() {
-                return Err(EngineError::Conflict(format!(
-                    "template slug '{new_slug}' already exists"
-                )));
-            }
-        }
+    if let Some(new_slug) = slug
+        && new_slug != tpl.slug
+        && qt::get_template_by_slug(conn, project_id, new_slug).is_ok()
+    {
+        return Err(EngineError::Conflict(format!(
+            "template slug '{new_slug}' already exists"
+        )));
     }
 
     if let Some(t) = title {
@@ -149,10 +152,7 @@ pub fn publish_template(
         ));
     }
 
-    let body = tpl
-        .content
-        .clone()
-        .unwrap_or_default();
+    let body = tpl.content.clone().unwrap_or_default();
 
     // Validate before publishing
     validate_template(&body).map_err(EngineError::Validation)?;
@@ -210,9 +210,8 @@ pub fn unpublish_template(
         let abs_path = data_dir.join(&tpl.file_path);
         if abs_path.exists() {
             let file_content = fs::read_to_string(&abs_path)?;
-            let (_fm, body) =
-                crate::util::frontmatter::read_template_file(&file_content)
-                    .map_err(EngineError::Parse)?;
+            let (_fm, body) = crate::util::frontmatter::read_template_file(&file_content)
+                .map_err(EngineError::Parse)?;
             tpl.content = Some(body);
         }
     }
@@ -340,25 +339,29 @@ fn validate_liquid_blocks(content: &str) -> Result<(), String> {
             let start = i + 2;
             if let Some(end_offset) = content[start..].find("%}") {
                 let tag_content = content[start..start + end_offset].trim();
-                let tag_content = tag_content.trim_start_matches('-').trim_end_matches('-').trim();
-                let first_word = tag_content
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
+                let tag_content = tag_content
+                    .trim_start_matches('-')
+                    .trim_end_matches('-')
+                    .trim();
+                let first_word = tag_content.split_whitespace().next().unwrap_or("");
 
                 match first_word {
                     "if" => if_depth += 1,
                     "endif" => {
                         if_depth -= 1;
                         if if_depth < 0 {
-                            return Err("unexpected {% endif %} without matching {% if %}".to_string());
+                            return Err(
+                                "unexpected {% endif %} without matching {% if %}".to_string()
+                            );
                         }
                     }
                     "for" => for_depth += 1,
                     "endfor" => {
                         for_depth -= 1;
                         if for_depth < 0 {
-                            return Err("unexpected {% endfor %} without matching {% for %}".to_string());
+                            return Err(
+                                "unexpected {% endfor %} without matching {% for %}".to_string()
+                            );
                         }
                     }
                     _ => {}
@@ -416,8 +419,8 @@ fn null_template_slug_on_tags(conn: &Connection, slug: &str) -> EngineResult<()>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
@@ -431,7 +434,14 @@ mod tests {
     #[test]
     fn create_draft_template() {
         let (db, _dir) = setup();
-        let tpl = create_template(db.conn(), "p1", "My Template", TemplateKind::Post, "<p>hello</p>").unwrap();
+        let tpl = create_template(
+            db.conn(),
+            "p1",
+            "My Template",
+            TemplateKind::Post,
+            "<p>hello</p>",
+        )
+        .unwrap();
         assert_eq!(tpl.title, "My Template");
         assert_eq!(tpl.slug, "my-template");
         assert_eq!(tpl.kind, TemplateKind::Post);
@@ -456,9 +466,16 @@ mod tests {
         let (db, _dir) = setup();
         let tpl = create_template(db.conn(), "p1", "Tpl", TemplateKind::Post, "old").unwrap();
         let updated = update_template(
-            db.conn(), &tpl.id, "p1",
-            Some("New Title"), None, None, None, Some("new content"),
-        ).unwrap();
+            db.conn(),
+            &tpl.id,
+            "p1",
+            Some("New Title"),
+            None,
+            None,
+            None,
+            Some("new content"),
+        )
+        .unwrap();
         assert_eq!(updated.title, "New Title");
         assert_eq!(updated.content, Some("new content".to_string()));
         assert_eq!(updated.version, 2);
@@ -469,7 +486,16 @@ mod tests {
         let (db, _dir) = setup();
         create_template(db.conn(), "p1", "Alpha", TemplateKind::Post, "").unwrap();
         let t2 = create_template(db.conn(), "p1", "Beta", TemplateKind::Post, "").unwrap();
-        let result = update_template(db.conn(), &t2.id, "p1", None, Some("alpha"), None, None, None);
+        let result = update_template(
+            db.conn(),
+            &t2.id,
+            "p1",
+            None,
+            Some("alpha"),
+            None,
+            None,
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -485,7 +511,14 @@ mod tests {
     #[test]
     fn publish_and_unpublish_template() {
         let (db, dir) = setup();
-        let tpl = create_template(db.conn(), "p1", "Pub", TemplateKind::Post, "<div>body</div>").unwrap();
+        let tpl = create_template(
+            db.conn(),
+            "p1",
+            "Pub",
+            TemplateKind::Post,
+            "<div>body</div>",
+        )
+        .unwrap();
 
         // Publish
         let published = publish_template(db.conn(), dir.path(), &tpl.id).unwrap();

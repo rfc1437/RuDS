@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -118,10 +118,7 @@ pub enum ScriptEditorMsg {
 }
 
 /// Render the script editor view.
-pub fn view<'a>(
-    state: &'a ScriptEditorState,
-    locale: UiLocale,
-) -> Element<'a, Message> {
+pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, Message> {
     let header = inputs::toolbar(
         vec![
             text(state.title.clone()).size(18).into(),
@@ -162,7 +159,9 @@ pub fn view<'a>(
         &state.slug,
         |s| Message::ScriptEditor(ScriptEditorMsg::SlugChanged(s)),
     );
-    let meta_row1 = row![title_input, slug_input].spacing(16).width(Length::Fill);
+    let meta_row1 = row![title_input, slug_input]
+        .spacing(16)
+        .width(Length::Fill);
 
     // Metadata row 2: kind, entrypoint, enabled
     let kind_options = vec![
@@ -179,7 +178,10 @@ pub fn view<'a>(
     );
 
     let mut entrypoint_options = state.discovered_entrypoints.clone();
-    if !entrypoint_options.iter().any(|entrypoint| entrypoint == &state.entrypoint) {
+    if !entrypoint_options
+        .iter()
+        .any(|entrypoint| entrypoint == &state.entrypoint)
+    {
         entrypoint_options.push(state.entrypoint.clone());
     }
     let selected_entrypoint = entrypoint_options
@@ -192,28 +194,30 @@ pub fn view<'a>(
         |entrypoint| Message::ScriptEditor(ScriptEditorMsg::EntrypointChanged(entrypoint)),
     );
 
-    let enabled_check = inputs::labeled_checkbox(
-        &t(locale, "editor.enabled"),
-        state.enabled,
-        |b| Message::ScriptEditor(ScriptEditorMsg::EnabledChanged(b)),
-    );
+    let enabled_check =
+        inputs::labeled_checkbox(&t(locale, "editor.enabled"), state.enabled, |b| {
+            Message::ScriptEditor(ScriptEditorMsg::EnabledChanged(b))
+        });
     let meta_row2 = row![kind_select, entrypoint_input, enabled_check]
         .spacing(16)
         .width(Length::Fill);
 
     // Content editor (CodeEditor with syntax highlighting based on file extension)
-    let syntax_ext = if state.file_path.ends_with(".py") { "py" } else { "lua" };
+    let syntax_ext = if state.file_path.ends_with(".py") {
+        "py"
+    } else {
+        "lua"
+    };
     let content_section: Element<'a, Message> = column![
         inputs::section_header(&t(locale, "editor.content")),
         Element::from(
-            CodeEditor::new(
-                &state.editor_buffer,
-                highlighter(),
-                syntax_ext,
-            )
-            .on_change(|msg| match msg {
-                EditorMessage::ContentChanged(s) => Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s)),
-                EditorMessage::SaveRequested => Message::ScriptEditor(ScriptEditorMsg::Save),
+            CodeEditor::new(&state.editor_buffer, highlighter(), syntax_ext,).on_change(|msg| {
+                match msg {
+                    EditorMessage::ContentChanged(s) => {
+                        Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s))
+                    }
+                    EditorMessage::SaveRequested => Message::ScriptEditor(ScriptEditorMsg::Save),
+                }
             })
         ),
     ]
@@ -245,29 +249,20 @@ pub fn view<'a>(
 
     // Top pane: header + metadata (scrollable for overflow)
     let top_pane = scrollable(
-        column![
-            header,
-            meta_row1,
-            meta_row2,
-        ]
-        .spacing(12)
-        .padding(16)
-        .width(Length::Fill)
+        column![header, meta_row1, meta_row2,]
+            .spacing(12)
+            .padding(16)
+            .width(Length::Fill),
     )
     .height(Length::Shrink);
 
     // Full layout: top pane (shrink), content (fill), validation + footer (shrink)
-    column![
-        top_pane,
-        content_section,
-        validation,
-        footer,
-    ]
-    .spacing(4)
-    .padding([0, 16])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    column![top_pane, content_section, validation, footer,]
+        .spacing(4)
+        .padding([0, 16])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn status_badge<'a>(status: &ScriptStatus) -> Element<'a, Message> {

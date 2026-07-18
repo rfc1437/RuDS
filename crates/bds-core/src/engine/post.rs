@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -30,6 +30,10 @@ pub struct RebuildReport {
 }
 
 /// Create a new draft post.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are the user-supplied post fields"
+)]
 pub fn create_post(
     conn: &Connection,
     _data_dir: &Path,
@@ -90,6 +94,10 @@ pub fn create_post(
 }
 
 /// Update a post's fields.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "optional arguments represent independent post field changes"
+)]
 pub fn update_post(
     conn: &Connection,
     _data_dir: &Path,
@@ -115,14 +123,13 @@ pub fn update_post(
     }
 
     // Slug uniqueness check
-    if let Some(new_slug) = slug {
-        if new_slug != post.slug {
-            if qp::get_post_by_project_and_slug(conn, &post.project_id, new_slug).is_ok() {
-                return Err(EngineError::Conflict(format!(
-                    "slug '{new_slug}' already exists in this project"
-                )));
-            }
-        }
+    if let Some(new_slug) = slug
+        && new_slug != post.slug
+        && qp::get_post_by_project_and_slug(conn, &post.project_id, new_slug).is_ok()
+    {
+        return Err(EngineError::Conflict(format!(
+            "slug '{new_slug}' already exists in this project"
+        )));
     }
 
     if let Some(t) = title {
@@ -161,12 +168,11 @@ pub fn update_post(
         // Reload content from filesystem if content field is NULL (published state)
         if post.content.is_none() && !post.file_path.is_empty() {
             let abs_path = _data_dir.join(&post.file_path);
-            if abs_path.exists() {
-                if let Ok(file_content) = fs::read_to_string(&abs_path) {
-                    if let Ok((_fm, body)) = read_post_file(&file_content) {
-                        post.content = Some(body);
-                    }
-                }
+            if abs_path.exists()
+                && let Ok(file_content) = fs::read_to_string(&abs_path)
+                && let Ok((_fm, body)) = read_post_file(&file_content)
+            {
+                post.content = Some(body);
             }
         }
         post.status = PostStatus::Draft;
@@ -207,7 +213,7 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
         c.clone()
     } else if abs_path.exists() {
         let file_content = fs::read_to_string(&abs_path)?;
-        let (_fm, body) = read_post_file(&file_content).map_err(|e| EngineError::Parse(e))?;
+        let (_fm, body) = read_post_file(&file_content).map_err(EngineError::Parse)?;
         body
     } else {
         String::new()
@@ -310,13 +316,12 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     if post.status == PostStatus::Published && post.content.is_none() && !post.file_path.is_empty()
     {
         let abs_path = data_dir.join(&post.file_path);
-        if abs_path.exists() {
-            if let Ok(file_content) = fs::read_to_string(&abs_path) {
-                if let Ok((_fm, body)) = read_post_file(&file_content) {
-                    post.content = Some(body);
-                    qp::update_post(conn, &post)?;
-                }
-            }
+        if abs_path.exists()
+            && let Ok(file_content) = fs::read_to_string(&abs_path)
+            && let Ok((_fm, body)) = read_post_file(&file_content)
+        {
+            post.content = Some(body);
+            qp::update_post(conn, &post)?;
         }
     }
     let now = now_unix_ms();
@@ -325,11 +330,7 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
 }
 
 /// Discard unpublished draft changes and restore the published version.
-pub fn discard_post_draft(
-    conn: &Connection,
-    data_dir: &Path,
-    post_id: &str,
-) -> EngineResult<Post> {
+pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
     let mut post = qp::get_post_by_id(conn, post_id)?;
     if post.published_at.is_none() {
         return Err(EngineError::Conflict(
@@ -337,49 +338,43 @@ pub fn discard_post_draft(
         ));
     }
 
-    let (title, slug, excerpt, author, language, template_slug, do_not_translate, tags, categories, checksum) =
-        if !post.file_path.is_empty() {
-            let abs_path = data_dir.join(&post.file_path);
-            if abs_path.exists() {
-                let raw = fs::read_to_string(&abs_path)?;
-                let (fm, _body) = read_post_file(&raw).map_err(EngineError::Parse)?;
-                (
-                    fm.title,
-                    fm.slug,
-                    fm.excerpt,
-                    fm.author,
-                    fm.language,
-                    fm.template_slug,
-                    fm.do_not_translate,
-                    fm.tags,
-                    fm.categories,
-                    Some(content_hash(raw.as_bytes())),
-                )
-            } else {
-                (
-                    post.published_title.clone().unwrap_or_else(|| post.title.clone()),
-                    post.slug.clone(),
-                    post.published_excerpt.clone().or_else(|| post.excerpt.clone()),
-                    post.author.clone(),
-                    post.language.clone(),
-                    post.template_slug.clone(),
-                    post.do_not_translate,
-                    post.published_tags
-                        .as_deref()
-                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                        .unwrap_or_else(|| post.tags.clone()),
-                    post.published_categories
-                        .as_deref()
-                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                        .unwrap_or_else(|| post.categories.clone()),
-                    post.checksum.clone(),
-                )
-            }
+    let (
+        title,
+        slug,
+        excerpt,
+        author,
+        language,
+        template_slug,
+        do_not_translate,
+        tags,
+        categories,
+        checksum,
+    ) = if !post.file_path.is_empty() {
+        let abs_path = data_dir.join(&post.file_path);
+        if abs_path.exists() {
+            let raw = fs::read_to_string(&abs_path)?;
+            let (fm, _body) = read_post_file(&raw).map_err(EngineError::Parse)?;
+            (
+                fm.title,
+                fm.slug,
+                fm.excerpt,
+                fm.author,
+                fm.language,
+                fm.template_slug,
+                fm.do_not_translate,
+                fm.tags,
+                fm.categories,
+                Some(content_hash(raw.as_bytes())),
+            )
         } else {
             (
-                post.published_title.clone().unwrap_or_else(|| post.title.clone()),
+                post.published_title
+                    .clone()
+                    .unwrap_or_else(|| post.title.clone()),
                 post.slug.clone(),
-                post.published_excerpt.clone().or_else(|| post.excerpt.clone()),
+                post.published_excerpt
+                    .clone()
+                    .or_else(|| post.excerpt.clone()),
                 post.author.clone(),
                 post.language.clone(),
                 post.template_slug.clone(),
@@ -394,7 +389,31 @@ pub fn discard_post_draft(
                     .unwrap_or_else(|| post.categories.clone()),
                 post.checksum.clone(),
             )
-        };
+        }
+    } else {
+        (
+            post.published_title
+                .clone()
+                .unwrap_or_else(|| post.title.clone()),
+            post.slug.clone(),
+            post.published_excerpt
+                .clone()
+                .or_else(|| post.excerpt.clone()),
+            post.author.clone(),
+            post.language.clone(),
+            post.template_slug.clone(),
+            post.do_not_translate,
+            post.published_tags
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_else(|| post.tags.clone()),
+            post.published_categories
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_else(|| post.categories.clone()),
+            post.checksum.clone(),
+        )
+    };
 
     post.title = title;
     post.slug = slug;
@@ -415,11 +434,7 @@ pub fn discard_post_draft(
 }
 
 /// Create a new draft post by duplicating an existing post.
-pub fn duplicate_post(
-    conn: &Connection,
-    data_dir: &Path,
-    post_id: &str,
-) -> EngineResult<Post> {
+pub fn duplicate_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
     let source = qp::get_post_by_id(conn, post_id)?;
     let body = if let Some(ref content) = source.content {
         content.clone()
@@ -529,7 +544,7 @@ pub fn canonical_url(created_at_ms: i64, slug: &str) -> String {
 /// Upsert a translation for a post.
 pub fn upsert_translation(
     conn: &Connection,
-    _data_dir: &Path,
+    data_dir: &Path,
     post_id: &str,
     language: &str,
     title: &str,
@@ -548,7 +563,20 @@ pub fn upsert_translation(
     let existing = qt::get_post_translation_by_post_and_language(conn, post_id, language);
     match existing {
         Ok(mut t) => {
-            // Update existing
+            let published_body = if t.status == PostStatus::Published && !t.file_path.is_empty() {
+                let raw = fs::read_to_string(data_dir.join(&t.file_path))?;
+                let (_, body) = read_translation_file(&raw).map_err(EngineError::Parse)?;
+                Some(body)
+            } else {
+                t.content.clone()
+            };
+            let affects_published_content = t.title != title
+                || t.excerpt.as_deref() != excerpt
+                || content.is_some_and(|value| published_body.as_deref() != Some(value));
+            if t.status == PostStatus::Published && affects_published_content {
+                t.status = PostStatus::Draft;
+                t.content = published_body;
+            }
             t.title = title.to_string();
             t.excerpt = excerpt.map(|s| s.to_string());
             if let Some(c) = content {
@@ -834,8 +862,7 @@ fn publish_translation(
         c.clone()
     } else if abs_path.exists() {
         let file_content = fs::read_to_string(&abs_path)?;
-        let (_fm, body) =
-            read_translation_file(&file_content).map_err(|e| EngineError::Parse(e))?;
+        let (_fm, body) = read_translation_file(&file_content).map_err(EngineError::Parse)?;
         body
     } else {
         String::new()
@@ -912,7 +939,7 @@ fn rebuild_canonical_post(
     path: &Path,
 ) -> EngineResult<bool> {
     let content = fs::read_to_string(path)?;
-    let (fm, body) = read_post_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, body) = read_post_file(&content).map_err(EngineError::Parse)?;
 
     let rel_path = path
         .strip_prefix(data_dir)
@@ -1002,7 +1029,7 @@ fn rebuild_translation(
     path: &Path,
 ) -> EngineResult<bool> {
     let content = fs::read_to_string(path)?;
-    let (fm, body) = read_translation_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, body) = read_translation_file(&content).map_err(EngineError::Parse)?;
 
     let rel_path = path
         .strip_prefix(data_dir)
@@ -1011,7 +1038,6 @@ fn rebuild_translation(
         .to_string();
 
     let hash = content_hash(content.as_bytes());
-    let now = now_unix_ms();
 
     // Check if parent post exists
     let parent = qp::get_post_by_id(conn, &fm.translation_for);
@@ -1023,12 +1049,17 @@ fn rebuild_translation(
     }
     let parent = parent.unwrap();
 
-    // Determine status from parent
-    let status = if parent.status == PostStatus::Published {
-        PostStatus::Published
-    } else {
-        PostStatus::Draft
+    // Current files carry independent translation metadata. Legacy files fall back to the
+    // canonical post values for compatibility.
+    let status = match fm.status.as_deref() {
+        Some("published") => PostStatus::Published,
+        Some("draft") => PostStatus::Draft,
+        _ if parent.status == PostStatus::Published => PostStatus::Published,
+        _ => PostStatus::Draft,
     };
+    let created_at = fm.created_at.unwrap_or(parent.created_at);
+    let updated_at = fm.updated_at.unwrap_or(parent.updated_at);
+    let published_at = fm.published_at.or(parent.published_at);
 
     // Check if translation exists
     let existing =
@@ -1045,13 +1076,15 @@ fn rebuild_translation(
             t.status = status;
             t.file_path = rel_path;
             t.checksum = Some(hash);
-            t.updated_at = now;
+            t.created_at = created_at;
+            t.updated_at = updated_at;
+            t.published_at = published_at;
             qt::update_post_translation(conn, &t)?;
             Ok(false)
         }
         Err(_) => {
             let t = PostTranslation {
-                id: Uuid::new_v4().to_string(),
+                id: fm.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 project_id: project_id.to_string(),
                 translation_for: fm.translation_for,
                 language: fm.language,
@@ -1065,13 +1098,9 @@ fn rebuild_translation(
                 status,
                 file_path: rel_path,
                 checksum: Some(hash),
-                created_at: now,
-                updated_at: now,
-                published_at: if parent.published_at.is_some() {
-                    Some(now)
-                } else {
-                    None
-                },
+                created_at,
+                updated_at,
+                published_at,
             };
             qt::insert_post_translation(conn, &t)?;
             Ok(true)
@@ -1093,15 +1122,9 @@ pub fn post_insert_link(slug: &str) -> String {
 /// Returns the Markdown syntax: ![alt](bds-media://id) or [name](bds-media://id)
 pub fn post_insert_media(media_id: &str, is_image: bool, original_name: &str) -> String {
     if is_image {
-        format!(
-            "![]({bds_media_url})",
-            bds_media_url = format!("bds-media://{media_id}")
-        )
+        format!("![](bds-media://{media_id})")
     } else {
-        format!(
-            "[{original_name}]({bds_media_url})",
-            bds_media_url = format!("bds-media://{media_id}")
-        )
+        format!("[{original_name}](bds-media://{media_id})")
     }
 }
 
@@ -1120,9 +1143,9 @@ pub fn list_post_backlinks(conn: &Connection, post_id: &str) -> EngineResult<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::fts::ensure_fts_tables;
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
@@ -1582,6 +1605,49 @@ mod tests {
         .unwrap();
         assert_eq!(t2.id, t.id);
         assert_eq!(t2.title, "Neuer Titel");
+    }
+
+    #[test]
+    fn editing_published_translation_reopens_draft() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Parent",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Titel",
+            None,
+            Some("Inhalt"),
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let edited = upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Neuer Titel",
+            None,
+            Some("Neuer Inhalt"),
+        )
+        .unwrap();
+
+        assert_eq!(edited.status, PostStatus::Draft);
+        assert_eq!(edited.content.as_deref(), Some("Neuer Inhalt"));
     }
 
     #[test]

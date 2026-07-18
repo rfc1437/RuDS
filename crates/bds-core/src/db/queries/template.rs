@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::db::from_row::{
-    template_from_row, template_kind_to_str, template_status_to_str, TEMPLATE_COLUMNS,
+    TEMPLATE_COLUMNS, template_from_row, template_kind_to_str, template_status_to_str,
 };
 use crate::model::Template;
 
@@ -43,9 +43,7 @@ pub fn get_template_by_slug(
     slug: &str,
 ) -> rusqlite::Result<Template> {
     conn.query_row(
-        &format!(
-            "SELECT {TEMPLATE_COLUMNS} FROM templates WHERE project_id = ?1 AND slug = ?2"
-        ),
+        &format!("SELECT {TEMPLATE_COLUMNS} FROM templates WHERE project_id = ?1 AND slug = ?2"),
         params![project_id, slug],
         template_from_row,
     )
@@ -92,8 +90,8 @@ pub fn delete_template(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::model::{TemplateKind, TemplateStatus};
 
     fn setup() -> Database {

@@ -8,7 +8,11 @@ pub fn post_file_path(created_at_ms: i64, slug: &str) -> String {
 
 /// Translation file path: `posts/YYYY/MM/{slug}.{lang}.md` from canonical
 /// post's `created_at`.
-pub fn translation_file_path(canonical_created_at_ms: i64, canonical_slug: &str, language: &str) -> String {
+pub fn translation_file_path(
+    canonical_created_at_ms: i64,
+    canonical_slug: &str,
+    language: &str,
+) -> String {
     let (y, m) = year_month_from_unix_ms(canonical_created_at_ms);
     format!("posts/{y}/{m}/{canonical_slug}.{language}.md")
 }
@@ -101,7 +105,10 @@ mod tests {
 
     #[test]
     fn template_and_script_paths() {
-        assert_eq!(template_file_path("testvorlage"), "templates/testvorlage.liquid");
+        assert_eq!(
+            template_file_path("testvorlage"),
+            "templates/testvorlage.liquid"
+        );
         assert_eq!(script_file_path("bgg_link"), "scripts/bgg_link.lua");
     }
 }

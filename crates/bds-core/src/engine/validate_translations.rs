@@ -63,7 +63,14 @@ pub fn validate_translations(
     blog_languages: &[String],
     main_language: &str,
 ) -> EngineResult<TranslationValidationReport> {
-    validate_translations_with_progress(conn, data_dir, project_id, blog_languages, main_language, None)
+    validate_translations_with_progress(
+        conn,
+        data_dir,
+        project_id,
+        blog_languages,
+        main_language,
+        None,
+    )
 }
 
 /// Like `validate_translations` but with optional per-item progress.
@@ -193,11 +200,13 @@ pub fn validate_translations_with_progress(
                 Err(_) => continue,
             };
 
-            let Some((yaml_str, _body)) = crate::util::frontmatter::split_frontmatter(&content) else {
+            let Some((yaml_str, _body)) = crate::util::frontmatter::split_frontmatter(&content)
+            else {
                 continue;
             };
 
-            let Ok(fm) = crate::util::frontmatter::TranslationFrontmatter::from_yaml(yaml_str) else {
+            let Ok(fm) = crate::util::frontmatter::TranslationFrontmatter::from_yaml(yaml_str)
+            else {
                 continue;
             };
 

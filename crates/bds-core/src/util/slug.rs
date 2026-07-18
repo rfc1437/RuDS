@@ -1,5 +1,4 @@
 use deunicode::deunicode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Pre-process German characters to match TypeScript `transliteration` npm output.
 /// deunicode maps ä→a, ö→o, ü→u but TypeScript produces ä→ae, ö→oe, ü→ue.
@@ -50,7 +49,7 @@ pub fn slugify(input: &str) -> String {
 }
 
 /// Ensure a slug is unique within a project, using the spec's algorithm:
-/// tries base, then {slug}-2 .. {slug}-999, then {slug}-{timestamp}.
+/// tries base, then unbounded numeric suffixes `{slug}-2`, `{slug}-3`, and so on.
 ///
 /// `exists` is a predicate that returns true if the candidate slug is already taken.
 pub fn ensure_unique<F>(base: &str, exists: F) -> String
@@ -60,17 +59,13 @@ where
     if !exists(base) {
         return base.to_string();
     }
-    for n in 2..=999 {
+    for n in 2_u64.. {
         let candidate = format!("{base}-{n}");
         if !exists(&candidate) {
             return candidate;
         }
     }
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("{base}-{ts}")
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -121,7 +116,9 @@ mod tests {
 
     #[test]
     fn ensure_unique_sequential_taken() {
-        let slug = ensure_unique("hello", |s| s == "hello" || s == "hello-2" || s == "hello-3");
+        let slug = ensure_unique("hello", |s| {
+            s == "hello" || s == "hello-2" || s == "hello-3"
+        });
         assert_eq!(slug, "hello-4");
     }
 
@@ -178,20 +175,18 @@ mod tests {
     }
 
     #[test]
-    fn ensure_unique_all_999_taken() {
+    fn ensure_unique_continues_after_999() {
         let slug = ensure_unique("x", |s| {
-            if s == "x" { return true; }
-            if let Some(suffix) = s.strip_prefix("x-") {
-                if let Ok(n) = suffix.parse::<u32>() {
-                    return n <= 999;
-                }
+            if s == "x" {
+                return true;
+            }
+            if let Some(suffix) = s.strip_prefix("x-")
+                && let Ok(n) = suffix.parse::<u32>()
+            {
+                return n <= 999;
             }
             false
         });
-        // Should fall back to timestamp-based slug
-        assert!(slug.starts_with("x-"));
-        let suffix = slug.strip_prefix("x-").unwrap();
-        let ts: u64 = suffix.parse().expect("should be a timestamp");
-        assert!(ts > 1_000_000_000);
+        assert_eq!(slug, "x-1000");
     }
 }

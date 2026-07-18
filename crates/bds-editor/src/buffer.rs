@@ -127,7 +127,13 @@ impl EditorBuffer {
     }
 
     /// Set selection explicitly (for double-click word select, etc).
-    pub fn set_selection(&mut self, anchor_line: usize, anchor_col: usize, head_line: usize, head_col: usize) {
+    pub fn set_selection(
+        &mut self,
+        anchor_line: usize,
+        anchor_col: usize,
+        head_line: usize,
+        head_col: usize,
+    ) {
         self.selection = Some(Selection {
             anchor_line,
             anchor_col,
@@ -176,7 +182,7 @@ impl EditorBuffer {
 
     /// Insert text at the current cursor position. Deletes selection first if any.
     pub fn insert(&mut self, text: &str) {
-        if self.selection.is_some() && self.selection.as_ref().map_or(false, |s| !s.is_empty()) {
+        if self.selection.is_some() && self.selection.as_ref().is_some_and(|s| !s.is_empty()) {
             self.delete_selection();
         }
         let char_idx = self.cursor_char_idx();
@@ -198,7 +204,7 @@ impl EditorBuffer {
 
     /// Delete one character before the cursor (backspace).
     pub fn backspace(&mut self) {
-        if self.selection.as_ref().map_or(false, |s| !s.is_empty()) {
+        if self.selection.as_ref().is_some_and(|s| !s.is_empty()) {
             self.delete_selection();
             return;
         }
@@ -229,7 +235,7 @@ impl EditorBuffer {
 
     /// Delete one character after the cursor (delete key).
     pub fn delete_forward(&mut self) {
-        if self.selection.as_ref().map_or(false, |s| !s.is_empty()) {
+        if self.selection.as_ref().is_some_and(|s| !s.is_empty()) {
             self.delete_selection();
             return;
         }
@@ -497,7 +503,12 @@ impl EditorBuffer {
     }
 
     /// Ensure cursor is visible using visual line index (for word-wrap aware scrolling).
-    pub fn ensure_visual_line_visible(&mut self, visual_line: usize, visible_lines: usize, max_visual: usize) {
+    pub fn ensure_visual_line_visible(
+        &mut self,
+        visual_line: usize,
+        visible_lines: usize,
+        max_visual: usize,
+    ) {
         if visible_lines == 0 {
             return;
         }

@@ -4,7 +4,7 @@ use keyring::Entry;
 use reqwest::blocking::Client;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::db::queries::setting;
 use crate::engine::{EngineError, EngineResult};
@@ -167,17 +167,37 @@ pub fn load_ai_settings(conn: &Connection, offline_mode: bool) -> EngineResult<A
 pub fn save_endpoint(conn: &Connection, endpoint: &AiEndpointConfig) -> EngineResult<()> {
     validate_endpoint_config(endpoint)?;
     let checked_at = now_unix_ms();
-    set_setting(conn, &endpoint_setting_key(endpoint.kind, "url"), endpoint.url.trim(), checked_at)?;
-    set_setting(conn, &endpoint_setting_key(endpoint.kind, "model"), endpoint.model.trim(), checked_at)?;
+    set_setting(
+        conn,
+        &endpoint_setting_key(endpoint.kind, "url"),
+        endpoint.url.trim(),
+        checked_at,
+    )?;
+    set_setting(
+        conn,
+        &endpoint_setting_key(endpoint.kind, "model"),
+        endpoint.model.trim(),
+        checked_at,
+    )?;
     if endpoint.kind == AiEndpointKind::Online {
         let entry = endpoint_keyring_entry(endpoint.kind)?;
         if let Some(api_key) = &endpoint.api_key {
             if api_key.trim().is_empty() {
                 entry.delete_credential().ok();
-                set_setting(conn, &endpoint_setting_key(endpoint.kind, "api_key_configured"), "false", checked_at)?;
+                set_setting(
+                    conn,
+                    &endpoint_setting_key(endpoint.kind, "api_key_configured"),
+                    "false",
+                    checked_at,
+                )?;
             } else {
                 entry.set_password(api_key.trim()).map_err(keyring_error)?;
-                set_setting(conn, &endpoint_setting_key(endpoint.kind, "api_key_configured"), "true", checked_at)?;
+                set_setting(
+                    conn,
+                    &endpoint_setting_key(endpoint.kind, "api_key_configured"),
+                    "true",
+                    checked_at,
+                )?;
             }
         }
     }
@@ -200,7 +220,11 @@ pub fn save_model_preferences(
 }
 
 pub fn active_endpoint(conn: &Connection, offline_mode: bool) -> EngineResult<AiEndpointConfig> {
-    let kind = if offline_mode { AiEndpointKind::Airplane } else { AiEndpointKind::Online };
+    let kind = if offline_mode {
+        AiEndpointKind::Airplane
+    } else {
+        AiEndpointKind::Online
+    };
     let stored = load_endpoint(conn, kind)?;
     if stored.url.trim().is_empty() {
         return Err(EngineError::Validation(format!(
@@ -243,14 +267,11 @@ pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<Ai
     validate_endpoint_config(endpoint)?;
     let client = build_http_client()?;
     let request = client.get(models_url(&endpoint.url));
-    let response = with_auth(request, endpoint)
-        .send()?
-        .error_for_status()?;
+    let response = with_auth(request, endpoint).send()?.error_for_status()?;
     let body: Value = response.json()?;
-    let models = body
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| EngineError::Parse("model catalog response missing data array".to_string()))?;
+    let models = body.get("data").and_then(Value::as_array).ok_or_else(|| {
+        EngineError::Parse("model catalog response missing data array".to_string())
+    })?;
 
     let mut result = Vec::new();
     for model in models {
@@ -275,7 +296,11 @@ pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<Ai
         let supports_vision = model
             .get("modalities")
             .and_then(Value::as_array)
-            .map(|modalities| modalities.iter().any(|value| value.as_str() == Some("vision")))
+            .map(|modalities| {
+                modalities
+                    .iter()
+                    .any(|value| value.as_str() == Some("vision"))
+            })
             .unwrap_or(false);
         result.push(AiModelInfo {
             id,
@@ -326,9 +351,14 @@ pub fn run_one_shot(
         }
     });
     let client = build_http_client()?;
-    let response = with_auth(client.post(chat_completions_url(&endpoint.url)).json(&payload), &endpoint)
-        .send()?
-        .error_for_status()?;
+    let response = with_auth(
+        client
+            .post(chat_completions_url(&endpoint.url))
+            .json(&payload),
+        &endpoint,
+    )
+    .send()?
+    .error_for_status()?;
     let body: Value = response.json()?;
     let content = body
         .get("choices")
@@ -337,7 +367,9 @@ pub fn run_one_shot(
         .and_then(|choice| choice.get("message"))
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
-        .ok_or_else(|| EngineError::Parse("chat completions response missing message content".to_string()))?;
+        .ok_or_else(|| {
+            EngineError::Parse("chat completions response missing message content".to_string())
+        })?;
     parse_one_shot_response(request, content)
 }
 
@@ -347,10 +379,12 @@ fn build_http_client() -> EngineResult<Client> {
 
 fn load_endpoint(conn: &Connection, kind: AiEndpointKind) -> EngineResult<StoredAiEndpointConfig> {
     let url = get_optional_setting(conn, &endpoint_setting_key(kind, "url"))?.unwrap_or_default();
-    let model = get_optional_setting(conn, &endpoint_setting_key(kind, "model"))?.unwrap_or_default();
-    let api_key_configured = get_optional_setting(conn, &endpoint_setting_key(kind, "api_key_configured"))?
-        .map(|value| value == "true")
-        .unwrap_or(false);
+    let model =
+        get_optional_setting(conn, &endpoint_setting_key(kind, "model"))?.unwrap_or_default();
+    let api_key_configured =
+        get_optional_setting(conn, &endpoint_setting_key(kind, "api_key_configured"))?
+            .map(|value| value == "true")
+            .unwrap_or(false);
     Ok(StoredAiEndpointConfig {
         kind,
         url,
@@ -361,48 +395,81 @@ fn load_endpoint(conn: &Connection, kind: AiEndpointKind) -> EngineResult<Stored
 
 fn validate_endpoint_config(endpoint: &AiEndpointConfig) -> EngineResult<()> {
     if endpoint.url.trim().is_empty() {
-        return Err(EngineError::Validation("endpoint url is required".to_string()));
+        return Err(EngineError::Validation(
+            "endpoint url is required".to_string(),
+        ));
     }
     if endpoint.model.trim().is_empty() {
-        return Err(EngineError::Validation("endpoint model is required".to_string()));
+        return Err(EngineError::Validation(
+            "endpoint model is required".to_string(),
+        ));
     }
     if endpoint.kind == AiEndpointKind::Online
-        && endpoint.api_key.as_ref().map(|value| value.trim().is_empty()).unwrap_or(true)
+        && endpoint
+            .api_key
+            .as_ref()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
     {
-        return Err(EngineError::Validation("online endpoint api key is required".to_string()));
+        return Err(EngineError::Validation(
+            "online endpoint api key is required".to_string(),
+        ));
     }
     Ok(())
 }
 
-fn select_model(settings: &AiSettings, endpoint: &AiEndpointConfig, operation: &OneShotOperation) -> EngineResult<String> {
+fn select_model(
+    settings: &AiSettings,
+    endpoint: &AiEndpointConfig,
+    operation: &OneShotOperation,
+) -> EngineResult<String> {
     let selected = match operation {
         OneShotOperation::AnalyzeImage => settings.image_model.as_ref(),
         OneShotOperation::AnalyzeTaxonomy
         | OneShotOperation::AnalyzePost
         | OneShotOperation::DetectLanguage
         | OneShotOperation::TranslatePost { .. }
-        | OneShotOperation::TranslateMedia { .. } => settings.title_model.as_ref().or(settings.default_model.as_ref()),
+        | OneShotOperation::TranslateMedia { .. } => settings
+            .title_model
+            .as_ref()
+            .or(settings.default_model.as_ref()),
     }
     .filter(|model| !model.trim().is_empty())
     .cloned()
     .unwrap_or_else(|| endpoint.model.clone());
     if selected.trim().is_empty() {
-        return Err(EngineError::Validation("AI unavailable - configure model in Settings".to_string()));
+        return Err(EngineError::Validation(
+            "AI unavailable - configure model in Settings".to_string(),
+        ));
     }
     Ok(selected)
 }
 
 fn build_system_prompt(base_prompt: &str, operation: &OneShotOperation) -> String {
     let operation_prompt = match operation {
-        OneShotOperation::AnalyzeTaxonomy => "Return only JSON with tags and categories for the post.",
-        OneShotOperation::AnalyzePost => "Return only JSON with title, excerpt, and slug suggestions for the post.",
+        OneShotOperation::AnalyzeTaxonomy => {
+            "Return only JSON with tags and categories for the post."
+        }
+        OneShotOperation::AnalyzePost => {
+            "Return only JSON with title, excerpt, and slug suggestions for the post."
+        }
         OneShotOperation::DetectLanguage => "Return only JSON with the detected language_code.",
         OneShotOperation::TranslatePost { target_language } => {
-            return format!("{} Translate the post into {} and return only JSON with title, excerpt, and content.", base_prompt.trim(), target_language);
+            return format!(
+                "{} Translate the post into {} and return only JSON with title, excerpt, and content.",
+                base_prompt.trim(),
+                target_language
+            );
         }
-        OneShotOperation::AnalyzeImage => "Return only JSON with title, alt, and caption suggestions for the image.",
+        OneShotOperation::AnalyzeImage => {
+            "Return only JSON with title, alt, and caption suggestions for the image."
+        }
         OneShotOperation::TranslateMedia { target_language } => {
-            return format!("{} Translate the media metadata into {} and return only JSON with title, alt, and caption.", base_prompt.trim(), target_language);
+            return format!(
+                "{} Translate the media metadata into {} and return only JSON with title, alt, and caption.",
+                base_prompt.trim(),
+                target_language
+            );
         }
     };
     if base_prompt.trim().is_empty() {
@@ -417,26 +484,31 @@ fn build_one_shot_user_content(request: &OneShotRequest) -> EngineResult<Value> 
         OneShotOperation::AnalyzeTaxonomy => Ok(format!(
             "Suggest tags and categories for this post: {}",
             serde_json::to_string(&request.content)?
-        ).into()),
+        )
+        .into()),
         OneShotOperation::AnalyzePost => Ok(format!(
             "Analyze this post and suggest title, excerpt, and slug: {}",
             serde_json::to_string(&request.content)?
-        ).into()),
+        )
+        .into()),
         OneShotOperation::DetectLanguage => Ok(format!(
             "Detect the language of this text: {}",
             serde_json::to_string(&request.content)?
-        ).into()),
+        )
+        .into()),
         OneShotOperation::TranslatePost { target_language } => Ok(format!(
             "Translate this post to {}: {}",
             target_language,
             serde_json::to_string(&request.content)?
-        ).into()),
+        )
+        .into()),
         OneShotOperation::AnalyzeImage => build_image_analysis_user_content(&request.content),
         OneShotOperation::TranslateMedia { target_language } => Ok(format!(
             "Translate this media metadata to {}: {}",
             target_language,
             serde_json::to_string(&request.content)?
-        ).into()),
+        )
+        .into()),
     }
 }
 
@@ -549,14 +621,29 @@ fn response_schema(operation: &OneShotOperation) -> (&'static str, Value) {
     }
 }
 
-fn parse_one_shot_response(request: &OneShotRequest, content: &str) -> EngineResult<OneShotResponse> {
+fn parse_one_shot_response(
+    request: &OneShotRequest,
+    content: &str,
+) -> EngineResult<OneShotResponse> {
     Ok(match request.operation {
-        OneShotOperation::AnalyzeTaxonomy => OneShotResponse::Taxonomy(serde_json::from_str(content)?),
-        OneShotOperation::AnalyzePost => OneShotResponse::PostAnalysis(serde_json::from_str(content)?),
-        OneShotOperation::DetectLanguage => OneShotResponse::LanguageDetection(serde_json::from_str(content)?),
-        OneShotOperation::TranslatePost { .. } => OneShotResponse::Translation(serde_json::from_str(content)?),
-        OneShotOperation::AnalyzeImage => OneShotResponse::ImageAnalysis(serde_json::from_str(content)?),
-        OneShotOperation::TranslateMedia { .. } => OneShotResponse::MediaTranslation(serde_json::from_str(content)?),
+        OneShotOperation::AnalyzeTaxonomy => {
+            OneShotResponse::Taxonomy(serde_json::from_str(content)?)
+        }
+        OneShotOperation::AnalyzePost => {
+            OneShotResponse::PostAnalysis(serde_json::from_str(content)?)
+        }
+        OneShotOperation::DetectLanguage => {
+            OneShotResponse::LanguageDetection(serde_json::from_str(content)?)
+        }
+        OneShotOperation::TranslatePost { .. } => {
+            OneShotResponse::Translation(serde_json::from_str(content)?)
+        }
+        OneShotOperation::AnalyzeImage => {
+            OneShotResponse::ImageAnalysis(serde_json::from_str(content)?)
+        }
+        OneShotOperation::TranslateMedia { .. } => {
+            OneShotResponse::MediaTranslation(serde_json::from_str(content)?)
+        }
     })
 }
 
@@ -565,7 +652,11 @@ fn endpoint_setting_key(kind: AiEndpointKind, suffix: &str) -> String {
 }
 
 fn endpoint_keyring_entry(kind: AiEndpointKind) -> EngineResult<Entry> {
-    Entry::new(KEYRING_SERVICE, &format!("{}.{}", KEYRING_SETTING_PREFIX, kind.as_str())).map_err(keyring_error)
+    Entry::new(
+        KEYRING_SERVICE,
+        &format!("{}.{}", KEYRING_SETTING_PREFIX, kind.as_str()),
+    )
+    .map_err(keyring_error)
 }
 
 fn keyring_error(error: keyring::Error) -> EngineError {
@@ -577,7 +668,12 @@ fn set_setting(conn: &Connection, key: &str, value: &str, updated_at: i64) -> En
     Ok(())
 }
 
-fn set_optional_setting(conn: &Connection, key: &str, value: Option<&str>, updated_at: i64) -> EngineResult<()> {
+fn set_optional_setting(
+    conn: &Connection,
+    key: &str,
+    value: Option<&str>,
+    updated_at: i64,
+) -> EngineResult<()> {
     set_setting(conn, key, value.unwrap_or(""), updated_at)
 }
 
@@ -691,12 +787,15 @@ mod tests {
 
     #[test]
     fn refresh_model_catalog_parses_openai_models_shape() {
-        let server = spawn_test_server(|request| {
-            assert!(request.starts_with("GET /v1/models HTTP/1.1"));
-            http_ok(
-                r#"{"data":[{"id":"gpt-4.1-mini","name":"GPT 4.1 mini","context_window":128000,"max_output_tokens":8192,"modalities":["text"]},{"id":"gpt-4.1","modalities":["text","vision"]}]}"#,
-            )
-        }, 1);
+        let server = spawn_test_server(
+            |request| {
+                assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+                http_ok(
+                    r#"{"data":[{"id":"gpt-4.1-mini","name":"GPT 4.1 mini","context_window":128000,"max_output_tokens":8192,"modalities":["text"]},{"id":"gpt-4.1","modalities":["text","vision"]}]}"#,
+                )
+            },
+            1,
+        );
         let models = refresh_model_catalog(&AiEndpointConfig {
             kind: AiEndpointKind::Airplane,
             url: server,
@@ -713,16 +812,22 @@ mod tests {
     #[ignore = "touches system keychain; run explicitly when validating keychain integration"]
     fn run_one_shot_uses_active_endpoint_and_parses_response() {
         clear_keyring(AiEndpointKind::Online);
-        let server = spawn_test_server(|request| {
-            if request.starts_with("GET /v1/models HTTP/1.1") {
-                return http_ok(r#"{"data":[{"id":"gpt-4.1-mini"}]}"#);
-            }
-            assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-            assert!(request.contains("authorization: Bearer secret-token") || request.contains("Authorization: Bearer secret-token"));
-            http_ok(
-                r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
-            )
-        }, 1);
+        let server = spawn_test_server(
+            |request| {
+                if request.starts_with("GET /v1/models HTTP/1.1") {
+                    return http_ok(r#"{"data":[{"id":"gpt-4.1-mini"}]}"#);
+                }
+                assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                assert!(
+                    request.contains("authorization: Bearer secret-token")
+                        || request.contains("Authorization: Bearer secret-token")
+                );
+                http_ok(
+                    r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
+                )
+            },
+            1,
+        );
 
         let db = setup();
         save_endpoint(
@@ -769,9 +874,17 @@ mod tests {
         let parts = content.as_array().unwrap();
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["type"], "text");
-        assert!(parts[0]["text"].as_str().unwrap().contains("Existing title"));
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Existing title")
+        );
         assert_eq!(parts[1]["type"], "image_url");
-        assert_eq!(parts[1]["image_url"]["url"], "data:image/jpeg;base64,abc123");
+        assert_eq!(
+            parts[1]["image_url"]["url"],
+            "data:image/jpeg;base64,abc123"
+        );
     }
 
     #[test]
@@ -940,7 +1053,10 @@ mod tests {
         run_one_shot(db.conn(), true, &request).unwrap()
     }
 
-    fn spawn_test_server(handler: impl Fn(String) -> String + Send + 'static, request_count: usize) -> String {
+    fn spawn_test_server(
+        handler: impl Fn(String) -> String + Send + 'static,
+        request_count: usize,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         thread::spawn(move || {

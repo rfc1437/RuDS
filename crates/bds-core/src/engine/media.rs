@@ -12,11 +12,11 @@ use crate::db::queries::post_media as qpm;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Media, MediaTranslation};
 use crate::util::sidecar::{
-    read_sidecar, read_translation_sidecar, MediaSidecar, MediaTranslationSidecar,
+    MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar,
 };
 use crate::util::thumbnail::{
-    generate_all_thumbnails, image_dimensions, mime_from_extension, ThumbnailFormat,
-    THUMBNAIL_SIZES,
+    THUMBNAIL_SIZES, ThumbnailFormat, generate_all_thumbnails, image_dimensions,
+    mime_from_extension,
 };
 use crate::util::{
     atomic_write_str, content_hash, media_dir_path, media_sidecar_path,
@@ -46,6 +46,10 @@ const SUPPORTED_IMAGE_TYPES: &[&str] = &[
 ];
 
 /// Import a media file (image, etc.) into the project.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are the user-supplied media metadata fields"
+)]
 pub fn import_media(
     conn: &Connection,
     data_dir: &Path,
@@ -142,6 +146,10 @@ pub fn import_media(
 }
 
 /// Update a media item's metadata fields.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "optional arguments represent independent media field changes"
+)]
 pub fn update_media(
     conn: &Connection,
     data_dir: &Path,
@@ -655,9 +663,9 @@ fn rebuild_translation_sidecar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::fts::ensure_fts_tables;
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
     use image::DynamicImage;
     use tempfile::TempDir;
 

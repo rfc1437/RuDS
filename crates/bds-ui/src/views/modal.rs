@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use iced::widget::text::Shaping;
-use iced::widget::{button, checkbox, column, container, image, row, scrollable, text, text_input, Space};
+use iced::widget::{
+    Space, button, checkbox, column, container, image, row, scrollable, text, text_input,
+};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -112,7 +114,10 @@ pub enum ConfirmAction {
     DeleteTemplate(String),
     ForceDeleteTemplate(String),
     DeleteTag(String),
-    MergeTags { sources: Vec<String>, target: String },
+    MergeTags {
+        sources: Vec<String>,
+        target: String,
+    },
 }
 
 // ── Modal backdrop style ──
@@ -231,7 +236,11 @@ fn gallery_step(current: usize, len: usize, delta: isize) -> usize {
 }
 
 /// Render the modal overlay.
-pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Element<'static, Message> {
+pub fn view(
+    state: ModalState,
+    locale: UiLocale,
+    data_dir: Option<&Path>,
+) -> Element<'static, Message> {
     let modal_content: Element<'static, Message> = match state {
         ModalState::ConfirmDelete {
             entity_name,
@@ -452,14 +461,18 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                                         }),
                                 )
                                 .padding([3, 8])
-                                .style(|_: &Theme| container::Style {
-                                    background: Some(Background::Color(Color::from_rgb(0.18, 0.20, 0.25))),
-                                    border: Border {
-                                        color: Color::from_rgb(0.30, 0.30, 0.35),
-                                        width: 1.0,
-                                        radius: 999.0.into(),
-                                    },
-                                    ..container::Style::default()
+                                .style(|_: &Theme| {
+                                    container::Style {
+                                        background: Some(Background::Color(Color::from_rgb(
+                                            0.18, 0.20, 0.25,
+                                        ))),
+                                        border: Border {
+                                            color: Color::from_rgb(0.30, 0.30, 0.35),
+                                            width: 1.0,
+                                            radius: 999.0.into(),
+                                        },
+                                        ..container::Style::default()
+                                    }
                                 }),
                             ]
                             .spacing(12)
@@ -505,7 +518,9 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 row![
                     Space::with_width(Length::Fill),
                     button(text(t(locale, "modal.postInsertLink.insert")))
-                        .on_press(Message::PostEditor(PostEditorMsg::PostInsertLinkExternalInsert))
+                        .on_press(Message::PostEditor(
+                            PostEditorMsg::PostInsertLinkExternalInsert
+                        ))
                         .padding([6, 16])
                         .style(confirm_button_style),
                 ]
@@ -537,11 +552,12 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .size(13)
                 .shaping(Shaping::Advanced);
 
-            let trailing_button: Element<'static, Message> = if active_tab == PostInsertLinkTab::Internal {
-                create_post_btn
-            } else {
-                Space::with_width(0.0).into()
-            };
+            let trailing_button: Element<'static, Message> =
+                if active_tab == PostInsertLinkTab::Internal {
+                    create_post_btn
+                } else {
+                    Space::with_width(0.0).into()
+                };
 
             let buttons = row![
                 button(cancel_text)
@@ -597,31 +613,27 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .iter()
                 .map(|m| {
                     let is_image = m.mime_type.starts_with("image/");
-                    let title = m
-                        .title
-                        .as_ref()
-                        .map(|s| s.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let title = m.title.as_deref().unwrap_or("").to_string();
                     let original_name = m.original_name.clone();
-                    let thumb: Element<'static, Message> = if let Some(path) = resolve_thumbnail_file(data_dir, m) {
-                        image(path)
-                            .width(Length::Fixed(120.0))
-                            .height(Length::Fixed(90.0))
-                            .into()
-                    } else if is_image {
-                        text("\u{1F5BC}")
-                            .size(32)
-                            .shaping(Shaping::Advanced)
-                            .color(Color::from_rgb(0.40, 0.40, 0.45))
-                            .into()
-                    } else {
-                        text("\u{1F4C4}")
-                            .size(32)
-                            .shaping(Shaping::Advanced)
-                            .color(Color::from_rgb(0.40, 0.40, 0.45))
-                            .into()
-                    };
+                    let thumb: Element<'static, Message> =
+                        if let Some(path) = resolve_thumbnail_file(data_dir, m) {
+                            image(path)
+                                .width(Length::Fixed(120.0))
+                                .height(Length::Fixed(90.0))
+                                .into()
+                        } else if is_image {
+                            text("\u{1F5BC}")
+                                .size(32)
+                                .shaping(Shaping::Advanced)
+                                .color(Color::from_rgb(0.40, 0.40, 0.45))
+                                .into()
+                        } else {
+                            text("\u{1F4C4}")
+                                .size(32)
+                                .shaping(Shaping::Advanced)
+                                .color(Color::from_rgb(0.40, 0.40, 0.45))
+                                .into()
+                        };
 
                     let media_title = text(title.clone())
                         .size(12)
@@ -716,10 +728,12 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .size(13)
                 .shaping(Shaping::Advanced);
 
-            let buttons = row![button(cancel_text)
-                .on_press(Message::DismissModal)
-                .padding([6, 16])
-                .style(cancel_button_style),];
+            let buttons = row![
+                button(cancel_text)
+                    .on_press(Message::DismissModal)
+                    .padding([6, 16])
+                    .style(cancel_button_style),
+            ];
 
             let content = column![
                 title,
@@ -754,24 +768,20 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .iter()
                 .enumerate()
                 .map(|(index, m)| {
-                    let title = m
-                        .title
-                        .as_ref()
-                        .map(|s| s.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let thumb: Element<'static, Message> = if let Some(path) = resolve_thumbnail_file(data_dir, m) {
-                        image(path)
-                            .width(Length::Fixed(180.0))
-                            .height(Length::Fixed(120.0))
-                            .into()
-                    } else {
-                        text("\u{1F5BC}")
-                            .size(32)
-                            .shaping(Shaping::Advanced)
-                            .color(Color::from_rgb(0.40, 0.40, 0.45))
-                            .into()
-                    };
+                    let title = m.title.as_deref().unwrap_or("").to_string();
+                    let thumb: Element<'static, Message> =
+                        if let Some(path) = resolve_thumbnail_file(data_dir, m) {
+                            image(path)
+                                .width(Length::Fixed(180.0))
+                                .height(Length::Fixed(120.0))
+                                .into()
+                        } else {
+                            text("\u{1F5BC}")
+                                .size(32)
+                                .shaping(Shaping::Advanced)
+                                .color(Color::from_rgb(0.40, 0.40, 0.45))
+                                .into()
+                        };
 
                     let media_title = text(title)
                         .size(12)
@@ -845,17 +855,18 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
 
             let lightbox: Element<'static, Message> = if let Some(index) = selected_index {
                 if let Some(selected) = image_media.get(index) {
-                    let preview: Element<'static, Message> = if let Some(path) = resolve_media_file(data_dir, selected) {
-                        image(path)
-                            .width(Length::Fill)
-                            .height(Length::Fixed(420.0))
-                            .into()
-                    } else {
-                        text(t(locale, "modal.postGallery.unavailable"))
-                            .size(13)
-                            .shaping(Shaping::Advanced)
-                            .into()
-                    };
+                    let preview: Element<'static, Message> =
+                        if let Some(path) = resolve_media_file(data_dir, selected) {
+                            image(path)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(420.0))
+                                .into()
+                        } else {
+                            text(t(locale, "modal.postGallery.unavailable"))
+                                .size(13)
+                                .shaping(Shaping::Advanced)
+                                .into()
+                        };
                     column![
                         container(preview)
                             .width(Length::Fill)
@@ -876,7 +887,9 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                                 .style(cancel_button_style),
                             Space::with_width(12.0),
                             button(text(t(locale, "modal.postGallery.backToGrid")))
-                                .on_press(Message::PostEditor(PostEditorMsg::PostGalleryCloseLightbox))
+                                .on_press(Message::PostEditor(
+                                    PostEditorMsg::PostGalleryCloseLightbox
+                                ))
                                 .padding([6, 12])
                                 .style(cancel_button_style),
                         ]
@@ -915,35 +928,53 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .shaping(Shaping::Advanced)
                 .color(Color::WHITE);
 
-            let rows = fields.iter().enumerate().map(|(index, field)| {
-                let toggle = checkbox(field.label.clone(), field.accepted)
-                    .on_toggle_maybe((!field.locked)
-                        .then_some(move |value| Message::ToggleAiSuggestionField(index, value)))
-                    .size(16)
-                    .text_size(13);
-                container(column![
-                    toggle,
-                    row![
-                        container(text(field.current_value.clone()).size(12).color(Color::from_rgb(0.58, 0.58, 0.64))).width(Length::FillPortion(1)),
-                        text("→").size(14).color(Color::from_rgb(0.62, 0.66, 0.74)),
-                        container(text(field.suggested_value.clone()).size(12).color(Color::WHITE)).width(Length::FillPortion(1)),
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                ]
-                .spacing(8))
-                .padding(10)
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb(0.18, 0.20, 0.25))),
-                    border: Border {
-                        color: Color::from_rgb(0.30, 0.30, 0.35),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..container::Style::default()
+            let rows = fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    let toggle =
+                        checkbox(field.label.clone(), field.accepted)
+                            .on_toggle_maybe((!field.locked).then_some(move |value| {
+                                Message::ToggleAiSuggestionField(index, value)
+                            }))
+                            .size(16)
+                            .text_size(13);
+                    container(
+                        column![
+                            toggle,
+                            row![
+                                container(
+                                    text(field.current_value.clone())
+                                        .size(12)
+                                        .color(Color::from_rgb(0.58, 0.58, 0.64))
+                                )
+                                .width(Length::FillPortion(1)),
+                                text("→").size(14).color(Color::from_rgb(0.62, 0.66, 0.74)),
+                                container(
+                                    text(field.suggested_value.clone())
+                                        .size(12)
+                                        .color(Color::WHITE)
+                                )
+                                .width(Length::FillPortion(1)),
+                            ]
+                            .spacing(10)
+                            .align_y(Alignment::Center),
+                        ]
+                        .spacing(8),
+                    )
+                    .padding(10)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.18, 0.20, 0.25))),
+                        border: Border {
+                            color: Color::from_rgb(0.30, 0.30, 0.35),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..container::Style::default()
+                    })
+                    .into()
                 })
-                .into()
-            }).collect::<Vec<Element<'static, Message>>>();
+                .collect::<Vec<Element<'static, Message>>>();
 
             let buttons = row![
                 button(text(t(locale, "common.cancel")).size(13))
@@ -972,35 +1003,59 @@ pub fn view(state: ModalState, locale: UiLocale, data_dir: Option<&Path>) -> Ele
                 .into()
         }
 
-        ModalState::LanguagePicker { target, source_language, available_targets } => {
+        ModalState::LanguagePicker {
+            target,
+            source_language,
+            available_targets,
+        } => {
             let title = text(t(locale, "modal.languagePicker.title"))
                 .size(16)
                 .shaping(Shaping::Advanced)
                 .color(Color::WHITE);
-            let subtitle = text(format!("{}: {}", t(locale, "editor.language"), source_language))
-                .size(12)
-                .shaping(Shaping::Advanced)
-                .color(Color::from_rgb(0.60, 0.60, 0.68));
+            let subtitle = text(format!(
+                "{}: {}",
+                t(locale, "editor.language"),
+                source_language
+            ))
+            .size(12)
+            .shaping(Shaping::Advanced)
+            .color(Color::from_rgb(0.60, 0.60, 0.68));
 
             let rows = if available_targets.is_empty() {
                 vec![text(t(locale, "common.noResults")).size(12).into()]
             } else {
-                available_targets.into_iter().map(|language| {
-                    let message = match &target {
-                        AiEntityTarget::Post(_) => Message::PostEditor(PostEditorMsg::TranslateTo(language.code.clone())),
-                        AiEntityTarget::Media(_) => Message::MediaEditor(crate::views::media_editor::MediaEditorMsg::TranslateTo(language.code.clone())),
-                    };
-                    let status = language.existing_status.clone().unwrap_or_default();
-                    button(row![
-                        text(format!("{} {}", language.flag_emoji, language.name)).size(13).color(Color::WHITE),
-                        Space::with_width(Length::Fill),
-                        text(status).size(11).color(Color::from_rgb(0.60, 0.60, 0.68)),
-                    ].align_y(Alignment::Center))
-                    .on_press(message)
-                    .padding([8, 12])
-                    .style(cancel_button_style)
-                    .into()
-                }).collect::<Vec<Element<'static, Message>>>()
+                available_targets
+                    .into_iter()
+                    .map(|language| {
+                        let message = match &target {
+                            AiEntityTarget::Post(_) => Message::PostEditor(
+                                PostEditorMsg::TranslateTo(language.code.clone()),
+                            ),
+                            AiEntityTarget::Media(_) => Message::MediaEditor(
+                                crate::views::media_editor::MediaEditorMsg::TranslateTo(
+                                    language.code.clone(),
+                                ),
+                            ),
+                        };
+                        let status = language.existing_status.clone().unwrap_or_default();
+                        button(
+                            row![
+                                text(format!("{} {}", language.flag_emoji, language.name))
+                                    .size(13)
+                                    .color(Color::WHITE),
+                                Space::with_width(Length::Fill),
+                                text(status)
+                                    .size(11)
+                                    .color(Color::from_rgb(0.60, 0.60, 0.68)),
+                            ]
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(message)
+                        .padding([8, 12])
+                        .style(cancel_button_style)
+                        .into()
+                    })
+                    .collect::<Vec<Element<'static, Message>>>()
             };
 
             let content = column![
@@ -1042,7 +1097,10 @@ mod tests {
     #[test]
     fn external_link_markdown_requires_url() {
         assert_eq!(external_link_markdown("", "text"), None);
-        assert_eq!(external_link_markdown("https://example.com", ""), Some("https://example.com".to_string()));
+        assert_eq!(
+            external_link_markdown("https://example.com", ""),
+            Some("https://example.com".to_string())
+        );
         assert_eq!(
             external_link_markdown("https://example.com", "Example"),
             Some("[Example](https://example.com)".to_string())

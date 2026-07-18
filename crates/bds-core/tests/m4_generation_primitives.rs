@@ -1,12 +1,11 @@
 use std::fs;
 
+use bds_core::db::Database;
 use bds_core::db::queries::generated_file_hash::get_generated_file_hash;
 use bds_core::db::queries::project::insert_project;
-use bds_core::db::Database;
 use bds_core::model::{Post, PostStatus, Project};
 use bds_core::render::{
-    GeneratedWriteOutcome, build_calendar_json, build_core_generation_paths,
-    write_generated_file,
+    GeneratedWriteOutcome, build_calendar_json, build_core_generation_paths, write_generated_file,
 };
 use tempfile::TempDir;
 
@@ -72,7 +71,11 @@ fn generated_write_skips_unchanged_content() {
 
     let stored = get_generated_file_hash(db.conn(), "p1", "index.html").unwrap();
     assert_eq!(stored.relative_path, "index.html");
-    assert!(fs::read_to_string(dir.path().join("index.html")).unwrap().contains("changed"));
+    assert!(
+        fs::read_to_string(dir.path().join("index.html"))
+            .unwrap()
+            .contains("changed")
+    );
 }
 
 #[test]
@@ -85,7 +88,10 @@ fn generated_write_rewrites_missing_file_even_when_hash_matches() {
 
     assert_eq!(first, GeneratedWriteOutcome::Written);
     assert_eq!(second, GeneratedWriteOutcome::Written);
-    assert_eq!(fs::read_to_string(dir.path().join("index.html")).unwrap(), "hello");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "hello"
+    );
 }
 
 #[test]
@@ -98,7 +104,10 @@ fn generated_write_rewrites_stale_file_even_when_db_hash_matches() {
 
     assert_eq!(first, GeneratedWriteOutcome::Written);
     assert_eq!(second, GeneratedWriteOutcome::Written);
-    assert_eq!(fs::read_to_string(dir.path().join("index.html")).unwrap(), "hello");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "hello"
+    );
 }
 
 #[test]

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use liquid::ParserBuilder;
 use liquid::partials::{EagerCompiler, InMemorySource};
-use liquid_core::{
-    Display_filter, Expression, Filter, FilterParameters, FilterReflection,
-    FromFilterParameters, ParseFilter, Runtime, Value, ValueView,
-};
 use liquid_core::model::ScalarCow;
+use liquid_core::{
+    Display_filter, Expression, Filter, FilterParameters, FilterReflection, FromFilterParameters,
+    ParseFilter, Runtime, Value, ValueView,
+};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use thiserror::Error;
@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::i18n::translate_render;
 use crate::render::macros::{MacroRenderContext, expand_builtin_macros};
 use crate::render::render_markdown_to_html;
+use crate::util::slugify;
 
 #[derive(Debug, Error)]
 pub enum RenderError {
@@ -40,11 +41,34 @@ pub fn render_liquid_template<T: Serialize>(
     let parser = ParserBuilder::with_stdlib()
         .filter(I18n)
         .filter(Markdown)
+        .filter(Slugify)
         .partials(compiled_partials)
         .build()?;
     let template = parser.parse(template_source)?;
     let globals = liquid::to_object(context)?;
     Ok(template.render(&globals)?)
+}
+
+#[derive(Clone, ParseFilter, FilterReflection)]
+#[filter(
+    name = "slugify",
+    description = "Convert text to the canonical post slug format.",
+    parsed(SlugifyFilter)
+)]
+struct Slugify;
+
+#[derive(Debug, Default, Display_filter)]
+#[name = "slugify"]
+struct SlugifyFilter;
+
+impl Filter for SlugifyFilter {
+    fn evaluate(
+        &self,
+        input: &dyn ValueView,
+        _runtime: &dyn Runtime,
+    ) -> liquid_core::Result<Value> {
+        Ok(Value::scalar(slugify(input.to_kstr().as_str())))
+    }
 }
 
 #[derive(Debug, FilterParameters)]
@@ -74,7 +98,10 @@ impl Filter for I18nFilter {
         let args = self.args.evaluate(runtime)?;
         let key = input.to_kstr();
         let language = args.language.to_kstr();
-        Ok(Value::scalar(translate_render(language.as_str(), key.as_str())))
+        Ok(Value::scalar(translate_render(
+            language.as_str(),
+            key.as_str(),
+        )))
     }
 }
 
@@ -135,7 +162,10 @@ impl Filter for MarkdownFilter {
 
         let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
         let rendered = render_markdown_to_html(&expanded);
-        Ok(Value::scalar(rewrite_rendered_html_urls(&rendered, &rewrite_context)))
+        Ok(Value::scalar(rewrite_rendered_html_urls(
+            &rendered,
+            &rewrite_context,
+        )))
     }
 }
 
@@ -148,10 +178,10 @@ fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {
         }
     }
 
-    if !roots.contains_key("Tags") {
-        if let Some(tags) = roots.get("post_tags").cloned() {
-            roots.insert("Tags".to_string(), tags);
-        }
+    if !roots.contains_key("Tags")
+        && let Some(tags) = roots.get("post_tags").cloned()
+    {
+        roots.insert("Tags".to_string(), tags);
     }
 
     roots
@@ -202,9 +232,16 @@ fn value_to_string_map(value: &impl ValueView) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-pub(crate) fn rewrite_rendered_html_urls(html: &str, rewrite_context: &impl RewriteContextView) -> String {
-    let rewritten = rewrite_attribute_urls(html, "href", |href| normalize_preview_href(href, rewrite_context));
-    rewrite_attribute_urls(&rewritten, "src", |src| normalize_preview_src(src, rewrite_context))
+pub(crate) fn rewrite_rendered_html_urls(
+    html: &str,
+    rewrite_context: &impl RewriteContextView,
+) -> String {
+    let rewritten = rewrite_attribute_urls(html, "href", |href| {
+        normalize_preview_href(href, rewrite_context)
+    });
+    rewrite_attribute_urls(&rewritten, "src", |src| {
+        normalize_preview_src(src, rewrite_context)
+    })
 }
 
 pub(crate) trait RewriteContextView {
@@ -387,7 +424,9 @@ fn extract_post_slug(path: &str) -> Option<String> {
     let segments: Vec<_> = trimmed.split('/').collect();
     match segments.as_slice() {
         ["post" | "posts", slug] => Some(trim_html_suffix(slug)),
-        ["post" | "posts", year, month, slug] if year.len() == 4 && month.chars().all(|ch| ch.is_ascii_digit()) => {
+        ["post" | "posts", year, month, slug]
+            if year.len() == 4 && month.chars().all(|ch| ch.is_ascii_digit()) =>
+        {
             Some(trim_html_suffix(slug))
         }
         _ => None,
@@ -422,7 +461,7 @@ fn trim_html_suffix(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_rendered_html_urls, RewriteContextView};
+    use super::{RewriteContextView, render_liquid_template, rewrite_rendered_html_urls};
     use std::collections::HashMap;
 
     struct TestRewriteContext {
@@ -456,5 +495,17 @@ mod tests {
         );
 
         assert!(html.contains("src=\"/media/2026/04/media-1.png\""));
+    }
+
+    #[test]
+    fn exposes_slugify_liquid_filter() {
+        let rendered = render_liquid_template(
+            "{{ title | slugify }}",
+            &HashMap::new(),
+            &serde_json::json!({"title": "Über die Brücke"}),
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "ueber-die-bruecke");
     }
 }

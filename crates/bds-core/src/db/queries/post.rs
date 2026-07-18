@@ -1,7 +1,8 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{post_from_row, post_status_to_str, POST_COLUMNS};
+use crate::db::from_row::{POST_COLUMNS, post_from_row, post_status_to_str};
 use crate::model::{Post, PostStatus};
+use crate::util::calendar_range_unix_ms;
 
 fn tags_to_json(tags: &[String]) -> String {
     serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
@@ -165,6 +166,10 @@ pub fn set_post_file_path(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments mirror the published snapshot columns"
+)]
 pub fn set_published_snapshot(
     conn: &Connection,
     id: &str,
@@ -182,7 +187,16 @@ pub fn set_published_snapshot(
             published_categories = ?4, published_excerpt = ?5,
             published_at = ?6, updated_at = ?7
          WHERE id = ?8",
-        params![title, content, tags, categories, excerpt, published_at, updated_at, id],
+        params![
+            title,
+            content,
+            tags,
+            categories,
+            excerpt,
+            published_at,
+            updated_at,
+            id
+        ],
     )?;
     Ok(())
 }
@@ -295,50 +309,15 @@ pub fn list_posts_filtered(
     }
 
     if let Some(year) = filters.year {
-        // created_at is unix ms; compute year range
-        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-        let end = chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-
-        if let Some(month) = filters.month {
-            let m_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .timestamp() * 1000;
-            let next_month = if month == 12 {
-                chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-            } else {
-                chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
-            }
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-
-            let idx1 = param_values.len() + 1;
-            let idx2 = param_values.len() + 2;
-            filter_conditions.push(format!("(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"));
-            param_values.push(Box::new(m_start));
-            param_values.push(Box::new(next_month));
-        } else {
-            let idx1 = param_values.len() + 1;
-            let idx2 = param_values.len() + 2;
-            filter_conditions.push(format!("(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"));
-            param_values.push(Box::new(start));
-            param_values.push(Box::new(end));
-        }
+        let (start, end) =
+            calendar_range_unix_ms(year, filters.month).ok_or(rusqlite::Error::InvalidQuery)?;
+        let idx1 = param_values.len() + 1;
+        let idx2 = param_values.len() + 2;
+        filter_conditions.push(format!(
+            "(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"
+        ));
+        param_values.push(Box::new(start));
+        param_values.push(Box::new(end));
     }
 
     for tag in &filters.tags {
@@ -435,22 +414,16 @@ pub fn post_calendar_counts(
 }
 
 /// Collect all distinct tag values across posts for a project.
-pub fn distinct_post_tags(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT tags FROM posts WHERE project_id = ?1 AND tags != '[]'"
-    )?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        row.get::<_, String>(0)
-    })?;
+pub fn distinct_post_tags(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT tags FROM posts WHERE project_id = ?1 AND tags != '[]'")?;
+    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
     let mut all_tags = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str {
-            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
-                all_tags.extend(tags);
-            }
+        if let Ok(json_str) = json_str
+            && let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str)
+        {
+            all_tags.extend(tags);
         }
     }
     Ok(all_tags.into_iter().collect())
@@ -462,17 +435,15 @@ pub fn distinct_post_categories(
     project_id: &str,
 ) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT categories FROM posts WHERE project_id = ?1 AND categories != '[]'"
+        "SELECT DISTINCT categories FROM posts WHERE project_id = ?1 AND categories != '[]'",
     )?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
     let mut all_cats = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str {
-            if let Ok(cats) = serde_json::from_str::<Vec<String>>(&json_str) {
-                all_cats.extend(cats);
-            }
+        if let Ok(json_str) = json_str
+            && let Ok(cats) = serde_json::from_str::<Vec<String>>(&json_str)
+        {
+            all_cats.extend(cats);
         }
     }
     Ok(all_cats.into_iter().collect())
@@ -481,8 +452,8 @@ pub fn distinct_post_categories(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();
@@ -603,9 +574,17 @@ mod tests {
         let db = setup();
         insert_post(db.conn(), &make_post("x1", "hello")).unwrap();
         set_published_snapshot(
-            db.conn(), "x1", "Pub Title", "Pub Body",
-            "[\"rust\"]", "[\"tech\"]", Some("Pub Excerpt"), 3000, 3000,
-        ).unwrap();
+            db.conn(),
+            "x1",
+            "Pub Title",
+            "Pub Body",
+            "[\"rust\"]",
+            "[\"tech\"]",
+            Some("Pub Excerpt"),
+            3000,
+            3000,
+        )
+        .unwrap();
         let fetched = get_post_by_id(db.conn(), "x1").unwrap();
         assert_eq!(fetched.published_title.as_deref(), Some("Pub Title"));
         assert_eq!(fetched.published_content.as_deref(), Some("Pub Body"));

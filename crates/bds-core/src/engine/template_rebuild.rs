@@ -139,8 +139,8 @@ fn rebuild_single_template(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
@@ -172,8 +172,7 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
 ";
         fs::write(tpl_dir.join("my-template.liquid"), content).unwrap();
 
-        let report =
-            rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 1);
         assert_eq!(report.updated, 0);
@@ -186,7 +185,10 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
         assert!(tpl.enabled);
         assert_eq!(tpl.version, 1);
         assert_eq!(tpl.status, TemplateStatus::Published);
-        assert!(tpl.content.is_none(), "published template should have content=None in DB");
+        assert!(
+            tpl.content.is_none(),
+            "published template should have content=None in DB"
+        );
         assert_eq!(tpl.file_path, "templates/my-template.liquid");
     }
 
@@ -230,8 +232,7 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
 ";
         fs::write(tpl_dir.join("updated-slug.liquid"), content).unwrap();
 
-        let report =
-            rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 0);
         assert_eq!(report.updated, 1);
@@ -256,8 +257,7 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
         fs::write(tpl_dir.join("readme.txt"), "not a template").unwrap();
         fs::write(tpl_dir.join("styles.css"), "body {}").unwrap();
 
-        let report =
-            rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 0);
         assert_eq!(report.updated, 0);
@@ -286,14 +286,12 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
         fs::write(tpl_dir.join("idem.liquid"), content).unwrap();
 
         // First run
-        let r1 =
-            rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let r1 = rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
         assert_eq!(r1.created, 1);
         assert_eq!(r1.updated, 0);
 
         // Second run - should update, not create
-        let r2 =
-            rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let r2 = rebuild_templates_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
         assert_eq!(r2.created, 0);
         assert_eq!(r2.updated, 1);
 

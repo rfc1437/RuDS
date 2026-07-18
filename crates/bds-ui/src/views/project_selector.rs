@@ -1,5 +1,5 @@
-use iced::widget::{button, container, row, svg, text, Column, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Column, Space, button, container, row, svg, text};
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -120,19 +120,32 @@ pub fn view(
 
         let label = if is_active {
             row![
-                text("\u{2713}").size(12).shaping(Shaping::Advanced).color(Color::from_rgb(0.40, 0.80, 0.40)),
-                text(name).size(12).shaping(Shaping::Advanced).color(Color::WHITE),
+                text("\u{2713}")
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.40, 0.80, 0.40)),
+                text(name)
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::WHITE),
             ]
             .spacing(6)
         } else {
             row![
                 Space::with_width(Length::Fixed(14.0)),
-                text(name).size(12).shaping(Shaping::Advanced).color(Color::from_rgb(0.80, 0.80, 0.85)),
+                text(name)
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.80, 0.80, 0.85)),
             ]
             .spacing(6)
         };
 
-        let style_fn = if is_active { project_item_active } else { project_item };
+        let style_fn = if is_active {
+            project_item_active
+        } else {
+            project_item
+        };
 
         items.push(
             button(label)
@@ -159,8 +172,13 @@ pub fn view(
     items.push(
         button(
             row![
-                text("+").size(14).shaping(Shaping::Advanced).color(Color::from_rgb(0.55, 0.75, 0.95)),
-                text(t(locale, "projectSelector.newProject")).size(12).shaping(Shaping::Advanced),
+                text("+")
+                    .size(14)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.55, 0.75, 0.95)),
+                text(t(locale, "projectSelector.newProject"))
+                    .size(12)
+                    .shaping(Shaping::Advanced),
             ]
             .spacing(6),
         )

@@ -381,5 +381,7 @@
   "dashboard.recentPosts": "Recent Posts",
   "dashboard.noRecentPosts": "No recent posts",
   "dashboard.and": "and",
-  "dashboard.pin": "Pin"
+  "dashboard.pin": "Pin",
+  "common.tabNotImplemented": "This area will be implemented in a later milestone.",
+  "editor.noPreviewAvailable": "No preview available"
 }

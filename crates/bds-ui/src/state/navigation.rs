@@ -92,24 +92,21 @@ mod tests {
 
     #[test]
     fn toggle_off_when_same_and_visible() {
-        let (view, visible) =
-            handle_activity_click(SidebarView::Posts, true, SidebarView::Posts);
+        let (view, visible) = handle_activity_click(SidebarView::Posts, true, SidebarView::Posts);
         assert_eq!(view, SidebarView::Posts);
         assert!(!visible);
     }
 
     #[test]
     fn toggle_on_when_same_and_hidden() {
-        let (view, visible) =
-            handle_activity_click(SidebarView::Posts, false, SidebarView::Posts);
+        let (view, visible) = handle_activity_click(SidebarView::Posts, false, SidebarView::Posts);
         assert_eq!(view, SidebarView::Posts);
         assert!(visible);
     }
 
     #[test]
     fn switch_view_when_different() {
-        let (view, visible) =
-            handle_activity_click(SidebarView::Posts, true, SidebarView::Media);
+        let (view, visible) = handle_activity_click(SidebarView::Posts, true, SidebarView::Media);
         assert_eq!(view, SidebarView::Media);
         assert!(visible);
     }

@@ -25,9 +25,18 @@ fn post_status_serde_matches_db_values() {
     // spec: status: draft | published | archived
     use bds_core::model::PostStatus;
 
-    assert_eq!(serde_json::to_string(&PostStatus::Draft).unwrap(), "\"draft\"");
-    assert_eq!(serde_json::to_string(&PostStatus::Published).unwrap(), "\"published\"");
-    assert_eq!(serde_json::to_string(&PostStatus::Archived).unwrap(), "\"archived\"");
+    assert_eq!(
+        serde_json::to_string(&PostStatus::Draft).unwrap(),
+        "\"draft\""
+    );
+    assert_eq!(
+        serde_json::to_string(&PostStatus::Published).unwrap(),
+        "\"published\""
+    );
+    assert_eq!(
+        serde_json::to_string(&PostStatus::Archived).unwrap(),
+        "\"archived\""
+    );
 
     // round-trip
     let d: PostStatus = serde_json::from_str("\"draft\"").unwrap();
@@ -44,10 +53,22 @@ fn post_status_serde_matches_db_values() {
 fn template_kind_serde_matches_db_values() {
     use bds_core::model::TemplateKind;
 
-    assert_eq!(serde_json::to_string(&TemplateKind::Post).unwrap(), "\"post\"");
-    assert_eq!(serde_json::to_string(&TemplateKind::List).unwrap(), "\"list\"");
-    assert_eq!(serde_json::to_string(&TemplateKind::NotFound).unwrap(), "\"not_found\"");
-    assert_eq!(serde_json::to_string(&TemplateKind::Partial).unwrap(), "\"partial\"");
+    assert_eq!(
+        serde_json::to_string(&TemplateKind::Post).unwrap(),
+        "\"post\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TemplateKind::List).unwrap(),
+        "\"list\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TemplateKind::NotFound).unwrap(),
+        "\"not_found\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TemplateKind::Partial).unwrap(),
+        "\"partial\""
+    );
 
     let nf: TemplateKind = serde_json::from_str("\"not_found\"").unwrap();
     assert_eq!(nf, TemplateKind::NotFound);
@@ -59,8 +80,14 @@ fn template_kind_serde_matches_db_values() {
 fn template_status_serde_matches_db_values() {
     use bds_core::model::TemplateStatus;
 
-    assert_eq!(serde_json::to_string(&TemplateStatus::Draft).unwrap(), "\"draft\"");
-    assert_eq!(serde_json::to_string(&TemplateStatus::Published).unwrap(), "\"published\"");
+    assert_eq!(
+        serde_json::to_string(&TemplateStatus::Draft).unwrap(),
+        "\"draft\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TemplateStatus::Published).unwrap(),
+        "\"published\""
+    );
 }
 
 // ── spec: schema.allium — Script kind: macro | utility | transform ──
@@ -69,9 +96,18 @@ fn template_status_serde_matches_db_values() {
 fn script_kind_serde_matches_db_values() {
     use bds_core::model::ScriptKind;
 
-    assert_eq!(serde_json::to_string(&ScriptKind::Macro).unwrap(), "\"macro\"");
-    assert_eq!(serde_json::to_string(&ScriptKind::Utility).unwrap(), "\"utility\"");
-    assert_eq!(serde_json::to_string(&ScriptKind::Transform).unwrap(), "\"transform\"");
+    assert_eq!(
+        serde_json::to_string(&ScriptKind::Macro).unwrap(),
+        "\"macro\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ScriptKind::Utility).unwrap(),
+        "\"utility\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ScriptKind::Transform).unwrap(),
+        "\"transform\""
+    );
 
     let t: ScriptKind = serde_json::from_str("\"transform\"").unwrap();
     assert_eq!(t, ScriptKind::Transform);
@@ -83,8 +119,14 @@ fn script_kind_serde_matches_db_values() {
 fn script_status_serde_matches_db_values() {
     use bds_core::model::ScriptStatus;
 
-    assert_eq!(serde_json::to_string(&ScriptStatus::Draft).unwrap(), "\"draft\"");
-    assert_eq!(serde_json::to_string(&ScriptStatus::Published).unwrap(), "\"published\"");
+    assert_eq!(
+        serde_json::to_string(&ScriptStatus::Draft).unwrap(),
+        "\"draft\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ScriptStatus::Published).unwrap(),
+        "\"published\""
+    );
 }
 
 // ── spec: post.allium — content_location invariant ──
@@ -105,7 +147,10 @@ fn content_location_published_posts_null_content_in_fixture() {
 
     assert!(!rows.is_empty());
     for (slug, content) in &rows {
-        assert!(content.is_none(), "spec: published post '{slug}' must have NULL content in DB");
+        assert!(
+            content.is_none(),
+            "spec: published post '{slug}' must have NULL content in DB"
+        );
     }
 }
 
@@ -123,7 +168,10 @@ fn content_location_draft_posts_have_content_in_fixture() {
 
     assert!(!rows.is_empty());
     for (slug, content) in &rows {
-        assert!(content.is_some(), "spec: draft post '{slug}' must have content in DB");
+        assert!(
+            content.is_some(),
+            "spec: draft post '{slug}' must have content in DB"
+        );
     }
 }
 
@@ -138,7 +186,8 @@ fn post_status_transitions_all_valid() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO posts (id, project_id, title, slug, status, file_path, created_at, updated_at) \
          VALUES ('post1', 'p1', 'Test', 'test', 'draft', '', 1000, 1000)",
@@ -157,11 +206,15 @@ fn post_status_transitions_all_valid() {
 
     for (from, to) in transitions {
         // Set to 'from' state first
-        conn.execute("UPDATE posts SET status = ?1 WHERE id = 'post1'", [from]).unwrap();
+        conn.execute("UPDATE posts SET status = ?1 WHERE id = 'post1'", [from])
+            .unwrap();
         // Transition to 'to' state
-        conn.execute("UPDATE posts SET status = ?1 WHERE id = 'post1'", [to]).unwrap();
+        conn.execute("UPDATE posts SET status = ?1 WHERE id = 'post1'", [to])
+            .unwrap();
         let status: String = conn
-            .query_row("SELECT status FROM posts WHERE id = 'post1'", [], |r| r.get(0))
+            .query_row("SELECT status FROM posts WHERE id = 'post1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(status, to, "transition {from} -> {to} failed");
     }
@@ -177,7 +230,8 @@ fn slug_frozen_after_publish_semantics() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO posts (id, project_id, title, slug, status, file_path, created_at, updated_at, published_at) \
          VALUES ('post1', 'p1', 'Test', 'test', 'published', 'posts/2024/01/test.md', 1000, 1000, 1000)",
@@ -186,9 +240,16 @@ fn slug_frozen_after_publish_semantics() {
 
     // published_at is set — slug should be considered frozen
     let published_at: Option<i64> = conn
-        .query_row("SELECT published_at FROM posts WHERE id = 'post1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT published_at FROM posts WHERE id = 'post1'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert!(published_at.is_some(), "spec: is_slug_frozen = published_at != null");
+    assert!(
+        published_at.is_some(),
+        "spec: is_slug_frozen = published_at != null"
+    );
 
     // A never-published draft has no published_at — slug is mutable
     conn.execute(
@@ -197,9 +258,16 @@ fn slug_frozen_after_publish_semantics() {
         [],
     ).unwrap();
     let draft_published_at: Option<i64> = conn
-        .query_row("SELECT published_at FROM posts WHERE id = 'post2'", [], |r| r.get(0))
+        .query_row(
+            "SELECT published_at FROM posts WHERE id = 'post2'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert!(draft_published_at.is_none(), "spec: unpublished draft has no published_at");
+    assert!(
+        draft_published_at.is_none(),
+        "spec: unpublished draft has no published_at"
+    );
 }
 
 // ── spec: project.allium — SingleActiveProject invariant ──
@@ -209,7 +277,11 @@ fn slug_frozen_after_publish_semantics() {
 fn single_active_project_in_fixture() {
     let conn = fixture_db();
     let active_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM projects WHERE is_active = 1", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM projects WHERE is_active = 1",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(active_count, 1, "spec: exactly one project is active");
 }
@@ -247,7 +319,10 @@ fn unique_translation_per_post_language_in_fixture() {
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
-    assert!(dupes.is_empty(), "spec: translation unique per (post, language)");
+    assert!(
+        dupes.is_empty(),
+        "spec: translation unique per (post, language)"
+    );
 }
 
 // ── spec: schema.allium — Post defaults ──
@@ -260,13 +335,15 @@ fn post_defaults_match_spec() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     // Insert with minimal columns to test defaults
     conn.execute(
         "INSERT INTO posts (id, project_id, title, slug, created_at, updated_at) \
          VALUES ('min1', 'p1', 'Minimal', 'minimal', 1000, 1000)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     let (status, do_not_translate, file_path): (String, bool, String) = conn
         .query_row(
@@ -291,12 +368,14 @@ fn script_defaults_match_spec() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO scripts (id, project_id, slug, title, file_path, created_at, updated_at) \
          VALUES ('s1', 'p1', 'test', 'Test', 'scripts/test.lua', 1000, 1000)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     let (kind, entrypoint, enabled, version, status): (String, String, bool, i32, String) = conn
         .query_row(
@@ -322,12 +401,14 @@ fn template_defaults_match_spec() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO templates (id, project_id, slug, title, file_path, created_at, updated_at) \
          VALUES ('t1', 'p1', 'test', 'Test', 'templates/test.liquid', 1000, 1000)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     let (kind, enabled, version, status): (String, bool, i32, String) = conn
         .query_row(
@@ -351,12 +432,14 @@ fn tag_unique_name_per_project_enforced() {
         "INSERT INTO projects (id, name, slug, created_at, updated_at, is_active) \
          VALUES ('p1', 'test', 'test', 1000, 1000, 1)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO tags (id, project_id, name, created_at, updated_at) \
          VALUES ('t1', 'p1', 'rust', 1000, 1000)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Same name, same project — must fail
     let result = conn.execute(
@@ -364,7 +447,10 @@ fn tag_unique_name_per_project_enforced() {
          VALUES ('t2', 'p1', 'rust', 1000, 1000)",
         [],
     );
-    assert!(result.is_err(), "spec: duplicate tag name in same project must fail");
+    assert!(
+        result.is_err(),
+        "spec: duplicate tag name in same project must fail"
+    );
 }
 
 // ── spec: post.allium — Slug generation algorithm ──
@@ -447,16 +533,37 @@ fn published_post_file_paths_follow_date_layout() {
 
 #[test]
 fn notification_entity_serde_matches_db_values() {
-    use bds_core::model::{NotificationEntity, NotificationAction};
+    use bds_core::model::{NotificationAction, NotificationEntity};
 
-    assert_eq!(serde_json::to_string(&NotificationEntity::Post).unwrap(), "\"post\"");
-    assert_eq!(serde_json::to_string(&NotificationEntity::Media).unwrap(), "\"media\"");
-    assert_eq!(serde_json::to_string(&NotificationEntity::Script).unwrap(), "\"script\"");
-    assert_eq!(serde_json::to_string(&NotificationEntity::Template).unwrap(), "\"template\"");
+    assert_eq!(
+        serde_json::to_string(&NotificationEntity::Post).unwrap(),
+        "\"post\""
+    );
+    assert_eq!(
+        serde_json::to_string(&NotificationEntity::Media).unwrap(),
+        "\"media\""
+    );
+    assert_eq!(
+        serde_json::to_string(&NotificationEntity::Script).unwrap(),
+        "\"script\""
+    );
+    assert_eq!(
+        serde_json::to_string(&NotificationEntity::Template).unwrap(),
+        "\"template\""
+    );
 
-    assert_eq!(serde_json::to_string(&NotificationAction::Created).unwrap(), "\"created\"");
-    assert_eq!(serde_json::to_string(&NotificationAction::Updated).unwrap(), "\"updated\"");
-    assert_eq!(serde_json::to_string(&NotificationAction::Deleted).unwrap(), "\"deleted\"");
+    assert_eq!(
+        serde_json::to_string(&NotificationAction::Created).unwrap(),
+        "\"created\""
+    );
+    assert_eq!(
+        serde_json::to_string(&NotificationAction::Updated).unwrap(),
+        "\"updated\""
+    );
+    assert_eq!(
+        serde_json::to_string(&NotificationAction::Deleted).unwrap(),
+        "\"deleted\""
+    );
 }
 
 // ── spec: generation.allium / publishing.allium — SshMode values ──
@@ -493,7 +600,11 @@ fn fts5_tables_exist_in_fixture() {
         [],
         |r| r.get::<_, i64>(0),
     );
-    assert_eq!(result.unwrap(), 1, "spec: posts_fts virtual table must exist");
+    assert_eq!(
+        result.unwrap(),
+        1,
+        "spec: posts_fts virtual table must exist"
+    );
 
     // media_fts
     let result = conn.query_row(
@@ -501,5 +612,9 @@ fn fts5_tables_exist_in_fixture() {
         [],
         |r| r.get::<_, i64>(0),
     );
-    assert_eq!(result.unwrap(), 1, "spec: media_fts virtual table must exist");
+    assert_eq!(
+        result.unwrap(),
+        1,
+        "spec: media_fts virtual table must exist"
+    );
 }

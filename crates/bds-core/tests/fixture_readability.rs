@@ -25,7 +25,15 @@ fn read_project() {
         .query_row(
             "SELECT id, name, slug, data_path, is_active FROM projects WHERE id = ?1",
             [PROJECT_ID],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .unwrap();
 
@@ -52,7 +60,10 @@ fn read_published_post_has_null_content() {
     assert_eq!(title, "Esmeralda");
     assert_eq!(slug, "esmeralda");
     assert_eq!(status, "published");
-    assert!(content.is_none(), "published posts must have NULL content in DB");
+    assert!(
+        content.is_none(),
+        "published posts must have NULL content in DB"
+    );
 }
 
 #[test]
@@ -96,8 +107,14 @@ fn published_posts_have_file_paths() {
 
     assert_eq!(rows.len(), 3);
     for (slug, path) in &rows {
-        assert!(!path.is_empty(), "published post '{slug}' must have a file_path");
-        assert!(path.ends_with(&format!("{slug}.md")), "file_path must end with {slug}.md");
+        assert!(
+            !path.is_empty(),
+            "published post '{slug}' must have a file_path"
+        );
+        assert!(
+            path.ends_with(&format!("{slug}.md")),
+            "file_path must end with {slug}.md"
+        );
     }
 }
 
@@ -131,8 +148,14 @@ fn post_timestamps_are_unix_integers() {
         .unwrap();
 
     // Sanity: timestamps should be in reasonable Unix range (year 2000+)
-    assert!(created_at > 946_684_800, "created_at should be after year 2000");
-    assert!(updated_at > 946_684_800, "updated_at should be after year 2000");
+    assert!(
+        created_at > 946_684_800,
+        "created_at should be after year 2000"
+    );
+    assert!(
+        updated_at > 946_684_800,
+        "updated_at should be after year 2000"
+    );
 }
 
 #[test]
@@ -147,7 +170,10 @@ fn post_unique_constraint_on_project_slug() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(dupes.is_empty(), "found duplicate (project_id, slug) pairs: {dupes:?}");
+    assert!(
+        dupes.is_empty(),
+        "found duplicate (project_id, slug) pairs: {dupes:?}"
+    );
 }
 
 // ── Post Translations ───────────────────────────────────────────────
@@ -156,7 +182,9 @@ fn post_unique_constraint_on_project_slug() {
 fn read_post_translations() {
     let conn = fixture_db();
     let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM post_translations", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM post_translations", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(count, 4);
 }
@@ -177,7 +205,10 @@ fn translation_references_valid_post() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "orphan translations referencing missing posts: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "orphan translations referencing missing posts: {orphans:?}"
+    );
 }
 
 #[test]
@@ -193,7 +224,10 @@ fn published_translations_have_null_content() {
         .collect();
 
     for (id, content) in &rows {
-        assert!(content.is_none(), "published translation {id} must have NULL content");
+        assert!(
+            content.is_none(),
+            "published translation {id} must have NULL content"
+        );
     }
 }
 
@@ -293,7 +327,16 @@ fn tag_names_are_expected() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert_eq!(names, vec!["fotografie", "mac-os-x", "natur", "programmierung", "sysadmin"]);
+    assert_eq!(
+        names,
+        vec![
+            "fotografie",
+            "mac-os-x",
+            "natur",
+            "programmierung",
+            "sysadmin"
+        ]
+    );
 }
 
 #[test]
@@ -308,7 +351,10 @@ fn tag_unique_constraint_on_project_name() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(dupes.is_empty(), "found duplicate (project_id, name) tag pairs: {dupes:?}");
+    assert!(
+        dupes.is_empty(),
+        "found duplicate (project_id, name) tag pairs: {dupes:?}"
+    );
 }
 
 // ── Templates ───────────────────────────────────────────────────────
@@ -345,7 +391,10 @@ fn read_template() {
     assert_eq!(kind, "post");
     assert!(enabled);
     assert_eq!(status, "published");
-    assert!(content.is_none(), "published template content should be NULL in DB");
+    assert!(
+        content.is_none(),
+        "published template content should be NULL in DB"
+    );
 }
 
 // ── Scripts ─────────────────────────────────────────────────────────
@@ -420,7 +469,10 @@ fn settings_are_key_value_pairs() {
         assert!(!value.is_empty());
     }
     // All setting keys should contain the project ID (namespaced)
-    let project_keys: Vec<_> = pairs.iter().filter(|(k, _)| k.contains(PROJECT_ID)).collect();
+    let project_keys: Vec<_> = pairs
+        .iter()
+        .filter(|(k, _)| k.contains(PROJECT_ID))
+        .collect();
     assert_eq!(project_keys.len(), 5);
 }
 
@@ -479,7 +531,10 @@ fn all_posts_belong_to_existing_project() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "posts referencing missing projects: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "posts referencing missing projects: {orphans:?}"
+    );
 }
 
 #[test]
@@ -498,7 +553,10 @@ fn all_tags_belong_to_existing_project() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "tags referencing missing projects: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "tags referencing missing projects: {orphans:?}"
+    );
 }
 
 #[test]
@@ -517,7 +575,10 @@ fn all_media_belong_to_existing_project() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "media referencing missing projects: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "media referencing missing projects: {orphans:?}"
+    );
 }
 
 #[test]
@@ -537,7 +598,10 @@ fn post_links_reference_valid_posts() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "post_links with invalid references: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "post_links with invalid references: {orphans:?}"
+    );
 }
 
 #[test]
@@ -557,5 +621,8 @@ fn post_media_references_valid_entities() {
         .map(|r| r.unwrap())
         .collect();
 
-    assert!(orphans.is_empty(), "post_media with invalid references: {orphans:?}");
+    assert!(
+        orphans.is_empty(),
+        "post_media with invalid references: {orphans:?}"
+    );
 }

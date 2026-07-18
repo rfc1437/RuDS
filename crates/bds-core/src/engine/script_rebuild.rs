@@ -140,8 +140,8 @@ fn rebuild_single_script(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
@@ -176,8 +176,7 @@ end
 ";
         fs::write(scripts_dir.join("my-macro.lua"), content).unwrap();
 
-        let report =
-            rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 1);
         assert_eq!(report.updated, 0);
@@ -191,7 +190,10 @@ end
         assert!(script.enabled);
         assert_eq!(script.version, 1);
         assert_eq!(script.status, ScriptStatus::Published);
-        assert!(script.content.is_none(), "published script should have content=None in DB");
+        assert!(
+            script.content.is_none(),
+            "published script should have content=None in DB"
+        );
         assert_eq!(script.file_path, "scripts/my-macro.lua");
     }
 
@@ -219,8 +221,7 @@ def main():
 ";
         fs::write(scripts_dir.join("my-utility.py"), content).unwrap();
 
-        let report =
-            rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 1);
         assert_eq!(report.updated, 0);
@@ -280,8 +281,7 @@ end
 ";
         fs::write(scripts_dir.join("updated-script.lua"), content).unwrap();
 
-        let report =
-            rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let report = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
 
         assert_eq!(report.created, 0);
         assert_eq!(report.updated, 1);
@@ -321,14 +321,12 @@ function run() end
         fs::write(scripts_dir.join("idem.lua"), content).unwrap();
 
         // First run
-        let r1 =
-            rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let r1 = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
         assert_eq!(r1.created, 1);
         assert_eq!(r1.updated, 0);
 
         // Second run - should update, not create
-        let r2 =
-            rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        let r2 = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
         assert_eq!(r2.created, 0);
         assert_eq!(r2.updated, 1);
 

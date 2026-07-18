@@ -3,9 +3,9 @@
 //! Validates toast system, menu sync logic, dialog i18n,
 //! and keyboard shortcut coverage.
 
-use bds_core::i18n::{translate, UiLocale};
-use bds_ui::state::toast::{Toast, ToastLevel};
+use bds_core::i18n::{UiLocale, translate};
 use bds_ui::platform::menu::MenuAction;
+use bds_ui::state::toast::{Toast, ToastLevel};
 
 // ── Toast system ──
 
@@ -89,10 +89,7 @@ fn menu_actions_that_need_tab() {
 
 #[test]
 fn menu_actions_gated_by_offline() {
-    let online_only = [
-        MenuAction::FillMissingTranslations,
-        MenuAction::UploadSite,
-    ];
+    let online_only = [MenuAction::FillMissingTranslations, MenuAction::UploadSite];
     for action in &online_only {
         let key = action.i18n_key();
         let label = translate(UiLocale::En, key);
@@ -105,7 +102,11 @@ fn menu_actions_gated_by_offline() {
 
 #[test]
 fn dialog_keys_exist_in_all_locales() {
-    let keys = ["dialog.selectFolder", "dialog.importMedia", "dialog.imageFilter"];
+    let keys = [
+        "dialog.selectFolder",
+        "dialog.importMedia",
+        "dialog.imageFilter",
+    ];
     for locale in UiLocale::all() {
         for key in &keys {
             let label = translate(*locale, key);
@@ -120,27 +121,31 @@ fn dialog_keys_exist_in_all_locales() {
 fn accelerator_actions_match_spec() {
     // M2 spec: these actions must have keyboard shortcuts
     let accelerated = [
-        MenuAction::NewPost,      // Cmd+N
-        MenuAction::ImportMedia,   // Cmd+I
-        MenuAction::Save,         // Cmd+S
-        MenuAction::Find,         // Cmd+F
-        MenuAction::Replace,      // Cmd+H
+        MenuAction::NewPost,         // Cmd+N
+        MenuAction::ImportMedia,     // Cmd+I
+        MenuAction::Save,            // Cmd+S
+        MenuAction::Find,            // Cmd+F
+        MenuAction::Replace,         // Cmd+H
         MenuAction::EditPreferences, // Cmd+,
-        MenuAction::ViewPosts,    // Cmd+1
-        MenuAction::ViewMedia,    // Cmd+2
-        MenuAction::ToggleSidebar, // Cmd+B
-        MenuAction::TogglePanel,  // Cmd+J
+        MenuAction::ViewPosts,       // Cmd+1
+        MenuAction::ViewMedia,       // Cmd+2
+        MenuAction::ToggleSidebar,   // Cmd+B
+        MenuAction::TogglePanel,     // Cmd+J
         MenuAction::PublishSelected, // Cmd+Shift+P
-        MenuAction::PreviewPost,  // Cmd+Shift+V
+        MenuAction::PreviewPost,     // Cmd+Shift+V
         MenuAction::GenerateSitemap, // Cmd+R
-        MenuAction::ValidateSite, // Cmd+Shift+L
-        MenuAction::UploadSite,   // Cmd+Shift+U
+        MenuAction::ValidateSite,    // Cmd+Shift+L
+        MenuAction::UploadSite,      // Cmd+Shift+U
     ];
     // All must be valid MenuAction variants with i18n keys
     for action in &accelerated {
         assert!(!action.i18n_key().is_empty());
     }
-    assert_eq!(accelerated.len(), 15, "M2 spec has 15 accelerator-bound actions");
+    assert_eq!(
+        accelerated.len(),
+        15,
+        "M2 spec has 15 accelerator-bound actions"
+    );
 }
 
 // ── Toast i18n keys ──

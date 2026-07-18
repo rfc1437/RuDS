@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 
+use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 use tokio::sync::oneshot;
 
@@ -81,7 +81,9 @@ pub fn start_preview_server(
     };
     let listener = std::net::TcpListener::bind((PREVIEW_HOST, PREVIEW_PORT)).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AddrInUse {
-            EngineError::Conflict(format!("preview server already running on {PREVIEW_HOST}:{PREVIEW_PORT}"))
+            EngineError::Conflict(format!(
+                "preview server already running on {PREVIEW_HOST}:{PREVIEW_PORT}"
+            ))
         } else {
             EngineError::Io(error)
         }
@@ -135,23 +137,23 @@ async fn handle_draft_preview(
         theme: query.theme.clone(),
         mode: query.mode.clone(),
     };
-    match render_preview_response(&state, &format!("/__draft/{post_id}"), query.language.as_deref(), Some(&style)) {
+    match render_preview_response(
+        &state,
+        &format!("/__draft/{post_id}"),
+        query.language.as_deref(),
+        Some(&style),
+    ) {
         Ok(response) => response,
         Err(error) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
 }
 
-async fn handle_style_preview(
-    Query(query): Query<StylePreviewQuery>,
-) -> Response {
+async fn handle_style_preview(Query(query): Query<StylePreviewQuery>) -> Response {
     let theme = query.theme.unwrap_or_else(|| "default".to_string());
     let mode = query.mode.unwrap_or_else(|| "auto".to_string());
     let html = format!(
         "<!doctype html><html lang=\"en\" data-theme=\"{}\" data-mode=\"{}\"><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>Style Preview</title><link rel=\"stylesheet\" href=\"/assets/pico.min.css\" /><link rel=\"stylesheet\" href=\"/assets/bds.css\" /></head><body><main><section class=\"style-preview\"><h1>Style Preview</h1><p>Theme: {}</p><p>Mode: {}</p></section></main></body></html>",
-        theme,
-        mode,
-        theme,
-        mode,
+        theme, mode, theme, mode,
     );
     Html(html).into_response()
 }
@@ -163,7 +165,10 @@ fn render_preview_response(
     style: Option<&StylePreviewQuery>,
 ) -> EngineResult<Response> {
     if let Some(post_id) = path.strip_prefix("/__draft/") {
-        let html = apply_preview_style(render_draft_preview(state, post_id, requested_language)?, style);
+        let html = apply_preview_style(
+            render_draft_preview(state, post_id, requested_language)?,
+            style,
+        );
         return Ok(Html(html).into_response());
     }
 
@@ -178,8 +183,15 @@ fn render_preview_response(
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let response = build_preview_response(db.conn(), &state.data_dir, &state.project_id, &metadata, &input_posts, path)
-        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let response = build_preview_response(
+        db.conn(),
+        &state.data_dir,
+        &state.project_id,
+        &metadata,
+        &input_posts,
+        path,
+    )
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
     let status = StatusCode::from_u16(response.status_code).unwrap_or(StatusCode::OK);
     Ok((status, Html(apply_preview_style(response.html, style))).into_response())
 }
@@ -188,7 +200,9 @@ fn apply_preview_style(html: String, style: Option<&StylePreviewQuery>) -> Strin
     let Some(style) = style else {
         return html;
     };
-    if style.theme.as_deref().unwrap_or("").is_empty() && style.mode.as_deref().unwrap_or("").is_empty() {
+    if style.theme.as_deref().unwrap_or("").is_empty()
+        && style.mode.as_deref().unwrap_or("").is_empty()
+    {
         return html;
     }
 
@@ -238,34 +252,42 @@ fn render_draft_preview(
     let db = Database::open(&state.db_path)?;
     let metadata = crate::engine::meta::read_project_json(&state.data_dir)?;
     let post = queries::post::get_post_by_id(db.conn(), post_id)?;
-    let canonical_language = post.language.as_deref().unwrap_or_else(|| metadata.main_language.as_deref().unwrap_or("en"));
+    let canonical_language = post
+        .language
+        .as_deref()
+        .unwrap_or_else(|| metadata.main_language.as_deref().unwrap_or("en"));
     let target_language = requested_language.unwrap_or(canonical_language);
 
-    if target_language != canonical_language {
-        if let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(
-            db.conn(),
-            post_id,
-            target_language,
-        ) {
-            let mut translated_post = post.clone();
-            translated_post.title = translation.title.clone();
-            translated_post.excerpt = translation.excerpt.clone();
-            translated_post.language = Some(translation.language.clone());
-            translated_post.status = translation.status.clone();
-            translated_post.file_path = translation.file_path.clone();
-            translated_post.published_at = translation.published_at.or(post.published_at);
-            let body = load_translation_body(&state.data_dir, &translation)?;
-            let response = build_preview_response(
+    if target_language != canonical_language
+        && let Ok(translation) =
+            queries::post_translation::get_post_translation_by_post_and_language(
                 db.conn(),
-                &state.data_dir,
-                &state.project_id,
-                &metadata,
-                &[(translated_post, body)],
-                &crate::render::build_canonical_post_path(&post, target_language, metadata.main_language.as_deref().unwrap_or("en")),
+                post_id,
+                target_language,
             )
-            .map_err(|error| EngineError::Parse(error.to_string()))?;
-            return Ok(response.html);
-        }
+    {
+        let mut translated_post = post.clone();
+        translated_post.title = translation.title.clone();
+        translated_post.excerpt = translation.excerpt.clone();
+        translated_post.language = Some(translation.language.clone());
+        translated_post.status = translation.status.clone();
+        translated_post.file_path = translation.file_path.clone();
+        translated_post.published_at = translation.published_at.or(post.published_at);
+        let body = load_translation_body(&state.data_dir, &translation)?;
+        let response = build_preview_response(
+            db.conn(),
+            &state.data_dir,
+            &state.project_id,
+            &metadata,
+            &[(translated_post, body)],
+            &crate::render::build_canonical_post_path(
+                &post,
+                target_language,
+                metadata.main_language.as_deref().unwrap_or("en"),
+            ),
+        )
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+        return Ok(response.html);
     }
 
     let body = load_post_body(&state.data_dir, &post)?;
@@ -275,7 +297,11 @@ fn render_draft_preview(
         &state.project_id,
         &metadata,
         &[(post.clone(), body)],
-        &crate::render::build_canonical_post_path(&post, canonical_language, metadata.main_language.as_deref().unwrap_or("en")),
+        &crate::render::build_canonical_post_path(
+            &post,
+            canonical_language,
+            metadata.main_language.as_deref().unwrap_or("en"),
+        ),
     )
     .map_err(|error| EngineError::Parse(error.to_string()))?;
     Ok(response.html)
@@ -288,7 +314,10 @@ fn collect_published_posts(
     let db = Database::open(&state.db_path)?;
     let posts = queries::post::list_posts_by_project(db.conn(), &state.project_id)?;
     let mut published = Vec::new();
-    for post in posts.into_iter().filter(|post| matches!(post.status, PostStatus::Published)) {
+    for post in posts
+        .into_iter()
+        .filter(|post| matches!(post.status, PostStatus::Published))
+    {
         published.push(PublishedPostSource {
             body_markdown: load_post_body(&state.data_dir, &post)?,
             post,
@@ -318,7 +347,11 @@ fn load_translation_body(
     load_markdown_body(data_dir, &translation.file_path, true)
 }
 
-fn load_markdown_body(data_dir: &Path, relative_path: &str, translation: bool) -> EngineResult<String> {
+fn load_markdown_body(
+    data_dir: &Path,
+    relative_path: &str,
+    translation: bool,
+) -> EngineResult<String> {
     let raw = fs::read_to_string(data_dir.join(relative_path.trim_start_matches('/')))?;
     let body = if translation {
         read_translation_file(&raw).map(|(_, body)| body)
@@ -351,25 +384,32 @@ fn serve_scoped_file(
     let scope_root = data_dir.join(scope_dir);
     let candidate = scope_root.join(relative);
     if !candidate.exists() || !candidate.is_file() {
-        return Ok(Some(error_response(StatusCode::NOT_FOUND, "preview asset not found")));
+        return Ok(Some(error_response(
+            StatusCode::NOT_FOUND,
+            "preview asset not found",
+        )));
     }
     let canonical_candidate = candidate.canonicalize()?;
     let canonical_scope_root = scope_root.canonicalize().unwrap_or(scope_root);
     if !canonical_candidate.starts_with(&canonical_scope_root) {
-        return Ok(Some(error_response(StatusCode::NOT_FOUND, "preview asset not found")));
+        return Ok(Some(error_response(
+            StatusCode::NOT_FOUND,
+            "preview asset not found",
+        )));
     }
     let bytes = fs::read(&canonical_candidate)?;
     let mime = guess_content_type(&canonical_candidate);
-    Ok(Some((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, mime)],
-        bytes,
-    )
-        .into_response()))
+    Ok(Some(
+        (StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response(),
+    ))
 }
 
 fn guess_content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|ext| ext.to_str()).unwrap_or_default() {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+    {
         "css" => "text/css; charset=utf-8",
         "js" => "application/javascript; charset=utf-8",
         "json" => "application/json; charset=utf-8",
@@ -383,7 +423,12 @@ fn guess_content_type(path: &Path) -> &'static str {
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
-    (status, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], message.to_string()).into_response()
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        message.to_string(),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -391,7 +436,7 @@ mod tests {
     use super::*;
     use crate::db::queries;
     use crate::engine::meta;
-    use crate::model::{Post, Project, ProjectMetadata, PostStatus};
+    use crate::model::{Post, PostStatus, Project, ProjectMetadata};
     use std::sync::{Mutex, OnceLock};
 
     fn preview_port_guard() -> &'static Mutex<()> {
@@ -504,9 +549,16 @@ mod tests {
     #[test]
     fn root_preview_renders_index_page() {
         let db = Database::open_in_memory().unwrap();
-        let html = build_preview_response(db.conn(), Path::new("."), "project-1", &make_metadata(), &[(make_post().post, make_post().body_markdown)], "/")
-            .unwrap()
-            .html;
+        let html = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &make_metadata(),
+            &[(make_post().post, make_post().body_markdown)],
+            "/",
+        )
+        .unwrap()
+        .html;
         assert!(html.contains("post-list"));
     }
 
@@ -568,11 +620,15 @@ mod tests {
         let client = reqwest::blocking::Client::new();
         let mut body = None;
         for _ in 0..20 {
-            if let Ok(response) = client.get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/__draft/post-1")).send() {
-                if response.status().is_success() {
-                    body = Some(response.text().unwrap());
-                    break;
-                }
+            if let Ok(response) = client
+                .get(format!(
+                    "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__draft/post-1"
+                ))
+                .send()
+                && response.status().is_success()
+            {
+                body = Some(response.text().unwrap());
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -599,7 +655,9 @@ mod tests {
 
         let client = reqwest::blocking::Client::new();
         let response = client
-            .get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/../outside.txt"))
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/../outside.txt"
+            ))
             .send()
             .unwrap();
         server.stop().unwrap();
@@ -628,7 +686,9 @@ mod tests {
             .send()
             .unwrap();
         let asset = client
-            .get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/assets/site.css"))
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/assets/site.css"
+            ))
             .send()
             .unwrap();
         let media_body = media.text().unwrap();
@@ -739,7 +799,10 @@ mod tests {
             dir.path(),
             "project-1",
             &make_metadata(),
-            &[(hidden.post.clone(), hidden.body_markdown.clone()), (featured.post.clone(), featured.body_markdown.clone())],
+            &[
+                (hidden.post.clone(), hidden.body_markdown.clone()),
+                (featured.post.clone(), featured.body_markdown.clone()),
+            ],
             "/category/hidden",
         )
         .unwrap();
@@ -750,7 +813,10 @@ mod tests {
             dir.path(),
             "project-1",
             &make_metadata(),
-            &[(hidden.post, hidden.body_markdown), (featured.post, featured.body_markdown)],
+            &[
+                (hidden.post, hidden.body_markdown),
+                (featured.post, featured.body_markdown),
+            ],
             "/category/featured",
         )
         .unwrap();
@@ -893,6 +959,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 404);
-        assert!(response.html.contains("No rendered page exists for /missing/route"));
+        assert!(
+            response
+                .html
+                .contains("No rendered page exists for /missing/route")
+        );
     }
 }

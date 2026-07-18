@@ -1,6 +1,10 @@
 use std::fs;
 use std::path::Path;
 
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::{Reader, Writer, XmlVersion, escape::escape};
+
+use crate::engine::EngineError;
 use crate::engine::EngineResult;
 use crate::util::atomic_write_str;
 
@@ -53,14 +57,14 @@ pub fn read_menu(data_dir: &Path) -> EngineResult<Vec<MenuItem>> {
         }]);
     }
     let content = fs::read_to_string(&path)?;
-    Ok(parse_opml(&content))
+    parse_opml(&content)
 }
 
 /// Write the navigation menu to meta/menu.opml.
 /// Per menu.allium UpdateMenu rule: Home entry is always extracted and prepended.
 pub fn write_menu(data_dir: &Path, items: &[MenuItem]) -> EngineResult<()> {
     let normalized = normalize_menu(items);
-    let opml = serialize_opml(&normalized);
+    let opml = serialize_opml(&normalized)?;
     let path = data_dir.join("meta").join("menu.opml");
     atomic_write_str(&path, &opml)?;
     Ok(())
@@ -74,7 +78,7 @@ pub fn default_menu_opml() -> String {
         slug: None,
         children: Vec::new(),
     }];
-    serialize_opml(&items)
+    serialize_opml(&items).expect("writing menu XML to memory cannot fail")
 }
 
 /// Per menu.allium HomeAlwaysPresent: ensure Home is always first.
@@ -95,211 +99,136 @@ fn normalize_menu(items: &[MenuItem]) -> Vec<MenuItem> {
 }
 
 /// Parse OPML 2.0 XML into menu items.
-fn parse_opml(content: &str) -> Vec<MenuItem> {
-    // Simple XML parsing using quick-xml-style manual parsing.
-    // OPML structure: <opml><body><outline .../></body></opml>
+fn parse_opml(content: &str) -> EngineResult<Vec<MenuItem>> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
     let mut items = Vec::new();
-    parse_outlines(content, &mut items);
+    let mut parents = Vec::new();
+    let mut in_body = false;
 
-    // Ensure HomeAlwaysPresent
-    if items.is_empty() || items[0].kind != MenuItemKind::Home {
-        let without_home: Vec<MenuItem> = items
-            .into_iter()
-            .filter(|i| i.kind != MenuItemKind::Home)
-            .collect();
-        let mut normalized = vec![MenuItem {
-            kind: MenuItemKind::Home,
-            label: "Home".to_string(),
-            slug: None,
-            children: Vec::new(),
-        }];
-        normalized.extend(without_home);
-        return normalized;
-    }
-    items
-}
-
-/// Simple OPML outline parser.
-/// Parses <outline text="..." type="..." htmlUrl="..."> elements.
-fn parse_outlines(xml: &str, items: &mut Vec<MenuItem>) {
-    // Find all outline elements at the body level
-    let body_start = xml.find("<body>");
-    let body_end = xml.find("</body>");
-    if body_start.is_none() || body_end.is_none() {
-        return;
-    }
-    let body = &xml[body_start.unwrap() + 6..body_end.unwrap()];
-    parse_outline_children(body, items);
-}
-
-fn parse_outline_children(content: &str, items: &mut Vec<MenuItem>) {
-    let mut pos = 0;
-    while pos < content.len() {
-        // Find next <outline
-        let Some(start) = content[pos..].find("<outline") else {
-            break;
-        };
-        let abs_start = pos + start;
-        let tag_start = abs_start;
-
-        // Find the end of the opening tag
-        let rest = &content[tag_start..];
-        let is_self_closing;
-        let tag_end;
-
-        if let Some(sc) = rest.find("/>") {
-            if let Some(gt) = rest.find('>') {
-                if sc < gt {
-                    is_self_closing = true;
-                    tag_end = tag_start + sc + 2;
-                } else {
-                    is_self_closing = false;
-                    tag_end = tag_start + gt + 1;
-                }
-            } else {
-                is_self_closing = true;
-                tag_end = tag_start + sc + 2;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) if event.name().as_ref() == b"body" => in_body = true,
+            Ok(Event::End(event)) if event.name().as_ref() == b"body" => in_body = false,
+            Ok(Event::Start(event)) if in_body && event.name().as_ref() == b"outline" => {
+                parents.push(parse_outline(&event)?);
             }
-        } else if let Some(gt) = rest.find('>') {
-            is_self_closing = false;
-            tag_end = tag_start + gt + 1;
-        } else {
-            break;
-        }
-
-        let tag_content = &content[tag_start..tag_end];
-
-        // Extract attributes
-        let label = extract_attr(tag_content, "text")
-            .unwrap_or_else(|| "Untitled".to_string());
-        let kind_str = extract_attr(tag_content, "type")
-            .unwrap_or_else(|| "page".to_string());
-        let slug = extract_attr(tag_content, "htmlUrl");
-        let kind = MenuItemKind::from_str(&kind_str);
-
-        let mut children = Vec::new();
-        let after_tag;
-
-        if is_self_closing {
-            after_tag = tag_end;
-        } else {
-            // Find matching </outline>
-            let inner = &content[tag_end..];
-            if let Some(close_idx) = find_closing_outline(inner) {
-                let inner_content = &inner[..close_idx];
-                parse_outline_children(inner_content, &mut children);
-                after_tag = tag_end + close_idx + "</outline>".len();
-            } else {
-                after_tag = tag_end;
+            Ok(Event::Empty(event)) if in_body && event.name().as_ref() == b"outline" => {
+                attach_outline(parse_outline(&event)?, &mut parents, &mut items);
             }
-        }
-
-        items.push(MenuItem {
-            kind,
-            label,
-            slug,
-            children,
-        });
-        pos = after_tag;
-    }
-}
-
-fn find_closing_outline(content: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut pos = 0;
-    while pos < content.len() {
-        if content[pos..].starts_with("<outline") {
-            if let Some(sc) = content[pos..].find("/>") {
-                if let Some(gt) = content[pos..].find('>') {
-                    if sc < gt {
-                        pos += sc + 2;
-                        continue;
-                    }
-                }
+            Ok(Event::End(event)) if event.name().as_ref() == b"outline" => {
+                let item = parents
+                    .pop()
+                    .ok_or_else(|| EngineError::Parse("unexpected </outline>".to_string()))?;
+                attach_outline(item, &mut parents, &mut items);
             }
-            depth += 1;
-            pos += 8; // skip past "<outline"
-        } else if content[pos..].starts_with("</outline>") {
-            if depth == 0 {
-                return Some(pos);
-            }
-            depth -= 1;
-            pos += 10;
-        } else {
-            pos += 1;
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(EngineError::Parse(error.to_string())),
         }
     }
-    None
+
+    if !parents.is_empty() {
+        return Err(EngineError::Parse("unclosed <outline>".to_string()));
+    }
+    Ok(normalize_menu(&items))
 }
 
-fn extract_attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!("{name}=\"");
-    let start = tag.find(&pattern)?;
-    let value_start = start + pattern.len();
-    let rest = &tag[value_start..];
-    let end = rest.find('"')?;
-    let value = &rest[..end];
-    // Unescape XML entities
-    Some(
-        value
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'"),
-    )
+fn parse_outline(event: &BytesStart<'_>) -> EngineResult<MenuItem> {
+    let mut label = "Untitled".to_string();
+    let mut kind = MenuItemKind::Page;
+    let mut slug = None;
+
+    for attribute in event.attributes() {
+        let attribute = attribute.map_err(|error| EngineError::Parse(error.to_string()))?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, event.decoder())
+            .map_err(|error| EngineError::Parse(error.to_string()))?
+            .into_owned();
+        match attribute.key.as_ref() {
+            b"text" => label = value,
+            b"type" => kind = MenuItemKind::from_str(&value),
+            b"htmlUrl" => slug = Some(value),
+            _ => {}
+        }
+    }
+
+    Ok(MenuItem {
+        kind,
+        label,
+        slug,
+        children: Vec::new(),
+    })
+}
+
+fn attach_outline(item: MenuItem, parents: &mut [MenuItem], items: &mut Vec<MenuItem>) {
+    if let Some(parent) = parents.last_mut() {
+        parent.children.push(item);
+    } else {
+        items.push(item);
+    }
 }
 
 /// Serialize menu items to OPML 2.0 format.
-fn serialize_opml(items: &[MenuItem]) -> String {
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<opml version=\"2.0\">\n");
-    out.push_str("  <head><title>Blog Menu</title></head>\n");
-    out.push_str("  <body>\n");
+fn serialize_opml(items: &[MenuItem]) -> EngineResult<String> {
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let mut opml = BytesStart::new("opml");
+    opml.push_attribute(("version", "2.0"));
+    writer
+        .write_event(Event::Start(opml))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::Start(BytesStart::new("head")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::Start(BytesStart::new("title")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::Text(BytesText::new("Blog Menu")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::End(BytesEnd::new("title")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::End(BytesEnd::new("head")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::Start(BytesStart::new("body")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
     for item in items {
-        serialize_outline(&mut out, item, 2);
+        write_outline(&mut writer, item).map_err(|error| EngineError::Parse(error.to_string()))?;
     }
-    out.push_str("  </body>\n");
-    out.push_str("</opml>\n");
-    out
+    writer
+        .write_event(Event::End(BytesEnd::new("body")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    writer
+        .write_event(Event::End(BytesEnd::new("opml")))
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    String::from_utf8(writer.into_inner()).map_err(|error| EngineError::Parse(error.to_string()))
 }
 
-fn serialize_outline(out: &mut String, item: &MenuItem, indent: usize) {
-    let pad = "  ".repeat(indent);
-    out.push_str(&pad);
-    out.push_str("<outline");
-    out.push_str(&format!(
-        " text=\"{}\"",
-        xml_escape(&item.label)
-    ));
-    out.push_str(&format!(
-        " type=\"{}\"",
-        item.kind.as_str()
-    ));
-    if let Some(ref slug) = item.slug {
-        out.push_str(&format!(
-            " htmlUrl=\"{}\"",
-            xml_escape(slug)
-        ));
+fn write_outline(writer: &mut Writer<Vec<u8>>, item: &MenuItem) -> quick_xml::Result<()> {
+    let label = escape(&item.label);
+    let slug = item.slug.as_deref().map(escape);
+    let mut outline = BytesStart::new("outline");
+    outline.push_attribute(("text", label.as_ref()));
+    outline.push_attribute(("type", item.kind.as_str()));
+    if let Some(slug) = &slug {
+        outline.push_attribute(("htmlUrl", slug.as_ref()));
     }
     if item.children.is_empty() {
-        out.push_str("/>\n");
+        writer.write_event(Event::Empty(outline))?;
     } else {
-        out.push_str(">\n");
+        writer.write_event(Event::Start(outline))?;
         for child in &item.children {
-            serialize_outline(out, child, indent + 1);
+            write_outline(writer, child)?;
         }
-        out.push_str(&pad);
-        out.push_str("</outline>\n");
+        writer.write_event(Event::End(BytesEnd::new("outline")))?;
     }
-}
-
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    Ok(())
 }
 
 #[cfg(test)]
@@ -332,18 +261,16 @@ mod tests {
                 kind: MenuItemKind::Submenu,
                 label: "Categories".into(),
                 slug: None,
-                children: vec![
-                    MenuItem {
-                        kind: MenuItemKind::CategoryArchive,
-                        label: "Tech".into(),
-                        slug: Some("/category/tech/".into()),
-                        children: Vec::new(),
-                    },
-                ],
+                children: vec![MenuItem {
+                    kind: MenuItemKind::CategoryArchive,
+                    label: "Tech".into(),
+                    slug: Some("/category/tech/".into()),
+                    children: Vec::new(),
+                }],
             },
         ];
-        let opml = serialize_opml(&items);
-        let parsed = parse_opml(&opml);
+        let opml = serialize_opml(&items).unwrap();
+        let parsed = parse_opml(&opml).unwrap();
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].kind, MenuItemKind::Home);
         assert_eq!(parsed[1].label, "About");
@@ -354,14 +281,12 @@ mod tests {
 
     #[test]
     fn normalize_prepends_home() {
-        let items = vec![
-            MenuItem {
-                kind: MenuItemKind::Page,
-                label: "About".into(),
-                slug: Some("/about".into()),
-                children: Vec::new(),
-            },
-        ];
+        let items = vec![MenuItem {
+            kind: MenuItemKind::Page,
+            label: "About".into(),
+            slug: Some("/about".into()),
+            children: Vec::new(),
+        }];
         let normalized = normalize_menu(&items);
         assert_eq!(normalized.len(), 2);
         assert_eq!(normalized[0].kind, MenuItemKind::Home);
@@ -381,14 +306,12 @@ mod tests {
     fn write_and_read_menu() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
-        let items = vec![
-            MenuItem {
-                kind: MenuItemKind::Page,
-                label: "Blog".into(),
-                slug: Some("/blog".into()),
-                children: Vec::new(),
-            },
-        ];
+        let items = vec![MenuItem {
+            kind: MenuItemKind::Page,
+            label: "Blog".into(),
+            slug: Some("/blog".into()),
+            children: Vec::new(),
+        }];
         write_menu(dir.path(), &items).unwrap();
         let read = read_menu(dir.path()).unwrap();
         // Home is always prepended
@@ -398,8 +321,25 @@ mod tests {
     }
 
     #[test]
-    fn xml_escape_special_chars() {
-        let escaped = xml_escape("Tom & Jerry <3 \"quotes\"");
-        assert_eq!(escaped, "Tom &amp; Jerry &lt;3 &quot;quotes&quot;");
+    fn reads_single_quoted_xml_attributes() {
+        let parsed = parse_opml(
+            "<opml version='2.0'><body><outline text='About' type='page' htmlUrl='/about'/></body></opml>",
+        )
+        .unwrap();
+        assert_eq!(parsed[1].label, "About");
+        assert_eq!(parsed[1].slug.as_deref(), Some("/about"));
+    }
+
+    #[test]
+    fn read_menu_rejects_malformed_xml() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(
+            dir.path().join("meta/menu.opml"),
+            "<opml><body><outline></body></opml>",
+        )
+        .unwrap();
+
+        assert!(read_menu(dir.path()).is_err());
     }
 }

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use iced::widget::{button, column, container, image, row, scrollable, text, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, column, container, image, row, scrollable, text};
 use iced::{Color, Element, Length};
 
 use bds_core::i18n::{self, UiLocale};
@@ -72,12 +72,15 @@ impl MediaEditorState {
 
         let mut translation_drafts = HashMap::new();
         for tr in translations {
-            translation_drafts.insert(tr.language.clone(), MediaTranslationDraft {
-                title: tr.title.clone().unwrap_or_default(),
-                alt: tr.alt.clone().unwrap_or_default(),
-                caption: tr.caption.clone().unwrap_or_default(),
-                is_dirty: false,
-            });
+            translation_drafts.insert(
+                tr.language.clone(),
+                MediaTranslationDraft {
+                    title: tr.title.clone().unwrap_or_default(),
+                    alt: tr.alt.clone().unwrap_or_default(),
+                    caption: tr.caption.clone().unwrap_or_default(),
+                    is_dirty: false,
+                },
+            );
         }
 
         Self {
@@ -125,12 +128,15 @@ impl MediaEditorState {
                 is_dirty: self.is_dirty,
             });
         } else {
-            self.translation_drafts.insert(self.active_language.clone(), MediaTranslationDraft {
-                title: self.title.clone(),
-                alt: self.alt.clone(),
-                caption: self.caption.clone(),
-                is_dirty: self.is_dirty,
-            });
+            self.translation_drafts.insert(
+                self.active_language.clone(),
+                MediaTranslationDraft {
+                    title: self.title.clone(),
+                    alt: self.alt.clone(),
+                    caption: self.caption.clone(),
+                    is_dirty: self.is_dirty,
+                },
+            );
         }
         // Load target fields
         if target_lang == self.canonical_language {
@@ -225,24 +231,28 @@ pub fn view<'a>(
     ai_enabled: bool,
 ) -> Element<'a, Message> {
     let header = inputs::toolbar(
-        vec![
-            text(state.original_name.clone()).size(18).into(),
-        ],
+        vec![text(state.original_name.clone()).size(18).into()],
         vec![
             if state.mime_type.starts_with("image/") {
                 button(text(t(locale, "editor.aiAnalyze")).size(13))
-                    .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi)))
+                    .on_press_maybe(
+                        ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi)),
+                    )
                     .padding([6, 16])
                     .into()
             } else {
                 Space::new(0, 0).into()
             },
             button(text(t(locale, "editor.detectLanguage")).size(13))
-                .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::DetectLanguage)))
+                .on_press_maybe(
+                    ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::DetectLanguage)),
+                )
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "editor.translate")).size(13))
-                .on_press_maybe(ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::TranslateMetadata)))
+                .on_press_maybe(
+                    ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::TranslateMetadata)),
+                )
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "common.save")).size(13))
@@ -273,7 +283,9 @@ pub fn view<'a>(
                     Color::from_rgb(0.55, 0.58, 0.65)
                 };
                 button(text(label).size(12).shaping(Shaping::Advanced).color(color))
-                    .on_press(Message::MediaEditor(MediaEditorMsg::SwitchLanguage(flag.language.clone())))
+                    .on_press(Message::MediaEditor(MediaEditorMsg::SwitchLanguage(
+                        flag.language.clone(),
+                    )))
                     .padding([4, 8])
                     .style(|_: &iced::Theme, _| button::Style::default())
                     .into()
@@ -295,13 +307,13 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .into()
             } else {
-                no_preview()
+                no_preview(locale)
             }
         } else {
-            no_preview()
+            no_preview(locale)
         }
     } else {
-        no_preview()
+        no_preview(locale)
     };
 
     // File info
@@ -311,9 +323,12 @@ pub fn view<'a>(
     };
     let size_str = format_file_size(state.size);
     let info = row![
-        text(format!("{} • {} • {}", state.mime_type, size_str, dimensions))
-            .size(12)
-            .color(Color::from_rgb(0.55, 0.58, 0.65)),
+        text(format!(
+            "{} • {} • {}",
+            state.mime_type, size_str, dimensions
+        ))
+        .size(12)
+        .color(Color::from_rgb(0.55, 0.58, 0.65)),
     ]
     .padding(8);
 
@@ -332,18 +347,13 @@ pub fn view<'a>(
     );
     let meta_row1 = row![title_input, alt_input].spacing(16).width(Length::Fill);
 
-    let caption_input = inputs::labeled_input(
-        &t(locale, "editor.caption"),
-        "",
-        &state.caption,
-        |s| Message::MediaEditor(MediaEditorMsg::CaptionChanged(s)),
-    );
-    let author_input = inputs::labeled_input(
-        &t(locale, "editor.author"),
-        "",
-        &state.author,
-        |s| Message::MediaEditor(MediaEditorMsg::AuthorChanged(s)),
-    );
+    let caption_input =
+        inputs::labeled_input(&t(locale, "editor.caption"), "", &state.caption, |s| {
+            Message::MediaEditor(MediaEditorMsg::CaptionChanged(s))
+        });
+    let author_input = inputs::labeled_input(&t(locale, "editor.author"), "", &state.author, |s| {
+        Message::MediaEditor(MediaEditorMsg::AuthorChanged(s))
+    });
     let tags_input = inputs::labeled_input(
         &t(locale, "editor.tags"),
         &t(locale, "editor.tagsPlaceholder"),
@@ -361,8 +371,12 @@ pub fn view<'a>(
         Some(&state.language),
         |lang| Message::MediaEditor(MediaEditorMsg::LanguageChanged(lang)),
     );
-    let meta_row2 = row![caption_input, author_input].spacing(16).width(Length::Fill);
-    let meta_row3 = row![tags_input, language_input].spacing(16).width(Length::Fill);
+    let meta_row2 = row![caption_input, author_input]
+        .spacing(16)
+        .width(Length::Fill);
+    let meta_row3 = row![tags_input, language_input]
+        .spacing(16)
+        .width(Length::Fill);
 
     let linked_posts_header = row![
         text(t(locale, "editor.linkedPosts"))
@@ -396,24 +410,30 @@ pub fn view<'a>(
                 .iter()
                 .map(|post| {
                     button(text(post.title.clone()).size(12))
-                        .on_press(Message::MediaEditor(MediaEditorMsg::LinkPost(post.post_id.clone())))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::LinkPost(
+                            post.post_id.clone(),
+                        )))
                         .padding([4, 10])
                         .width(Length::Fill)
                         .into()
                 })
                 .collect()
         };
-        container(column![search, column(results).spacing(4)].spacing(8).padding(8))
-            .style(|_: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
-                border: iced::Border {
-                    color: Color::from_rgb(0.28, 0.28, 0.32),
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..iced::widget::container::Style::default()
-            })
-            .into()
+        container(
+            column![search, column(results).spacing(4)]
+                .spacing(8)
+                .padding(8),
+        )
+        .style(|_: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
+            border: iced::Border {
+                color: Color::from_rgb(0.28, 0.28, 0.32),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..iced::widget::container::Style::default()
+        })
+        .into()
     } else {
         Space::new(0, 0).into()
     };
@@ -430,11 +450,15 @@ pub fn view<'a>(
             .map(|post| {
                 row![
                     button(text(post.title.clone()).size(12))
-                        .on_press(Message::MediaEditor(MediaEditorMsg::OpenLinkedPost(post.post_id.clone())))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::OpenLinkedPost(
+                            post.post_id.clone()
+                        )))
                         .padding([4, 0]),
                     Space::with_width(Length::Fill),
                     button(text(t(locale, "editor.unlinkMedia")).size(11))
-                        .on_press(Message::MediaEditor(MediaEditorMsg::UnlinkPost(post.post_id.clone())))
+                        .on_press(Message::MediaEditor(MediaEditorMsg::UnlinkPost(
+                            post.post_id.clone()
+                        )))
                         .padding([3, 8])
                         .style(inputs::danger_button),
                 ]
@@ -471,13 +495,36 @@ pub fn view<'a>(
         ]
         .spacing(12)
         .padding(16)
-        .width(Length::Fill)
+        .width(Length::Fill),
     );
 
     container(body)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn no_preview<'a>(locale: UiLocale) -> Element<'a, Message> {
+    container(
+        text(t(locale, "editor.noPreviewAvailable"))
+            .size(14)
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(200.0))
+    .center_x(Length::Fill)
+    .center_y(Length::Fixed(200.0))
+    .into()
+}
+
+fn format_file_size(bytes: i64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 #[cfg(test)]
@@ -519,30 +566,10 @@ mod tests {
         );
 
         let flags = state.translation_flags();
-        let languages = flags.into_iter().map(|flag| flag.language).collect::<Vec<_>>();
+        let languages = flags
+            .into_iter()
+            .map(|flag| flag.language)
+            .collect::<Vec<_>>();
         assert_eq!(languages, vec!["en".to_string(), "de".to_string()]);
-    }
-}
-
-fn no_preview<'a>() -> Element<'a, Message> {
-    container(
-        text("No preview available")
-            .size(14)
-            .color(Color::from_rgb(0.5, 0.5, 0.5)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(200.0))
-    .center_x(Length::Fill)
-    .center_y(Length::Fixed(200.0))
-    .into()
-}
-
-fn format_file_size(bytes: i64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }

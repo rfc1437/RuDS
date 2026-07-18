@@ -381,5 +381,7 @@
   "dashboard.recentPosts": "Publicaciones recientes",
   "dashboard.noRecentPosts": "No hay publicaciones recientes",
   "dashboard.and": "y",
-  "dashboard.pin": "Fijar"
+  "dashboard.pin": "Fijar",
+  "common.tabNotImplemented": "Esta sección se implementará en un hito posterior.",
+  "editor.noPreviewAvailable": "No hay vista previa disponible"
 }

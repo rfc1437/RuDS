@@ -24,6 +24,31 @@ pub struct PublishedPostSource {
     pub body_markdown: String,
 }
 
+/// Whether a post has a published snapshot eligible for site generation.
+pub fn has_published_snapshot(post: &Post) -> bool {
+    matches!(
+        post.status,
+        crate::model::PostStatus::Published | crate::model::PostStatus::Draft
+    ) && !post.file_path.trim().is_empty()
+}
+
+/// Load the last-published body from disk, never from draft database content.
+pub fn load_published_post_source(
+    data_dir: &Path,
+    post: Post,
+) -> EngineResult<Option<PublishedPostSource>> {
+    if !has_published_snapshot(&post) {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(data_dir.join(&post.file_path))?;
+    let (_, body_markdown) =
+        crate::util::frontmatter::read_post_file(&raw).map_err(EngineError::Parse)?;
+    Ok(Some(PublishedPostSource {
+        post,
+        body_markdown,
+    }))
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct GenerationReport {
     pub written_paths: Vec<String>,
@@ -56,11 +81,19 @@ pub fn generate_starter_site(
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let artifacts = build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
-        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let artifacts =
+        build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
 
     for page in &artifacts.pages {
-        write_out(conn, output_dir, project_id, &page.relative_path, &page.html, &mut report)?;
+        write_out(
+            conn,
+            output_dir,
+            project_id,
+            &page.relative_path,
+            &page.html,
+            &mut report,
+        )?;
     }
 
     write_bundled_site_assets(conn, output_dir, project_id, &mut report)?;
@@ -70,13 +103,24 @@ pub fn generate_starter_site(
         output_dir,
         project_id,
         "calendar.json",
-        &build_calendar_json(&list_posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
+        &build_calendar_json(
+            &list_posts
+                .iter()
+                .map(|source| source.post.clone())
+                .collect::<Vec<_>>(),
+        )?,
         &mut report,
     )?;
 
     for render_language in render_languages(metadata) {
-        let localized_posts = localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
-        let prefix = if render_language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
+        let localized_posts =
+            localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
+        let prefix = if render_language
+            == metadata
+                .main_language
+                .clone()
+                .unwrap_or_else(|| "en".to_string())
+        {
             String::new()
         } else {
             format!("{}/", render_language)
@@ -85,19 +129,44 @@ pub fn generate_starter_site(
         if prefix.is_empty() {
             write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
         }
-        write_out(conn, output_dir, project_id, &format!("{prefix}feed.xml"), &rss, &mut report)?;
-        write_out(conn, output_dir, project_id, &format!("{prefix}atom.xml"), &build_atom_xml(metadata, &localized_posts, &render_language), &mut report)?;
+        write_out(
+            conn,
+            output_dir,
+            project_id,
+            &format!("{prefix}feed.xml"),
+            &rss,
+            &mut report,
+        )?;
+        write_out(
+            conn,
+            output_dir,
+            project_id,
+            &format!("{prefix}atom.xml"),
+            &build_atom_xml(metadata, &localized_posts, &render_language),
+            &mut report,
+        )?;
         write_out(
             conn,
             output_dir,
             project_id,
             &format!("{prefix}sitemap.xml"),
-            &build_sitemap_xml(metadata, &artifacts.pages, &localized_posts, &render_language),
+            &build_sitemap_xml(
+                metadata,
+                &artifacts.pages,
+                &localized_posts,
+                &render_language,
+            ),
             &mut report,
         )?;
     }
 
-    write_pagefind_indexes(conn, output_dir, project_id, &artifacts.pagefind_documents, &mut report)?;
+    write_pagefind_indexes(
+        conn,
+        output_dir,
+        project_id,
+        &artifacts.pagefind_documents,
+        &mut report,
+    )?;
 
     Ok(report)
 }
@@ -151,20 +220,22 @@ pub fn apply_validation_sections(
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let artifacts = build_site_render_artifacts(
-        conn,
-        &data_dir,
-        project_id,
-        metadata,
-        &input_posts,
-    )
-    .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let artifacts =
+        build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
     let mut report = GenerationReport::default();
     let expected_paths = expected_paths_for_sections(metadata, &artifacts.pages, &section_set);
 
     for page in &artifacts.pages {
         if path_matches_sections(&page.relative_path, &section_set) {
-            write_out(conn, output_dir, project_id, &page.relative_path, &page.html, &mut report)?;
+            write_out(
+                conn,
+                output_dir,
+                project_id,
+                &page.relative_path,
+                &page.html,
+                &mut report,
+            )?;
         }
     }
 
@@ -175,19 +246,24 @@ pub fn apply_validation_sections(
             output_dir,
             project_id,
             "calendar.json",
-            &build_calendar_json(&list_posts.iter().map(|source| source.post.clone()).collect::<Vec<_>>())?,
+            &build_calendar_json(
+                &list_posts
+                    .iter()
+                    .map(|source| source.post.clone())
+                    .collect::<Vec<_>>(),
+            )?,
             &mut report,
         )?;
 
         for render_language in render_languages(metadata) {
-            let localized_posts = localized_sources(
-                conn,
-                &data_dir,
-                &list_posts,
-                &render_language,
-                metadata,
-            )?;
-            let prefix = if render_language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
+            let localized_posts =
+                localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
+            let prefix = if render_language
+                == metadata
+                    .main_language
+                    .clone()
+                    .unwrap_or_else(|| "en".to_string())
+            {
                 String::new()
             } else {
                 format!("{}/", render_language)
@@ -196,7 +272,14 @@ pub fn apply_validation_sections(
             if prefix.is_empty() {
                 write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
             }
-            write_out(conn, output_dir, project_id, &format!("{prefix}feed.xml"), &rss, &mut report)?;
+            write_out(
+                conn,
+                output_dir,
+                project_id,
+                &format!("{prefix}feed.xml"),
+                &rss,
+                &mut report,
+            )?;
             write_out(
                 conn,
                 output_dir,
@@ -210,38 +293,27 @@ pub fn apply_validation_sections(
                 output_dir,
                 project_id,
                 &format!("{prefix}sitemap.xml"),
-                &build_sitemap_xml(metadata, &artifacts.pages, &localized_posts, &render_language),
+                &build_sitemap_xml(
+                    metadata,
+                    &artifacts.pages,
+                    &localized_posts,
+                    &render_language,
+                ),
                 &mut report,
             )?;
         }
     }
 
     remove_extra_section_paths(output_dir, &expected_paths, &section_set, &mut report)?;
-    write_pagefind_indexes(conn, output_dir, project_id, &artifacts.pagefind_documents, &mut report)?;
+    write_pagefind_indexes(
+        conn,
+        output_dir,
+        project_id,
+        &artifacts.pagefind_documents,
+        &mut report,
+    )?;
 
     Ok(report)
-}
-
-fn build_media_rewrite_map(
-    conn: &Connection,
-    project_id: &str,
-) -> EngineResult<HashMap<String, String>> {
-    let media_items = queries::media::list_media_by_project(conn, project_id)?;
-    let mut map = HashMap::new();
-
-    for media in media_items {
-        let canonical_path = if media.file_path.starts_with('/') {
-            media.file_path.clone()
-        } else {
-            format!("/{}", media.file_path.trim_start_matches('/'))
-        };
-        map.insert(format!("bds-media://{}", media.id), canonical_path.clone());
-
-        let relative_key = media.file_path.trim_start_matches('/').to_lowercase();
-        map.insert(relative_key, canonical_path);
-    }
-
-    Ok(map)
 }
 
 fn write_out(
@@ -256,7 +328,9 @@ fn write_out(
         .map_err(|error| EngineError::Parse(error.to_string()))?
     {
         GeneratedWriteOutcome::Written => report.written_paths.push(relative_path.to_string()),
-        GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative_path.to_string()),
+        GeneratedWriteOutcome::SkippedUnchanged => {
+            report.skipped_paths.push(relative_path.to_string())
+        }
     }
     Ok(())
 }
@@ -273,10 +347,13 @@ fn write_pagefind_indexes(
         .build()
         .map_err(EngineError::Io)?;
 
-    let grouped = documents.iter().fold(HashMap::<String, Vec<&crate::render::PagefindDocument>>::new(), |mut acc, doc| {
-        acc.entry(doc.language.clone()).or_default().push(doc);
-        acc
-    });
+    let grouped = documents.iter().fold(
+        HashMap::<String, Vec<&crate::render::PagefindDocument>>::new(),
+        |mut acc, doc| {
+            acc.entry(doc.language.clone()).or_default().push(doc);
+            acc
+        },
+    );
 
     for (language, docs) in grouped {
         let config = PagefindServiceConfig::builder()
@@ -292,9 +369,16 @@ fn write_pagefind_indexes(
                     .await
                     .map_err(|error| EngineError::Parse(error.to_string()))?;
             }
-            let files = index.get_files().await.map_err(|error| EngineError::Parse(error.to_string()))?;
+            let files = index
+                .get_files()
+                .await
+                .map_err(|error| EngineError::Parse(error.to_string()))?;
             for file in files {
-                let relative = file.filename.to_string_lossy().trim_start_matches('/').to_string();
+                let relative = file
+                    .filename
+                    .to_string_lossy()
+                    .trim_start_matches('/')
+                    .to_string();
                 match write_generated_bytes(conn, output_dir, project_id, &relative, &file.contents)
                     .map_err(|error| EngineError::Parse(error.to_string()))?
                 {
@@ -332,7 +416,12 @@ fn expected_paths_for_sections(
         expected.insert("calendar.json".to_string());
         expected.insert("rss.xml".to_string());
         for language in render_languages(metadata) {
-            let prefix = if language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
+            let prefix = if language
+                == metadata
+                    .main_language
+                    .clone()
+                    .unwrap_or_else(|| "en".to_string())
+            {
                 String::new()
             } else {
                 format!("{language}/")
@@ -376,7 +465,10 @@ fn remove_extra_section_paths(
         {
             continue;
         }
-        if !matches_generated_extension(&rel) || !path_matches_sections(&rel, sections) || expected.contains(&rel) {
+        if !matches_generated_extension(&rel)
+            || !path_matches_sections(&rel, sections)
+            || expected.contains(&rel)
+        {
             continue;
         }
         std::fs::remove_file(entry.path()).map_err(EngineError::Io)?;
@@ -412,9 +504,14 @@ fn classify_generated_path(path: &str) -> Option<GenerationSection> {
         ["category", ..] => Some(GenerationSection::Category),
         ["tag", ..] => Some(GenerationSection::Tag),
         [year, "index.html"] if is_year_segment(year) => Some(GenerationSection::Date),
-        [year, month, "index.html"] if is_year_segment(year) && is_month_segment(month) => Some(GenerationSection::Date),
+        [year, month, "index.html"] if is_year_segment(year) && is_month_segment(month) => {
+            Some(GenerationSection::Date)
+        }
         [year, month, day, _slug, "index.html"]
-            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) => Some(GenerationSection::Single),
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            Some(GenerationSection::Single)
+        }
         _ => None,
     }
 }
@@ -425,7 +522,10 @@ fn has_language_prefix(parts: &[&str]) -> bool {
             !is_year_segment(first)
                 && *first != "category"
                 && *first != "tag"
-                && (*second == "index.html" || is_year_segment(second) || *second == "category" || *second == "tag")
+                && (*second == "index.html"
+                    || is_year_segment(second)
+                    || *second == "category"
+                    || *second == "tag")
         }
         _ => false,
     }
@@ -468,14 +568,22 @@ fn section_sort_key(section: &GenerationSection) -> u8 {
 }
 
 fn report_is_empty(report: &SiteValidationReport) -> bool {
-    report.missing_pages.is_empty() && report.extra_pages.is_empty() && report.stale_pages.is_empty()
+    report.missing_pages.is_empty()
+        && report.extra_pages.is_empty()
+        && report.stale_pages.is_empty()
 }
 
 fn render_languages(metadata: &ProjectMetadata) -> Vec<String> {
-    let main = metadata.main_language.clone().unwrap_or_else(|| "en".to_string());
+    let main = metadata
+        .main_language
+        .clone()
+        .unwrap_or_else(|| "en".to_string());
     let mut languages = vec![main.clone()];
     for language in &metadata.blog_languages {
-        if !languages.iter().any(|existing| existing.eq_ignore_ascii_case(language)) {
+        if !languages
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(language))
+        {
             languages.push(language.clone());
         }
     }
@@ -496,9 +604,17 @@ fn localized_sources(
             localized.push(source.clone());
             continue;
         }
-        if let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(conn, &source.post.id, language) {
-            let raw = std::fs::read_to_string(data_dir.join(translation.file_path.trim_start_matches('/')))
-                .map_err(EngineError::Io)?;
+        if let Ok(translation) =
+            queries::post_translation::get_post_translation_by_post_and_language(
+                conn,
+                &source.post.id,
+                language,
+            )
+        {
+            let raw = std::fs::read_to_string(
+                data_dir.join(translation.file_path.trim_start_matches('/')),
+            )
+            .map_err(EngineError::Io)?;
             let (_, body) = crate::util::frontmatter::read_translation_file(&raw)
                 .map_err(EngineError::Parse)?;
             let mut translated_post = source.post.clone();
@@ -524,7 +640,8 @@ fn filter_posts_for_lists(
     posts: &[PublishedPostSource],
     category_settings: &HashMap<String, CategorySettings>,
 ) -> Vec<PublishedPostSource> {
-    posts.iter()
+    posts
+        .iter()
         .filter(|source| {
             !source.post.categories.iter().any(|category| {
                 category_settings
@@ -537,8 +654,16 @@ fn filter_posts_for_lists(
         .collect()
 }
 
-fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {
-    let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+fn build_rss_xml(
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    language: &str,
+) -> String {
+    let base_url = metadata
+        .public_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
     let last_build = posts
         .iter()
         .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
@@ -557,22 +682,46 @@ fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lang
     ];
 
     for source in posts {
-        let url = format!("{base_url}{}", build_canonical_post_path(&source.post, language, metadata.main_language.as_deref().unwrap_or("en")));
-        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at)).unwrap_or_else(Utc::now);
+        let url = format!(
+            "{base_url}{}",
+            build_canonical_post_path(
+                &source.post,
+                language,
+                metadata.main_language.as_deref().unwrap_or("en")
+            )
+        );
+        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at))
+            .unwrap_or_else(Utc::now);
         xml.push("    <item>".to_string());
-        xml.push(format!("      <title>{}</title>", escape_xml(&source.post.title)));
+        xml.push(format!(
+            "      <title>{}</title>",
+            escape_xml(&source.post.title)
+        ));
         xml.push(format!("      <link>{url}</link>"));
         xml.push(format!("      <guid isPermaLink=\"true\">{url}</guid>"));
-        xml.push(format!("      <pubDate>{}</pubDate>", published.format("%a, %d %b %Y %H:%M:%S GMT")));
+        xml.push(format!(
+            "      <pubDate>{}</pubDate>",
+            published.format("%a, %d %b %Y %H:%M:%S GMT")
+        ));
         if let Some(author) = &source.post.author {
             xml.push(format!("      <author>{}</author>", escape_xml(author)));
         }
-        xml.push(format!("      <dc:language>{}</dc:language>", escape_xml(language)));
+        xml.push(format!(
+            "      <dc:language>{}</dc:language>",
+            escape_xml(language)
+        ));
         let html = render_markdown_to_html(&source.body_markdown);
-        xml.push(format!("      <description><![CDATA[{html}]]></description>"));
-        xml.push(format!("      <content:encoded><![CDATA[{html}]]></content:encoded>"));
+        xml.push(format!(
+            "      <description><![CDATA[{html}]]></description>"
+        ));
+        xml.push(format!(
+            "      <content:encoded><![CDATA[{html}]]></content:encoded>"
+        ));
         for category in &source.post.categories {
-            xml.push(format!("      <category>{}</category>", escape_xml(category)));
+            xml.push(format!(
+                "      <category>{}</category>",
+                escape_xml(category)
+            ));
         }
         for tag in &source.post.tags {
             xml.push(format!("      <category>{}</category>", escape_xml(tag)));
@@ -585,8 +734,16 @@ fn build_rss_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lang
     xml.join("\n")
 }
 
-fn build_atom_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], language: &str) -> String {
-    let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+fn build_atom_xml(
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    language: &str,
+) -> String {
+    let base_url = metadata
+        .public_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
     let main_language = metadata.main_language.as_deref().unwrap_or("en");
     let feed_prefix = language_prefix(language, main_language);
     let updated = posts
@@ -598,30 +755,59 @@ fn build_atom_xml(metadata: &ProjectMetadata, posts: &[PublishedPostSource], lan
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
         "<feed xmlns=\"http://www.w3.org/2005/Atom\">".to_string(),
         format!("  <title>{}</title>", escape_xml(&metadata.name)),
-        format!("  <subtitle>{}</subtitle>", escape_xml(metadata.description.as_deref().unwrap_or(""))),
+        format!(
+            "  <subtitle>{}</subtitle>",
+            escape_xml(metadata.description.as_deref().unwrap_or(""))
+        ),
         format!("  <id>{base_url}/</id>"),
         format!("  <link href=\"{base_url}{feed_prefix}/\" rel=\"alternate\" />"),
         format!("  <link href=\"{base_url}{feed_prefix}/atom.xml\" rel=\"self\" />"),
-        format!("  <updated>{}</updated>", updated.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        format!(
+            "  <updated>{}</updated>",
+            updated.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        ),
     ];
 
     for source in posts {
-        let url = format!("{base_url}{}", build_canonical_post_path(&source.post, language, metadata.main_language.as_deref().unwrap_or("en")));
-        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at)).unwrap_or_else(Utc::now);
+        let url = format!(
+            "{base_url}{}",
+            build_canonical_post_path(
+                &source.post,
+                language,
+                metadata.main_language.as_deref().unwrap_or("en")
+            )
+        );
+        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at))
+            .unwrap_or_else(Utc::now);
         let html = render_markdown_to_html(&source.body_markdown);
         xml.push(format!("  <entry xml:lang=\"{}\">", escape_xml(language)));
-        xml.push(format!("    <title>{}</title>", escape_xml(&source.post.title)));
+        xml.push(format!(
+            "    <title>{}</title>",
+            escape_xml(&source.post.title)
+        ));
         xml.push(format!("    <id>{url}</id>"));
         xml.push(format!("    <link href=\"{url}\" />"));
-        xml.push(format!("    <updated>{}</updated>", published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
-        xml.push(format!("    <published>{}</published>", published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+        xml.push(format!(
+            "    <updated>{}</updated>",
+            published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        ));
+        xml.push(format!(
+            "    <published>{}</published>",
+            published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        ));
         if let Some(author) = &source.post.author {
-            xml.push(format!("    <author><name>{}</name></author>", escape_xml(author)));
+            xml.push(format!(
+                "    <author><name>{}</name></author>",
+                escape_xml(author)
+            ));
         }
         xml.push(format!("    <summary type=\"xhtml\"><div xmlns=\"http://www.w3.org/1999/xhtml\">{html}</div></summary>"));
         xml.push(format!("    <content type=\"xhtml\"><div xmlns=\"http://www.w3.org/1999/xhtml\">{html}</div></content>"));
         for category in &source.post.categories {
-            xml.push(format!("    <category term=\"{}\" />", escape_xml(category)));
+            xml.push(format!(
+                "    <category term=\"{}\" />",
+                escape_xml(category)
+            ));
         }
         for tag in &source.post.tags {
             xml.push(format!("    <category term=\"{}\" />", escape_xml(tag)));
@@ -639,7 +825,11 @@ fn build_sitemap_xml(
     posts: &[PublishedPostSource],
     language: &str,
 ) -> String {
-    let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+    let base_url = metadata
+        .public_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
     let main_language = metadata.main_language.as_deref().unwrap_or("en");
     let languages = render_languages(metadata);
     let index_lastmod = posts
@@ -694,7 +884,10 @@ fn build_sitemap_xml(
                     alternate.url_path,
                 ));
             }
-            if let Some(default_page) = alternates.iter().find(|alternate| alternate.language == main_language) {
+            if let Some(default_page) = alternates
+                .iter()
+                .find(|alternate| alternate.language == main_language)
+            {
                 xml.push(format!(
                     "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{base_url}{}\" />",
                     default_page.url_path,
@@ -746,7 +939,9 @@ fn logical_page_key(relative_path: &str, languages: &[String], main_language: &s
     if first.eq_ignore_ascii_case(main_language) {
         return parts.collect::<Vec<_>>().join("/");
     }
-    if languages.iter().any(|language| language.eq_ignore_ascii_case(first) && !language.eq_ignore_ascii_case(main_language)) {
+    if languages.iter().any(|language| {
+        language.eq_ignore_ascii_case(first) && !language.eq_ignore_ascii_case(main_language)
+    }) {
         return parts.collect::<Vec<_>>().join("/");
     }
     relative_path.to_string()

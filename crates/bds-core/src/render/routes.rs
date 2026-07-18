@@ -7,11 +7,16 @@ use crate::i18n::normalize_language;
 use crate::model::{Post, ProjectMetadata};
 use crate::render::{RenderError, render_liquid_template};
 
-const STARTER_SINGLE_POST_TEMPLATE: &str = include_str!("../../../../assets/starter-templates/single-post.liquid");
-const STARTER_POST_LIST_TEMPLATE: &str = include_str!("../../../../assets/starter-templates/post-list.liquid");
-const STARTER_HEAD_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/head.liquid");
-const STARTER_MENU_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/menu.liquid");
-const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
+const STARTER_SINGLE_POST_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/single-post.liquid");
+const STARTER_POST_LIST_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/post-list.liquid");
+const STARTER_HEAD_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/head.liquid");
+const STARTER_MENU_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/menu.liquid");
+const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedPage {
@@ -136,7 +141,10 @@ pub fn render_starter_single_post_page_with_media_map(
     language: &str,
     canonical_media_path_by_source_path: HashMap<String, String>,
 ) -> Result<RenderedPage, RenderError> {
-    let relative_path = format!("{}/index.html", build_canonical_post_path(post, language, main_language(metadata)).trim_start_matches('/'));
+    let relative_path = format!(
+        "{}/index.html",
+        build_canonical_post_path(post, language, main_language(metadata)).trim_start_matches('/')
+    );
     let canonical_path = build_canonical_post_path(post, language, main_language(metadata));
     let (calendar_initial_year, calendar_initial_month) = calendar_initial_parts(post);
     let context = PostTemplateContext {
@@ -171,13 +179,12 @@ pub fn render_starter_single_post_page_with_media_map(
         post_data_json_by_id: HashMap::new(),
     };
 
-    let html = render_liquid_template(
-        STARTER_SINGLE_POST_TEMPLATE,
-        &starter_partials(),
-        &context,
-    )?;
+    let html = render_liquid_template(STARTER_SINGLE_POST_TEMPLATE, &starter_partials(), &context)?;
 
-    Ok(RenderedPage { relative_path, html })
+    Ok(RenderedPage {
+        relative_path,
+        html,
+    })
 }
 
 pub fn render_starter_list_page(
@@ -246,26 +253,33 @@ pub fn render_starter_list_page_with_media_map(
         post_data_json_by_id: HashMap::new(),
     };
 
-    let html = render_liquid_template(
-        &starter_post_list_template(),
-        &starter_partials(),
-        &context,
-    )?;
+    let html =
+        render_liquid_template(&starter_post_list_template(), &starter_partials(), &context)?;
 
-    Ok(RenderedPage { relative_path, html })
+    Ok(RenderedPage {
+        relative_path,
+        html,
+    })
 }
 
 fn starter_partials() -> HashMap<String, String> {
     HashMap::from([
-        ("partials/head".to_string(), STARTER_HEAD_PARTIAL.to_string()),
-        ("partials/menu".to_string(), STARTER_MENU_PARTIAL.to_string()),
+        (
+            "partials/head".to_string(),
+            STARTER_HEAD_PARTIAL.to_string(),
+        ),
+        (
+            "partials/menu".to_string(),
+            STARTER_MENU_PARTIAL.to_string(),
+        ),
         (
             "partials/language-switcher".to_string(),
             STARTER_LANGUAGE_SWITCHER_PARTIAL.to_string(),
         ),
         (
             "partials/menu-items".to_string(),
-            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}".to_string(),
+            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}"
+                .to_string(),
         ),
     ])
 }
@@ -305,7 +319,11 @@ fn calendar_initial_parts(post: &Post) -> (i32, u32) {
         .unwrap_or((1970, 1))
 }
 
-fn build_alternate_links(post: &Post, metadata: &ProjectMetadata, current_language: &str) -> Vec<AlternateLinkContext> {
+fn build_alternate_links(
+    post: &Post,
+    metadata: &ProjectMetadata,
+    current_language: &str,
+) -> Vec<AlternateLinkContext> {
     metadata
         .blog_languages
         .iter()
@@ -320,7 +338,11 @@ fn build_alternate_links(post: &Post, metadata: &ProjectMetadata, current_langua
         .collect()
 }
 
-fn build_blog_languages(post: &Post, metadata: &ProjectMetadata, current_language: &str) -> Vec<BlogLanguageContext> {
+fn build_blog_languages(
+    post: &Post,
+    metadata: &ProjectMetadata,
+    current_language: &str,
+) -> Vec<BlogLanguageContext> {
     metadata
         .blog_languages
         .iter()
@@ -334,7 +356,10 @@ fn build_blog_languages(post: &Post, metadata: &ProjectMetadata, current_languag
         .collect()
 }
 
-fn build_blog_languages_for_index(metadata: &ProjectMetadata, current_language: &str) -> Vec<BlogLanguageContext> {
+fn build_blog_languages_for_index(
+    metadata: &ProjectMetadata,
+    current_language: &str,
+) -> Vec<BlogLanguageContext> {
     metadata
         .blog_languages
         .iter()
@@ -349,12 +374,23 @@ fn build_blog_languages_for_index(metadata: &ProjectMetadata, current_language: 
 }
 
 fn build_absolute_post_url(post: &Post, metadata: &ProjectMetadata, language: &str) -> String {
-    let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
-    format!("{base_url}{}", build_canonical_post_path(post, language, main_language(metadata)))
+    let base_url = metadata
+        .public_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    format!(
+        "{base_url}{}",
+        build_canonical_post_path(post, language, main_language(metadata))
+    )
 }
 
 fn build_absolute_index_url(metadata: &ProjectMetadata, language: &str) -> String {
-    let base_url = metadata.public_url.as_deref().unwrap_or("").trim_end_matches('/');
+    let base_url = metadata
+        .public_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
     let suffix = if language.eq_ignore_ascii_case(main_language(metadata)) {
         "/".to_string()
     } else {
@@ -377,7 +413,12 @@ fn build_day_blocks(posts: &[(Post, String)]) -> Vec<DayBlockContext> {
             continue;
         };
 
-        let key = format!("{:04}-{:02}-{:02}", timestamp.year(), timestamp.month(), timestamp.day());
+        let key = format!(
+            "{:04}-{:02}-{:02}",
+            timestamp.year(),
+            timestamp.month(),
+            timestamp.day()
+        );
         if current_key.as_deref() != Some(key.as_str()) {
             if let Some(last) = blocks.last_mut() {
                 last.show_separator = true;
@@ -385,7 +426,12 @@ fn build_day_blocks(posts: &[(Post, String)]) -> Vec<DayBlockContext> {
             current_key = Some(key);
             blocks.push(DayBlockContext {
                 show_date_marker: true,
-                date_label: format!("{:02}.{:02}.{:04}", timestamp.day(), timestamp.month(), timestamp.year()),
+                date_label: format!(
+                    "{:02}.{:02}.{:04}",
+                    timestamp.day(),
+                    timestamp.month(),
+                    timestamp.year()
+                ),
                 posts: Vec::new(),
                 show_separator: false,
             });
@@ -456,19 +502,39 @@ mod tests {
     #[test]
     fn canonical_post_paths_follow_language_prefix_rule() {
         let post = make_post();
-        assert_eq!(build_canonical_post_path(&post, "en", "en"), "/2024/03/09/hello");
-        assert_eq!(build_canonical_post_path(&post, "de", "en"), "/de/2024/03/09/hello");
+        assert_eq!(
+            build_canonical_post_path(&post, "en", "en"),
+            "/2024/03/09/hello"
+        );
+        assert_eq!(
+            build_canonical_post_path(&post, "de", "en"),
+            "/de/2024/03/09/hello"
+        );
     }
 
     #[test]
     fn starter_single_post_renderer_uses_canonical_route_and_language_links() {
         let post = make_post();
         let metadata = make_metadata();
-        let rendered = render_starter_single_post_page(&post, "Body with [link](/posts/hello)", &metadata, "en").unwrap();
+        let rendered = render_starter_single_post_page(
+            &post,
+            "Body with [link](/posts/hello)",
+            &metadata,
+            "en",
+        )
+        .unwrap();
 
         assert_eq!(rendered.relative_path, "2024/03/09/hello/index.html");
-        assert!(rendered.html.contains("https://example.com/2024/03/09/hello"));
-        assert!(rendered.html.contains("https://example.com/de/2024/03/09/hello"));
+        assert!(
+            rendered
+                .html
+                .contains("https://example.com/2024/03/09/hello")
+        );
+        assert!(
+            rendered
+                .html
+                .contains("https://example.com/de/2024/03/09/hello")
+        );
         assert!(rendered.html.contains("href=\"/2024/03/09/hello\""));
     }
 

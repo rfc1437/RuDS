@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use iced::widget::text::{Shaping, Wrapping};
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
+use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
-use bds_editor::{highlighter, CodeEditor, EditorBuffer, EditorMessage};
+use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -297,7 +297,11 @@ impl PostEditorState {
         langs.sort();
         for lang in langs {
             let locale = i18n::normalize_language(&lang);
-            let status = match self.translation_drafts.get(&lang).map(|draft| &draft.status) {
+            let status = match self
+                .translation_drafts
+                .get(&lang)
+                .map(|draft| &draft.status)
+            {
                 Some(PostStatus::Published) => "published",
                 Some(_) => "draft",
                 None => "missing",
@@ -480,10 +484,30 @@ pub fn view<'a>(
             Space::with_width(Length::Fill),
             container(
                 column![
-                    quick_action_item(locale, t(locale, "editor.aiAnalyze"), PostEditorMsg::AnalyzeWithAi, ai_enabled),
-                    quick_action_item(locale, t(locale, "editor.suggestTaxonomy"), PostEditorMsg::AnalyzeTaxonomy, ai_enabled),
-                    quick_action_item(locale, t(locale, "editor.translate"), PostEditorMsg::Translate, ai_enabled),
-                    quick_action_item(locale, t(locale, "editor.detectLanguage"), PostEditorMsg::DetectLanguage, ai_enabled),
+                    quick_action_item(
+                        locale,
+                        t(locale, "editor.aiAnalyze"),
+                        PostEditorMsg::AnalyzeWithAi,
+                        ai_enabled
+                    ),
+                    quick_action_item(
+                        locale,
+                        t(locale, "editor.suggestTaxonomy"),
+                        PostEditorMsg::AnalyzeTaxonomy,
+                        ai_enabled
+                    ),
+                    quick_action_item(
+                        locale,
+                        t(locale, "editor.translate"),
+                        PostEditorMsg::Translate,
+                        ai_enabled
+                    ),
+                    quick_action_item(
+                        locale,
+                        t(locale, "editor.detectLanguage"),
+                        PostEditorMsg::DetectLanguage,
+                        ai_enabled
+                    ),
                 ]
                 .spacing(4)
             )
@@ -525,7 +549,7 @@ pub fn view<'a>(
         let mut flag_row = row![].spacing(2);
         for flag in &flags {
             let lang = flag.language.clone();
-            let label = format!("{}", flag.flag_emoji);
+            let label = flag.flag_emoji.to_string();
             let btn = button(text(label).size(14).shaping(Shaping::Advanced))
                 .on_press(Message::PostEditor(PostEditorMsg::SwitchLanguage(lang)))
                 .padding([2, 4])
@@ -574,9 +598,13 @@ pub fn view<'a>(
             Some(&state.language),
             |lang| Message::PostEditor(PostEditorMsg::LanguageChanged(lang)),
         );
-        let detect_language = button(text(t(locale, "editor.detectLanguage")).size(12).shaping(Shaping::Advanced))
-            .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::DetectLanguage)))
-            .padding([6, 12]);
+        let detect_language = button(
+            text(t(locale, "editor.detectLanguage"))
+                .size(12)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::DetectLanguage)))
+        .padding([6, 12]);
         let template_input = inputs::labeled_input(
             &t(locale, "editor.templateSlug"),
             "",
@@ -619,11 +647,13 @@ pub fn view<'a>(
         let outlinks_section: Element<'a, Message> = if state.outlinks.is_empty() {
             Space::new(0, 0).into()
         } else {
-            let mut items: Vec<Element<'a, Message>> = vec![text(t(locale, "editor.outlinks"))
-                .size(12)
-                .color(inputs::LABEL_COLOR)
-                .shaping(Shaping::Advanced)
-                .into()];
+            let mut items: Vec<Element<'a, Message>> = vec![
+                text(t(locale, "editor.outlinks"))
+                    .size(12)
+                    .color(inputs::LABEL_COLOR)
+                    .shaping(Shaping::Advanced)
+                    .into(),
+            ];
             for link in &state.outlinks {
                 items.push(
                     text(format!("\u{2192} {}", link.title))
@@ -639,11 +669,13 @@ pub fn view<'a>(
         let backlinks_section: Element<'a, Message> = if state.backlinks.is_empty() {
             Space::new(0, 0).into()
         } else {
-            let mut items: Vec<Element<'a, Message>> = vec![text(t(locale, "editor.backlinks"))
-                .size(12)
-                .color(inputs::LABEL_COLOR)
-                .shaping(Shaping::Advanced)
-                .into()];
+            let mut items: Vec<Element<'a, Message>> = vec![
+                text(t(locale, "editor.backlinks"))
+                    .size(12)
+                    .color(inputs::LABEL_COLOR)
+                    .shaping(Shaping::Advanced)
+                    .into(),
+            ];
             for link in &state.backlinks {
                 items.push(
                     text(format!("\u{2190} {}", link.title))
@@ -712,20 +744,32 @@ pub fn view<'a>(
                             ]
                             .spacing(2)
                             .width(Length::Fill),
-                            button(text(t(locale, "common.open")).size(11).shaping(Shaping::Advanced))
-                                .on_press(Message::PostEditor(PostEditorMsg::OpenLinkedMedia(open_id)))
-                                .padding([4, 10]),
-                            button(text(t(locale, "editor.unlinkMedia")).size(11).shaping(Shaping::Advanced))
-                                .on_press(Message::PostEditor(PostEditorMsg::UnlinkLinkedMedia(media_id)))
-                                .padding([4, 10])
-                                .style(inputs::danger_button),
+                            button(
+                                text(t(locale, "common.open"))
+                                    .size(11)
+                                    .shaping(Shaping::Advanced)
+                            )
+                            .on_press(Message::PostEditor(PostEditorMsg::OpenLinkedMedia(open_id)))
+                            .padding([4, 10]),
+                            button(
+                                text(t(locale, "editor.unlinkMedia"))
+                                    .size(11)
+                                    .shaping(Shaping::Advanced)
+                            )
+                            .on_press(Message::PostEditor(PostEditorMsg::UnlinkLinkedMedia(
+                                media_id
+                            )))
+                            .padding([4, 10])
+                            .style(inputs::danger_button),
                         ]
                         .spacing(8)
                         .align_y(iced::Alignment::Center),
                     )
                     .padding(8)
                     .style(|_: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
+                        background: Some(iced::Background::Color(Color::from_rgb(
+                            0.16, 0.18, 0.22,
+                        ))),
                         border: iced::Border {
                             color: Color::from_rgb(0.28, 0.28, 0.32),
                             width: 1.0,
@@ -788,13 +832,31 @@ pub fn view<'a>(
     // ── Content section (fills remaining space) ──
     let content_label = inputs::section_header(&t(locale, "editor.content"));
     let mode_toggle = row![
-        mode_button(locale, &state.editor_mode, "markdown", Message::PostEditor(PostEditorMsg::SwitchEditorMode("markdown".to_string()))),
-        mode_button(locale, &state.editor_mode, "preview", Message::PostEditor(PostEditorMsg::SwitchEditorMode("preview".to_string()))),
+        mode_button(
+            locale,
+            &state.editor_mode,
+            "markdown",
+            Message::PostEditor(PostEditorMsg::SwitchEditorMode("markdown".to_string()))
+        ),
+        mode_button(
+            locale,
+            &state.editor_mode,
+            "preview",
+            Message::PostEditor(PostEditorMsg::SwitchEditorMode("preview".to_string()))
+        ),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
     let body_toolbar = inputs::toolbar(
-        vec![row![content_label, Space::with_width(Length::Fixed(12.0)), mode_toggle].align_y(iced::Alignment::Center).into()],
+        vec![
+            row![
+                content_label,
+                Space::with_width(Length::Fixed(12.0)),
+                mode_toggle
+            ]
+            .align_y(iced::Alignment::Center)
+            .into(),
+        ],
         vec![
             if state.editor_mode == "markdown" {
                 button(
@@ -980,10 +1042,15 @@ fn mode_button<'a>(
         .into()
 }
 
-fn quick_action_item<'a>(locale: UiLocale, label: String, msg: PostEditorMsg, enabled: bool) -> Element<'a, Message> {
+fn quick_action_item<'a>(
+    locale: UiLocale,
+    label: String,
+    msg: PostEditorMsg,
+    enabled: bool,
+) -> Element<'a, Message> {
     let _ = locale;
     button(text(label).size(12).shaping(Shaping::Advanced))
-    .on_press_maybe(enabled.then_some(Message::PostEditor(msg)))
+        .on_press_maybe(enabled.then_some(Message::PostEditor(msg)))
         .padding([6, 12])
         .style(status_bar::dropdown_item)
         .width(Length::Fixed(220.0))
@@ -1138,5 +1205,4 @@ mod tests {
         state.set_editor_mode("preview");
         assert_eq!(state.editor_mode, "preview");
     }
-
 }

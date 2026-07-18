@@ -52,15 +52,8 @@ fn render_macro(invocation: &str, context: &MacroRenderContext) -> Option<String
         "vimeo" => Some(render_vimeo(&args)),
         "photo_archive" => Some(render_photo_archive(&args, context)),
         "tag_cloud" => Some(render_tag_cloud(&args, context)),
-        _ => Some(unsupported_macro(name)),
+        _ => None,
     }
-}
-
-fn unsupported_macro(name: &str) -> String {
-    format!(
-        "<section class=\"macro-unsupported\"><p>Unsupported macro: <code>{}</code></p></section>",
-        escape_html_attr(name),
-    )
 }
 
 fn tokenize_invocation(invocation: &str) -> Vec<String> {
@@ -100,12 +93,11 @@ fn tokenize_invocation(invocation: &str) -> Vec<String> {
 
 fn resolve_token(raw: &str, context: &MacroRenderContext) -> JsonValue {
     let trimmed = raw.trim();
-    if trimmed.len() >= 2 {
-        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-        {
-            return JsonValue::String(trimmed[1..trimmed.len() - 1].to_string());
-        }
+    if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        return JsonValue::String(trimmed[1..trimmed.len() - 1].to_string());
     }
 
     match trimmed {
@@ -197,7 +189,11 @@ fn render_gallery(args: &HashMap<String, JsonValue>, context: &MacroRenderContex
 fn render_youtube(args: &HashMap<String, JsonValue>) -> String {
     let video_id = args.get("id").map(stringify_scalar).unwrap_or_default();
     if video_id.is_empty() {
-        return empty_block("macro-youtube", "gallery-empty", "Missing YouTube video id.");
+        return empty_block(
+            "macro-youtube",
+            "gallery-empty",
+            "Missing YouTube video id.",
+        );
     }
     format!(
         "<section class=\"macro-youtube\"><iframe src=\"https://www.youtube.com/embed/{}\" title=\"YouTube video\" loading=\"lazy\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe></section>",
@@ -224,10 +220,18 @@ fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRender
         .or_else(|| linked_media(context));
 
     let Some(media) = media else {
-        return empty_block("macro-photo-archive", "photo-archive-empty", "No photos available.");
+        return empty_block(
+            "macro-photo-archive",
+            "photo-archive-empty",
+            "No photos available.",
+        );
     };
     if media.is_empty() {
-        return empty_block("macro-photo-archive", "photo-archive-empty", "No photos available.");
+        return empty_block(
+            "macro-photo-archive",
+            "photo-archive-empty",
+            "No photos available.",
+        );
     }
 
     let mut grouped = BTreeMap::<String, Vec<JsonValue>>::new();
@@ -243,7 +247,11 @@ fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRender
     let single_month = grouped.len() == 1;
     let mut html = format!(
         "<section class=\"macro-photo-archive{}\"><div class=\"photo-archive-container\">",
-        if single_month { " photo-archive-single-month" } else { "" }
+        if single_month {
+            " photo-archive-single-month"
+        } else {
+            ""
+        }
     );
     for (bucket, items) in grouped.into_iter().rev() {
         html.push_str("<section class=\"photo-archive-month\">");
@@ -362,7 +370,10 @@ fn tag_items(context: &MacroRenderContext) -> Option<Vec<JsonValue>> {
 }
 
 fn image_path(image: &JsonValue) -> Option<String> {
-    image.get("file_path").and_then(JsonValue::as_str).map(ToOwned::to_owned)
+    image
+        .get("file_path")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn image_title(image: &JsonValue) -> Option<String> {
@@ -391,7 +402,9 @@ fn image_alt(image: &JsonValue, fallback: Option<&str>) -> String {
 }
 
 fn value_as_u64(value: &JsonValue) -> Option<u64> {
-    value.as_u64().or_else(|| value.as_i64().map(|number| number.max(0) as u64))
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().map(|number| number.max(0) as u64))
 }
 
 fn stringify_scalar(value: &JsonValue) -> String {
@@ -407,7 +420,9 @@ fn stringify_scalar(value: &JsonValue) -> String {
 fn month_bucket(path: &str) -> Option<String> {
     let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
     match segments.as_slice() {
-        ["media", year, month, ..] if year.len() == 4 && month.len() == 2 => Some(format!("{year}-{month}")),
+        ["media", year, month, ..] if year.len() == 4 && month.len() == 2 => {
+            Some(format!("{year}-{month}"))
+        }
         _ => None,
     }
 }
@@ -422,11 +437,16 @@ fn empty_block(wrapper_class: &str, message_class: &str, message: &str) -> Strin
 }
 
 fn escape_html(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn escape_html_attr(value: &str) -> String {
-    escape_html(value).replace('"', "&quot;").replace('\'', "&#39;")
+    escape_html(value)
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]
@@ -469,5 +489,14 @@ mod tests {
         assert!(html.contains("data-lightbox=\"post-1\""));
         assert!(html.contains("macro-tag-cloud"));
         assert!(html.contains("data-tag-cloud=\"true\""));
+    }
+
+    #[test]
+    fn leaves_unknown_macros_verbatim() {
+        let markdown = "Before [[future_macro value='x']] after";
+        assert_eq!(
+            expand_builtin_macros(markdown, &MacroRenderContext::default()),
+            markdown
+        );
     }
 }

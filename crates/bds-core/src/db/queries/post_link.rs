@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{post_link_from_row, POST_LINK_COLUMNS};
+use crate::db::from_row::{POST_LINK_COLUMNS, post_link_from_row};
 use crate::model::PostLink;
 
 pub fn insert_post_link(conn: &Connection, link: &PostLink) -> rusqlite::Result<()> {
@@ -51,8 +51,8 @@ pub fn list_links_by_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();
@@ -63,17 +63,20 @@ mod tests {
             "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
              VALUES ('a', 'p1', 'A', 'a', 'draft', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         c.execute(
             "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
              VALUES ('b', 'p1', 'B', 'b', 'draft', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         c.execute(
             "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
              VALUES ('c', 'p1', 'C', 'c', 'draft', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         db
     }
 

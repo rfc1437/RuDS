@@ -227,7 +227,7 @@ Rules:
 
 ### `bds-ui/views`
 
-- preview controls
+- internal Markdown/Preview switch backed by Wry, plus external Open in Browser command
 - generation progress display
 - render errors and diagnostics
 - AI operation triggers in post editor (analysis, taxonomy), translation editor (translate), and media editor (alt text, translate)

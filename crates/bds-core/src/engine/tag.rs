@@ -7,8 +7,8 @@ use crate::db::queries::post as post_q;
 use crate::db::queries::tag as tag_q;
 use crate::engine::meta;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::metadata::TagEntry;
 use crate::model::Tag;
+use crate::model::metadata::TagEntry;
 use crate::util::now_unix_ms;
 
 /// Create a new tag. Case-insensitive duplicate check.
@@ -240,10 +240,7 @@ pub fn import_tags_from_file(
 
 /// Sync tags from all posts: collect unique tag names, create missing tags in DB.
 /// This is additive only — it does NOT rewrite tags.json.
-pub fn sync_tags_from_posts(
-    conn: &Connection,
-    project_id: &str,
-) -> EngineResult<Vec<Tag>> {
+pub fn sync_tags_from_posts(conn: &Connection, project_id: &str) -> EngineResult<Vec<Tag>> {
     let posts = post_q::list_posts_by_project(conn, project_id)?;
 
     // Collect all unique tag names from posts (preserve original casing per spec).
@@ -290,11 +287,7 @@ pub fn discover_tags(
 }
 
 /// Rewrite meta/tags.json from DB state.
-pub fn rewrite_tags_json(
-    conn: &Connection,
-    data_dir: &Path,
-    project_id: &str,
-) -> EngineResult<()> {
+pub fn rewrite_tags_json(conn: &Connection, data_dir: &Path, project_id: &str) -> EngineResult<()> {
     let tags = tag_q::list_tags_by_project(conn, project_id)?;
     let entries: Vec<TagEntry> = tags
         .into_iter()
@@ -317,8 +310,8 @@ fn flush_post_frontmatter(
     data_dir: &Path,
     post_ids: &[String],
 ) -> EngineResult<()> {
-    use crate::util::frontmatter::write_post_file;
     use crate::util::atomic_write_str;
+    use crate::util::frontmatter::write_post_file;
 
     for post_id in post_ids {
         let post = post_q::get_post_by_id(conn, post_id)?;
@@ -328,7 +321,7 @@ fn flush_post_frontmatter(
                 // Read existing body from file
                 let content = std::fs::read_to_string(&abs_path)?;
                 let (_fm, body) = crate::util::frontmatter::read_post_file(&content)
-                    .map_err(|e| EngineError::Parse(e))?;
+                    .map_err(EngineError::Parse)?;
                 // Rewrite with updated frontmatter
                 let file_content = write_post_file(&post, &body);
                 atomic_write_str(&abs_path, &file_content)?;
@@ -348,8 +341,7 @@ fn remove_tag_name_from_posts(
     let mut modified = Vec::new();
     for mut post in posts {
         if post.tags.iter().any(|t| t.eq_ignore_ascii_case(tag_name)) {
-            post.tags
-                .retain(|t| !t.eq_ignore_ascii_case(tag_name));
+            post.tags.retain(|t| !t.eq_ignore_ascii_case(tag_name));
             post.updated_at = now;
             post_q::update_post(conn, &post)?;
             modified.push(post.id.clone());
@@ -361,9 +353,9 @@ fn remove_tag_name_from_posts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::queries::post::insert_post;
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
     use crate::model::{Post, PostStatus};
     use tempfile::TempDir;
 
@@ -470,11 +462,7 @@ mod tests {
     fn rename_tag_updates_posts() {
         let (db, dir) = setup();
         let tag = create_tag(db.conn(), dir.path(), "p1", "rust", None).unwrap();
-        insert_post(
-            db.conn(),
-            &make_post("x1", "hello", vec!["rust".into()]),
-        )
-        .unwrap();
+        insert_post(db.conn(), &make_post("x1", "hello", vec!["rust".into()])).unwrap();
 
         rename_tag(db.conn(), dir.path(), "p1", &tag.id, "golang").unwrap();
 
@@ -493,25 +481,14 @@ mod tests {
         let t2 = create_tag(db.conn(), dir.path(), "p1", "rust", None).unwrap();
         let t3 = create_tag(db.conn(), dir.path(), "p1", "target", None).unwrap();
 
-        insert_post(
-            db.conn(),
-            &make_post("x1", "a", vec!["rs".into()]),
-        )
-        .unwrap();
+        insert_post(db.conn(), &make_post("x1", "a", vec!["rs".into()])).unwrap();
         insert_post(
             db.conn(),
             &make_post("x2", "b", vec!["rust".into(), "target".into()]),
         )
         .unwrap();
 
-        merge_tags(
-            db.conn(),
-            dir.path(),
-            "p1",
-            &[&t1.id, &t2.id],
-            &t3.id,
-        )
-        .unwrap();
+        merge_tags(db.conn(), dir.path(), "p1", &[&t1.id, &t2.id], &t3.id).unwrap();
 
         // Post x1 should now have "target"
         let p1 = crate::db::queries::post::get_post_by_id(db.conn(), "x1").unwrap();
@@ -563,7 +540,10 @@ mod tests {
         assert_eq!(tags.len(), 2);
 
         let entries = meta::read_tags_json(dir.path()).unwrap();
-        let names = entries.into_iter().map(|entry| entry.name).collect::<Vec<_>>();
+        let names = entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
         assert_eq!(names, vec!["rust".to_string(), "web".to_string()]);
     }
 
@@ -572,8 +552,16 @@ mod tests {
         let (db, dir) = setup();
         // Write tags.json with colors
         let entries = vec![
-            TagEntry { name: "rust".into(), color: Some("#ff0000".into()), post_template_slug: None },
-            TagEntry { name: "web".into(), color: None, post_template_slug: Some("blog".into()) },
+            TagEntry {
+                name: "rust".into(),
+                color: Some("#ff0000".into()),
+                post_template_slug: None,
+            },
+            TagEntry {
+                name: "web".into(),
+                color: None,
+                post_template_slug: Some("blog".into()),
+            },
         ];
         meta::write_tags_json(dir.path(), &entries).unwrap();
 
@@ -605,9 +593,18 @@ mod tests {
         use crate::db::fts::ensure_fts_tables;
         ensure_fts_tables(db.conn()).unwrap();
         let post = crate::engine::post::create_post(
-            db.conn(), dir.path(), "p1", "Tagged Post", Some("body content"),
-            vec!["rust".into()], vec![], None, None, None,
-        ).unwrap();
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Tagged Post",
+            Some("body content"),
+            vec!["rust".into()],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         crate::engine::post::publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
         let tag = create_tag(db.conn(), dir.path(), "p1", "rust", None).unwrap();
@@ -616,7 +613,13 @@ mod tests {
         // Read the file from disk and verify tag was updated
         let from_db = crate::db::queries::post::get_post_by_id(db.conn(), &post.id).unwrap();
         let file_content = std::fs::read_to_string(dir.path().join(&from_db.file_path)).unwrap();
-        assert!(file_content.contains("golang"), "frontmatter should contain renamed tag");
-        assert!(!file_content.contains("rust"), "frontmatter should not contain old tag name");
+        assert!(
+            file_content.contains("golang"),
+            "frontmatter should contain renamed tag"
+        );
+        assert!(
+            !file_content.contains("rust"),
+            "frontmatter should not contain old tag name"
+        );
     }
 }

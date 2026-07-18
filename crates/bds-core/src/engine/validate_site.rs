@@ -25,8 +25,9 @@ pub fn validate_site(
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
     let output_dir = generated_output_dir(data_dir);
     let published_posts = load_published_posts(data_dir, conn, project_id)?;
-    let artifacts = build_site_render_artifacts(conn, data_dir, project_id, &metadata, &published_posts)
-        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let artifacts =
+        build_site_render_artifacts(conn, data_dir, project_id, &metadata, &published_posts)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
 
     let mut expected = artifacts
         .pages
@@ -36,7 +37,12 @@ pub fn validate_site(
     expected.insert("calendar.json".to_string());
     expected.insert("rss.xml".to_string());
     for language in render_languages(&metadata) {
-        let prefix = if language == metadata.main_language.clone().unwrap_or_else(|| "en".to_string()) {
+        let prefix = if language
+            == metadata
+                .main_language
+                .clone()
+                .unwrap_or_else(|| "en".to_string())
+        {
             String::new()
         } else {
             format!("{language}/")
@@ -79,7 +85,9 @@ pub fn validate_site(
 
     let mut stale_pages = Vec::new();
     for rel in expected.intersection(&actual) {
-        if let Ok(stored) = queries::generated_file_hash::get_generated_file_hash(conn, project_id, rel) {
+        if let Ok(stored) =
+            queries::generated_file_hash::get_generated_file_hash(conn, project_id, rel)
+        {
             let actual_hash = file_hash(&output_dir.join(rel))?;
             if actual_hash != stored.content_hash {
                 stale_pages.push(rel.clone());
@@ -114,13 +122,17 @@ fn load_published_posts(
 ) -> EngineResult<Vec<(Post, String)>> {
     let posts = queries::post::list_posts_by_project(conn, project_id)?;
     let mut published = Vec::new();
-    for post in posts.into_iter().filter(|post| post.status == PostStatus::Published) {
+    for post in posts
+        .into_iter()
+        .filter(|post| post.status == PostStatus::Published)
+    {
         let body = if let Some(content) = &post.content {
             content.clone()
         } else if let Some(content) = &post.published_content {
             content.clone()
         } else {
-            let raw = std::fs::read_to_string(data_dir.join(post.file_path.trim_start_matches('/')))?;
+            let raw =
+                std::fs::read_to_string(data_dir.join(post.file_path.trim_start_matches('/')))?;
             crate::util::frontmatter::read_post_file(&raw)
                 .map(|(_, body)| body)
                 .map_err(EngineError::Parse)?
@@ -131,10 +143,16 @@ fn load_published_posts(
 }
 
 fn render_languages(metadata: &crate::model::ProjectMetadata) -> Vec<String> {
-    let main = metadata.main_language.clone().unwrap_or_else(|| "en".to_string());
+    let main = metadata
+        .main_language
+        .clone()
+        .unwrap_or_else(|| "en".to_string());
     let mut languages = vec![main.clone()];
     for language in &metadata.blog_languages {
-        if !languages.iter().any(|existing| existing.eq_ignore_ascii_case(language)) {
+        if !languages
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(language))
+        {
             languages.push(language.clone());
         }
     }

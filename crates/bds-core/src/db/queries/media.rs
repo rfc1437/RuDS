@@ -1,7 +1,8 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{media_from_row, MEDIA_COLUMNS};
+use crate::db::from_row::{MEDIA_COLUMNS, media_from_row};
 use crate::model::Media;
+use crate::util::calendar_range_unix_ms;
 
 fn tags_to_json(tags: &[String]) -> String {
     serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
@@ -133,9 +134,7 @@ pub struct MediaFilterParams {
 
 impl MediaFilterParams {
     pub fn has_active_filters(&self) -> bool {
-        !self.search_query.is_empty()
-            || self.year.is_some()
-            || !self.tags.is_empty()
+        !self.search_query.is_empty() || self.year.is_some() || !self.tags.is_empty()
     }
 }
 
@@ -161,49 +160,13 @@ pub fn list_media_filtered(
     }
 
     if let Some(year) = filters.year {
-        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-        let end = chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-
-        if let Some(month) = filters.month {
-            let m_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .timestamp() * 1000;
-            let next_month = if month == 12 {
-                chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-            } else {
-                chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
-            }
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp() * 1000;
-
-            let idx1 = param_values.len() + 1;
-            let idx2 = param_values.len() + 2;
-            conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
-            param_values.push(Box::new(m_start));
-            param_values.push(Box::new(next_month));
-        } else {
-            let idx1 = param_values.len() + 1;
-            let idx2 = param_values.len() + 2;
-            conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
-            param_values.push(Box::new(start));
-            param_values.push(Box::new(end));
-        }
+        let (start, end) =
+            calendar_range_unix_ms(year, filters.month).ok_or(rusqlite::Error::InvalidQuery)?;
+        let idx1 = param_values.len() + 1;
+        let idx2 = param_values.len() + 2;
+        conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
+        param_values.push(Box::new(start));
+        param_values.push(Box::new(end));
     }
 
     for tag in &filters.tags {
@@ -244,7 +207,7 @@ pub fn media_calendar_counts(
          FROM media
          WHERE project_id = ?1
          GROUP BY y, m
-         ORDER BY y DESC, m DESC"
+         ORDER BY y DESC, m DESC",
     )?;
     let rows = stmt.query_map(params![project_id], |row| {
         Ok((
@@ -257,22 +220,16 @@ pub fn media_calendar_counts(
 }
 
 /// Collect all distinct tag values across media for a project.
-pub fn distinct_media_tags(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT tags FROM media WHERE project_id = ?1 AND tags != '[]'"
-    )?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        row.get::<_, String>(0)
-    })?;
+pub fn distinct_media_tags(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT tags FROM media WHERE project_id = ?1 AND tags != '[]'")?;
+    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
     let mut all_tags = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str {
-            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
-                all_tags.extend(tags);
-            }
+        if let Ok(json_str) = json_str
+            && let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str)
+        {
+            all_tags.extend(tags);
         }
     }
     Ok(all_tags.into_iter().collect())
@@ -307,8 +264,8 @@ pub fn make_test_media(id: &str, project_id: &str) -> Media {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();

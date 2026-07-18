@@ -381,5 +381,7 @@
   "dashboard.recentPosts": "Articles récents",
   "dashboard.noRecentPosts": "Aucun article récent",
   "dashboard.and": "et",
-  "dashboard.pin": "Épingler"
+  "dashboard.pin": "Épingler",
+  "common.tabNotImplemented": "Cette section sera mise en œuvre lors d’une étape ultérieure.",
+  "editor.noPreviewAvailable": "Aucun aperçu disponible"
 }

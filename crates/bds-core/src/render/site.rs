@@ -10,17 +10,28 @@ use serde_json::{Value, json};
 
 use crate::db::queries;
 use crate::engine::menu::{self, MenuItemKind};
-use crate::model::{CategorySettings, Media, Post, ProjectMetadata, Tag, Template, TemplateKind, TemplateStatus};
-use crate::render::{RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path, render_liquid_template, resolve_post_template};
+use crate::model::{
+    CategorySettings, Media, Post, ProjectMetadata, Tag, Template, TemplateKind, TemplateStatus,
+};
+use crate::render::{
+    RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
+    render_liquid_template, resolve_post_template,
+};
 use crate::util::frontmatter::{read_template_file, read_translation_file};
 use crate::util::slugify;
 
-const STARTER_SINGLE_POST_TEMPLATE: &str = include_str!("../../../../assets/starter-templates/single-post.liquid");
-const STARTER_POST_LIST_TEMPLATE: &str = include_str!("../../../../assets/starter-templates/post-list.liquid");
-const STARTER_NOT_FOUND_TEMPLATE: &str = include_str!("../../../../assets/starter-templates/not-found.liquid");
-const STARTER_HEAD_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/head.liquid");
-const STARTER_MENU_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/menu.liquid");
-const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str = include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
+const STARTER_SINGLE_POST_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/single-post.liquid");
+const STARTER_POST_LIST_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/post-list.liquid");
+const STARTER_NOT_FOUND_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/not-found.liquid");
+const STARTER_HEAD_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/head.liquid");
+const STARTER_MENU_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/menu.liquid");
+const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SitePage {
@@ -100,9 +111,16 @@ pub fn build_site_render_artifacts(
 
     let mut artifacts = SiteRenderArtifacts::default();
     for language in languages {
-        let localized_posts = load_language_posts(conn, data_dir, published_posts, &language, &main_language)?;
+        let localized_posts =
+            load_language_posts(conn, data_dir, published_posts, &language, &main_language)?;
         let localized_list_posts = filter_posts_for_lists(&localized_posts, &category_settings);
-        let routes = build_language_routes(&localized_list_posts, metadata, &language, &tags, &category_settings);
+        let routes = build_language_routes(
+            &localized_list_posts,
+            metadata,
+            &language,
+            &tags,
+            &category_settings,
+        );
         let post_data_json_by_id = build_post_data_json_by_id(&localized_posts);
         let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
@@ -138,7 +156,8 @@ pub fn build_site_render_artifacts(
             artifacts.pages.push(page);
         }
 
-        let canonical_map = canonical_post_path_by_slug(&localized_posts, &language, &main_language);
+        let canonical_map =
+            canonical_post_path_by_slug(&localized_posts, &language, &main_language);
         for record in &localized_posts {
             let html = render_post_route(
                 conn,
@@ -183,9 +202,14 @@ pub fn build_preview_response(
     published_posts: &[(Post, String)],
     requested_path: &str,
 ) -> Result<PreviewRenderResult, Box<dyn Error + Send + Sync>> {
-    let artifacts = build_site_render_artifacts(conn, data_dir, project_id, metadata, published_posts)?;
+    let artifacts =
+        build_site_render_artifacts(conn, data_dir, project_id, metadata, published_posts)?;
     let normalized = normalize_request_path(requested_path);
-    if let Some(page) = artifacts.pages.iter().find(|page| page.url_path == normalized) {
+    if let Some(page) = artifacts
+        .pages
+        .iter()
+        .find(|page| page.url_path == normalized)
+    {
         return Ok(PreviewRenderResult {
             status_code: 200,
             html: page.html.clone(),
@@ -207,7 +231,8 @@ fn load_template_bundle(
     data_dir: &Path,
     project_id: &str,
 ) -> Result<TemplateBundle, Box<dyn Error + Send + Sync>> {
-    let templates = queries::template::list_templates_by_project(conn, project_id).unwrap_or_default();
+    let templates =
+        queries::template::list_templates_by_project(conn, project_id).unwrap_or_default();
     let mut template_source_by_slug = HashMap::new();
     let mut post_templates = Vec::new();
     let mut list_template_sources = HashMap::new();
@@ -237,7 +262,10 @@ fn load_template_bundle(
                 }
             }
             TemplateKind::NotFound => {
-                if template.slug == "not-found" || template.slug == "not_found" || not_found_template == STARTER_NOT_FOUND_TEMPLATE {
+                if template.slug == "not-found"
+                    || template.slug == "not_found"
+                    || not_found_template == STARTER_NOT_FOUND_TEMPLATE
+                {
                     not_found_template = source;
                 }
             }
@@ -258,7 +286,10 @@ fn load_template_bundle(
         .entry("list".to_string())
         .or_insert_with(|| STARTER_POST_LIST_TEMPLATE.to_string());
 
-    if !post_templates.iter().any(|template| template.slug == "post") {
+    if !post_templates
+        .iter()
+        .any(|template| template.slug == "post")
+    {
         post_templates.push(Template {
             id: "starter-post-template".to_string(),
             project_id: project_id.to_string(),
@@ -273,7 +304,8 @@ fn load_template_bundle(
             created_at: 0,
             updated_at: 0,
         });
-        template_source_by_slug.insert("post".to_string(), STARTER_SINGLE_POST_TEMPLATE.to_string());
+        template_source_by_slug
+            .insert("post".to_string(), STARTER_SINGLE_POST_TEMPLATE.to_string());
     }
 
     Ok(TemplateBundle {
@@ -318,7 +350,11 @@ fn load_language_posts(
             continue;
         }
 
-        if let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(conn, &post.id, language) {
+        if let Ok(translation) =
+            queries::post_translation::get_post_translation_by_post_and_language(
+                conn, &post.id, language,
+            )
+        {
             let raw = fs::read_to_string(data_dir.join(&translation.file_path))?;
             let (_, translated_body) = read_translation_file(&raw)?;
             let mut translated_post = post.clone();
@@ -336,7 +372,10 @@ fn load_language_posts(
     }
 
     posts.sort_by(|left, right| {
-        right.post.published_at.unwrap_or(right.post.created_at)
+        right
+            .post
+            .published_at
+            .unwrap_or(right.post.created_at)
             .cmp(&left.post.published_at.unwrap_or(left.post.created_at))
     });
     Ok(posts)
@@ -367,14 +406,29 @@ fn build_language_routes(
 
     for record in posts {
         for category in &record.post.categories {
-            category_posts.entry(category.clone()).or_default().push(record.clone());
+            category_posts
+                .entry(category.clone())
+                .or_default()
+                .push(record.clone());
         }
         for tag in &record.post.tags {
-            tag_posts.entry(tag.clone()).or_default().push(record.clone());
+            tag_posts
+                .entry(tag.clone())
+                .or_default()
+                .push(record.clone());
         }
-        if let Some(timestamp) = Utc.timestamp_millis_opt(record.post.published_at.unwrap_or(record.post.created_at)).single() {
-            year_posts.entry(timestamp.year()).or_default().push(record.clone());
-            month_posts.entry((timestamp.year(), timestamp.month())).or_default().push(record.clone());
+        if let Some(timestamp) = Utc
+            .timestamp_millis_opt(record.post.published_at.unwrap_or(record.post.created_at))
+            .single()
+        {
+            year_posts
+                .entry(timestamp.year())
+                .or_default()
+                .push(record.clone());
+            month_posts
+                .entry((timestamp.year(), timestamp.month()))
+                .or_default()
+                .push(record.clone());
         }
     }
 
@@ -383,7 +437,10 @@ fn build_language_routes(
         routes.extend(paginated_route_specs(
             &records,
             per_page,
-            format!("{}/category/{slug}", language_root_prefix(language, metadata)),
+            format!(
+                "{}/category/{slug}",
+                language_root_prefix(language, metadata)
+            ),
             category.clone(),
             Some(json!({"kind": "category", "name": category})),
             category_settings
@@ -424,7 +481,10 @@ fn build_language_routes(
         routes.extend(paginated_route_specs(
             &records,
             per_page,
-            format!("{}/{year}/{month:02}", language_root_prefix(language, metadata)),
+            format!(
+                "{}/{year}/{month:02}",
+                language_root_prefix(language, metadata)
+            ),
             format!("{} {year}-{month:02}", metadata.name),
             Some(json!({"kind": "month", "year": year, "month": month})),
             None,
@@ -449,7 +509,11 @@ fn paginated_route_specs(
         let current_page = page_index + 1;
         let start = page_index * per_page;
         let end = (start + per_page).min(total_items);
-        let slice = if start < end { posts[start..end].to_vec() } else { Vec::new() };
+        let slice = if start < end {
+            posts[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
         let relative_base = base_path.trim_matches('/');
         let relative_path = if current_page == 1 {
             if relative_base.is_empty() {
@@ -479,6 +543,10 @@ fn paginated_route_specs(
     pages
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render inputs are existing domain data with distinct lifetimes"
+)]
 fn render_list_route(
     route: &RouteSpec,
     metadata: &ProjectMetadata,
@@ -536,7 +604,11 @@ fn render_list_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template(list_template, &bundle.partials, &context)?)
+    Ok(render_liquid_template(
+        list_template,
+        &bundle.partials,
+        &context,
+    )?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -558,9 +630,12 @@ fn render_post_route(
     let render_categories = category_settings
         .iter()
         .map(|(name, settings)| {
-            (name.clone(), RenderCategorySettings {
-                post_template_slug: settings.post_template_slug.clone(),
-            })
+            (
+                name.clone(),
+                RenderCategorySettings {
+                    post_template_slug: settings.post_template_slug.clone(),
+                },
+            )
         })
         .collect::<HashMap<_, _>>();
     let resolved = resolve_post_template(RenderTemplateLookup {
@@ -583,12 +658,26 @@ fn render_post_route(
         .filter_map(|link| media_by_id.get(&link.media_id))
         .map(media_context)
         .collect::<Vec<_>>();
-    let outgoing_links = queries::post_link::list_links_by_source(conn, &record.post.id).unwrap_or_default();
-    let incoming_links = queries::post_link::list_links_by_target(conn, &record.post.id).unwrap_or_default();
-    let post_by_id = all_posts.iter().map(|item| (item.post.id.clone(), item)).collect::<HashMap<_, _>>();
-    let outgoing_link_context = outgoing_links.iter().map(|link| link_context(link, &post_by_id, language, main_language)).collect::<Vec<_>>();
-    let incoming_link_context = incoming_links.iter().map(|link| link_context(link, &post_by_id, language, main_language)).collect::<Vec<_>>();
-    let backlinks = incoming_links.iter().map(|link| backlink_context(link, &post_by_id, language, main_language)).collect::<Vec<_>>();
+    let outgoing_links =
+        queries::post_link::list_links_by_source(conn, &record.post.id).unwrap_or_default();
+    let incoming_links =
+        queries::post_link::list_links_by_target(conn, &record.post.id).unwrap_or_default();
+    let post_by_id = all_posts
+        .iter()
+        .map(|item| (item.post.id.clone(), item))
+        .collect::<HashMap<_, _>>();
+    let outgoing_link_context = outgoing_links
+        .iter()
+        .map(|link| link_context(link, &post_by_id, language, main_language))
+        .collect::<Vec<_>>();
+    let incoming_link_context = incoming_links
+        .iter()
+        .map(|link| link_context(link, &post_by_id, language, main_language))
+        .collect::<Vec<_>>();
+    let backlinks = incoming_links
+        .iter()
+        .map(|link| backlink_context(link, &post_by_id, language, main_language))
+        .collect::<Vec<_>>();
     let taxonomy_counts = build_taxonomy_counts(all_posts, tags);
 
     let context = json!({
@@ -626,7 +715,11 @@ fn render_post_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template(&template_source, &bundle.partials, &context)?)
+    Ok(render_liquid_template(
+        &template_source,
+        &bundle.partials,
+        &context,
+    )?)
 }
 
 fn render_not_found_route(
@@ -670,7 +763,11 @@ fn render_not_found_route(
         "canonical_media_path_by_source_path": HashMap::<String, String>::new(),
         "post_data_json_by_id": HashMap::<String, Value>::new(),
     });
-    Ok(render_liquid_template(&bundle.not_found_template, &bundle.partials, &context)?)
+    Ok(render_liquid_template(
+        &bundle.not_found_template,
+        &bundle.partials,
+        &context,
+    )?)
 }
 
 fn build_menu_items(
@@ -728,17 +825,17 @@ fn prefixed_slug_path(prefix: &str, slug: &str) -> String {
 }
 
 fn prefix_or_root(prefix: &str) -> &str {
-    if prefix.is_empty() {
-        "/"
-    } else {
-        prefix
-    }
+    if prefix.is_empty() { "/" } else { prefix }
 }
 
 fn route_href(route: &RouteSpec, page: usize) -> String {
     let base = route.url_path.trim_end_matches('/');
     if page <= 1 {
-        if base.is_empty() { "/".to_string() } else { base.to_string() }
+        if base.is_empty() {
+            "/".to_string()
+        } else {
+            base.to_string()
+        }
     } else if base.is_empty() || base == "/" {
         format!("/page/{page}")
     } else {
@@ -760,7 +857,12 @@ fn build_day_blocks(
         let Some(timestamp) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
             continue;
         };
-        let key = format!("{:04}-{:02}-{:02}", timestamp.year(), timestamp.month(), timestamp.day());
+        let key = format!(
+            "{:04}-{:02}-{:02}",
+            timestamp.year(),
+            timestamp.month(),
+            timestamp.day()
+        );
         if !current_key.is_empty() && current_key != key {
             blocks.push(json!({
                 "show_date_marker": true,
@@ -771,7 +873,12 @@ fn build_day_blocks(
             current_posts = Vec::new();
         }
         current_key = key;
-        current_label = format!("{:02}.{:02}.{:04}", timestamp.day(), timestamp.month(), timestamp.year());
+        current_label = format!(
+            "{:02}.{:02}.{:04}",
+            timestamp.day(),
+            timestamp.month(),
+            timestamp.year()
+        );
         let show_title = should_show_list_title(&record.post, category_settings);
         current_posts.push(json!({
             "id": record.post.id,
@@ -797,7 +904,8 @@ fn filter_posts_for_lists(
     posts: &[RenderPostRecord],
     category_settings: &HashMap<String, CategorySettings>,
 ) -> Vec<RenderPostRecord> {
-    posts.iter()
+    posts
+        .iter()
         .filter(|record| !is_post_excluded_from_lists(&record.post, category_settings))
         .cloned()
         .collect()
@@ -850,11 +958,14 @@ fn canonical_post_path_by_slug(
     language: &str,
     main_language: &str,
 ) -> HashMap<String, String> {
-    posts.iter()
-        .map(|record| (
-            record.post.slug.clone(),
-            build_canonical_post_path(&record.post, language, main_language),
-        ))
+    posts
+        .iter()
+        .map(|record| {
+            (
+                record.post.slug.clone(),
+                build_canonical_post_path(&record.post, language, main_language),
+            )
+        })
         .collect()
 }
 
@@ -874,7 +985,9 @@ fn extract_media_refs(markdown: &str) -> Vec<String> {
     let mut remainder = markdown;
     while let Some(index) = remainder.find("bds-media://") {
         let rest = &remainder[index..];
-        let end = rest.find(|ch: char| ch == ')' || ch == ']' || ch.is_whitespace()).unwrap_or(rest.len());
+        let end = rest
+            .find(|ch: char| ch == ')' || ch == ']' || ch.is_whitespace())
+            .unwrap_or(rest.len());
         refs.push(rest[..end].to_string());
         remainder = &rest[end..];
     }
@@ -927,29 +1040,50 @@ fn build_taxonomy_counts(
         }
     }
 
-    let categories = category_counts.into_iter().map(|(name, count)| json!({
-        "name": name,
-        "slug": slugify(&name),
-        "post_count": count,
-    })).collect::<Vec<_>>();
-
-    let tag_items = tag_counts.into_iter().map(|(name, count)| {
-        let color = tags.iter().find(|tag| tag.name.eq_ignore_ascii_case(&name)).and_then(|tag| tag.color.clone());
-        json!({
-            "name": name,
-            "slug": slugify(&name),
-            "color": color,
-            "post_count": count,
+    let categories = category_counts
+        .into_iter()
+        .map(|(name, count)| {
+            json!({
+                "name": name,
+                "slug": slugify(&name),
+                "post_count": count,
+            })
         })
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
+
+    let tag_items = tag_counts
+        .into_iter()
+        .map(|(name, count)| {
+            let color = tags
+                .iter()
+                .find(|tag| tag.name.eq_ignore_ascii_case(&name))
+                .and_then(|tag| tag.color.clone());
+            json!({
+                "name": name,
+                "slug": slugify(&name),
+                "color": color,
+                "post_count": count,
+            })
+        })
+        .collect::<Vec<_>>();
 
     (categories, tag_items, tag_colors)
 }
 
 fn taxonomy_items_for_categories(names: &[String], posts: &[RenderPostRecord]) -> Vec<Value> {
-    names.iter()
+    names
+        .iter()
         .map(|name| {
-            let count = posts.iter().filter(|record| record.post.categories.iter().any(|category| category.eq_ignore_ascii_case(name))).count();
+            let count = posts
+                .iter()
+                .filter(|record| {
+                    record
+                        .post
+                        .categories
+                        .iter()
+                        .any(|category| category.eq_ignore_ascii_case(name))
+                })
+                .count();
             json!({
                 "name": name,
                 "slug": slugify(name),
@@ -959,11 +1093,28 @@ fn taxonomy_items_for_categories(names: &[String], posts: &[RenderPostRecord]) -
         .collect()
 }
 
-fn taxonomy_items_for_tags(names: &[String], posts: &[RenderPostRecord], tags: &[Tag]) -> Vec<Value> {
-    names.iter()
+fn taxonomy_items_for_tags(
+    names: &[String],
+    posts: &[RenderPostRecord],
+    tags: &[Tag],
+) -> Vec<Value> {
+    names
+        .iter()
         .map(|name| {
-            let count = posts.iter().filter(|record| record.post.tags.iter().any(|tag| tag.eq_ignore_ascii_case(name))).count();
-            let color = tags.iter().find(|tag| tag.name.eq_ignore_ascii_case(name)).and_then(|tag| tag.color.clone());
+            let count = posts
+                .iter()
+                .filter(|record| {
+                    record
+                        .post
+                        .tags
+                        .iter()
+                        .any(|tag| tag.eq_ignore_ascii_case(name))
+                })
+                .count();
+            let color = tags
+                .iter()
+                .find(|tag| tag.name.eq_ignore_ascii_case(name))
+                .and_then(|tag| tag.color.clone());
             json!({
                 "name": name,
                 "slug": slugify(name),
@@ -1076,7 +1227,11 @@ fn build_alternate_post_links(post: &Post, metadata: &ProjectMetadata) -> Vec<Va
     links
 }
 
-fn build_post_blog_languages(post: &Post, metadata: &ProjectMetadata, current_language: &str) -> Vec<Value> {
+fn build_post_blog_languages(
+    post: &Post,
+    metadata: &ProjectMetadata,
+    current_language: &str,
+) -> Vec<Value> {
     let main_language = main_language(metadata);
     render_languages(metadata)
         .into_iter()
@@ -1090,7 +1245,11 @@ fn build_post_blog_languages(post: &Post, metadata: &ProjectMetadata, current_la
         .collect()
 }
 
-fn build_list_blog_languages(metadata: &ProjectMetadata, current_language: &str, current_url_path: &str) -> Vec<Value> {
+fn build_list_blog_languages(
+    metadata: &ProjectMetadata,
+    current_language: &str,
+    current_url_path: &str,
+) -> Vec<Value> {
     let main_language = main_language(metadata);
     render_languages(metadata)
         .into_iter()
@@ -1126,7 +1285,11 @@ fn build_alternate_list_links(metadata: &ProjectMetadata, current_url_path: &str
     links
 }
 
-fn relocalize_url_path(current_url_path: &str, target_language: &str, main_language: &str) -> String {
+fn relocalize_url_path(
+    current_url_path: &str,
+    target_language: &str,
+    main_language: &str,
+) -> String {
     let stripped = strip_language_prefix(current_url_path, main_language);
     if target_language.eq_ignore_ascii_case(main_language) {
         stripped
@@ -1140,10 +1303,11 @@ fn relocalize_url_path(current_url_path: &str, target_language: &str, main_langu
 fn strip_language_prefix(path: &str, main_language: &str) -> String {
     let normalized = normalize_request_path(path);
     let trimmed = normalized.trim_start_matches('/');
-    if let Some((first, remainder)) = trimmed.split_once('/') {
-        if first.len() == 2 && !first.eq_ignore_ascii_case(main_language) {
-            return format!("/{}", remainder.trim_start_matches('/'));
-        }
+    if let Some((first, remainder)) = trimmed.split_once('/')
+        && first.len() == 2
+        && !first.eq_ignore_ascii_case(main_language)
+    {
+        return format!("/{}", remainder.trim_start_matches('/'));
     }
     normalized
 }
@@ -1161,16 +1325,20 @@ fn relative_to_url_path(relative_path: &str) -> String {
     if relative_path == "index.html" {
         return "/".to_string();
     }
-    let trimmed = relative_path.trim_end_matches("index.html").trim_end_matches('/');
+    let trimmed = relative_path
+        .trim_end_matches("index.html")
+        .trim_end_matches('/');
     format!("/{}", trimmed.trim_start_matches('/'))
 }
 
 fn language_from_path(path: &str, metadata: &ProjectMetadata) -> String {
     let trimmed = path.trim_start_matches('/');
-    if let Some((candidate, _)) = trimmed.split_once('/') {
-        if render_languages(metadata).iter().any(|language| language == candidate) {
-            return candidate.to_string();
-        }
+    if let Some((candidate, _)) = trimmed.split_once('/')
+        && render_languages(metadata)
+            .iter()
+            .any(|language| language == candidate)
+    {
+        return candidate.to_string();
     }
     main_language(metadata).to_string()
 }
@@ -1179,7 +1347,10 @@ fn render_languages(metadata: &ProjectMetadata) -> Vec<String> {
     let main = main_language(metadata).to_string();
     let mut languages = vec![main.clone()];
     for language in &metadata.blog_languages {
-        if !languages.iter().any(|existing| existing.eq_ignore_ascii_case(language)) {
+        if !languages
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(language))
+        {
             languages.push(language.clone());
         }
     }
@@ -1213,18 +1384,31 @@ fn normalize_partial_slug(slug: &str) -> String {
 
 fn starter_partials() -> HashMap<String, String> {
     HashMap::from([
-        ("partials/head".to_string(), STARTER_HEAD_PARTIAL.to_string()),
-        ("partials/menu".to_string(), STARTER_MENU_PARTIAL.to_string()),
-        ("partials/language-switcher".to_string(), STARTER_LANGUAGE_SWITCHER_PARTIAL.to_string()),
+        (
+            "partials/head".to_string(),
+            STARTER_HEAD_PARTIAL.to_string(),
+        ),
+        (
+            "partials/menu".to_string(),
+            STARTER_MENU_PARTIAL.to_string(),
+        ),
+        (
+            "partials/language-switcher".to_string(),
+            STARTER_LANGUAGE_SWITCHER_PARTIAL.to_string(),
+        ),
         (
             "partials/menu-items".to_string(),
-            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}".to_string(),
+            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}"
+                .to_string(),
         ),
     ])
 }
 
 fn pico_stylesheet_href(metadata: &ProjectMetadata) -> Option<String> {
-    metadata.pico_theme.as_ref().map(|_| "/assets/pico.min.css".to_string())
+    metadata
+        .pico_theme
+        .as_ref()
+        .map(|_| "/assets/pico.min.css".to_string())
 }
 
 fn calendar_initial_parts(post: &Post) -> (i32, u32) {

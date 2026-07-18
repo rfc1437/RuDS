@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::engine::EngineResult;
-use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
 use crate::model::PublishingPreferences;
+use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
 use crate::util::atomic_write_str;
 
 // ── project.json ────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ pub fn read_categories_json(data_dir: &Path) -> EngineResult<Vec<String>> {
 /// Sort categories, then atomic write to meta/categories.json.
 pub fn write_categories_json(data_dir: &Path, categories: &[String]) -> EngineResult<()> {
     let mut sorted = categories.to_vec();
-    sorted.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    sorted.sort_by_key(|a| a.to_lowercase());
     let path = data_dir.join("meta").join("categories.json");
     let json = serde_json::to_string_pretty(&sorted)?;
     atomic_write_str(&path, &json)?;
@@ -48,9 +48,7 @@ pub fn write_categories_json(data_dir: &Path, categories: &[String]) -> EngineRe
 // ── category-meta.json ──────────────────────────────────────────────
 
 /// Read meta/category-meta.json.
-pub fn read_category_meta_json(
-    data_dir: &Path,
-) -> EngineResult<HashMap<String, CategorySettings>> {
+pub fn read_category_meta_json(data_dir: &Path) -> EngineResult<HashMap<String, CategorySettings>> {
     let path = data_dir.join("meta").join("category-meta.json");
     let content = fs::read_to_string(&path)?;
     let meta: HashMap<String, CategorySettings> = serde_json::from_str(&content)?;
@@ -79,10 +77,7 @@ pub fn read_publishing_json(data_dir: &Path) -> EngineResult<PublishingPreferenc
 }
 
 /// Atomic write to meta/publishing.json.
-pub fn write_publishing_json(
-    data_dir: &Path,
-    prefs: &PublishingPreferences,
-) -> EngineResult<()> {
+pub fn write_publishing_json(data_dir: &Path, prefs: &PublishingPreferences) -> EngineResult<()> {
     let path = data_dir.join("meta").join("publishing.json");
     let json = serde_json::to_string_pretty(prefs)?;
     atomic_write_str(&path, &json)?;
@@ -102,7 +97,7 @@ pub fn read_tags_json(data_dir: &Path) -> EngineResult<Vec<TagEntry>> {
 /// Sort by name case-insensitive, then atomic write to meta/tags.json.
 pub fn write_tags_json(data_dir: &Path, tags: &[TagEntry]) -> EngineResult<()> {
     let mut sorted = tags.to_vec();
-    sorted.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    sorted.sort_by_key(|a| a.name.to_lowercase());
     let path = data_dir.join("meta").join("tags.json");
     let json = serde_json::to_string_pretty(&sorted)?;
     atomic_write_str(&path, &json)?;
@@ -162,10 +157,7 @@ pub fn update_blog_languages(data_dir: &Path, languages: Vec<String>) -> EngineR
 
 /// Update arbitrary fields of project metadata.
 /// Per metadata.allium UpdateProjectMetadata rule.
-pub fn update_project_metadata(
-    data_dir: &Path,
-    changes: &serde_json::Value,
-) -> EngineResult<()> {
+pub fn update_project_metadata(data_dir: &Path, changes: &serde_json::Value) -> EngineResult<()> {
     let mut meta = read_project_json(data_dir)?;
     if let Some(name) = changes.get("name").and_then(|v| v.as_str()) {
         meta.name = name.to_string();
@@ -191,7 +183,10 @@ pub fn update_project_metadata(
     if let Some(theme) = changes.get("picoTheme") {
         meta.pico_theme = theme.as_str().map(|s| s.to_string());
     }
-    if let Some(enabled) = changes.get("semanticSimilarityEnabled").and_then(|v| v.as_bool()) {
+    if let Some(enabled) = changes
+        .get("semanticSimilarityEnabled")
+        .and_then(|v| v.as_bool())
+    {
         meta.semantic_similarity_enabled = enabled;
     }
     if let Some(langs) = changes.get("blogLanguages").and_then(|v| v.as_array()) {
@@ -200,7 +195,8 @@ pub fn update_project_metadata(
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect();
     }
-    meta.validate().map_err(|e| crate::engine::EngineError::Validation(e))?;
+    meta.validate()
+        .map_err(crate::engine::EngineError::Validation)?;
     write_project_json(data_dir, &meta)?;
     Ok(())
 }
@@ -380,7 +376,7 @@ mod tests {
     fn add_category_creates_entries() {
         let dir = setup();
         // Seed files
-        write_categories_json(dir.path(), &vec!["article".into()]).unwrap();
+        write_categories_json(dir.path(), &["article".into()]).unwrap();
         write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
 
         add_category(dir.path(), "page").unwrap();
@@ -395,7 +391,7 @@ mod tests {
     #[test]
     fn add_category_idempotent() {
         let dir = setup();
-        write_categories_json(dir.path(), &vec!["article".into()]).unwrap();
+        write_categories_json(dir.path(), &["article".into()]).unwrap();
         write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
 
         add_category(dir.path(), "article").unwrap();
@@ -406,7 +402,7 @@ mod tests {
     #[test]
     fn remove_category_deletes_entries() {
         let dir = setup();
-        write_categories_json(dir.path(), &vec!["article".into(), "page".into()]).unwrap();
+        write_categories_json(dir.path(), &["article".into(), "page".into()]).unwrap();
         let mut meta = HashMap::new();
         meta.insert(
             "article".to_string(),

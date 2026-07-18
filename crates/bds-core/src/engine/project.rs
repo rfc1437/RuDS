@@ -10,7 +10,7 @@ use crate::engine::site_assets::copy_bundled_site_assets;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::Project;
 use crate::model::metadata::ProjectMetadata;
-use crate::util::{atomic_write_str, now_unix_ms, slugify, ensure_unique};
+use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 /// The well-known ID of the default project (spec: DefaultProjectExists).
 pub const DEFAULT_PROJECT_ID: &str = "default";
@@ -113,7 +113,11 @@ pub fn list_projects(conn: &Connection) -> EngineResult<Vec<Project>> {
 /// Delete a project row (cascading handled by queries).
 /// Rejects deletion of the default project and the currently active project.
 /// Only cleans up the internal project data directory (not external custom paths).
-pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Option<&Path>) -> EngineResult<()> {
+pub fn delete_project(
+    conn: &Connection,
+    project_id: &str,
+    internal_data_dir: Option<&Path>,
+) -> EngineResult<()> {
     // Cannot delete the default project
     if project_id == DEFAULT_PROJECT_ID {
         return Err(EngineError::Validation(
@@ -122,12 +126,12 @@ pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Op
     }
 
     // Check if this is the active project (don't delete active)
-    if let Ok(active) = q::get_active_project(conn) {
-        if active.id == project_id {
-            return Err(EngineError::Validation(
-                "cannot delete the active project".to_string(),
-            ));
-        }
+    if let Ok(active) = q::get_active_project(conn)
+        && active.id == project_id
+    {
+        return Err(EngineError::Validation(
+            "cannot delete the active project".to_string(),
+        ));
     }
 
     // Only delete internal data directory, never external custom data_path.
@@ -139,12 +143,11 @@ pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Op
     q::delete_project(conn, project_id)?;
 
     // Clean up internal filesystem only (not custom external paths per spec)
-    if !is_custom_path {
-        if let Some(dir) = internal_data_dir {
-            if dir.exists() {
-                let _ = fs::remove_dir_all(dir);
-            }
-        }
+    if !is_custom_path
+        && let Some(dir) = internal_data_dir
+        && dir.exists()
+    {
+        let _ = fs::remove_dir_all(dir);
     }
 
     Ok(())
@@ -153,7 +156,15 @@ pub fn delete_project(conn: &Connection, project_id: &str, internal_data_dir: Op
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn create_directory_structure(data_dir: &Path) -> EngineResult<()> {
-    let subdirs = ["posts", "media", "meta", "thumbnails", "templates", "scripts", "assets"];
+    let subdirs = [
+        "posts",
+        "media",
+        "meta",
+        "thumbnails",
+        "templates",
+        "scripts",
+        "assets",
+    ];
     for sub in &subdirs {
         fs::create_dir_all(data_dir.join(sub))?;
     }
@@ -215,15 +226,36 @@ fn copy_starter_templates(data_dir: &Path) -> EngineResult<()> {
 
     // Starter templates embedded at compile time from assets/starter-templates/
     let templates: &[(&str, &str)] = &[
-        ("single-post.liquid", include_str!("../../../../assets/starter-templates/single-post.liquid")),
-        ("post-list.liquid", include_str!("../../../../assets/starter-templates/post-list.liquid")),
-        ("not-found.liquid", include_str!("../../../../assets/starter-templates/not-found.liquid")),
+        (
+            "single-post.liquid",
+            include_str!("../../../../assets/starter-templates/single-post.liquid"),
+        ),
+        (
+            "post-list.liquid",
+            include_str!("../../../../assets/starter-templates/post-list.liquid"),
+        ),
+        (
+            "not-found.liquid",
+            include_str!("../../../../assets/starter-templates/not-found.liquid"),
+        ),
     ];
     let partials: &[(&str, &str)] = &[
-        ("head.liquid", include_str!("../../../../assets/starter-templates/partials/head.liquid")),
-        ("menu.liquid", include_str!("../../../../assets/starter-templates/partials/menu.liquid")),
-        ("menu-items.liquid", include_str!("../../../../assets/starter-templates/partials/menu-items.liquid")),
-        ("language-switcher.liquid", include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid")),
+        (
+            "head.liquid",
+            include_str!("../../../../assets/starter-templates/partials/head.liquid"),
+        ),
+        (
+            "menu.liquid",
+            include_str!("../../../../assets/starter-templates/partials/menu.liquid"),
+        ),
+        (
+            "menu-items.liquid",
+            include_str!("../../../../assets/starter-templates/partials/menu-items.liquid"),
+        ),
+        (
+            "language-switcher.liquid",
+            include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid"),
+        ),
     ];
 
     for (name, content) in templates {
@@ -258,12 +290,8 @@ mod tests {
     fn create_project_inserts_and_creates_dirs() {
         let (db, dir) = setup();
         let data_path = dir.path().join("my-blog");
-        let project = create_project(
-            db.conn(),
-            "My Blog",
-            Some(data_path.to_str().unwrap()),
-        )
-        .unwrap();
+        let project =
+            create_project(db.conn(), "My Blog", Some(data_path.to_str().unwrap())).unwrap();
 
         assert_eq!(project.name, "My Blog");
         assert_eq!(project.slug, "my-blog");
@@ -287,14 +315,16 @@ mod tests {
         assert_eq!(project_json["name"], "My Blog");
         assert_eq!(project_json["maxPostsPerPage"], 50);
 
-        let cats: Vec<String> =
-            serde_json::from_str(&fs::read_to_string(data_path.join("meta/categories.json")).unwrap())
-                .unwrap();
+        let cats: Vec<String> = serde_json::from_str(
+            &fs::read_to_string(data_path.join("meta/categories.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(cats, vec!["article", "aside", "page", "picture"]);
 
-        let cat_meta: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(data_path.join("meta/category-meta.json")).unwrap())
-                .unwrap();
+        let cat_meta: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(data_path.join("meta/category-meta.json")).unwrap(),
+        )
+        .unwrap();
         assert!(cat_meta.as_object().unwrap().is_empty());
 
         let tags: Vec<String> =
@@ -364,7 +394,10 @@ mod tests {
         assert!(internal_dir.join("posts").is_dir());
         delete_project(db.conn(), &project.id, Some(&internal_dir)).unwrap();
         assert!(list_projects(db.conn()).unwrap().is_empty());
-        assert!(!internal_dir.exists(), "internal directory should be cleaned up");
+        assert!(
+            !internal_dir.exists(),
+            "internal directory should be cleaned up"
+        );
     }
 
     #[test]

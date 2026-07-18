@@ -92,7 +92,7 @@ fn markdown_filter_expands_builtin_macros_from_runtime_context() {
 }
 
 #[test]
-fn markdown_filter_marks_unsupported_macros_visibly() {
+fn markdown_filter_leaves_unknown_macros_verbatim() {
     let template = "{{ body | markdown: nil, nil, canonical_post_path_by_slug, canonical_media_path_by_source_path, language, language_prefix }}";
     let partials = HashMap::new();
     let context = serde_json::json!({
@@ -104,9 +104,8 @@ fn markdown_filter_marks_unsupported_macros_visibly() {
     });
 
     let rendered = render_liquid_template(template, &partials, &context).unwrap();
-    assert!(rendered.contains("macro-unsupported"));
-    assert!(rendered.contains("Unsupported macro"));
-    assert!(rendered.contains("custom_block"));
+    assert!(rendered.contains("[[custom_block foo=bar]]"));
+    assert!(!rendered.contains("macro-unsupported"));
 }
 
 #[test]
@@ -123,11 +122,13 @@ fn starter_single_post_template_renders_with_partials() {
         ),
         (
             "partials/language-switcher".to_string(),
-            include_str!("../../../assets/starter-templates/partials/language-switcher.liquid").to_string(),
+            include_str!("../../../assets/starter-templates/partials/language-switcher.liquid")
+                .to_string(),
         ),
         (
             "partials/menu-items".to_string(),
-            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}".to_string(),
+            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}"
+                .to_string(),
         ),
     ]);
 

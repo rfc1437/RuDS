@@ -3,7 +3,6 @@
 /// Toasts are ephemeral, auto-dismissing messages shown at the top of
 /// the workspace.  Each toast has a severity level, a message, and a
 /// monotonically increasing id used for targeted dismissal.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TOAST_ID: AtomicU64 = AtomicU64::new(1);

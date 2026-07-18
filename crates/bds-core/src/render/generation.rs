@@ -32,13 +32,12 @@ pub fn write_generated_file(
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content.as_bytes());
     let target_path = output_dir.join(relative_path);
-    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path) {
-        if existing.content_hash == hash
-            && target_path.exists()
-            && file_hash(&target_path)? == hash
-        {
-            return Ok(GeneratedWriteOutcome::SkippedUnchanged);
-        }
+    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
+        && existing.content_hash == hash
+        && target_path.exists()
+        && file_hash(&target_path)? == hash
+    {
+        return Ok(GeneratedWriteOutcome::SkippedUnchanged);
     }
 
     if let Some(parent) = target_path.parent() {
@@ -68,13 +67,12 @@ pub fn write_generated_bytes(
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content);
     let target_path = output_dir.join(relative_path);
-    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path) {
-        if existing.content_hash == hash
-            && target_path.exists()
-            && file_hash(&target_path)? == hash
-        {
-            return Ok(GeneratedWriteOutcome::SkippedUnchanged);
-        }
+    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
+        && existing.content_hash == hash
+        && target_path.exists()
+        && file_hash(&target_path)? == hash
+    {
+        return Ok(GeneratedWriteOutcome::SkippedUnchanged);
     }
 
     if let Some(parent) = target_path.parent() {
@@ -135,7 +133,11 @@ pub fn build_calendar_archive_data(posts: &[Post]) -> CalendarArchiveData {
         *days.entry(day).or_insert(0) += 1;
     }
 
-    CalendarArchiveData { years, months, days }
+    CalendarArchiveData {
+        years,
+        months,
+        days,
+    }
 }
 
 pub fn build_calendar_json(posts: &[Post]) -> serde_json::Result<String> {

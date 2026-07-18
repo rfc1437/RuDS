@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Unique task identifier.
 pub type TaskId = u64;
@@ -23,6 +23,19 @@ pub struct TaskProgress {
     pub percent: Option<f32>,
 }
 
+/// Immutable task state exposed to UI consumers.
+#[derive(Debug, Clone)]
+pub struct TaskSnapshot {
+    pub id: TaskId,
+    pub label: String,
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
+    pub status: TaskStatus,
+    pub progress: Option<f32>,
+    pub message: Option<String>,
+    pub created_at: Instant,
+}
+
 /// Entry tracking a task.
 #[derive(Debug)]
 struct TaskEntry {
@@ -35,6 +48,7 @@ struct TaskEntry {
     progress: Option<f32>,
     message: Option<String>,
     created_at: Instant,
+    finished_at: Option<Instant>,
     last_progress_report: Option<Instant>,
 }
 
@@ -71,17 +85,23 @@ impl TaskManager {
             progress: None,
             message: None,
             created_at: Instant::now(),
+            finished_at: None,
             last_progress_report: None,
         };
 
         let mut tasks = self.tasks.lock().unwrap();
         tasks.push(entry);
         // Auto-start if under capacity
-        let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
-        if running < self.max_concurrent {
-            if let Some(t) = tasks.iter_mut().find(|t| t.id == id && t.status == TaskStatus::Pending) {
-                t.status = TaskStatus::Running;
-            }
+        let running = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
+        if running < self.max_concurrent
+            && let Some(t) = tasks
+                .iter_mut()
+                .find(|t| t.id == id && t.status == TaskStatus::Pending)
+        {
+            t.status = TaskStatus::Running;
         }
         id
     }
@@ -101,15 +121,18 @@ impl TaskManager {
     /// Running, false if concurrency is at capacity or the task is not Queued.
     pub fn try_start(&self, task_id: TaskId) -> bool {
         let mut tasks = self.tasks.lock().unwrap();
-        let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
+        let running = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
         if running >= self.max_concurrent {
             return false;
         }
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if entry.status == TaskStatus::Pending {
-                entry.status = TaskStatus::Running;
-                return true;
-            }
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
+            && entry.status == TaskStatus::Pending
+        {
+            entry.status = TaskStatus::Running;
+            return true;
         }
         false
     }
@@ -117,11 +140,12 @@ impl TaskManager {
     /// Mark a task as completed.
     pub fn complete(&self, task_id: TaskId) {
         let mut tasks = self.tasks.lock().unwrap();
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if matches!(entry.status, TaskStatus::Running) {
-                entry.status = TaskStatus::Completed;
-                entry.progress = Some(1.0);
-            }
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
+            && matches!(entry.status, TaskStatus::Running)
+        {
+            entry.status = TaskStatus::Completed;
+            entry.progress = Some(1.0);
+            entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
     }
@@ -129,11 +153,12 @@ impl TaskManager {
     /// Mark a task as failed with an error message.
     pub fn fail(&self, task_id: TaskId, error: String) {
         let mut tasks = self.tasks.lock().unwrap();
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if matches!(entry.status, TaskStatus::Running) {
-                entry.message = Some(error.clone());
-                entry.status = TaskStatus::Failed(error);
-            }
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
+            && matches!(entry.status, TaskStatus::Running)
+        {
+            entry.message = Some(error.clone());
+            entry.status = TaskStatus::Failed(error);
+            entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
     }
@@ -141,11 +166,12 @@ impl TaskManager {
     /// Cancel a task by setting its cancel flag and status.
     pub fn cancel(&self, task_id: TaskId) {
         let mut tasks = self.tasks.lock().unwrap();
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if matches!(entry.status, TaskStatus::Running | TaskStatus::Pending) {
-                entry.cancel_flag.store(true, Ordering::Release);
-                entry.status = TaskStatus::Cancelled;
-            }
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
+            && matches!(entry.status, TaskStatus::Running | TaskStatus::Pending)
+        {
+            entry.cancel_flag.store(true, Ordering::Release);
+            entry.status = TaskStatus::Cancelled;
+            entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
     }
@@ -163,54 +189,73 @@ impl TaskManager {
     /// Return the current status of a task.
     pub fn status(&self, task_id: TaskId) -> Option<TaskStatus> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.id == task_id).map(|t| t.status.clone())
+        tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .map(|t| t.status.clone())
     }
 
     /// Count tasks that are still queued.
     pub fn pending_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().filter(|t| t.status == TaskStatus::Pending).count()
+        tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Pending)
+            .count()
     }
 
     /// Count tasks that are currently running.
     pub fn running_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().filter(|t| t.status == TaskStatus::Running).count()
+        tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count()
     }
 
-    /// Remove all completed, failed, and cancelled tasks.
-    pub fn drain_completed(&self) {
+    /// Remove finished tasks older than the configured retention period.
+    pub fn evict_expired(&self) {
+        let cutoff = Instant::now() - FINISHED_TASK_TTL;
         let mut tasks = self.tasks.lock().unwrap();
-        tasks.retain(|t| matches!(t.status, TaskStatus::Pending | TaskStatus::Running));
+        tasks.retain(|task| {
+            task.finished_at
+                .is_none_or(|finished_at| finished_at > cutoff)
+        });
     }
 
     /// Return the label of a task.
     pub fn label(&self, task_id: TaskId) -> Option<String> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.id == task_id).map(|t| t.label.clone())
+        tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .map(|t| t.label.clone())
     }
 
     /// Return the id of the first queued task (FIFO order).
     pub fn next_queued(&self) -> Option<TaskId> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.status == TaskStatus::Pending).map(|t| t.id)
+        tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::Pending)
+            .map(|t| t.id)
     }
 
     /// Update progress for a running task. Throttled to at most once per 250ms.
     pub fn report_progress(&self, task_id: TaskId, progress: Option<f32>, message: Option<String>) {
         let mut tasks = self.tasks.lock().unwrap();
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id) {
-            if entry.status == TaskStatus::Running {
-                let now = Instant::now();
-                let should_report = match entry.last_progress_report {
-                    Some(prev) => now.duration_since(prev).as_millis() >= PROGRESS_THROTTLE_MS as u128,
-                    None => true,
-                };
-                if should_report {
-                    entry.progress = progress;
-                    entry.message = message;
-                    entry.last_progress_report = Some(now);
-                }
+        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
+            && entry.status == TaskStatus::Running
+        {
+            let now = Instant::now();
+            let should_report = match entry.last_progress_report {
+                Some(prev) => now.duration_since(prev).as_millis() >= PROGRESS_THROTTLE_MS as u128,
+                None => true,
+            };
+            if should_report {
+                entry.progress = progress;
+                entry.message = message;
+                entry.last_progress_report = Some(now);
             }
         }
     }
@@ -218,31 +263,59 @@ impl TaskManager {
     /// Return the current progress of a task.
     pub fn progress(&self, task_id: TaskId) -> Option<f32> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.id == task_id).and_then(|t| t.progress)
+        tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .and_then(|t| t.progress)
     }
 
     /// Return the current message of a task.
     pub fn message(&self, task_id: TaskId) -> Option<String> {
         let tasks = self.tasks.lock().unwrap();
-        tasks.iter().find(|t| t.id == task_id).and_then(|t| t.message.clone())
+        tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .and_then(|t| t.message.clone())
     }
 
     /// Return a snapshot of all tasks for UI display.
-    pub fn snapshots(&self) -> Vec<(TaskId, String, TaskStatus, Option<f32>, Option<String>)> {
+    pub fn snapshots(&self) -> Vec<TaskSnapshot> {
         let tasks = self.tasks.lock().unwrap();
-        tasks
+        let mut snapshots = tasks
             .iter()
-            .map(|t| (t.id, t.label.clone(), t.status.clone(), t.progress, t.message.clone()))
-            .collect()
+            .filter(|task| task.finished_at.is_none())
+            .chain(
+                tasks
+                    .iter()
+                    .rev()
+                    .filter(|task| task.finished_at.is_some())
+                    .take(RECENT_FINISHED_LIMIT),
+            )
+            .map(|task| TaskSnapshot {
+                id: task.id,
+                label: task.label.clone(),
+                group_id: task.group_id.clone(),
+                group_name: task.group_name.clone(),
+                status: task.status.clone(),
+                progress: task.progress,
+                message: task.message.clone(),
+                created_at: task.created_at,
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by_key(|snapshot| snapshot.created_at);
+        snapshots
     }
 
     /// Promote the next queued task to running if capacity allows.
-    fn promote_next(tasks: &mut Vec<TaskEntry>, max_concurrent: usize) {
-        let running = tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
-        if running < max_concurrent {
-            if let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Pending) {
-                t.status = TaskStatus::Running;
-            }
+    fn promote_next(tasks: &mut [TaskEntry], max_concurrent: usize) {
+        let running = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
+        if running < max_concurrent
+            && let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Pending)
+        {
+            t.status = TaskStatus::Running;
         }
     }
 }
@@ -255,6 +328,8 @@ impl Default for TaskManager {
 
 /// Default progress throttle interval (250ms per spec).
 pub const PROGRESS_THROTTLE_MS: u64 = 250;
+pub const RECENT_FINISHED_LIMIT: usize = 10;
+pub const FINISHED_TASK_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// Throttles progress reporting to avoid flooding.
 pub struct ProgressThrottle {
@@ -310,14 +385,14 @@ mod tests {
     #[test]
     fn fifo_order() {
         let mgr = TaskManager::new(1); // limit to 1 to test FIFO
-        let a = mgr.submit("first");  // auto-starts
+        let a = mgr.submit("first"); // auto-starts
         let b = mgr.submit("second"); // queued
-        let c = mgr.submit("third");  // queued
+        let c = mgr.submit("third"); // queued
 
         assert_eq!(mgr.status(a), Some(TaskStatus::Running));
         assert_eq!(mgr.next_queued(), Some(b));
 
-        mgr.complete(a);  // should auto-promote b
+        mgr.complete(a); // should auto-promote b
         assert_eq!(mgr.status(b), Some(TaskStatus::Running));
         assert_eq!(mgr.next_queued(), Some(c));
     }
@@ -344,17 +419,20 @@ mod tests {
         mgr.fail(bad, "disk full".into());
 
         assert_eq!(mgr.status(ok), Some(TaskStatus::Completed));
-        assert_eq!(mgr.status(bad), Some(TaskStatus::Failed("disk full".into())));
+        assert_eq!(
+            mgr.status(bad),
+            Some(TaskStatus::Failed("disk full".into()))
+        );
         // Progress should be 1.0 on completed
         assert_eq!(mgr.progress(ok), Some(1.0));
     }
 
     #[test]
-    fn drain_removes_finished() {
+    fn eviction_removes_only_expired_finished_tasks() {
         let mgr = TaskManager::new(3);
-        let a = mgr.submit("done");    // auto-starts
-        let b = mgr.submit("broken");  // auto-starts
-        let e = mgr.submit("busy");    // auto-starts
+        let a = mgr.submit("done"); // auto-starts
+        let b = mgr.submit("broken"); // auto-starts
+        let e = mgr.submit("busy"); // auto-starts
         let _c = mgr.submit("stopped"); // queued (at capacity)
         let _d = mgr.submit("waiting"); // queued
 
@@ -364,7 +442,14 @@ mod tests {
         // After a completes: c promoted to running
         // After b fails: d promoted to running
 
-        mgr.drain_completed();
+        {
+            let mut tasks = mgr.tasks.lock().unwrap();
+            for task in tasks.iter_mut().filter(|task| task.finished_at.is_some()) {
+                task.finished_at =
+                    Some(Instant::now() - FINISHED_TASK_TTL - Duration::from_secs(1));
+            }
+        }
+        mgr.evict_expired();
 
         assert_eq!(mgr.status(a), None);
         assert_eq!(mgr.status(b), None);
@@ -373,9 +458,20 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_retain_only_ten_finished_tasks() {
+        let mgr = TaskManager::new(20);
+        for index in 0..12 {
+            let id = mgr.submit(&format!("task {index}"));
+            mgr.complete(id);
+        }
+
+        assert_eq!(mgr.snapshots().len(), 10);
+    }
+
+    #[test]
     fn completing_task_starts_next_queued() {
         let mgr = TaskManager::new(1);
-        let a = mgr.submit("first");  // auto-starts
+        let a = mgr.submit("first"); // auto-starts
         let b = mgr.submit("second"); // queued
 
         assert_eq!(mgr.status(a), Some(TaskStatus::Running));

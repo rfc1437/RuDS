@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::db::queries::script as qs;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Script, ScriptKind, ScriptStatus};
-use crate::util::frontmatter::{write_script_file, ScriptFrontmatter};
+use crate::util::frontmatter::{ScriptFrontmatter, write_script_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 /// Create a new draft script. Content stored in DB, no file written.
@@ -53,6 +53,10 @@ pub fn create_script(
 }
 
 /// Update a script's metadata and/or content. Bumps version.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "optional arguments represent independent script field changes"
+)]
 pub fn update_script(
     conn: &Connection,
     script_id: &str,
@@ -67,14 +71,13 @@ pub fn update_script(
     let mut script = qs::get_script_by_id(conn, script_id)?;
 
     // Slug uniqueness
-    if let Some(new_slug) = slug {
-        if new_slug != script.slug {
-            if qs::get_script_by_slug(conn, project_id, new_slug).is_ok() {
-                return Err(EngineError::Conflict(format!(
-                    "script slug '{new_slug}' already exists"
-                )));
-            }
-        }
+    if let Some(new_slug) = slug
+        && new_slug != script.slug
+        && qs::get_script_by_slug(conn, project_id, new_slug).is_ok()
+    {
+        return Err(EngineError::Conflict(format!(
+            "script slug '{new_slug}' already exists"
+        )));
     }
 
     if let Some(t) = title {
@@ -108,11 +111,7 @@ pub fn update_script(
 }
 
 /// Save script content (editor save). Updates DB, bumps version.
-pub fn save_script(
-    conn: &Connection,
-    script_id: &str,
-    content: &str,
-) -> EngineResult<Script> {
+pub fn save_script(conn: &Connection, script_id: &str, content: &str) -> EngineResult<Script> {
     let mut script = qs::get_script_by_id(conn, script_id)?;
     script.content = Some(content.to_string());
     script.version += 1;
@@ -161,11 +160,7 @@ pub fn discover_entrypoints(content: &str) -> Vec<String> {
 }
 
 /// Publish a script: write frontmatter+body to file, clear content in DB.
-pub fn publish_script(
-    conn: &Connection,
-    data_dir: &Path,
-    script_id: &str,
-) -> EngineResult<Script> {
+pub fn publish_script(conn: &Connection, data_dir: &Path, script_id: &str) -> EngineResult<Script> {
     let mut script = qs::get_script_by_id(conn, script_id)?;
 
     if script.status == ScriptStatus::Published {
@@ -221,9 +216,7 @@ pub fn unpublish_script(
     let mut script = qs::get_script_by_id(conn, script_id)?;
 
     if script.status != ScriptStatus::Published {
-        return Err(EngineError::Conflict(
-            "script is not published".to_string(),
-        ));
+        return Err(EngineError::Conflict("script is not published".to_string()));
     }
 
     if !script.file_path.is_empty() {
@@ -244,11 +237,7 @@ pub fn unpublish_script(
 }
 
 /// Delete a script and its file.
-pub fn delete_script(
-    conn: &Connection,
-    data_dir: &Path,
-    script_id: &str,
-) -> EngineResult<()> {
+pub fn delete_script(conn: &Connection, data_dir: &Path, script_id: &str) -> EngineResult<()> {
     let script = qs::get_script_by_id(conn, script_id)?;
 
     // Delete file if exists
@@ -311,8 +300,8 @@ fn validate_lua_blocks(content: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
@@ -326,7 +315,15 @@ mod tests {
     #[test]
     fn create_draft_script() {
         let (db, _dir) = setup();
-        let s = create_script(db.conn(), "p1", "My Script", ScriptKind::Macro, "return 'hi'", None).unwrap();
+        let s = create_script(
+            db.conn(),
+            "p1",
+            "My Script",
+            ScriptKind::Macro,
+            "return 'hi'",
+            None,
+        )
+        .unwrap();
         assert_eq!(s.title, "My Script");
         assert_eq!(s.slug, "my-script");
         assert_eq!(s.kind, ScriptKind::Macro);
@@ -340,7 +337,15 @@ mod tests {
     #[test]
     fn create_with_custom_entrypoint() {
         let (db, _dir) = setup();
-        let s = create_script(db.conn(), "p1", "Util", ScriptKind::Utility, "", Some("main")).unwrap();
+        let s = create_script(
+            db.conn(),
+            "p1",
+            "Util",
+            ScriptKind::Utility,
+            "",
+            Some("main"),
+        )
+        .unwrap();
         assert_eq!(s.entrypoint, "main");
     }
 
@@ -357,7 +362,18 @@ mod tests {
     fn update_script_bumps_version() {
         let (db, _dir) = setup();
         let s = create_script(db.conn(), "p1", "S", ScriptKind::Macro, "old", None).unwrap();
-        let updated = update_script(db.conn(), &s.id, "p1", Some("New"), None, None, None, None, Some("new")).unwrap();
+        let updated = update_script(
+            db.conn(),
+            &s.id,
+            "p1",
+            Some("New"),
+            None,
+            None,
+            None,
+            None,
+            Some("new"),
+        )
+        .unwrap();
         assert_eq!(updated.title, "New");
         assert_eq!(updated.content, Some("new".to_string()));
         assert_eq!(updated.version, 2);
@@ -375,7 +391,15 @@ mod tests {
     #[test]
     fn publish_and_unpublish_script() {
         let (db, dir) = setup();
-        let s = create_script(db.conn(), "p1", "Pub", ScriptKind::Macro, "function render()\n  return 'hi'\nend", None).unwrap();
+        let s = create_script(
+            db.conn(),
+            "p1",
+            "Pub",
+            ScriptKind::Macro,
+            "function render()\n  return 'hi'\nend",
+            None,
+        )
+        .unwrap();
 
         let published = publish_script(db.conn(), dir.path(), &s.id).unwrap();
         assert_eq!(published.status, ScriptStatus::Published);
@@ -391,7 +415,15 @@ mod tests {
     #[test]
     fn delete_script_removes_file() {
         let (db, dir) = setup();
-        let s = create_script(db.conn(), "p1", "Del", ScriptKind::Macro, "function render()\nend", None).unwrap();
+        let s = create_script(
+            db.conn(),
+            "p1",
+            "Del",
+            ScriptKind::Macro,
+            "function render()\nend",
+            None,
+        )
+        .unwrap();
         publish_script(db.conn(), dir.path(), &s.id).unwrap();
         assert!(dir.path().join("scripts/del.lua").exists());
 

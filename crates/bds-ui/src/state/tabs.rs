@@ -122,21 +122,20 @@ pub fn open_tab(tabs: &mut Vec<Tab>, new_tab: Tab) -> usize {
     }
 
     // Singleton: only one instance allowed (catches id mismatch edge cases)
-    if new_tab.tab_type.is_singleton() {
-        if let Some(idx) = tabs.iter().position(|t| t.tab_type == new_tab.tab_type) {
-            return idx;
-        }
+    if new_tab.tab_type.is_singleton()
+        && let Some(idx) = tabs.iter().position(|t| t.tab_type == new_tab.tab_type)
+    {
+        return idx;
     }
 
     // Transient replacement: replace existing transient of same type
-    if new_tab.is_transient {
-        if let Some(idx) = tabs
+    if new_tab.is_transient
+        && let Some(idx) = tabs
             .iter()
             .position(|t| t.tab_type == new_tab.tab_type && t.is_transient)
-        {
-            tabs[idx] = new_tab;
-            return idx;
-        }
+    {
+        tabs[idx] = new_tab;
+        return idx;
     }
 
     tabs.push(new_tab);
@@ -159,7 +158,7 @@ pub fn close_tab(tabs: &mut Vec<Tab>, id: &str) -> Option<usize> {
 }
 
 /// Mark a transient tab as permanent (non-transient).
-pub fn pin_tab(tabs: &mut Vec<Tab>, id: &str) {
+pub fn pin_tab(tabs: &mut [Tab], id: &str) {
     if let Some(tab) = tabs.iter_mut().find(|t| t.id == id) {
         tab.is_transient = false;
     }

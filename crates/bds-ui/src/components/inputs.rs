@@ -1,5 +1,5 @@
-use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, checkbox, column, container, pick_list, row, text, text_input};
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
 /// Standard form field label color.
@@ -19,7 +19,10 @@ pub fn labeled_input<'a, Message: Clone + 'a>(
     on_change: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message> {
     column![
-        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
+        text(label.to_string())
+            .size(12)
+            .color(LABEL_COLOR)
+            .shaping(Shaping::Advanced),
         text_input(placeholder, value).on_input(on_change).size(14),
     ]
     .spacing(4)
@@ -39,7 +42,10 @@ where
 {
     let list: Vec<T> = options.to_vec();
     column![
-        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
+        text(label.to_string())
+            .size(12)
+            .color(LABEL_COLOR)
+            .shaping(Shaping::Advanced),
         pick_list(list, selected.cloned(), on_select),
     ]
     .spacing(4)
@@ -157,8 +163,14 @@ pub fn toolbar<'a, Message: 'a>(
 pub fn date_label<'a, Message: 'a>(label: &str, timestamp_ms: i64) -> Element<'a, Message> {
     let date_str = format_timestamp(timestamp_ms);
     row![
-        text(label.to_string()).size(12).color(LABEL_COLOR).shaping(Shaping::Advanced),
-        text(date_str).size(12).color(Color::from_rgb(0.55, 0.58, 0.65)).shaping(Shaping::Advanced),
+        text(label.to_string())
+            .size(12)
+            .color(LABEL_COLOR)
+            .shaping(Shaping::Advanced),
+        text(date_str)
+            .size(12)
+            .color(Color::from_rgb(0.55, 0.58, 0.65))
+            .shaping(Shaping::Advanced),
     ]
     .spacing(8)
     .into()

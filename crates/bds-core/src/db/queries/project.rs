@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{project_from_row, PROJECT_COLUMNS};
+use crate::db::from_row::{PROJECT_COLUMNS, project_from_row};
 use crate::model::Project;
 
 pub fn insert_project(conn: &Connection, project: &Project) -> rusqlite::Result<()> {

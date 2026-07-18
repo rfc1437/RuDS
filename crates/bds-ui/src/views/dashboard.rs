@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, tooltip, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -88,13 +88,8 @@ impl DashboardState {
 }
 
 /// Render the dashboard overview.
-pub fn view<'a>(
-    state: &'a DashboardState,
-    locale: UiLocale,
-) -> Element<'a, Message> {
-    let header = text(state.title.clone())
-        .size(24)
-        .color(Color::WHITE);
+pub fn view<'a>(state: &'a DashboardState, locale: UiLocale) -> Element<'a, Message> {
+    let header = text(state.title.clone()).size(24).color(Color::WHITE);
 
     let project_label = text(state.subtitle.clone())
         .size(14)
@@ -106,11 +101,23 @@ pub fn view<'a>(
             state.stats.total_posts.to_string(),
             {
                 let mut details = vec![
-                    format!("{} {}", state.stats.published_count, t(locale, "dashboard.published")),
-                    format!("{} {}", state.stats.draft_count, t(locale, "dashboard.drafts")),
+                    format!(
+                        "{} {}",
+                        state.stats.published_count,
+                        t(locale, "dashboard.published")
+                    ),
+                    format!(
+                        "{} {}",
+                        state.stats.draft_count,
+                        t(locale, "dashboard.drafts")
+                    ),
                 ];
                 if state.stats.archived_count > 0 {
-                    details.push(format!("{} {}", state.stats.archived_count, t(locale, "dashboard.archived")));
+                    details.push(format!(
+                        "{} {}",
+                        state.stats.archived_count,
+                        t(locale, "dashboard.archived")
+                    ));
                 }
                 details
             },
@@ -119,14 +126,22 @@ pub fn view<'a>(
             &t(locale, "dashboard.media"),
             state.stats.media_count.to_string(),
             vec![
-                format!("{} {}", state.stats.image_count, t(locale, "dashboard.images")),
+                format!(
+                    "{} {}",
+                    state.stats.image_count,
+                    t(locale, "dashboard.images")
+                ),
                 state.stats.total_media_size.clone(),
             ],
         ),
         stat_card(
             &t(locale, "dashboard.tags"),
             state.stats.tag_count.to_string(),
-            vec![format!("{} {}", state.stats.category_count, t(locale, "dashboard.categories"))],
+            vec![format!(
+                "{} {}",
+                state.stats.category_count,
+                t(locale, "dashboard.categories")
+            )],
         ),
     ]
     .spacing(16);
@@ -166,7 +181,12 @@ fn stat_card<'a>(label: &str, value: String, details: Vec<String>) -> Element<'a
     container(
         column(
             std::iter::once(text(value).size(28).color(Color::WHITE).into())
-                .chain(std::iter::once(text(label.to_string()).size(12).color(Color::from_rgb(0.55, 0.58, 0.65)).into()))
+                .chain(std::iter::once(
+                    text(label.to_string())
+                        .size(12)
+                        .color(Color::from_rgb(0.55, 0.58, 0.65))
+                        .into(),
+                ))
                 .chain(details.into_iter().map(|detail| {
                     text(detail)
                         .size(12)
@@ -191,65 +211,84 @@ fn stat_card<'a>(label: &str, value: String, details: Vec<String>) -> Element<'a
     .into()
 }
 
-fn timeline_chart<'a>(months: &'a [DashboardTimelineMonth], _locale: UiLocale) -> Element<'a, Message> {
-    let max_count = months.iter().map(|month| month.count).max().unwrap_or(1).max(1);
-    row(
-        months
-            .iter()
-            .map(|month| {
-                let height = if month.count == 0 {
-                    8.0
-                } else {
-                    24.0 + (month.count as f32 / max_count as f32) * 96.0
-                };
-                container(
-                    column![
-                        text(month.count.to_string()).size(12).color(Color::WHITE),
-                        container(Space::with_height(height))
-                            .width(Length::Fill)
-                            .style(|_: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgb(0.25, 0.48, 0.80))),
-                                border: iced::Border { radius: 6.0.into(), ..iced::Border::default() },
-                                ..container::Style::default()
-                            }),
-                        text(format!("{} {}", month.label, month.year)).size(11).color(Color::from_rgb(0.7, 0.72, 0.78)),
-                    ]
-                    .spacing(6)
-                    .align_x(Alignment::Center),
-                )
-                .width(Length::FillPortion(1))
-                .into()
-            })
-            .collect::<Vec<_>>(),
-    )
+fn timeline_chart<'a>(
+    months: &'a [DashboardTimelineMonth],
+    _locale: UiLocale,
+) -> Element<'a, Message> {
+    let max_count = months
+        .iter()
+        .map(|month| month.count)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    row(months
+        .iter()
+        .map(|month| {
+            let height = if month.count == 0 {
+                8.0
+            } else {
+                24.0 + (month.count as f32 / max_count as f32) * 96.0
+            };
+            container(
+                column![
+                    text(month.count.to_string()).size(12).color(Color::WHITE),
+                    container(Space::with_height(height))
+                        .width(Length::Fill)
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgb(0.25, 0.48, 0.80))),
+                            border: iced::Border {
+                                radius: 6.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        }),
+                    text(format!("{} {}", month.label, month.year))
+                        .size(11)
+                        .color(Color::from_rgb(0.7, 0.72, 0.78)),
+                ]
+                .spacing(6)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::FillPortion(1))
+            .into()
+        })
+        .collect::<Vec<_>>())
     .spacing(10)
     .align_y(Alignment::End)
     .into()
 }
 
-fn tag_cloud<'a>(tags: &'a [DashboardTag], overflow_count: usize, locale: UiLocale) -> Element<'a, Message> {
+fn tag_cloud<'a>(
+    tags: &'a [DashboardTag],
+    overflow_count: usize,
+    locale: UiLocale,
+) -> Element<'a, Message> {
     let cloud = if tags.is_empty() {
-        row![text(t(locale, "dashboard.noTags")).size(13).color(Color::from_rgb(0.6, 0.62, 0.68))]
-            .spacing(8)
-            .wrap()
+        row![
+            text(t(locale, "dashboard.noTags"))
+                .size(13)
+                .color(Color::from_rgb(0.6, 0.62, 0.68))
+        ]
+        .spacing(8)
+        .wrap()
     } else {
         let words = tags
             .iter()
             .map(|tag| {
-                let bg = parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
+                let bg =
+                    parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
                 let fg = contrast_color(bg);
                 tooltip(
-                    container(
-                        text(tag.name.clone())
-                            .size(scale_font(tag.count))
-                            .color(fg),
-                    )
-                    .padding([6, 10])
-                    .style(move |_: &Theme| container::Style {
-                        background: Some(Background::Color(bg)),
-                        border: iced::Border { radius: 999.0.into(), ..iced::Border::default() },
-                        ..container::Style::default()
-                    }),
+                    container(text(tag.name.clone()).size(scale_font(tag.count)).color(fg))
+                        .padding([6, 10])
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(Background::Color(bg)),
+                            border: iced::Border {
+                                radius: 999.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        }),
                     text(format!("{} {}", tag.name, tag.count)).size(12),
                     tooltip::Position::Top,
                 )
@@ -269,30 +308,49 @@ fn tag_cloud<'a>(tags: &'a [DashboardTag], overflow_count: usize, locale: UiLoca
         ]
         .spacing(8)
     } else {
-        column![inputs::section_header(&t(locale, "dashboard.tagCloud")), cloud].spacing(8)
+        column![
+            inputs::section_header(&t(locale, "dashboard.tagCloud")),
+            cloud
+        ]
+        .spacing(8)
     };
 
     container(content).width(Length::FillPortion(1)).into()
 }
 
-fn category_cloud<'a>(categories: &'a [DashboardCategory], locale: UiLocale) -> Element<'a, Message> {
-    let items = categories.iter().fold(column![inputs::section_header(&t(locale, "dashboard.categoryCloud"))].spacing(8), |column, category| {
-        column.push(
-            container(
-                row![
-                    text(category.name.clone()).size(13).color(Color::WHITE),
-                    text(category.count.to_string()).size(12).color(Color::from_rgb(0.72, 0.74, 0.80)),
-                ]
-                .spacing(8),
+fn category_cloud<'a>(
+    categories: &'a [DashboardCategory],
+    locale: UiLocale,
+) -> Element<'a, Message> {
+    let items = categories.iter().fold(
+        column![inputs::section_header(&t(
+            locale,
+            "dashboard.categoryCloud"
+        ))]
+        .spacing(8),
+        |column, category| {
+            column.push(
+                container(
+                    row![
+                        text(category.name.clone()).size(13).color(Color::WHITE),
+                        text(category.count.to_string())
+                            .size(12)
+                            .color(Color::from_rgb(0.72, 0.74, 0.80)),
+                    ]
+                    .spacing(8),
+                )
+                .padding([6, 10])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
+                    border: iced::Border {
+                        radius: 999.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }),
             )
-            .padding([6, 10])
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb(0.16, 0.18, 0.22))),
-                border: iced::Border { radius: 999.0.into(), ..iced::Border::default() },
-                ..container::Style::default()
-            }),
-        )
-    });
+        },
+    );
     container(items).width(Length::FillPortion(1)).into()
 }
 
@@ -313,7 +371,9 @@ fn recent_posts<'a>(posts: &'a [DashboardRecentPost], locale: UiLocale) -> Eleme
                         button(
                             column![
                                 text(post.title.clone()).size(14).color(Color::WHITE),
-                                text(post.date.clone()).size(12).color(Color::from_rgb(0.6, 0.62, 0.68)),
+                                text(post.date.clone())
+                                    .size(12)
+                                    .color(Color::from_rgb(0.6, 0.62, 0.68)),
                             ]
                             .spacing(4),
                         )
@@ -342,7 +402,10 @@ fn recent_posts<'a>(posts: &'a [DashboardRecentPost], locale: UiLocale) -> Eleme
                 .padding(12)
                 .style(|_: &Theme| container::Style {
                     background: Some(Background::Color(Color::from_rgb(0.13, 0.14, 0.18))),
-                    border: iced::Border { radius: 8.0.into(), ..iced::Border::default() },
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        ..iced::Border::default()
+                    },
                     ..container::Style::default()
                 })
                 .into()
@@ -363,7 +426,10 @@ fn status_badge<'a>(status: &str) -> Element<'a, Message> {
         .padding([4, 8])
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(bg)),
-            border: iced::Border { radius: 999.0.into(), ..iced::Border::default() },
+            border: iced::Border {
+                radius: 999.0.into(),
+                ..iced::Border::default()
+            },
             ..container::Style::default()
         })
         .into()
@@ -387,5 +453,9 @@ fn parse_color(value: Option<&str>) -> Option<Color> {
 
 fn contrast_color(background: Color) -> Color {
     let luma = 0.299 * background.r + 0.587 * background.g + 0.114 * background.b;
-    if luma > 0.55 { Color::BLACK } else { Color::WHITE }
+    if luma > 0.55 {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    }
 }

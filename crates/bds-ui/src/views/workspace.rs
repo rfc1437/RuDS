@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use iced::widget::text::Shaping;
-use iced::widget::{button, column, container, mouse_area, row, stack, text, Space};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -20,10 +20,11 @@ use crate::views::{
     modal, panel,
     post_editor::{self, PostEditorState},
     project_selector,
-    site_validation::{self, SiteValidationState},
     script_editor::{self, ScriptEditorState},
     settings_view::{self, SettingsViewState},
-    sidebar, status_bar, tab_bar,
+    sidebar,
+    site_validation::{self, SiteValidationState},
+    status_bar, tab_bar,
     tags_view::{self, TagsViewState},
     template_editor::{self, TemplateEditorState},
     toast, welcome,
@@ -58,6 +59,10 @@ fn separator_h<'a>() -> Element<'a, Message> {
 }
 
 /// Compose the full workspace layout.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "root Iced view receives the application state explicitly"
+)]
 pub fn view<'a>(
     // Navigation
     sidebar_view: SidebarView,
@@ -344,6 +349,10 @@ pub fn view<'a>(
 }
 
 /// Route the content area based on the active tab type.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "router receives the state required by each routed view"
+)]
 fn route_content_area<'a>(
     tabs: &'a [Tab],
     active_tab: Option<&'a str>,
@@ -378,14 +387,25 @@ fn route_content_area<'a>(
         ContentRoute::Post(tab_id) => {
             if let Some(state) = post_editors.get(tab_id) {
                 let wrap = settings_state.map(|s| s.wrap_long_lines).unwrap_or(true);
-                post_editor::view(state, locale, wrap, is_ai_enabled(settings_state, offline_mode), post_preview_widget)
+                post_editor::view(
+                    state,
+                    locale,
+                    wrap,
+                    is_ai_enabled(settings_state, offline_mode),
+                    post_preview_widget,
+                )
             } else {
                 loading_view(locale)
             }
         }
         ContentRoute::Media(tab_id) => {
             if let Some(state) = media_editors.get(tab_id) {
-                media_editor::view(state, locale, data_dir, is_ai_enabled(settings_state, offline_mode))
+                media_editor::view(
+                    state,
+                    locale,
+                    data_dir,
+                    is_ai_enabled(settings_state, offline_mode),
+                )
             } else {
                 loading_view(locale)
             }
@@ -419,7 +439,7 @@ fn route_content_area<'a>(
             }
         }
         ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
-        ContentRoute::Placeholder(title) => welcome::tab_placeholder(title, None),
+        ContentRoute::Placeholder(title) => welcome::tab_placeholder(locale, title, None),
     }
 }
 
@@ -438,6 +458,10 @@ enum ContentRoute<'a> {
     Placeholder(&'a str),
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "route selection checks independent loaded-state collections"
+)]
 fn route_kind<'a>(
     tabs: &'a [Tab],
     active_tab: Option<&'a str>,
@@ -451,30 +475,58 @@ fn route_kind<'a>(
     _site_validation_state: &'a SiteValidationState,
 ) -> ContentRoute<'a> {
     let Some(tab_id) = active_tab else {
-        return dashboard_state.map(ContentRoute::Dashboard).unwrap_or(ContentRoute::Welcome);
+        return dashboard_state
+            .map(ContentRoute::Dashboard)
+            .unwrap_or(ContentRoute::Welcome);
     };
     let Some(tab) = tabs.iter().find(|t| t.id == tab_id) else {
-        return dashboard_state.map(ContentRoute::Dashboard).unwrap_or(ContentRoute::Welcome);
+        return dashboard_state
+            .map(ContentRoute::Dashboard)
+            .unwrap_or(ContentRoute::Welcome);
     };
 
     match tab.tab_type {
         TabType::Post => {
-            if post_editors.contains_key(tab_id) { ContentRoute::Post(tab_id) } else { ContentRoute::Loading }
+            if post_editors.contains_key(tab_id) {
+                ContentRoute::Post(tab_id)
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::Media => {
-            if media_editors.contains_key(tab_id) { ContentRoute::Media(tab_id) } else { ContentRoute::Loading }
+            if media_editors.contains_key(tab_id) {
+                ContentRoute::Media(tab_id)
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::Templates => {
-            if template_editors.contains_key(tab_id) { ContentRoute::Templates(tab_id) } else { ContentRoute::Loading }
+            if template_editors.contains_key(tab_id) {
+                ContentRoute::Templates(tab_id)
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::Scripts => {
-            if script_editors.contains_key(tab_id) { ContentRoute::Scripts(tab_id) } else { ContentRoute::Loading }
+            if script_editors.contains_key(tab_id) {
+                ContentRoute::Scripts(tab_id)
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::Tags => {
-            if tags_view_state.is_some() { ContentRoute::Tags } else { ContentRoute::Loading }
+            if tags_view_state.is_some() {
+                ContentRoute::Tags
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::Settings => {
-            if settings_state.is_some() { ContentRoute::Settings } else { ContentRoute::Loading }
+            if settings_state.is_some() {
+                ContentRoute::Settings
+            } else {
+                ContentRoute::Loading
+            }
         }
         TabType::SiteValidation => ContentRoute::SiteValidation,
         TabType::Style
@@ -496,12 +548,27 @@ fn is_ai_enabled(settings_state: Option<&SettingsViewState>, offline_mode: bool)
     };
 
     if offline_mode {
-        !state.airplane_endpoint_url.trim().is_empty() && !state.airplane_endpoint_model.trim().is_empty()
+        !state.airplane_endpoint_url.trim().is_empty()
+            && !state.airplane_endpoint_model.trim().is_empty()
     } else {
         !state.online_endpoint_url.trim().is_empty()
             && !state.online_endpoint_model.trim().is_empty()
             && (state.online_api_key_configured || !state.online_api_key_input.trim().is_empty())
     }
+}
+
+fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
+    use crate::i18n::t;
+    container(
+        text(t(locale, "tabBar.loading"))
+            .size(14)
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .into()
 }
 
 #[cfg(test)]
@@ -593,7 +660,11 @@ mod tests {
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
         let site_validation_state = SiteValidationState::default();
-        let tabs = vec![tab("site_validation", TabType::SiteValidation, "Validation")];
+        let tabs = vec![tab(
+            "site_validation",
+            TabType::SiteValidation,
+            "Validation",
+        )];
 
         let route = route_kind(
             &tabs,
@@ -630,18 +701,4 @@ mod tests {
         settings.airplane_endpoint_model = "llama3.2".to_string();
         assert!(is_ai_enabled(Some(&settings), true));
     }
-}
-
-fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
-    use crate::i18n::t;
-    container(
-        text(t(locale, "tabBar.loading"))
-            .size(14)
-            .color(Color::from_rgb(0.5, 0.5, 0.5)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .into()
 }

@@ -21,13 +21,17 @@ pub enum TemplateLookupError {
     MissingDefaultTemplate,
 }
 
-pub fn resolve_post_template<'a>(lookup: RenderTemplateLookup<'a>) -> Result<&'a Template, TemplateLookupError> {
+pub fn resolve_post_template<'a>(
+    lookup: RenderTemplateLookup<'a>,
+) -> Result<&'a Template, TemplateLookupError> {
     if let Some(explicit_slug) = lookup.post.template_slug.as_deref() {
         return lookup
             .templates
             .iter()
             .find(|template| is_enabled_post_template(template, explicit_slug))
-            .ok_or_else(|| TemplateLookupError::MissingExplicitTemplate(explicit_slug.to_string()));
+            .ok_or_else(|| {
+                TemplateLookupError::MissingExplicitTemplate(explicit_slug.to_string())
+            });
     }
 
     for post_tag in &lookup.post.tags {
@@ -36,14 +40,12 @@ pub fn resolve_post_template<'a>(lookup: RenderTemplateLookup<'a>) -> Result<&'a
             .iter()
             .find(|tag| tag.name.eq_ignore_ascii_case(post_tag))
             .and_then(|tag| tag.post_template_slug.as_deref())
-        {
-            if let Some(template) = lookup
+            && let Some(template) = lookup
                 .templates
                 .iter()
                 .find(|template| is_enabled_post_template(template, template_slug))
-            {
-                return Ok(template);
-            }
+        {
+            return Ok(template);
         }
     }
 
@@ -52,14 +54,12 @@ pub fn resolve_post_template<'a>(lookup: RenderTemplateLookup<'a>) -> Result<&'a
             .category_settings
             .get(category_name)
             .and_then(|settings| settings.post_template_slug.as_deref())
-        {
-            if let Some(template) = lookup
+            && let Some(template) = lookup
                 .templates
                 .iter()
                 .find(|template| is_enabled_post_template(template, template_slug))
-            {
-                return Ok(template);
-            }
+        {
+            return Ok(template);
         }
     }
 

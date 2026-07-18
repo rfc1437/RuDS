@@ -8,12 +8,12 @@
 //! be tested via `cargo test`. The full smoke test is launching the binary:
 //!   cargo run -p bds-ui
 
-use std::path::PathBuf;
 use bds_core::i18n::UiLocale;
 use bds_ui::app::Message;
 use bds_ui::state::navigation::{PanelTab, SidebarView};
 use bds_ui::state::tabs::{Tab, TabType};
 use bds_ui::state::toast::ToastLevel;
+use std::path::PathBuf;
 
 // ── Smoke: Message enum is well-formed ──
 
@@ -53,7 +53,10 @@ fn new_message_variants_constructable() {
 
     // Project
     let _switch = Message::SwitchProject("id".into());
-    let _create = Message::CreateProject { name: "X".into(), data_path: None };
+    let _create = Message::CreateProject {
+        name: "X".into(),
+        data_path: None,
+    };
     let _delete = Message::DeleteProject("id".into());
 
     // Dialogs

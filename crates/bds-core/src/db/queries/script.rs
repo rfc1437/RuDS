@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::db::from_row::{
-    script_from_row, script_kind_to_str, script_status_to_str, SCRIPT_COLUMNS,
+    SCRIPT_COLUMNS, script_from_row, script_kind_to_str, script_status_to_str,
 };
 use crate::model::Script;
 
@@ -44,9 +44,7 @@ pub fn get_script_by_slug(
     slug: &str,
 ) -> rusqlite::Result<Script> {
     conn.query_row(
-        &format!(
-            "SELECT {SCRIPT_COLUMNS} FROM scripts WHERE project_id = ?1 AND slug = ?2"
-        ),
+        &format!("SELECT {SCRIPT_COLUMNS} FROM scripts WHERE project_id = ?1 AND slug = ?2"),
         params![project_id, slug],
         script_from_row,
     )
@@ -94,8 +92,8 @@ pub fn delete_script(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::model::{ScriptKind, ScriptStatus};
 
     fn setup() -> Database {

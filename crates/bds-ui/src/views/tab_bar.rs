@@ -1,7 +1,7 @@
-use iced::widget::{button, container, row, scrollable, text, tooltip, Space};
 use iced::widget::scrollable::Direction;
 use iced::widget::text::Shaping;
 use iced::widget::tooltip::Position;
+use iced::widget::{Space, button, container, row, scrollable, text, tooltip};
 use iced::{Background, Border, Color, Element, Font, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -106,7 +106,10 @@ fn truncate_chat_title(title: &str) -> String {
 /// Uses "…" (Unicode ellipsis) as the truncation indicator.
 fn truncate_tab_title(title: &str) -> String {
     if title.chars().count() > TAB_TITLE_MAX_LEN {
-        let truncated: String = title.chars().take(TAB_TITLE_MAX_LEN.saturating_sub(1)).collect();
+        let truncated: String = title
+            .chars()
+            .take(TAB_TITLE_MAX_LEN.saturating_sub(1))
+            .collect();
         format!("{truncated}\u{2026}")
     } else {
         title.to_string()
@@ -129,11 +132,7 @@ fn build_tooltip_text(tab: &Tab, locale: UiLocale) -> String {
     tip
 }
 
-pub fn view(
-    tabs: &[Tab],
-    active_tab: Option<&str>,
-    locale: UiLocale,
-) -> Element<'static, Message> {
+pub fn view(tabs: &[Tab], active_tab: Option<&str>, locale: UiLocale) -> Element<'static, Message> {
     // Per tabs.allium: "Hidden when no tabs exist."
     if tabs.is_empty() {
         return Space::with_height(0).into();
@@ -159,7 +158,10 @@ pub fn view(
                 text(display_title)
                     .size(12)
                     .shaping(Shaping::Advanced)
-                    .font(Font { style: iced::font::Style::Italic, ..Font::DEFAULT })
+                    .font(Font {
+                        style: iced::font::Style::Italic,
+                        ..Font::DEFAULT
+                    })
                     .wrapping(iced::widget::text::Wrapping::None)
             } else {
                 text(display_title)
@@ -170,7 +172,9 @@ pub fn view(
 
             // Per tabs.allium DirtyIndicator: dot for dirty post tabs
             let dirty_indicator = if tab.is_dirty {
-                text(" \u{25CF}").size(10).shaping(Shaping::Advanced)
+                text(" \u{25CF}")
+                    .size(10)
+                    .shaping(Shaping::Advanced)
                     .color(Color::from_rgb(0.90, 0.70, 0.30))
             } else {
                 text("").size(10)
@@ -180,7 +184,7 @@ pub fn view(
             let title_area = container(
                 row![title_label, dirty_indicator]
                     .spacing(2)
-                    .align_y(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center),
             )
             .width(Length::Fill)
             .clip(true);

@@ -13,6 +13,12 @@ pub struct UndoHistory {
     last_group_boundary: usize,
 }
 
+impl Default for UndoHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UndoHistory {
     pub fn new() -> Self {
         Self {

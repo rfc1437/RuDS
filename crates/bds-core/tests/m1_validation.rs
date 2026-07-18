@@ -4,23 +4,22 @@
 //! - Step 20: Golden-file comparisons against fixture files
 //! - Step 21: Metadata diff coverage matrix (every diffable field covered)
 
+use bds_core::db::Database;
 use bds_core::db::fts::ensure_fts_tables;
 use bds_core::db::queries::project::insert_project;
 use bds_core::db::queries::script as qs;
 use bds_core::db::queries::template as qtpl;
-use bds_core::db::Database;
 use bds_core::engine::media;
 use bds_core::engine::meta;
 use bds_core::engine::metadata_diff;
 use bds_core::engine::post;
 use bds_core::engine::tag;
 use bds_core::model::{
-    PostStatus, Project, Script, ScriptKind, ScriptStatus, Template, TemplateKind,
-    TemplateStatus,
+    PostStatus, Project, Script, ScriptKind, ScriptStatus, Template, TemplateKind, TemplateStatus,
 };
 use bds_core::util::frontmatter::{
-    read_post_file, read_template_file, read_translation_file,
-    write_script_file, write_template_file, ScriptFrontmatter, TemplateFrontmatter,
+    ScriptFrontmatter, TemplateFrontmatter, read_post_file, read_template_file,
+    read_translation_file, write_script_file, write_template_file,
 };
 use bds_core::util::sidecar::{read_sidecar, read_translation_sidecar};
 use image::DynamicImage;
@@ -325,10 +324,7 @@ fn test_golden_post_esmeralda() {
     let actual = bds_core::util::frontmatter::format_frontmatter(&yaml, &body);
 
     // Compare byte-for-byte with fixture
-    assert_eq!(
-        actual, expected,
-        "golden output mismatch for esmeralda.md"
-    );
+    assert_eq!(actual, expected, "golden output mismatch for esmeralda.md");
 }
 
 #[test]
@@ -353,8 +349,7 @@ fn test_golden_translation_esmeralda_en() {
 
 #[test]
 fn test_golden_sidecar() {
-    let path =
-        fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
+    let path = fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
     let expected = fs::read_to_string(&path).unwrap();
     let sc = read_sidecar(&expected).unwrap();
 
@@ -401,7 +396,14 @@ fn test_golden_meta_files() {
     assert_eq!(
         categories,
         vec![
-            "article", "aside", "kochbuch", "metaowl", "page", "picture", "spielelog", "wiki"
+            "article",
+            "aside",
+            "kochbuch",
+            "metaowl",
+            "page",
+            "picture",
+            "spielelog",
+            "wiki"
         ]
     );
     // Verify they are sorted
@@ -416,7 +418,7 @@ fn test_golden_meta_files() {
     // Verify sorted by name
     let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
     let mut sorted_names = names.clone();
-    sorted_names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    sorted_names.sort_by_key(|a| a.to_lowercase());
     assert_eq!(names, sorted_names, "tags should be sorted by name");
     // Spot-check a known tag
     assert!(tags.iter().any(|t| t.name == "rust"));
@@ -457,9 +459,7 @@ fn test_golden_template() {
 
 /// Helper: create a post, publish it, then modify a specific field in the
 /// file on disk. Run the diff and return all detected field names.
-fn post_diff_for_field(
-    modify_fn: impl FnOnce(&str) -> String,
-) -> Vec<String> {
+fn post_diff_for_field(modify_fn: impl FnOnce(&str) -> String) -> Vec<String> {
     let (db, dir) = setup();
 
     let created = post::create_post(
@@ -519,9 +519,8 @@ fn test_diff_detects_post_slug() {
 
 #[test]
 fn test_diff_detects_post_status() {
-    let fields = post_diff_for_field(|content| {
-        content.replace("status: published", "status: draft")
-    });
+    let fields =
+        post_diff_for_field(|content| content.replace("status: published", "status: draft"));
     assert!(
         fields.contains(&"status".to_string()),
         "expected 'status' in diff fields, got: {fields:?}"
@@ -530,9 +529,7 @@ fn test_diff_detects_post_status() {
 
 #[test]
 fn test_diff_detects_post_tags() {
-    let fields = post_diff_for_field(|content| {
-        content.replace("  - tag1", "  - changed-tag")
-    });
+    let fields = post_diff_for_field(|content| content.replace("  - tag1", "  - changed-tag"));
     assert!(
         fields.contains(&"tags".to_string()),
         "expected 'tags' in diff fields, got: {fields:?}"
@@ -541,9 +538,7 @@ fn test_diff_detects_post_tags() {
 
 #[test]
 fn test_diff_detects_post_categories() {
-    let fields = post_diff_for_field(|content| {
-        content.replace("  - cat1", "  - changed-cat")
-    });
+    let fields = post_diff_for_field(|content| content.replace("  - cat1", "  - changed-cat"));
     assert!(
         fields.contains(&"categories".to_string()),
         "expected 'categories' in diff fields, got: {fields:?}"
@@ -578,9 +573,7 @@ fn test_diff_detects_post_author() {
 
 #[test]
 fn test_diff_detects_post_language() {
-    let fields = post_diff_for_field(|content| {
-        content.replace("language: en", "language: de")
-    });
+    let fields = post_diff_for_field(|content| content.replace("language: en", "language: de"));
     assert!(
         fields.contains(&"language".to_string()),
         "expected 'language' in diff fields, got: {fields:?}"
@@ -687,9 +680,7 @@ fn test_diff_detects_post_published_at() {
 
 /// Helper: import media, then modify a field in the sidecar file.
 /// Returns the list of diff field names detected.
-fn media_diff_for_field(
-    modify_fn: impl FnOnce(&str) -> String,
-) -> Vec<String> {
+fn media_diff_for_field(modify_fn: impl FnOnce(&str) -> String) -> Vec<String> {
     let (db, dir) = setup();
 
     let source_path = create_test_image(dir.path());
@@ -764,10 +755,7 @@ fn test_diff_detects_media_caption() {
 #[test]
 fn test_diff_detects_media_author() {
     let fields = media_diff_for_field(|content| {
-        content.replace(
-            "author: \"Original Author\"",
-            "author: \"Changed Author\"",
-        )
+        content.replace("author: \"Original Author\"", "author: \"Changed Author\"")
     });
     assert!(
         fields.contains(&"author".to_string()),
@@ -778,10 +766,7 @@ fn test_diff_detects_media_author() {
 #[test]
 fn test_diff_detects_media_tags() {
     let fields = media_diff_for_field(|content| {
-        content.replace(
-            "tags: [\"original-tag\"]",
-            "tags: [\"changed-tag\"]",
-        )
+        content.replace("tags: [\"original-tag\"]", "tags: [\"changed-tag\"]")
     });
     assert!(
         fields.contains(&"tags".to_string()),
@@ -791,9 +776,7 @@ fn test_diff_detects_media_tags() {
 
 #[test]
 fn test_diff_detects_media_language() {
-    let fields = media_diff_for_field(|content| {
-        content.replace("language: en", "language: de")
-    });
+    let fields = media_diff_for_field(|content| content.replace("language: en", "language: de"));
     assert!(
         fields.contains(&"language".to_string()),
         "expected 'language' in media diff fields, got: {fields:?}"
@@ -804,9 +787,7 @@ fn test_diff_detects_media_language() {
 
 /// Helper: insert a template in DB + write file, then modify a field in
 /// the file. Returns the list of diff field names.
-fn template_diff_for_field(
-    modify_fn: impl FnOnce(&str) -> String,
-) -> Vec<String> {
+fn template_diff_for_field(modify_fn: impl FnOnce(&str) -> String) -> Vec<String> {
     let (db, dir) = setup();
 
     let tpl = Template {
@@ -870,9 +851,8 @@ fn test_diff_detects_template_title() {
 
 #[test]
 fn test_diff_detects_template_kind() {
-    let fields = template_diff_for_field(|content| {
-        content.replace("kind: \"post\"", "kind: \"list\"")
-    });
+    let fields =
+        template_diff_for_field(|content| content.replace("kind: \"post\"", "kind: \"list\""));
     assert!(
         fields.contains(&"kind".to_string()),
         "expected 'kind' in template diff fields, got: {fields:?}"
@@ -881,9 +861,8 @@ fn test_diff_detects_template_kind() {
 
 #[test]
 fn test_diff_detects_template_enabled() {
-    let fields = template_diff_for_field(|content| {
-        content.replace("enabled: true", "enabled: false")
-    });
+    let fields =
+        template_diff_for_field(|content| content.replace("enabled: true", "enabled: false"));
     assert!(
         fields.contains(&"enabled".to_string()),
         "expected 'enabled' in template diff fields, got: {fields:?}"
@@ -892,9 +871,7 @@ fn test_diff_detects_template_enabled() {
 
 #[test]
 fn test_diff_detects_template_version() {
-    let fields = template_diff_for_field(|content| {
-        content.replace("version: 1", "version: 99")
-    });
+    let fields = template_diff_for_field(|content| content.replace("version: 1", "version: 99"));
     assert!(
         fields.contains(&"version".to_string()),
         "expected 'version' in template diff fields, got: {fields:?}"
@@ -905,9 +882,7 @@ fn test_diff_detects_template_version() {
 
 /// Helper: insert a script in DB + write file, then modify a field in the
 /// file. Returns the list of diff field names.
-fn script_diff_for_field(
-    modify_fn: impl FnOnce(&str) -> String,
-) -> Vec<String> {
+fn script_diff_for_field(modify_fn: impl FnOnce(&str) -> String) -> Vec<String> {
     let (db, dir) = setup();
 
     let script = Script {
@@ -995,9 +970,8 @@ fn test_diff_detects_script_entrypoint() {
 
 #[test]
 fn test_diff_detects_script_enabled() {
-    let fields = script_diff_for_field(|content| {
-        content.replace("enabled: true", "enabled: false")
-    });
+    let fields =
+        script_diff_for_field(|content| content.replace("enabled: true", "enabled: false"));
     assert!(
         fields.contains(&"enabled".to_string()),
         "expected 'enabled' in script diff fields, got: {fields:?}"
@@ -1006,9 +980,7 @@ fn test_diff_detects_script_enabled() {
 
 #[test]
 fn test_diff_detects_script_version() {
-    let fields = script_diff_for_field(|content| {
-        content.replace("version: 1", "version: 42")
-    });
+    let fields = script_diff_for_field(|content| content.replace("version: 1", "version: 42"));
     assert!(
         fields.contains(&"version".to_string()),
         "expected 'version' in script diff fields, got: {fields:?}"

@@ -381,5 +381,7 @@
   "dashboard.recentPosts": "Post recenti",
   "dashboard.noRecentPosts": "Nessun post recente",
   "dashboard.and": "e",
-  "dashboard.pin": "Fissa"
+  "dashboard.pin": "Fissa",
+  "common.tabNotImplemented": "Questa sezione verrà implementata in una fase successiva.",
+  "editor.noPreviewAvailable": "Nessuna anteprima disponibile"
 }

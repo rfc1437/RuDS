@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use bds_core::model::{Post, PostStatus, Tag, Template, TemplateKind, TemplateStatus};
 use bds_core::render::{
-    RenderCategorySettings, RenderTemplateLookup, TemplateLookupError,
-    render_markdown_to_html, resolve_post_template,
+    RenderCategorySettings, RenderTemplateLookup, TemplateLookupError, render_markdown_to_html,
+    resolve_post_template,
 };
 
 fn make_post() -> Post {
@@ -70,7 +70,11 @@ fn template_lookup_prefers_post_specific_template() {
     post.tags = vec!["rust".into()];
     post.categories = vec!["article".into()];
 
-    let templates = vec![make_template("post"), make_template("tag-template"), make_template("custom")];
+    let templates = vec![
+        make_template("post"),
+        make_template("tag-template"),
+        make_template("custom"),
+    ];
     let tags = vec![make_tag("rust", Some("tag-template"))];
     let mut categories = HashMap::new();
     categories.insert(
@@ -163,7 +167,10 @@ fn template_lookup_errors_when_explicit_template_missing() {
     })
     .unwrap_err();
 
-    assert_eq!(err, TemplateLookupError::MissingExplicitTemplate("missing".into()));
+    assert_eq!(
+        err,
+        TemplateLookupError::MissingExplicitTemplate("missing".into())
+    );
 }
 
 #[test]

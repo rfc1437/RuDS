@@ -22,6 +22,7 @@ sys-locale = { workspace = true }
 pulldown-cmark = { workspace = true }
 liquid = { workspace = true }
 liquid-core = { workspace = true }
+quick-xml = { workspace = true }
 rayon = { workspace = true }
 pagefind = { workspace = true }
 reqwest = { workspace = true }

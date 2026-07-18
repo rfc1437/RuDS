@@ -19,12 +19,8 @@ fn create_and_activate_default_project() {
     let (db, dir) = setup();
     let data_path = dir.path().join("my-blog");
 
-    let p = project::create_project(
-        db.conn(),
-        "My Blog",
-        Some(data_path.to_str().unwrap()),
-    )
-    .unwrap();
+    let p =
+        project::create_project(db.conn(), "My Blog", Some(data_path.to_str().unwrap())).unwrap();
 
     assert_eq!(p.name, "My Blog");
     assert_eq!(p.slug, "my-blog");
@@ -103,10 +99,9 @@ fn default_meta_files_written() {
     let p_path = dir.path().join("meta-test");
     project::create_project(db.conn(), "Meta Test", Some(p_path.to_str().unwrap())).unwrap();
 
-    let project_json: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(p_path.join("meta/project.json")).unwrap(),
-    )
-    .unwrap();
+    let project_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(p_path.join("meta/project.json")).unwrap())
+            .unwrap();
     assert_eq!(project_json["name"], "Meta Test");
     assert_eq!(project_json["maxPostsPerPage"], 50);
 
@@ -116,9 +111,8 @@ fn default_meta_files_written() {
     .unwrap();
     assert_eq!(categories, vec!["article", "aside", "page", "picture"]);
 
-    let tags: Vec<String> = serde_json::from_str(
-        &std::fs::read_to_string(p_path.join("meta/tags.json")).unwrap(),
-    )
-    .unwrap();
+    let tags: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(p_path.join("meta/tags.json")).unwrap())
+            .unwrap();
     assert!(tags.is_empty());
 }

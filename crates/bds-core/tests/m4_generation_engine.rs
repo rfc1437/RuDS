@@ -1,15 +1,18 @@
 use std::collections::HashMap;
 
+use bds_core::db::Database;
 use bds_core::db::queries::project::insert_project;
 use bds_core::db::queries::template::insert_template;
-use bds_core::db::Database;
 use bds_core::engine::generation::{
     PublishedPostSource, apply_validation_sections, generate_starter_site,
-    sections_from_validation_report,
+    load_published_post_source, sections_from_validation_report,
 };
 use bds_core::engine::meta::write_category_meta_json;
 use bds_core::engine::validate_site::validate_site;
-use bds_core::model::{CategorySettings, Post, PostStatus, Project, ProjectMetadata, Template, TemplateKind, TemplateStatus};
+use bds_core::model::{
+    CategorySettings, Post, PostStatus, Project, ProjectMetadata, Template, TemplateKind,
+    TemplateStatus,
+};
 use tempfile::TempDir;
 
 fn make_project() -> Project {
@@ -96,6 +99,24 @@ fn setup() -> (Database, TempDir) {
 }
 
 #[test]
+fn reopened_draft_generation_uses_last_published_file() {
+    let (_db, dir) = setup();
+    let mut post = make_post("reopened", 1_710_000_000_000);
+    post.status = PostStatus::Draft;
+    post.content = Some("Unpublished draft body".into());
+    post.file_path = "posts/2024/03/reopened.md".into();
+    let frontmatter = bds_core::util::frontmatter::PostFrontmatter::from_post(&post).to_yaml();
+    let file = bds_core::util::frontmatter::format_frontmatter(&frontmatter, "Published body");
+    std::fs::create_dir_all(dir.path().join("posts/2024/03")).unwrap();
+    std::fs::write(dir.path().join(&post.file_path), file).unwrap();
+
+    let source = load_published_post_source(dir.path(), post)
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.body_markdown, "Published body");
+}
+
+#[test]
 fn generation_engine_writes_core_and_single_post_artifacts() {
     let (db, dir) = setup();
     let metadata = make_metadata();
@@ -110,7 +131,8 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
         },
     ];
 
-    let report = generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let report =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
 
     assert!(report.written_paths.contains(&"index.html".to_string()));
     assert!(report.written_paths.contains(&"calendar.json".to_string()));
@@ -118,10 +140,26 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(report.written_paths.contains(&"feed.xml".to_string()));
     assert!(report.written_paths.contains(&"atom.xml".to_string()));
     assert!(report.written_paths.contains(&"sitemap.xml".to_string()));
-    assert!(report.written_paths.contains(&"assets/pico.min.css".to_string()));
-    assert!(report.written_paths.contains(&"assets/tag-cloud.js".to_string()));
-    assert!(report.written_paths.contains(&"2024/03/09/hello/index.html".to_string()));
-    assert!(report.written_paths.contains(&"2024/03/10/next/index.html".to_string()));
+    assert!(
+        report
+            .written_paths
+            .contains(&"assets/pico.min.css".to_string())
+    );
+    assert!(
+        report
+            .written_paths
+            .contains(&"assets/tag-cloud.js".to_string())
+    );
+    assert!(
+        report
+            .written_paths
+            .contains(&"2024/03/09/hello/index.html".to_string())
+    );
+    assert!(
+        report
+            .written_paths
+            .contains(&"2024/03/10/next/index.html".to_string())
+    );
 
     assert!(dir.path().join("index.html").exists());
     assert!(dir.path().join("rss.xml").exists());
@@ -152,13 +190,17 @@ fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
         body_markdown: "Hallo Welt".into(),
     }];
 
-    let report = generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "de").unwrap();
+    let report =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "de").unwrap();
 
     assert!(report.written_paths.contains(&"en/atom.xml".to_string()));
     assert!(report.written_paths.contains(&"en/sitemap.xml".to_string()));
 
     let atom = std::fs::read_to_string(dir.path().join("en/atom.xml")).unwrap();
-    assert!(atom.contains("<link href=\"https://example.com/en/\" rel=\"alternate\" />") || atom.contains("<link href=\"https://example.com/en\" rel=\"alternate\" />"));
+    assert!(
+        atom.contains("<link href=\"https://example.com/en/\" rel=\"alternate\" />")
+            || atom.contains("<link href=\"https://example.com/en\" rel=\"alternate\" />")
+    );
     assert!(atom.contains("<link href=\"https://example.com/en/atom.xml\" rel=\"self\" />"));
 
     let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
@@ -223,7 +265,8 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
         },
     ];
 
-    let report = generate_starter_site(db.conn(), dir.path(), "p1", &make_metadata(), &posts, "en").unwrap();
+    let report =
+        generate_starter_site(db.conn(), dir.path(), "p1", &make_metadata(), &posts, "en").unwrap();
 
     for asset in [
         "images/close.png",
@@ -232,17 +275,29 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
         "images/prev.png",
     ] {
         assert!(report.written_paths.contains(&asset.to_string()));
-        assert!(dir.path().join(asset).exists(), "missing bundled image {asset}");
+        assert!(
+            dir.path().join(asset).exists(),
+            "missing bundled image {asset}"
+        );
     }
 
-    assert!(!report.written_paths.contains(&"category/hidden/index.html".to_string()));
-    assert!(report.written_paths.contains(&"category/featured/index.html".to_string()));
+    assert!(
+        !report
+            .written_paths
+            .contains(&"category/hidden/index.html".to_string())
+    );
+    assert!(
+        report
+            .written_paths
+            .contains(&"category/featured/index.html".to_string())
+    );
 
     let index_html = std::fs::read_to_string(dir.path().join("index.html")).unwrap();
     assert!(!index_html.contains("Hidden Post"));
     assert!(index_html.contains("[Featured Post|false]"));
 
-    let featured_html = std::fs::read_to_string(dir.path().join("category/featured/index.html")).unwrap();
+    let featured_html =
+        std::fs::read_to_string(dir.path().join("category/featured/index.html")).unwrap();
     assert!(featured_html.contains("FEATURED:[Featured Post|false]"));
 
     let feed = std::fs::read_to_string(dir.path().join("feed.xml")).unwrap();
@@ -263,15 +318,21 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
         body_markdown: "Hello **world**".into(),
     }];
 
-    let first = generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
-    let second = generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let first =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let second =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
 
     assert!(!first.written_paths.is_empty());
     assert!(second.skipped_paths.contains(&"index.html".to_string()));
     assert!(second.skipped_paths.contains(&"calendar.json".to_string()));
     assert!(second.skipped_paths.contains(&"rss.xml".to_string()));
     assert!(second.skipped_paths.contains(&"feed.xml".to_string()));
-    assert!(second.skipped_paths.contains(&"assets/pico.min.css".to_string()));
+    assert!(
+        second
+            .skipped_paths
+            .contains(&"assets/pico.min.css".to_string())
+    );
 }
 
 #[test]
@@ -313,7 +374,9 @@ fn apply_validation_repairs_core_section_outputs() {
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
     let sections = sections_from_validation_report(&report);
-    let apply_report = apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections).unwrap();
+    let apply_report =
+        apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
+            .unwrap();
     let repaired = validate_site(db.conn(), dir.path(), "p1").unwrap();
 
     assert!(!apply_report.written_paths.is_empty() || !apply_report.skipped_paths.is_empty());
@@ -339,12 +402,22 @@ fn apply_validation_removes_extra_section_outputs() {
     std::fs::write(extra_dir.join("index.html"), "ghost").unwrap();
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
-    assert!(report.extra_pages.contains(&"tag/ghost/index.html".to_string()));
+    assert!(
+        report
+            .extra_pages
+            .contains(&"tag/ghost/index.html".to_string())
+    );
     let sections = sections_from_validation_report(&report);
-    let apply_report = apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections).unwrap();
+    let apply_report =
+        apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
+            .unwrap();
     let repaired = validate_site(db.conn(), dir.path(), "p1").unwrap();
 
-    assert!(apply_report.deleted_paths.contains(&"tag/ghost/index.html".to_string()));
+    assert!(
+        apply_report
+            .deleted_paths
+            .contains(&"tag/ghost/index.html".to_string())
+    );
     assert!(repaired.extra_pages.is_empty());
 }
 

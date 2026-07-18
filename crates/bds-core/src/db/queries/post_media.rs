@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{post_media_from_row, POST_MEDIA_COLUMNS};
+use crate::db::from_row::{POST_MEDIA_COLUMNS, post_media_from_row};
 use crate::model::PostMedia;
 
 pub fn link_media(conn: &Connection, pm: &PostMedia) -> rusqlite::Result<()> {
@@ -65,9 +65,9 @@ pub fn update_sort_order(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::queries::media::{insert_media, make_test_media};
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();

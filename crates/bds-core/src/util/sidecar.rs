@@ -1,5 +1,7 @@
+use std::fmt::{self, Display};
+
 use crate::model::Media;
-use crate::util::timestamp::{unix_ms_to_iso, iso_to_unix_ms};
+use crate::util::timestamp::{iso_to_unix_ms, unix_ms_to_iso};
 
 /// Parsed media sidecar fields.
 #[derive(Debug, Clone)]
@@ -53,11 +55,14 @@ impl MediaSidecar {
     }
 
     /// Serialize to the hand-built YAML-like format matching TypeScript output.
-    pub fn to_string(&self) -> String {
+    fn serialize(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
         lines.push("---".into());
         lines.push(format!("id: {}", self.id));
-        lines.push(format!("originalName: \"{}\"", escape_double_quotes(&self.original_name)));
+        lines.push(format!(
+            "originalName: \"{}\"",
+            escape_double_quotes(&self.original_name)
+        ));
         lines.push(format!("mimeType: {}", self.mime_type));
         lines.push(format!("size: {}", self.size));
         if let Some(w) = self.width {
@@ -66,30 +71,30 @@ impl MediaSidecar {
         if let Some(h) = self.height {
             lines.push(format!("height: {h}"));
         }
-        if let Some(ref title) = self.title {
-            if !title.is_empty() {
-                lines.push(format!("title: \"{}\"", escape_double_quotes(title)));
-            }
+        if let Some(ref title) = self.title
+            && !title.is_empty()
+        {
+            lines.push(format!("title: \"{}\"", escape_double_quotes(title)));
         }
-        if let Some(ref alt) = self.alt {
-            if !alt.is_empty() {
-                lines.push(format!("alt: \"{}\"", escape_double_quotes(alt)));
-            }
+        if let Some(ref alt) = self.alt
+            && !alt.is_empty()
+        {
+            lines.push(format!("alt: \"{}\"", escape_double_quotes(alt)));
         }
-        if let Some(ref caption) = self.caption {
-            if !caption.is_empty() {
-                lines.push(format!("caption: \"{}\"", escape_double_quotes(caption)));
-            }
+        if let Some(ref caption) = self.caption
+            && !caption.is_empty()
+        {
+            lines.push(format!("caption: \"{}\"", escape_double_quotes(caption)));
         }
-        if let Some(ref author) = self.author {
-            if !author.is_empty() {
-                lines.push(format!("author: \"{}\"", escape_double_quotes(author)));
-            }
+        if let Some(ref author) = self.author
+            && !author.is_empty()
+        {
+            lines.push(format!("author: \"{}\"", escape_double_quotes(author)));
         }
-        if let Some(ref language) = self.language {
-            if !language.is_empty() {
-                lines.push(format!("language: {language}"));
-            }
+        if let Some(ref language) = self.language
+            && !language.is_empty()
+        {
+            lines.push(format!("language: {language}"));
         }
         lines.push(format!("createdAt: {}", unix_ms_to_iso(self.created_at)));
         lines.push(format!("updatedAt: {}", unix_ms_to_iso(self.updated_at)));
@@ -98,13 +103,21 @@ impl MediaSidecar {
         if self.tags.is_empty() {
             lines.push("tags: []".into());
         } else {
-            let quoted: Vec<String> = self.tags.iter().map(|t| format!("\"{}\"", escape_double_quotes(t))).collect();
+            let quoted: Vec<String> = self
+                .tags
+                .iter()
+                .map(|t| format!("\"{}\"", escape_double_quotes(t)))
+                .collect();
             lines.push(format!("tags: [{}]", quoted.join(", ")));
         }
 
         // linkedPostIds: only if non-empty
         if !self.linked_post_ids.is_empty() {
-            let quoted: Vec<String> = self.linked_post_ids.iter().map(|id| format!("\"{id}\"")).collect();
+            let quoted: Vec<String> = self
+                .linked_post_ids
+                .iter()
+                .map(|id| format!("\"{id}\""))
+                .collect();
             lines.push(format!("linkedPostIds: [{}]", quoted.join(", ")));
         }
 
@@ -113,30 +126,42 @@ impl MediaSidecar {
     }
 }
 
+impl Display for MediaSidecar {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.serialize())
+    }
+}
+
 impl MediaTranslationSidecar {
     /// Serialize to the hand-built format.
-    pub fn to_string(&self) -> String {
+    fn serialize(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
         lines.push("---".into());
         lines.push(format!("translationFor: {}", self.translation_for));
         lines.push(format!("language: {}", self.language));
-        if let Some(ref title) = self.title {
-            if !title.is_empty() {
-                lines.push(format!("title: \"{}\"", escape_double_quotes(title)));
-            }
+        if let Some(ref title) = self.title
+            && !title.is_empty()
+        {
+            lines.push(format!("title: \"{}\"", escape_double_quotes(title)));
         }
-        if let Some(ref alt) = self.alt {
-            if !alt.is_empty() {
-                lines.push(format!("alt: \"{}\"", escape_double_quotes(alt)));
-            }
+        if let Some(ref alt) = self.alt
+            && !alt.is_empty()
+        {
+            lines.push(format!("alt: \"{}\"", escape_double_quotes(alt)));
         }
-        if let Some(ref caption) = self.caption {
-            if !caption.is_empty() {
-                lines.push(format!("caption: \"{}\"", escape_double_quotes(caption)));
-            }
+        if let Some(ref caption) = self.caption
+            && !caption.is_empty()
+        {
+            lines.push(format!("caption: \"{}\"", escape_double_quotes(caption)));
         }
         lines.push("---".into());
         lines.join("\n")
+    }
+}
+
+impl Display for MediaTranslationSidecar {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.serialize())
     }
 }
 
@@ -301,7 +326,8 @@ mod tests {
 
     #[test]
     fn parse_fixture_sidecar() {
-        let path = fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
+        let path =
+            fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
         let content = fs::read_to_string(path).unwrap();
         let sc = read_sidecar(&content).unwrap();
         assert_eq!(sc.id, "eb0cf9d7-6fbd-4b74-9be3-759d6e16f240");
@@ -314,17 +340,25 @@ mod tests {
         assert!(sc.alt.as_ref().unwrap().contains("Spinnenfrau"));
         assert!(sc.caption.as_ref().unwrap().contains("Handwerkskunst"));
         assert!(sc.tags.is_empty());
-        assert_eq!(sc.linked_post_ids, vec!["40a83ab1-423d-4310-aac4-642d84675007"]);
+        assert_eq!(
+            sc.linked_post_ids,
+            vec!["40a83ab1-423d-4310-aac4-642d84675007"]
+        );
     }
 
     #[test]
     fn golden_output_sidecar() {
-        let path = fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
+        let path =
+            fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
         let expected = fs::read_to_string(&path).unwrap();
         let sc = read_sidecar(&expected).unwrap();
         let actual = sc.to_string();
         // Compare trimmed (fixture may or may not have trailing newline)
-        assert_eq!(actual.trim(), expected.trim(), "golden output mismatch for media sidecar");
+        assert_eq!(
+            actual.trim(),
+            expected.trim(),
+            "golden output mismatch for media sidecar"
+        );
     }
 
     #[test]
@@ -378,10 +412,7 @@ mod tests {
     #[test]
     fn inline_json_array_parsing() {
         assert_eq!(parse_inline_json_array("[]"), Vec::<String>::new());
-        assert_eq!(
-            parse_inline_json_array("[\"a\", \"b\"]"),
-            vec!["a", "b"]
-        );
+        assert_eq!(parse_inline_json_array("[\"a\", \"b\"]"), vec!["a", "b"]);
     }
 
     #[test]

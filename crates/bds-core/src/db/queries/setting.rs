@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{setting_from_row, SETTING_COLUMNS};
+use crate::db::from_row::{SETTING_COLUMNS, setting_from_row};
 use crate::model::Setting;
 
 pub fn get_setting_by_key(conn: &Connection, key: &str) -> rusqlite::Result<Setting> {

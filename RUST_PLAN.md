@@ -25,7 +25,7 @@ This plan is split into multiple documents:
 ## Non-Negotiable Constraints
 
 1. **Content compatibility is exact.** Existing SQLite data, markdown/frontmatter, translation files, media sidecars, templates, menu documents, generated HTML structure, feeds, and sitemaps must remain readable and writable by the Rust app.
-2. **No JavaScript anywhere.** No npm, no webview, no JS runtime, no Electron. This is a supply-chain security constraint. The entire app is pure Rust plus native platform APIs. Pagefind is integrated as a Rust library dependency (`pagefind` crate), not as an external binary.
+2. **No JavaScript application runtime.** No npm, Node.js, Electron, or remotely loaded application assets. The required in-editor and style preview panels use Wry to display the localhost-only Rust preview server in the operating system webview; the separate Open in Browser command opens the same preview in the system browser. Pagefind is integrated as a Rust library dependency (`pagefind` crate), not as an external binary.
 3. **Script compatibility is intentionally broken.** Python/Pyodide is removed. Rust bDS is a green-field app and uses Lua for user-authored scripting. Existing Python scripts are not carried forward as compatible runtime artifacts. Built-in macros (gallery, youtube, vimeo, photo_archive, tag_cloud) are re-implemented as native Rust, not routed through Lua.
 4. **Core release ships as a native desktop app.** Primary target is macOS, but the UI stack (Iced + muda + rfd) is cross-platform from day one. Native menus, key handling, open-file/deep-link handling, and platform command routing are part of core scope, not follow-up polish.
 5. **Template editing is core scope.** Template rendering without template management UI is not sufficient.
@@ -42,12 +42,14 @@ The application uses the following UI and platform integration stack:
 | Text editing | **ropey** + **syntect** + **cosmic-text** | Custom syntax-highlighting editor widget for markdown, Liquid templates, and Lua scripts |
 | Native menus | **muda** | Cross-platform native menu bar (NSMenu on macOS, Win32 menus on Windows, GTK/dbus on Linux) |
 | File dialogs | **rfd** | Cross-platform native file/folder dialogs (NSOpenPanel/NSSavePanel on macOS, equivalents elsewhere) |
+| Internal preview | **wry** | Embedded post and style preview panels backed only by the localhost Rust preview server |
 | Platform lifecycle | **objc2** (macOS only, cfg-gated) | Thin shim for `application:openFile:`, `application:openURLs:`, and other `NSApplicationDelegate` hooks |
 
 ### Why this stack
 
 - **Iced** is a published crate with versioned releases, proper documentation, and a stable API. It uses wgpu for GPU-accelerated rendering and follows the Elm architecture (Message → update → view).
 - **muda** and **rfd** render through real platform APIs (NSMenu, NSOpenPanel, etc.) with zero fidelity loss versus hand-rolled platform code, while providing cross-platform support from day one.
+- **wry** preserves the baseline app's internal Markdown/Preview workflow using the operating system webview. It is a presentation surface for the loopback preview server, not the application runtime; external-browser preview remains available separately.
 - **ropey + syntect + cosmic-text** gives full control over the editor experience: rope-based efficient text storage, Sublime Text syntax grammars (markdown, Liquid, Lua), and proper font shaping and layout via the same engine used by cosmic-DE.
 - The only platform-specific code is a small (~50 line) lifecycle shim for macOS app delegate hooks, conditionally compiled via `cfg(target_os = "macos")`. Linux and Windows equivalents are bounded and isolated to the same module.
 
@@ -72,15 +74,15 @@ bds-rust/
 
 - **bds-core**: all engines, models, persistence, rendering, publishing — zero UI dependencies.
 - **bds-editor**: reusable Iced custom widget for syntax-highlighting text editing. Depends on ropey, syntect, cosmic-text, and iced. Does not depend on bds-core. Can be extracted as a standalone crate.
-- **bds-ui**: application shell, Iced views and components, message routing, platform integration (muda for menus, rfd for dialogs, objc2 shim for macOS lifecycle). Depends on bds-core and bds-editor.
+- **bds-ui**: application shell, Iced views and components, embedded localhost preview (wry), message routing, platform integration (muda for menus, rfd for dialogs, objc2 shim for macOS lifecycle). Depends on bds-core and bds-editor.
 - **bds-cli**: headless automation surface. Depends on bds-core only.
 
 ## Distribution Characteristics
 
-- **Single static binary.** No external runtime dependencies (no GTK, no Electron, no Node.js). Lua and SQLite are compiled into the binary.
+- **Single application binary.** No Electron or Node.js runtime. Lua and SQLite are compiled into the binary; internal preview uses the operating system webview supplied by the target platform.
 - **Binary size:** ~15–25 MB.
-- **Memory usage / startup:** no BEAM VM, no browser engine — a single native process.
-- **Zero install dependencies:** users download one binary. No Homebrew, no system packages.
+- **Memory usage / startup:** no BEAM VM or bundled browser engine — one native application process plus the operating system webview used while preview is visible.
+- **Platform prerequisites:** macOS uses the system WebKit runtime. Windows/Linux packaging must account for Wry's platform webview prerequisites without adding an application-managed JavaScript runtime.
 
 ## Split Rationale
 
@@ -98,7 +100,7 @@ The Rust rewrite is not considered successful until the core release can do all 
 
 1. Open a real project created by the baseline app.
 2. Create and edit posts, translations, media, tags, templates, and settings.
-3. Preview drafts and published content locally.
+3. Preview drafts and published content both in the post editor's internal preview panel and in the external system browser.
 4. Generate a complete site whose output matches the current app modulo approved normalization differences.
 5. Publish the generated output to a remote target.
 6. Rebuild the database from files and run metadata diff without losing information.

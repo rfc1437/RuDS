@@ -62,12 +62,11 @@ pub fn mono_metrics() -> &'static MonoMetrics {
         let mut char_width = FONT_SIZE * 0.6; // fallback
         let mut line_height = (FONT_SIZE * 1.43).ceil(); // fallback
 
-        for run in buffer.layout_runs() {
+        if let Some(run) = buffer.layout_runs().next() {
             if let Some(glyph) = run.glyphs.first() {
                 char_width = glyph.w;
             }
             line_height = run.line_height;
-            break;
         }
 
         MonoMetrics {
@@ -92,7 +91,7 @@ const SCROLLBAR_THUMB: Color = Color::from_rgba(0.50, 0.53, 0.60, 0.7);
 const SCROLLBAR_THUMB_HOVER: Color = Color::from_rgba(0.60, 0.63, 0.70, 0.9);
 const MIN_THUMB_HEIGHT: f32 = 20.0;
 
-fn committed_text_input<'a>(text: Option<&'a str>, is_command_shortcut: bool) -> Option<&'a str> {
+fn committed_text_input(text: Option<&str>, is_command_shortcut: bool) -> Option<&str> {
     if is_command_shortcut {
         return None;
     }
@@ -156,7 +155,11 @@ fn line_text_for(buf: &EditorBuffer, line_idx: usize) -> String {
     buf.line(line_idx)
         .map(|l| {
             let s: String = l.chars().collect();
-            if s.ends_with('\n') { s[..s.len() - 1].to_string() } else { s }
+            if s.ends_with('\n') {
+                s[..s.len() - 1].to_string()
+            } else {
+                s
+            }
         })
         .unwrap_or_default()
 }
@@ -186,7 +189,11 @@ fn logical_to_visual(buf: &EditorBuffer, line: usize, col: usize, max_chars: usi
         if idx == line {
             // Find which sub-line the column falls on
             for (i, &start) in breaks.iter().enumerate() {
-                let end = if i + 1 < breaks.len() { breaks[i + 1] } else { usize::MAX };
+                let end = if i + 1 < breaks.len() {
+                    breaks[i + 1]
+                } else {
+                    usize::MAX
+                };
                 if (col >= start && col < end) || i + 1 == breaks.len() {
                     return vis + i;
                 }
@@ -209,7 +216,11 @@ fn visual_to_logical(
     if max_chars == 0 {
         // No wrapping — direct 1:1 mapping
         let line = scroll + visual_row;
-        return if line < buf.line_count() { Some((line, 0)) } else { None };
+        return if line < buf.line_count() {
+            Some((line, 0))
+        } else {
+            None
+        };
     }
     let target = scroll + visual_row;
     let mut vis_count = 0usize;
@@ -357,7 +368,11 @@ where
             let line_len = text.chars().count();
 
             for (w, &start) in breaks.iter().enumerate() {
-                let end = if w + 1 < breaks.len() { breaks[w + 1] } else { line_len };
+                let end = if w + 1 < breaks.len() {
+                    breaks[w + 1]
+                } else {
+                    line_len
+                };
                 if vis_skip < scroll {
                     vis_skip += 1;
                 } else if visual_rows.len() < visible_lines {
@@ -370,43 +385,57 @@ where
         let text_x = bounds.x + GUTTER_WIDTH + 8.0;
 
         // Render visual rows
-        for (vis_idx, &(line_idx, char_start, char_end, is_first)) in visual_rows.iter().enumerate() {
+        for (vis_idx, &(line_idx, char_start, char_end, is_first)) in visual_rows.iter().enumerate()
+        {
             let y = bounds.y + vis_idx as f32 * metrics.line_height;
             if y + metrics.line_height < bounds.y || y > bounds.y + bounds.height {
                 continue;
             }
 
             // Draw selection highlight for this visual line
-            if let Some(sel) = selection {
-                if !sel.is_empty() {
-                    let (start, end) = sel.ordered();
-                    let line_len = buf
-                        .line(line_idx)
-                        .map(|l| {
-                            let len = l.len_chars();
-                            if len > 0 && l.char(len - 1) == '\n' { len - 1 } else { len }
-                        })
-                        .unwrap_or(0);
-
-                    if line_idx >= start.0 && line_idx <= end.0 {
-                        let sel_start_col = if line_idx == start.0 { start.1 } else { 0 };
-                        let sel_end_col = if line_idx == end.0 { end.1 } else { line_len + 1 };
-
-                        // Clip selection to current visual line range
-                        let s = sel_start_col.max(char_start);
-                        let e = sel_end_col.min(char_end);
-                        if s < e {
-                            let sel_x = text_x + (s - char_start) as f32 * metrics.char_width;
-                            let sel_w = (e - s) as f32 * metrics.char_width;
-                            renderer.fill_quad(
-                                renderer::Quad {
-                                    bounds: Rectangle { x: sel_x, y, width: sel_w, height: metrics.line_height },
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                },
-                                SELECTION_BG,
-                            );
+            if let Some(sel) = selection
+                && !sel.is_empty()
+            {
+                let (start, end) = sel.ordered();
+                let line_len = buf
+                    .line(line_idx)
+                    .map(|l| {
+                        let len = l.len_chars();
+                        if len > 0 && l.char(len - 1) == '\n' {
+                            len - 1
+                        } else {
+                            len
                         }
+                    })
+                    .unwrap_or(0);
+
+                if line_idx >= start.0 && line_idx <= end.0 {
+                    let sel_start_col = if line_idx == start.0 { start.1 } else { 0 };
+                    let sel_end_col = if line_idx == end.0 {
+                        end.1
+                    } else {
+                        line_len + 1
+                    };
+
+                    // Clip selection to current visual line range
+                    let s = sel_start_col.max(char_start);
+                    let e = sel_end_col.min(char_end);
+                    if s < e {
+                        let sel_x = text_x + (s - char_start) as f32 * metrics.char_width;
+                        let sel_w = (e - s) as f32 * metrics.char_width;
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: sel_x,
+                                    y,
+                                    width: sel_w,
+                                    height: metrics.line_height,
+                                },
+                                border: iced::Border::default(),
+                                shadow: iced::Shadow::default(),
+                            },
+                            SELECTION_BG,
+                        );
                     }
                 }
             }
@@ -414,13 +443,19 @@ where
             // Line number (only on first visual line of each logical line)
             if is_first {
                 let line_num = format!("{:>4}", line_idx + 1);
-                let num_color = if line_idx == cursor_line { ACTIVE_LINE_NUM } else { GUTTER_TEXT };
+                let num_color = if line_idx == cursor_line {
+                    ACTIVE_LINE_NUM
+                } else {
+                    GUTTER_TEXT
+                };
                 renderer.fill_text(
                     text::Text {
                         content: line_num,
                         bounds: Size::new(GUTTER_WIDTH - 8.0, metrics.line_height),
                         size: Pixels(FONT_SIZE),
-                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                        line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                            metrics.line_height,
+                        )),
                         font,
                         horizontal_alignment: iced::alignment::Horizontal::Right,
                         vertical_alignment: iced::alignment::Vertical::Top,
@@ -441,7 +476,9 @@ where
                 for (style, span_text) in spans {
                     let color = syntect_to_iced(style.foreground);
                     for ch in span_text.chars() {
-                        if ch == '\n' { continue; }
+                        if ch == '\n' {
+                            continue;
+                        }
                         chars_with_color.push((ch, color));
                     }
                 }
@@ -463,14 +500,19 @@ where
                     while span_end < slice.len() && slice[span_end].1 == color {
                         span_end += 1;
                     }
-                    let display_text: String = slice[span_start..span_end].iter().map(|(c, _)| *c).collect();
+                    let display_text: String = slice[span_start..span_end]
+                        .iter()
+                        .map(|(c, _)| *c)
+                        .collect();
                     let span_width = display_text.len() as f32 * metrics.char_width;
                     renderer.fill_text(
                         text::Text {
                             content: display_text,
                             bounds: Size::new(span_width + metrics.char_width, metrics.line_height),
                             size: Pixels(FONT_SIZE),
-                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                                metrics.line_height,
+                            )),
                             font,
                             horizontal_alignment: iced::alignment::Horizontal::Left,
                             vertical_alignment: iced::alignment::Vertical::Top,
@@ -499,7 +541,9 @@ where
                             content: display_text.to_string(),
                             bounds: Size::new(text_area_width, metrics.line_height),
                             size: Pixels(FONT_SIZE),
-                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(metrics.line_height)),
+                            line_height: iced::widget::text::LineHeight::Absolute(Pixels(
+                                metrics.line_height,
+                            )),
                             font,
                             horizontal_alignment: iced::alignment::Horizontal::Left,
                             vertical_alignment: iced::alignment::Vertical::Top,
@@ -520,7 +564,10 @@ where
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
-                                x: cursor_x, y, width: 2.0, height: metrics.line_height,
+                                x: cursor_x,
+                                y,
+                                width: 2.0,
+                                height: metrics.line_height,
                             },
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
@@ -529,12 +576,17 @@ where
                     );
                 }
                 // Also draw cursor at end of last visual line segment
-                if cursor_col == char_end && char_end == line_text_for(&buf, line_idx).chars().count() {
+                if cursor_col == char_end
+                    && char_end == line_text_for(&buf, line_idx).chars().count()
+                {
                     let cursor_x = text_x + (char_end - char_start) as f32 * metrics.char_width;
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
-                                x: cursor_x, y, width: 2.0, height: metrics.line_height,
+                                x: cursor_x,
+                                y,
+                                width: 2.0,
+                                height: metrics.line_height,
                             },
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
@@ -553,14 +605,23 @@ where
             let thumb_ratio = viewport_lines as f32 / total_vis as f32;
             let thumb_height = (track_height * thumb_ratio).max(MIN_THUMB_HEIGHT);
             let max_scroll = total_vis.saturating_sub(viewport_lines);
-            let scroll_ratio = if max_scroll > 0 { scroll as f32 / max_scroll as f32 } else { 0.0 };
+            let scroll_ratio = if max_scroll > 0 {
+                scroll as f32 / max_scroll as f32
+            } else {
+                0.0
+            };
             let thumb_y = bounds.y + scroll_ratio * (track_height - thumb_height);
             let track_x = bounds.x + bounds.width - SCROLLBAR_WIDTH;
 
             // Track
             renderer.fill_quad(
                 renderer::Quad {
-                    bounds: Rectangle { x: track_x, y: bounds.y, width: SCROLLBAR_WIDTH, height: track_height },
+                    bounds: Rectangle {
+                        x: track_x,
+                        y: bounds.y,
+                        width: SCROLLBAR_WIDTH,
+                        height: track_height,
+                    },
                     border: iced::Border::default(),
                     shadow: iced::Shadow::default(),
                 },
@@ -582,7 +643,11 @@ where
                     },
                     shadow: iced::Shadow::default(),
                 },
-                if is_hover { SCROLLBAR_THUMB_HOVER } else { SCROLLBAR_THUMB },
+                if is_hover {
+                    SCROLLBAR_THUMB_HOVER
+                } else {
+                    SCROLLBAR_THUMB
+                },
             );
         }
     }
@@ -629,7 +694,11 @@ where
                         if let Some(pos) = cursor.position() {
                             let local_y = pos.y - bounds.y - grab_offset;
                             let scroll_range = track_height - thumb_height;
-                            let ratio = if scroll_range > 0.0 { (local_y / scroll_range).clamp(0.0, 1.0) } else { 0.0 };
+                            let ratio = if scroll_range > 0.0 {
+                                (local_y / scroll_range).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
                             let new_scroll = (ratio * max_scroll as f32).round() as usize;
                             self.buffer.borrow_mut().set_scroll(new_scroll, max_scroll);
                         }
@@ -644,29 +713,33 @@ where
             }
 
             // Start scrollbar drag
-            if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-                if let Some(pos) = cursor.position() {
-                    if pos.x >= track_x && pos.x <= bounds.x + bounds.width
-                        && pos.y >= bounds.y && pos.y <= bounds.y + bounds.height
-                    {
-                        let current_scroll = self.buffer.borrow().scroll_offset();
-                        let scroll_ratio = if max_scroll > 0 { current_scroll as f32 / max_scroll as f32 } else { 0.0 };
-                        let thumb_y = bounds.y + scroll_ratio * (track_height - thumb_height);
+            if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
+                && let Some(pos) = cursor.position()
+                && pos.x >= track_x
+                && pos.x <= bounds.x + bounds.width
+                && pos.y >= bounds.y
+                && pos.y <= bounds.y + bounds.height
+            {
+                let current_scroll = self.buffer.borrow().scroll_offset();
+                let scroll_ratio = if max_scroll > 0 {
+                    current_scroll as f32 / max_scroll as f32
+                } else {
+                    0.0
+                };
+                let thumb_y = bounds.y + scroll_ratio * (track_height - thumb_height);
 
-                        if pos.y >= thumb_y && pos.y <= thumb_y + thumb_height {
-                            // Clicked on thumb — start dragging
-                            state.scrollbar_drag = Some(pos.y - thumb_y);
-                        } else {
-                            // Clicked on track — jump to position
-                            let ratio = ((pos.y - bounds.y) / track_height).clamp(0.0, 1.0);
-                            let new_scroll = (ratio * max_scroll as f32).round() as usize;
-                            self.buffer.borrow_mut().set_scroll(new_scroll, max_scroll);
-                            state.scrollbar_drag = Some(thumb_height / 2.0);
-                        }
-                        state.is_focused = true;
-                        return Status::Captured;
-                    }
+                if pos.y >= thumb_y && pos.y <= thumb_y + thumb_height {
+                    // Clicked on thumb — start dragging
+                    state.scrollbar_drag = Some(pos.y - thumb_y);
+                } else {
+                    // Clicked on track — jump to position
+                    let ratio = ((pos.y - bounds.y) / track_height).clamp(0.0, 1.0);
+                    let new_scroll = (ratio * max_scroll as f32).round() as usize;
+                    self.buffer.borrow_mut().set_scroll(new_scroll, max_scroll);
+                    state.scrollbar_drag = Some(thumb_height / 2.0);
                 }
+                state.is_focused = true;
+                return Status::Captured;
             }
         }
 
@@ -679,9 +752,11 @@ where
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
                         let vis_row = (pos.y / metrics.line_height) as usize;
-                        let raw_col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
-                        let (line, char_off) = visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
-                            .unwrap_or((buf.line_count().saturating_sub(1), 0));
+                        let raw_col =
+                            ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let (line, char_off) =
+                            visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
+                                .unwrap_or((buf.line_count().saturating_sub(1), 0));
                         let col = char_off + raw_col;
 
                         // Double-click detection
@@ -717,16 +792,17 @@ where
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
                         let vis_row = (pos.y / metrics.line_height) as usize;
-                        let raw_col = ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
-                        let (line, char_off) = visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
-                            .unwrap_or((buf.line_count().saturating_sub(1), 0));
+                        let raw_col =
+                            ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let (line, char_off) =
+                            visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
+                                .unwrap_or((buf.line_count().saturating_sub(1), 0));
                         let col = char_off + raw_col;
                         // Extend selection by simulating shift+movement
                         let clamped_line = line.min(buf.line_count().saturating_sub(1));
                         let clamped_col = if clamped_line < buf.line_count() {
                             col.min(
-                                buf
-                                    .line(clamped_line)
+                                buf.line(clamped_line)
                                     .map(|l| {
                                         let len = l.len_chars();
                                         if len > 0 && l.char(len - 1) == '\n' {
@@ -748,12 +824,7 @@ where
                             .selection()
                             .map(|s| s.anchor_col)
                             .unwrap_or(buf.cursor().1);
-                        buf.set_selection(
-                                anchor_line,
-                                anchor_col,
-                                clamped_line,
-                                clamped_col,
-                            );
+                        buf.set_selection(anchor_line, anchor_col, clamped_line, clamped_col);
                         buf.set_cursor(clamped_line, clamped_col);
                     }
                     return Status::Captured;
@@ -762,9 +833,7 @@ where
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 let lines = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -(y * 3.0) as isize,
-                    mouse::ScrollDelta::Pixels { y, .. } => {
-                        -(y / metrics.line_height) as isize
-                    }
+                    mouse::ScrollDelta::Pixels { y, .. } => -(y / metrics.line_height) as isize,
                 };
                 let mut buf = self.buffer.borrow_mut();
                 let vis = (bounds.height / metrics.line_height) as usize;
@@ -774,7 +843,10 @@ where
                 return Status::Captured;
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
-                key, modifiers, text, ..
+                key,
+                modifiers,
+                text,
+                ..
             }) if state.is_focused => {
                 let vis = (bounds.height / metrics.line_height) as usize;
                 let is_cmd = modifiers.command();
@@ -799,7 +871,11 @@ where
                     keyboard::Key::Character(ref c) if is_cmd && c.as_str() == "z" => {
                         {
                             let mut buf = self.buffer.borrow_mut();
-                            if is_shift { buf.redo(); } else { buf.undo(); }
+                            if is_shift {
+                                buf.redo();
+                            } else {
+                                buf.undo();
+                            }
                             ensure_vis!(buf);
                         }
                         self.emit_change(shell);
@@ -994,6 +1070,16 @@ impl<'a, Message> CodeEditor<'a, Message> {
     }
 }
 
+impl<'a, Message, Renderer> From<CodeEditor<'a, Message>> for Element<'a, Message, Theme, Renderer>
+where
+    Renderer: renderer::Renderer + text::Renderer<Font = iced::Font> + 'a,
+    Message: 'a,
+{
+    fn from(editor: CodeEditor<'a, Message>) -> Self {
+        Self::new(editor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::committed_text_input;
@@ -1011,15 +1097,5 @@ mod tests {
         assert_eq!(committed_text_input(Some("\n"), false), None);
         assert_eq!(committed_text_input(Some("\u{7f}"), false), None);
         assert_eq!(committed_text_input(None, false), None);
-    }
-}
-
-impl<'a, Message, Renderer> From<CodeEditor<'a, Message>> for Element<'a, Message, Theme, Renderer>
-where
-    Renderer: renderer::Renderer + text::Renderer<Font = iced::Font> + 'a,
-    Message: 'a,
-{
-    fn from(editor: CodeEditor<'a, Message>) -> Self {
-        Self::new(editor)
     }
 }

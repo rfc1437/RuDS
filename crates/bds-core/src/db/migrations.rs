@@ -2,14 +2,16 @@ use rusqlite::Connection;
 
 mod embedded {
     use refinery::embed_migrations;
-    embed_migrations!("migrations");
+    embed_migrations!("./migrations");
 }
 
 /// Run all embedded migrations against the given connection using refinery.
 ///
 /// Creates the full bDS schema as specified in specs/schema.allium.
 /// Uses refinery for proper versioned migration tracking.
-pub fn run_migrations(conn: &mut Connection) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn run_migrations(
+    conn: &mut Connection,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     embedded::migrations::runner().run(conn)?;
     Ok(())
 }
@@ -63,19 +65,34 @@ mod tests {
     fn all_tables_exist() {
         let conn = setup();
         let expected = [
-            "projects", "posts", "post_translations", "media", "media_translations",
-            "tags", "templates", "scripts", "post_links", "post_media", "settings",
-            "generated_file_hashes", "chat_conversations", "chat_messages", "ai_providers",
-            "ai_models", "ai_model_modalities", "ai_catalog_meta", "embedding_keys",
-            "dismissed_duplicate_pairs", "import_definitions", "db_notifications",
+            "projects",
+            "posts",
+            "post_translations",
+            "media",
+            "media_translations",
+            "tags",
+            "templates",
+            "scripts",
+            "post_links",
+            "post_media",
+            "settings",
+            "generated_file_hashes",
+            "chat_conversations",
+            "chat_messages",
+            "ai_providers",
+            "ai_models",
+            "ai_model_modalities",
+            "ai_catalog_meta",
+            "embedding_keys",
+            "dismissed_duplicate_pairs",
+            "import_definitions",
+            "db_notifications",
         ];
         for table in &expected {
             let count: i64 = conn
-                .query_row(
-                    &format!("SELECT COUNT(*) FROM {table}"),
-                    [],
-                    |row| row.get(0),
-                )
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap_or_else(|e| panic!("table '{table}' should be queryable: {e}"));
             assert_eq!(count, 0, "table '{table}' should start empty");
         }
@@ -89,11 +106,9 @@ mod tests {
     fn refinery_schema_history_exists() {
         let conn = setup();
         let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM refinery_schema_history",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM refinery_schema_history", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(count >= 1, "refinery should track at least one migration");
     }
@@ -124,7 +139,10 @@ mod tests {
              VALUES ('post2', 'p1', 'Other', 'hello', 'draft', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate post slug within same project must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate post slug within same project must be rejected"
+        );
     }
 
     #[test]
@@ -156,7 +174,10 @@ mod tests {
              VALUES ('t2', 'p1', 'post1', 'de', 'Hallo2', 'draft', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate (translation_for, language) must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate (translation_for, language) must be rejected"
+        );
     }
 
     #[test]
@@ -174,7 +195,10 @@ mod tests {
              VALUES ('mt2', 'p1', 'm1', 'de', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate (media translation_for, language) must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate (media translation_for, language) must be rejected"
+        );
     }
 
     #[test]
@@ -185,13 +209,17 @@ mod tests {
             "INSERT INTO tags (id, project_id, name, created_at, updated_at)
              VALUES ('t1', 'p1', 'rust', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         let err = conn.execute(
             "INSERT INTO tags (id, project_id, name, created_at, updated_at)
              VALUES ('t2', 'p1', 'rust', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate tag name within same project must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate tag name within same project must be rejected"
+        );
     }
 
     #[test]
@@ -208,7 +236,10 @@ mod tests {
              VALUES ('tpl2', 'p1', 'default', 'Default2', 'list', 'templates/default.liquid', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate template slug within same project must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate template slug within same project must be rejected"
+        );
     }
 
     #[test]
@@ -225,7 +256,10 @@ mod tests {
              VALUES ('s2', 'p1', 'gallery', 'Gallery2', 'utility', 'scripts/gallery.lua', 1000, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate script slug within same project must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate script slug within same project must be rejected"
+        );
     }
 
     #[test]
@@ -238,13 +272,17 @@ mod tests {
             "INSERT INTO post_media (id, project_id, post_id, media_id, sort_order, created_at)
              VALUES ('pm1', 'p1', 'post1', 'm1', 0, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         let err = conn.execute(
             "INSERT INTO post_media (id, project_id, post_id, media_id, sort_order, created_at)
              VALUES ('pm2', 'p1', 'post1', 'm1', 1, 1000)",
             [],
         );
-        assert!(err.is_err(), "duplicate (post_id, media_id) must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate (post_id, media_id) must be rejected"
+        );
     }
 
     #[test]
@@ -261,7 +299,10 @@ mod tests {
              VALUES ('p1', 'index.html', 'def456', 2000)",
             [],
         );
-        assert!(err.is_err(), "duplicate (project_id, relative_path) must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate (project_id, relative_path) must be rejected"
+        );
     }
 
     #[test]
@@ -278,7 +319,10 @@ mod tests {
              VALUES ('d2', 'p1', 'a', 'b', 2000)",
             [],
         );
-        assert!(err.is_err(), "duplicate (project_id, post_id_a, post_id_b) must be rejected");
+        assert!(
+            err.is_err(),
+            "duplicate (project_id, post_id_a, post_id_b) must be rejected"
+        );
     }
 
     // ================================================================
@@ -323,19 +367,25 @@ mod tests {
             [],
         ).unwrap();
 
-        let title: String = conn.query_row(
-            "SELECT title FROM posts WHERE id = 'post1'", [], |r| r.get(0)
-        ).unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM posts WHERE id = 'post1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(title, "Hello");
 
-        let tags: String = conn.query_row(
-            "SELECT tags FROM posts WHERE id = 'post1'", [], |r| r.get(0)
-        ).unwrap();
+        let tags: String = conn
+            .query_row("SELECT tags FROM posts WHERE id = 'post1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(tags, "[\"rust\",\"blog\"]");
 
-        let content: Option<String> = conn.query_row(
-            "SELECT content FROM posts WHERE id = 'post1'", [], |r| r.get(0)
-        ).unwrap();
+        let content: Option<String> = conn
+            .query_row("SELECT content FROM posts WHERE id = 'post1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(content.as_deref(), Some("Body text"));
     }
 
@@ -349,10 +399,15 @@ mod tests {
             [],
         ).unwrap();
 
-        let content: Option<String> = conn.query_row(
-            "SELECT content FROM posts WHERE id = 'post1'", [], |r| r.get(0)
-        ).unwrap();
-        assert!(content.is_none(), "published post content must be null in DB");
+        let content: Option<String> = conn
+            .query_row("SELECT content FROM posts WHERE id = 'post1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            content.is_none(),
+            "published post content must be null in DB"
+        );
     }
 
     #[test]
@@ -366,9 +421,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let (lang, title): (String, String) = conn.query_row(
-            "SELECT language, title FROM post_translations WHERE id = 't1'", [], |r| Ok((r.get(0)?, r.get(1)?))
-        ).unwrap();
+        let (lang, title): (String, String) = conn
+            .query_row(
+                "SELECT language, title FROM post_translations WHERE id = 't1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(lang, "de");
         assert_eq!(title, "Hallo");
     }
@@ -386,10 +445,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let (orig, w, h, tags): (String, Option<i32>, Option<i32>, String) = conn.query_row(
-            "SELECT original_name, width, height, tags FROM media WHERE id = 'm1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        ).unwrap();
+        let (orig, w, h, tags): (String, Option<i32>, Option<i32>, String) = conn
+            .query_row(
+                "SELECT original_name, width, height, tags FROM media WHERE id = 'm1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
         assert_eq!(orig, "photo.jpg");
         assert_eq!(w, Some(1920));
         assert_eq!(h, Some(1080));
@@ -407,10 +469,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let (title, alt): (Option<String>, Option<String>) = conn.query_row(
-            "SELECT title, alt FROM media_translations WHERE id = 'mt1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?))
-        ).unwrap();
+        let (title, alt): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT title, alt FROM media_translations WHERE id = 'mt1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(title.as_deref(), Some("Sonnenuntergang"));
         assert_eq!(alt.as_deref(), Some("Ein Sonnenuntergang"));
     }
@@ -425,10 +490,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let (name, color, tpl): (String, Option<String>, Option<String>) = conn.query_row(
-            "SELECT name, color, post_template_slug FROM tags WHERE id = 't1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        ).unwrap();
+        let (name, color, tpl): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT name, color, post_template_slug FROM tags WHERE id = 't1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(name, "rust");
         assert_eq!(color.as_deref(), Some("#ff5733"));
         assert_eq!(tpl.as_deref(), Some("tag-tpl"));
@@ -444,14 +512,20 @@ mod tests {
             [],
         ).unwrap();
 
-        let (kind, ver, status, content): (String, i32, String, Option<String>) = conn.query_row(
-            "SELECT kind, version, status, content FROM templates WHERE id = 'tpl1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        ).unwrap();
+        let (kind, ver, status, content): (String, i32, String, Option<String>) = conn
+            .query_row(
+                "SELECT kind, version, status, content FROM templates WHERE id = 'tpl1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
         assert_eq!(kind, "post");
         assert_eq!(ver, 3);
         assert_eq!(status, "published");
-        assert!(content.is_none(), "published template content should be null");
+        assert!(
+            content.is_none(),
+            "published template content should be null"
+        );
     }
 
     #[test]
@@ -464,10 +538,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let (kind, ep, content): (String, String, Option<String>) = conn.query_row(
-            "SELECT kind, entrypoint, content FROM scripts WHERE id = 's1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        ).unwrap();
+        let (kind, ep, content): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT kind, entrypoint, content FROM scripts WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(kind, "macro");
         assert_eq!(ep, "render");
         assert_eq!(content.as_deref(), Some("return html"));
@@ -483,12 +560,16 @@ mod tests {
             "INSERT INTO post_links (id, source_post_id, target_post_id, link_text, created_at)
              VALUES ('pl1', 'post1', 'post2', 'see also', 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let (src, tgt, txt): (String, String, Option<String>) = conn.query_row(
-            "SELECT source_post_id, target_post_id, link_text FROM post_links WHERE id = 'pl1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        ).unwrap();
+        let (src, tgt, txt): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT source_post_id, target_post_id, link_text FROM post_links WHERE id = 'pl1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(src, "post1");
         assert_eq!(tgt, "post2");
         assert_eq!(txt.as_deref(), Some("see also"));
@@ -504,11 +585,16 @@ mod tests {
             "INSERT INTO post_media (id, project_id, post_id, media_id, sort_order, created_at)
              VALUES ('pm1', 'p1', 'post1', 'm1', 5, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let order: i32 = conn.query_row(
-            "SELECT sort_order FROM post_media WHERE id = 'pm1'", [], |r| r.get(0)
-        ).unwrap();
+        let order: i32 = conn
+            .query_row(
+                "SELECT sort_order FROM post_media WHERE id = 'pm1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(order, 5);
     }
 
@@ -518,11 +604,14 @@ mod tests {
         conn.execute(
             "INSERT INTO settings (key, value, updated_at) VALUES ('theme', 'dark', 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let val: String = conn.query_row(
-            "SELECT value FROM settings WHERE key = 'theme'", [], |r| r.get(0)
-        ).unwrap();
+        let val: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'theme'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(val, "dark");
     }
 
@@ -550,11 +639,16 @@ mod tests {
             "INSERT INTO chat_conversations (id, title, model, created_at, updated_at)
              VALUES ('c1', 'Test Chat', 'gpt-4', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let title: String = conn.query_row(
-            "SELECT title FROM chat_conversations WHERE id = 'c1'", [], |r| r.get(0)
-        ).unwrap();
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM chat_conversations WHERE id = 'c1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(title, "Test Chat");
     }
 
@@ -565,19 +659,49 @@ mod tests {
             "INSERT INTO chat_conversations (id, title, created_at, updated_at)
              VALUES ('c1', 'Chat', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO chat_messages (conversation_id, role, content, created_at)
              VALUES ('c1', 'user', 'Hello', 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let (role, content): (String, Option<String>) = conn.query_row(
-            "SELECT role, content FROM chat_messages WHERE conversation_id = 'c1'", [],
-            |r| Ok((r.get(0)?, r.get(1)?))
-        ).unwrap();
+        let (role, content): (String, Option<String>) = conn
+            .query_row(
+                "SELECT role, content FROM chat_messages WHERE conversation_id = 'c1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(role, "user");
         assert_eq!(content.as_deref(), Some("Hello"));
+    }
+
+    #[test]
+    fn ai_schema_uses_current_usage_and_package_columns() {
+        let conn = setup();
+        let columns = |table: &str| {
+            let mut statement = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+
+        let message_columns = columns("chat_messages");
+        assert!(message_columns.contains(&"cache_read_tokens".to_string()));
+        assert!(message_columns.contains(&"cache_write_tokens".to_string()));
+        let provider_columns = columns("ai_providers");
+        assert!(provider_columns.contains(&"package_ref".to_string()));
+        assert!(!provider_columns.contains(&"npm".to_string()));
+        let model_columns = columns("ai_models");
+        assert!(model_columns.contains(&"provider_package_ref".to_string()));
+        assert!(!model_columns.contains(&"provider_npm".to_string()));
     }
 
     #[test]
@@ -586,7 +710,8 @@ mod tests {
         conn.execute(
             "INSERT INTO ai_providers (id, name, updated_at) VALUES ('openai', 'OpenAI', 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO ai_models (provider, model_id, name, context_window, max_input_tokens, max_output_tokens, updated_at)
              VALUES ('openai', 'gpt-4', 'GPT-4', 128000, 128000, 4096, 1000)",
@@ -596,12 +721,16 @@ mod tests {
             "INSERT INTO ai_model_modalities (provider, model_id, direction, modality)
              VALUES ('openai', 'gpt-4', 'input', 'text')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let name: String = conn.query_row(
-            "SELECT name FROM ai_models WHERE provider = 'openai' AND model_id = 'gpt-4'",
-            [], |r| r.get(0)
-        ).unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM ai_models WHERE provider = 'openai' AND model_id = 'gpt-4'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(name, "GPT-4");
 
         let modality: String = conn.query_row(
@@ -617,11 +746,16 @@ mod tests {
         conn.execute(
             "INSERT INTO ai_catalog_meta (key, value) VALUES ('etag', 'abc')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let val: String = conn.query_row(
-            "SELECT value FROM ai_catalog_meta WHERE key = 'etag'", [], |r| r.get(0)
-        ).unwrap();
+        let val: String = conn
+            .query_row(
+                "SELECT value FROM ai_catalog_meta WHERE key = 'etag'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(val, "abc");
     }
 
@@ -632,11 +766,16 @@ mod tests {
             "INSERT INTO embedding_keys (label, post_id, project_id, content_hash, vector)
              VALUES (1, 'post1', 'p1', 'hash1', 'base64vector')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let vec: String = conn.query_row(
-            "SELECT vector FROM embedding_keys WHERE label = 1", [], |r| r.get(0)
-        ).unwrap();
+        let vec: String = conn
+            .query_row(
+                "SELECT vector FROM embedding_keys WHERE label = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(vec, "base64vector");
     }
 
@@ -650,10 +789,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM dismissed_duplicate_pairs WHERE project_id = 'p1'",
-            [], |r| r.get(0)
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM dismissed_duplicate_pairs WHERE project_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -667,9 +809,13 @@ mod tests {
             [],
         ).unwrap();
 
-        let name: String = conn.query_row(
-            "SELECT name FROM import_definitions WHERE id = 'i1'", [], |r| r.get(0)
-        ).unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM import_definitions WHERE id = 'i1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(name, "WP Import");
     }
 
@@ -680,7 +826,8 @@ mod tests {
             "INSERT INTO db_notifications (entity_type, entity_id, action, from_cli, created_at)
              VALUES ('post', 'post1', 'created', 1, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let (etype, action, cli): (String, String, i64) = conn.query_row(
             "SELECT entity_type, action, from_cli FROM db_notifications WHERE entity_id = 'post1'",
@@ -715,7 +862,8 @@ mod tests {
             "INSERT INTO posts (id, project_id, title, slug, created_at, updated_at)
              VALUES ('post1', 'p1', 'Test', 'test', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let (status, file_path, tags, cats, dnt): (String, String, String, String, i64) = conn.query_row(
             "SELECT status, file_path, tags, categories, do_not_translate FROM posts WHERE id = 'post1'",
@@ -736,12 +884,16 @@ mod tests {
             "INSERT INTO templates (id, project_id, slug, title, file_path, created_at, updated_at)
              VALUES ('tpl1', 'p1', 'test', 'Test', 'templates/test.liquid', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let (kind, enabled, version, status): (String, i64, i64, String) = conn.query_row(
-            "SELECT kind, enabled, version, status FROM templates WHERE id = 'tpl1'",
-            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        ).unwrap();
+        let (kind, enabled, version, status): (String, i64, i64, String) = conn
+            .query_row(
+                "SELECT kind, enabled, version, status FROM templates WHERE id = 'tpl1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
         assert_eq!(kind, "post", "default kind must be 'post'");
         assert_eq!(enabled, 1, "default enabled must be 1");
         assert_eq!(version, 1, "default version must be 1");
@@ -756,12 +908,16 @@ mod tests {
             "INSERT INTO scripts (id, project_id, slug, title, file_path, created_at, updated_at)
              VALUES ('s1', 'p1', 'test', 'Test', 'scripts/test.lua', 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let (kind, ep, enabled, version, status): (String, String, i64, i64, String) = conn.query_row(
-            "SELECT kind, entrypoint, enabled, version, status FROM scripts WHERE id = 's1'",
-            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        ).unwrap();
+        let (kind, ep, enabled, version, status): (String, String, i64, i64, String) = conn
+            .query_row(
+                "SELECT kind, entrypoint, enabled, version, status FROM scripts WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
         assert_eq!(kind, "utility", "default kind must be 'utility'");
         assert_eq!(ep, "render", "default entrypoint must be 'render'");
         assert_eq!(enabled, 1, "default enabled must be 1");

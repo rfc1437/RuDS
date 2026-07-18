@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, svg, text, tooltip, Column, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Column, Space, button, column, container, svg, text, tooltip};
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -40,10 +40,7 @@ const TOP_ACTIVITIES: &[SidebarView] = &[
 ];
 
 /// Bottom group of activity items.
-const BOTTOM_ACTIVITIES: &[SidebarView] = &[
-    SidebarView::Git,
-    SidebarView::Settings,
-];
+const BOTTOM_ACTIVITIES: &[SidebarView] = &[SidebarView::Git, SidebarView::Settings];
 
 // ---------------------------------------------------------------------------
 // Styles — matching bDS ActivityBar.css
@@ -108,7 +105,7 @@ pub fn view(
         let icon = svg(handle)
             .width(Length::Fixed(24.0))
             .height(Length::Fixed(24.0))
-            .opacity(if is_active { 1.0 } else { 0.4 });
+            .opacity(if is_active { 1.0_f32 } else { 0.4_f32 });
 
         let btn = button(
             container(icon)
@@ -119,7 +116,11 @@ pub fn view(
         .height(Length::Fixed(48.0))
         .padding(0)
         .on_press(Message::SetActiveView(view))
-        .style(if is_active { active_button_style } else { inactive_button_style });
+        .style(if is_active {
+            active_button_style
+        } else {
+            inactive_button_style
+        });
 
         // Active indicator: 2px left border (like bDS/VS Code)
         let btn_row: Element<'static, Message> = if is_active {
@@ -138,33 +139,29 @@ pub fn view(
 
         // Wrap in tooltip per layout.allium ActivityButton.label_key
         let tip_text = t(locale, view.i18n_key());
-        tooltip(btn_row, text(tip_text).size(12).shaping(Shaping::Advanced), tooltip::Position::Right)
-            .gap(4)
-            .into()
+        tooltip(
+            btn_row,
+            text(tip_text).size(12).shaping(Shaping::Advanced),
+            tooltip::Position::Right,
+        )
+        .gap(4)
+        .into()
     };
 
-    let top_items: Vec<Element<'static, Message>> = TOP_ACTIVITIES
-        .iter()
-        .map(|v| make_btn(*v))
-        .collect();
+    let top_items: Vec<Element<'static, Message>> =
+        TOP_ACTIVITIES.iter().map(|v| make_btn(*v)).collect();
 
-    let bottom_items: Vec<Element<'static, Message>> = BOTTOM_ACTIVITIES
-        .iter()
-        .map(|v| make_btn(*v))
-        .collect();
+    let bottom_items: Vec<Element<'static, Message>> =
+        BOTTOM_ACTIVITIES.iter().map(|v| make_btn(*v)).collect();
 
     let top = Column::with_children(top_items).spacing(0);
     let bottom = Column::with_children(bottom_items).spacing(0);
 
     container(
-        column![
-            top,
-            Space::with_height(Length::Fill),
-            bottom,
-        ]
-        .width(Length::Fixed(50.0))
-        .height(Length::Fill)
-        .padding([4, 0]),
+        column![top, Space::with_height(Length::Fill), bottom,]
+            .width(Length::Fixed(50.0))
+            .height(Length::Fill)
+            .padding([4, 0]),
     )
     .width(Length::Fixed(50.0))
     .height(Length::Fill)

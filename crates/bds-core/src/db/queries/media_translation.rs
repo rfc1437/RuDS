@@ -1,12 +1,9 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{media_translation_from_row, MEDIA_TRANSLATION_COLUMNS};
+use crate::db::from_row::{MEDIA_TRANSLATION_COLUMNS, media_translation_from_row};
 use crate::model::MediaTranslation;
 
-pub fn insert_media_translation(
-    conn: &Connection,
-    t: &MediaTranslation,
-) -> rusqlite::Result<()> {
+pub fn insert_media_translation(conn: &Connection, t: &MediaTranslation) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO media_translations (
             id, project_id, translation_for, language, title, alt, caption,
@@ -54,10 +51,7 @@ pub fn list_media_translations_by_media(
     rows.collect()
 }
 
-pub fn upsert_media_translation(
-    conn: &Connection,
-    t: &MediaTranslation,
-) -> rusqlite::Result<()> {
+pub fn upsert_media_translation(conn: &Connection, t: &MediaTranslation) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO media_translations (
             id, project_id, translation_for, language, title, alt, caption,
@@ -98,9 +92,9 @@ pub fn delete_media_translation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::queries::media::{insert_media, make_test_media};
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();
@@ -164,8 +158,6 @@ mod tests {
         let db = setup();
         insert_media_translation(db.conn(), &make_mt("mt1", "de")).unwrap();
         delete_media_translation(db.conn(), "m1", "de").unwrap();
-        assert!(
-            get_media_translation_by_media_and_language(db.conn(), "m1", "de").is_err()
-        );
+        assert!(get_media_translation_by_media_and_language(db.conn(), "m1", "de").is_err());
     }
 }

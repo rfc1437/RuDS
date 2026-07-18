@@ -13,7 +13,9 @@ use crate::db::queries::script as qs;
 use crate::db::queries::template as qtpl;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Media, Post, PostStatus, PostTranslation, Script, Template};
-use crate::util::frontmatter::{read_post_file, read_script_file, read_template_file, read_translation_file};
+use crate::util::frontmatter::{
+    read_post_file, read_script_file, read_template_file, read_translation_file,
+};
 use crate::util::sidecar::read_sidecar;
 
 /// A single field difference.
@@ -139,7 +141,11 @@ fn opt_to_str(opt: &Option<String>) -> String {
 }
 
 fn bool_to_str(b: bool) -> String {
-    if b { "true".to_string() } else { "false".to_string() }
+    if b {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
 }
 
 fn tags_to_json(tags: &[String]) -> String {
@@ -172,7 +178,7 @@ fn diff_post(data_dir: &Path, post: &Post) -> EngineResult<Option<EntityDiff>> {
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (fm, _body) = read_post_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, _body) = read_post_file(&content).map_err(EngineError::Parse)?;
 
     let mut fields = Vec::new();
 
@@ -257,21 +263,23 @@ fn diff_post(data_dir: &Path, post: &Post) -> EngineResult<Option<EntityDiff>> {
     }
 }
 
-fn diff_translation(
-    data_dir: &Path,
-    t: &PostTranslation,
-) -> EngineResult<Option<EntityDiff>> {
+fn diff_translation(data_dir: &Path, t: &PostTranslation) -> EngineResult<Option<EntityDiff>> {
     let abs_path = data_dir.join(&t.file_path);
     if !abs_path.exists() {
         return Ok(None);
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (fm, _body) = read_translation_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, _body) = read_translation_file(&content).map_err(EngineError::Parse)?;
 
     let mut fields = Vec::new();
 
-    compare_field(&mut fields, "translationFor", &t.translation_for, &fm.translation_for);
+    compare_field(
+        &mut fields,
+        "translationFor",
+        &t.translation_for,
+        &fm.translation_for,
+    );
     compare_field(&mut fields, "language", &t.language, &fm.language);
     compare_field(&mut fields, "title", &t.title, &fm.title);
     compare_field(
@@ -285,7 +293,7 @@ fn diff_translation(
         Ok(None)
     } else {
         Ok(Some(EntityDiff {
-            entity_type: "translation".to_string(),
+            entity_type: "post_translation".to_string(),
             entity_id: t.id.clone(),
             file_path: t.file_path.clone(),
             fields,
@@ -300,7 +308,7 @@ fn diff_media(data_dir: &Path, media: &Media) -> EngineResult<Option<EntityDiff>
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let sc = read_sidecar(&content).map_err(|e| EngineError::Parse(e))?;
+    let sc = read_sidecar(&content).map_err(EngineError::Parse)?;
 
     let mut fields = Vec::new();
 
@@ -360,7 +368,7 @@ fn diff_template(data_dir: &Path, tpl: &Template) -> EngineResult<Option<EntityD
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (fm, _body) = read_template_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, _body) = read_template_file(&content).map_err(EngineError::Parse)?;
 
     let mut fields = Vec::new();
 
@@ -403,7 +411,7 @@ fn diff_script(data_dir: &Path, script: &Script) -> EngineResult<Option<EntityDi
     }
 
     let content = fs::read_to_string(&abs_path)?;
-    let (fm, _body) = read_script_file(&content).map_err(|e| EngineError::Parse(e))?;
+    let (fm, _body) = read_script_file(&content).map_err(EngineError::Parse)?;
 
     let mut fields = Vec::new();
 
@@ -414,7 +422,12 @@ fn diff_script(data_dir: &Path, script: &Script) -> EngineResult<Option<EntityDi
         script_kind_to_str(&script.kind),
         &fm.kind,
     );
-    compare_field(&mut fields, "entrypoint", &script.entrypoint, &fm.entrypoint);
+    compare_field(
+        &mut fields,
+        "entrypoint",
+        &script.entrypoint,
+        &fm.entrypoint,
+    );
     compare_field(
         &mut fields,
         "enabled",
@@ -494,10 +507,7 @@ fn detect_orphan_files(
         if !dir_path.exists() {
             continue;
         }
-        for entry in WalkDir::new(&dir_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(&dir_path).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if !path.is_file() {
                 continue;
@@ -600,20 +610,20 @@ fn detect_orphan_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::db::fts::ensure_fts_tables;
     use crate::db::queries::media::insert_media;
     use crate::db::queries::post::insert_post;
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::queries::script::insert_script;
     use crate::db::queries::template::insert_template;
-    use crate::db::Database;
     use crate::engine::post::{create_post, publish_post};
     use crate::model::{
         Media, Post, PostStatus, Script, ScriptKind, ScriptStatus, Template, TemplateKind,
         TemplateStatus,
     };
     use crate::util::frontmatter::{
-        write_script_file, write_template_file, ScriptFrontmatter, TemplateFrontmatter,
+        ScriptFrontmatter, TemplateFrontmatter, write_script_file, write_template_file,
     };
     use crate::util::sidecar::MediaSidecar;
     use tempfile::TempDir;
@@ -658,11 +668,7 @@ mod tests {
         let non_time_diffs: Vec<_> = report
             .diffs
             .iter()
-            .filter(|d| {
-                d.fields
-                    .iter()
-                    .any(|f| f.field_name != "updatedAt")
-            })
+            .filter(|d| d.fields.iter().any(|f| f.field_name != "updatedAt"))
             .collect();
         assert!(
             non_time_diffs.is_empty(),
@@ -786,7 +792,11 @@ mod tests {
         // Create a .md file in posts/ that is not in the DB
         let posts_dir = dir.path().join("posts/2024/01");
         fs::create_dir_all(&posts_dir).unwrap();
-        fs::write(posts_dir.join("orphan.md"), "---\ntitle: Orphan\n---\nBody\n").unwrap();
+        fs::write(
+            posts_dir.join("orphan.md"),
+            "---\ntitle: Orphan\n---\nBody\n",
+        )
+        .unwrap();
 
         let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
 
@@ -801,7 +811,9 @@ mod tests {
             "expected at least one orphan file"
         );
         assert!(
-            orphan_files.iter().any(|o| o.file_path.contains("orphan.md")),
+            orphan_files
+                .iter()
+                .any(|o| o.file_path.contains("orphan.md")),
             "expected orphan.md in orphans, got: {orphan_files:?}"
         );
     }

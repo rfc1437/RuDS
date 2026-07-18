@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -125,11 +125,11 @@ fn truncate_media_title(title: &str) -> String {
 fn post_type_icon(categories: &[String]) -> &'static str {
     for cat in categories {
         match cat.to_lowercase().as_str() {
-            "picture" => return "\u{1F4F7}",       // 📷 camera
-            "article" => return "\u{1F5D2}",        // 🗒 notepad
+            "picture" => return "\u{1F4F7}",            // 📷 camera
+            "article" => return "\u{1F5D2}",            // 🗒 notepad
             "aside" | "blogmark" => return "\u{1F517}", // 🔗 link
-            "video" => return "\u{1F3AC}",          // 🎬 film
-            "podcast" => return "\u{1F4AC}",        // 💬 speech bubble
+            "video" => return "\u{1F3AC}",              // 🎬 film
+            "podcast" => return "\u{1F4AC}",            // 💬 speech bubble
             _ => {}
         }
     }
@@ -269,9 +269,18 @@ fn clear_filters_style(_theme: &Theme, status: button::Status) -> button::Style 
 /// Month name abbreviation for calendar display.
 fn month_abbr(month: u32) -> &'static str {
     match month {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
         _ => "???",
     }
 }
@@ -300,10 +309,12 @@ fn calendar_widget(
         let label = format!("{} ({})", cy.year, total);
         let year_val = cy.year;
         let on_year_clone = on_year.clone();
-        let style_fn = if year_selected { calendar_selected_style } else { calendar_style };
-        let year_btn = button(
-            text(label).size(11).shaping(Shaping::Advanced)
-        )
+        let style_fn = if year_selected {
+            calendar_selected_style
+        } else {
+            calendar_style
+        };
+        let year_btn = button(text(label).size(11).shaping(Shaping::Advanced))
             .on_press(if year_selected {
                 on_year_clone(None)
             } else {
@@ -320,10 +331,12 @@ fn calendar_widget(
                 let label = format!("  {} ({})", month_abbr(cm.month), cm.count);
                 let month_val = cm.month;
                 let on_month_clone = on_month.clone();
-                let style_fn = if month_selected { calendar_selected_style } else { calendar_style };
-                let month_btn = button(
-                    text(label).size(10).shaping(Shaping::Advanced)
-                )
+                let style_fn = if month_selected {
+                    calendar_selected_style
+                } else {
+                    calendar_style
+                };
+                let month_btn = button(text(label).size(10).shaping(Shaping::Advanced))
                     .on_press(if month_selected {
                         on_month_clone(None)
                     } else {
@@ -362,10 +375,12 @@ fn chip_selector(
         let is_selected = selected.contains(tag);
         let tag_clone = tag.clone();
         let on_toggle_clone = on_toggle.clone();
-        let style_fn = if is_selected { chip_selected_style } else { chip_style };
-        let chip = button(
-            text(tag.clone()).size(10).shaping(Shaping::Advanced)
-        )
+        let style_fn = if is_selected {
+            chip_selected_style
+        } else {
+            chip_style
+        };
+        let chip = button(text(tag.clone()).size(10).shaping(Shaping::Advanced))
             .on_press(on_toggle_clone(tag_clone))
             .padding([2, 6])
             .style(style_fn);
@@ -377,9 +392,7 @@ fn chip_selector(
         while !collected.is_empty() {
             let chunk_size = 3.min(collected.len());
             let chunk: Vec<Element<'static, Message>> = collected.drain(..chunk_size).collect();
-            items.push(
-                iced::widget::Row::with_children(chunk).spacing(4).into()
-            );
+            items.push(iced::widget::Row::with_children(chunk).spacing(4).into());
         }
     }
 
@@ -408,7 +421,11 @@ fn single_select_chip_selector(
         .iter()
         .map(|(value, display)| {
             let is_selected = selected == Some(value.as_str());
-            let style_fn = if is_selected { chip_selected_style } else { chip_style };
+            let style_fn = if is_selected {
+                chip_selected_style
+            } else {
+                chip_style
+            };
             let value = value.clone();
             let on_toggle = on_toggle.clone();
             button(text(display.clone()).size(10).shaping(Shaping::Advanced))
@@ -473,8 +490,8 @@ fn post_filter_panel(
             &filter.calendar_years,
             filter.calendar.selected_year,
             filter.calendar.selected_month,
-            |y| Message::SetPostCalendarYear(y),
-            |m| Message::SetPostCalendarMonth(m),
+            Message::SetPostCalendarYear,
+            Message::SetPostCalendarMonth,
             locale,
         ));
         sections.push(Space::with_height(4.0).into());
@@ -486,7 +503,7 @@ fn post_filter_panel(
             "sidebar.filter.tags",
             &filter.available_tags,
             &filter.tag_filter,
-            |tag| Message::TogglePostTagFilter(tag),
+            Message::TogglePostTagFilter,
             locale,
         ));
         sections.push(Space::with_height(4.0).into());
@@ -498,7 +515,7 @@ fn post_filter_panel(
             "sidebar.filter.categories",
             &filter.available_categories,
             &filter.category_filter,
-            |cat| Message::TogglePostCategoryFilter(cat),
+            Message::TogglePostCategoryFilter,
             locale,
         ));
         sections.push(Space::with_height(4.0).into());
@@ -537,23 +554,22 @@ fn post_filter_panel(
             button(
                 text(t(locale, "sidebar.filter.clearAll"))
                     .size(10)
-                    .shaping(Shaping::Advanced)
+                    .shaping(Shaping::Advanced),
             )
-                .on_press(Message::ClearPostFilters)
-                .padding([2, 4])
-                .style(clear_filters_style)
-                .into()
+            .on_press(Message::ClearPostFilters)
+            .padding([2, 4])
+            .style(clear_filters_style)
+            .into(),
         );
     }
 
-    iced::widget::Column::with_children(sections).spacing(2).into()
+    iced::widget::Column::with_children(sections)
+        .spacing(2)
+        .into()
 }
 
 /// Build the filter panel for Media view.
-fn media_filter_panel(
-    filter: &MediaFilter,
-    locale: UiLocale,
-) -> Element<'static, Message> {
+fn media_filter_panel(filter: &MediaFilter, locale: UiLocale) -> Element<'static, Message> {
     let mut sections: Vec<Element<'static, Message>> = Vec::new();
 
     if !filter.calendar_years.is_empty() {
@@ -561,8 +577,8 @@ fn media_filter_panel(
             &filter.calendar_years,
             filter.calendar.selected_year,
             filter.calendar.selected_month,
-            |y| Message::SetMediaCalendarYear(y),
-            |m| Message::SetMediaCalendarMonth(m),
+            Message::SetMediaCalendarYear,
+            Message::SetMediaCalendarMonth,
             locale,
         ));
         sections.push(Space::with_height(4.0).into());
@@ -573,7 +589,7 @@ fn media_filter_panel(
             "sidebar.filter.tags",
             &filter.available_tags,
             &filter.tag_filter,
-            |tag| Message::ToggleMediaTagFilter(tag),
+            Message::ToggleMediaTagFilter,
             locale,
         ));
         sections.push(Space::with_height(4.0).into());
@@ -584,18 +600,24 @@ fn media_filter_panel(
             button(
                 text(t(locale, "sidebar.filter.clearAll"))
                     .size(10)
-                    .shaping(Shaping::Advanced)
+                    .shaping(Shaping::Advanced),
             )
-                .on_press(Message::ClearMediaFilters)
-                .padding([2, 4])
-                .style(clear_filters_style)
-                .into()
+            .on_press(Message::ClearMediaFilters)
+            .padding([2, 4])
+            .style(clear_filters_style)
+            .into(),
         );
     }
 
-    iced::widget::Column::with_children(sections).spacing(2).into()
+    iced::widget::Column::with_children(sections)
+        .spacing(2)
+        .into()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are independent sidebar state slices"
+)]
 pub fn view(
     sidebar_view: SidebarView,
     posts: &[Post],
@@ -633,10 +655,14 @@ pub fn view(
         row![
             header,
             Space::with_width(Length::Fill),
-            button(text(t(locale, "common.add")).size(11).shaping(Shaping::Advanced))
-                .on_press(action)
-                .padding([3, 8])
-                .style(filter_button_style),
+            button(
+                text(t(locale, "common.add"))
+                    .size(11)
+                    .shaping(Shaping::Advanced)
+            )
+            .on_press(action)
+            .padding([3, 8])
+            .style(filter_button_style),
         ]
         .align_y(iced::Alignment::Center)
         .into()
@@ -652,10 +678,7 @@ pub fn view(
             let mut top_items: Vec<Element<'static, Message>> = Vec::new();
 
             // Search input + filter toggle row
-            let search = text_input(
-                &t(locale, "sidebar.filter.search"),
-                &filter.search_query,
-            )
+            let search = text_input(&t(locale, "sidebar.filter.search"), &filter.search_query)
                 .on_input(Message::PostSearchChanged)
                 .size(11)
                 .padding([4, 6])
@@ -673,16 +696,12 @@ pub fn view(
             } else {
                 "\u{25BC}" // ▼ toggle icon
             };
-            let filter_toggle = button(
-                text(toggle_label).size(11).shaping(Shaping::Advanced)
-            )
+            let filter_toggle = button(text(toggle_label).size(11).shaping(Shaping::Advanced))
                 .on_press(Message::TogglePostFilterPanel)
                 .padding([4, 6])
                 .style(toggle_style);
 
-            top_items.push(
-                row![search, filter_toggle].spacing(4).into()
-            );
+            top_items.push(row![search, filter_toggle].spacing(4).into());
 
             // Filter panel (collapsible)
             if filter.filter_panel_visible {
@@ -703,7 +722,7 @@ pub fn view(
                         .size(12)
                         .shaping(Shaping::Advanced)
                         .color(muted)
-                        .into()
+                        .into(),
                 );
             } else {
                 let section_header = |label: &str| -> Element<'static, Message> {
@@ -724,7 +743,8 @@ pub fn view(
                     };
                     let date = format_post_date(p.created_at);
                     let prefix_chars: usize = 5;
-                    let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX
+                    let text_px = width
+                        - SIDEBAR_TEXT_OVERHEAD_PX
                         - (prefix_chars as f32 * AVG_CHAR_WIDTH_PX);
                     let display_title = truncate_to_fit(&p.title, text_px);
                     let label = format!("{icon} {status_indicator} {display_title}");
@@ -736,27 +756,34 @@ pub fn view(
                         .size(10)
                         .shaping(Shaping::Advanced)
                         .color(Color::from_rgb(0.50, 0.50, 0.55));
-                    let style_fn = if is_active { item_active_style } else { item_style };
+                    let style_fn = if is_active {
+                        item_active_style
+                    } else {
+                        item_style
+                    };
                     button(
                         container(column![label_text, date_text].spacing(1))
                             .width(Length::Fill)
-                            .clip(true)
+                            .clip(true),
                     )
-                        .on_press(Message::OpenTab(Tab {
-                            id: p.id.clone(),
-                            tab_type: TabType::Post,
-                            title: p.title.clone(),
-                            is_transient: true,
-                            is_dirty: false,
-                        }))
-                        .padding([3, 6])
-                        .width(Length::Fill)
-                        .style(style_fn)
-                        .into()
+                    .on_press(Message::OpenTab(Tab {
+                        id: p.id.clone(),
+                        tab_type: TabType::Post,
+                        title: p.title.clone(),
+                        is_transient: true,
+                        is_dirty: false,
+                    }))
+                    .padding([3, 6])
+                    .width(Length::Fill)
+                    .style(style_fn)
+                    .into()
                 };
 
                 // Draft section
-                let drafts: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Draft).collect();
+                let drafts: Vec<&Post> = posts
+                    .iter()
+                    .filter(|p| p.status == bds_core::model::PostStatus::Draft)
+                    .collect();
                 if !drafts.is_empty() {
                     top_items.push(section_header(&t(locale, "sidebar.drafts")));
                     for p in &drafts {
@@ -766,7 +793,10 @@ pub fn view(
                 }
 
                 // Published section
-                let published: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Published).collect();
+                let published: Vec<&Post> = posts
+                    .iter()
+                    .filter(|p| p.status == bds_core::model::PostStatus::Published)
+                    .collect();
                 if !published.is_empty() {
                     top_items.push(section_header(&t(locale, "sidebar.published")));
                     for p in &published {
@@ -776,7 +806,10 @@ pub fn view(
                 }
 
                 // Archived section
-                let archived: Vec<&Post> = posts.iter().filter(|p| p.status == bds_core::model::PostStatus::Archived).collect();
+                let archived: Vec<&Post> = posts
+                    .iter()
+                    .filter(|p| p.status == bds_core::model::PostStatus::Archived)
+                    .collect();
                 if !archived.is_empty() {
                     top_items.push(section_header(&t(locale, "sidebar.archived")));
                     for p in &archived {
@@ -791,13 +824,13 @@ pub fn view(
                         button(
                             text(t(locale, "sidebar.loadMore"))
                                 .size(11)
-                                .shaping(Shaping::Advanced)
+                                .shaping(Shaping::Advanced),
                         )
-                            .on_press(Message::LoadMorePosts)
-                            .padding([4, 8])
-                            .width(Length::Fill)
-                            .style(filter_button_style)
-                            .into()
+                        .on_press(Message::LoadMorePosts)
+                        .padding([4, 8])
+                        .width(Length::Fill)
+                        .style(filter_button_style)
+                        .into(),
                     );
                 }
             }
@@ -811,10 +844,7 @@ pub fn view(
             let mut top_items: Vec<Element<'static, Message>> = Vec::new();
 
             // Search input + filter toggle row
-            let search = text_input(
-                &t(locale, "sidebar.filter.search"),
-                &filter.search_query,
-            )
+            let search = text_input(&t(locale, "sidebar.filter.search"), &filter.search_query)
                 .on_input(Message::MediaSearchChanged)
                 .size(11)
                 .padding([4, 6])
@@ -832,16 +862,12 @@ pub fn view(
             } else {
                 "\u{25BC}" // ▼ toggle icon
             };
-            let filter_toggle = button(
-                text(toggle_label).size(11).shaping(Shaping::Advanced)
-            )
+            let filter_toggle = button(text(toggle_label).size(11).shaping(Shaping::Advanced))
                 .on_press(Message::ToggleMediaFilterPanel)
                 .padding([4, 6])
                 .style(toggle_style);
 
-            top_items.push(
-                row![search, filter_toggle].spacing(4).into()
-            );
+            top_items.push(row![search, filter_toggle].spacing(4).into());
 
             // Filter panel (collapsible)
             if filter.filter_panel_visible {
@@ -861,7 +887,7 @@ pub fn view(
                         .size(12)
                         .shaping(Shaping::Advanced)
                         .color(muted)
-                        .into()
+                        .into(),
                 );
             } else {
                 let items: Vec<Element<'static, Message>> = media
@@ -874,36 +900,38 @@ pub fn view(
                         };
                         let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 48.0;
                         let display_name = truncate_to_fit(&display_name, text_px);
-                        let style_fn = if is_active { item_active_style } else { item_style };
+                        let style_fn = if is_active {
+                            item_active_style
+                        } else {
+                            item_style
+                        };
 
                         // Left: 40x40 thumbnail or file icon (pre-resolved, no filesystem I/O)
-                        let thumb_path = media_thumbs
-                            .get(&m.id)
-                            .and_then(|opt| opt.as_ref());
+                        let thumb_path = media_thumbs.get(&m.id).and_then(|opt| opt.as_ref());
                         let left: Element<'static, Message> = if let Some(path) = thumb_path {
                             container(
                                 image(path.to_string_lossy().to_string())
                                     .width(Length::Fixed(40.0))
                                     .height(Length::Fixed(40.0))
-                                    .content_fit(iced::ContentFit::Cover)
+                                    .content_fit(iced::ContentFit::Cover),
                             )
-                                .width(Length::Fixed(40.0))
-                                .height(Length::Fixed(40.0))
-                                .clip(true)
-                                .style(thumbnail_container_style)
-                                .into()
+                            .width(Length::Fixed(40.0))
+                            .height(Length::Fixed(40.0))
+                            .clip(true)
+                            .style(thumbnail_container_style)
+                            .into()
                         } else {
                             container(
                                 text("\u{1F4C4}") // 📄 generic file icon
                                     .size(20)
-                                    .shaping(Shaping::Advanced)
+                                    .shaping(Shaping::Advanced),
                             )
-                                .width(Length::Fixed(40.0))
-                                .height(Length::Fixed(40.0))
-                                .align_x(iced::alignment::Horizontal::Center)
-                                .align_y(iced::alignment::Vertical::Center)
-                                .style(thumbnail_container_style)
-                                .into()
+                            .width(Length::Fixed(40.0))
+                            .height(Length::Fixed(40.0))
+                            .align_x(iced::alignment::Horizontal::Center)
+                            .align_y(iced::alignment::Vertical::Center)
+                            .style(thumbnail_container_style)
+                            .into()
                         };
 
                         // Right column: name + metadata line
@@ -924,13 +952,11 @@ pub fn view(
 
                         let right = column![name_text, meta_text].spacing(1);
 
-                        let content = row![left, right].spacing(8).align_y(iced::Alignment::Center);
+                        let content = row![left, right]
+                            .spacing(8)
+                            .align_y(iced::Alignment::Center);
 
-                        button(
-                            container(content)
-                                .width(Length::Fill)
-                                .clip(true)
-                        )
+                        button(container(content).width(Length::Fill).clip(true))
                             .on_press(Message::OpenTab(Tab {
                                 id: m.id.clone(),
                                 tab_type: TabType::Media,
@@ -953,13 +979,13 @@ pub fn view(
                         button(
                             text(t(locale, "sidebar.loadMore"))
                                 .size(11)
-                                .shaping(Shaping::Advanced)
+                                .shaping(Shaping::Advanced),
                         )
-                            .on_press(Message::LoadMoreMedia)
-                            .padding([4, 8])
-                            .width(Length::Fill)
-                            .style(filter_button_style)
-                            .into()
+                        .on_press(Message::LoadMoreMedia)
+                        .padding([4, 8])
+                        .width(Length::Fill)
+                        .style(filter_button_style)
+                        .into(),
                     );
                 }
             }
@@ -986,12 +1012,12 @@ pub fn view(
                             .size(12)
                             .shaping(Shaping::Advanced)
                             .wrapping(iced::widget::text::Wrapping::None);
-                        let style_fn = if is_active { item_active_style } else { item_style };
-                        button(
-                            container(label_text)
-                                .width(Length::Fill)
-                                .clip(true)
-                        )
+                        let style_fn = if is_active {
+                            item_active_style
+                        } else {
+                            item_style
+                        };
+                        button(container(label_text).width(Length::Fill).clip(true))
                             .on_press(Message::OpenTab(Tab {
                                 id: s.id.clone(),
                                 tab_type: TabType::Scripts,
@@ -1005,9 +1031,7 @@ pub fn view(
                             .into()
                     })
                     .collect();
-                iced::widget::Column::with_children(items)
-                    .spacing(1)
-                    .into()
+                iced::widget::Column::with_children(items).spacing(1).into()
             }
         }
         SidebarView::Templates => {
@@ -1028,12 +1052,12 @@ pub fn view(
                             .size(12)
                             .shaping(Shaping::Advanced)
                             .wrapping(iced::widget::text::Wrapping::None);
-                        let style_fn = if is_active { item_active_style } else { item_style };
-                        button(
-                            container(label_text)
-                                .width(Length::Fill)
-                                .clip(true)
-                        )
+                        let style_fn = if is_active {
+                            item_active_style
+                        } else {
+                            item_style
+                        };
+                        button(container(label_text).width(Length::Fill).clip(true))
                             .on_press(Message::OpenTab(Tab {
                                 id: tmpl.id.clone(),
                                 tab_type: TabType::Templates,
@@ -1047,9 +1071,7 @@ pub fn view(
                             .into()
                     })
                     .collect();
-                iced::widget::Column::with_children(items)
-                    .spacing(1)
-                    .into()
+                iced::widget::Column::with_children(items).spacing(1).into()
             }
         }
         SidebarView::Settings => {
@@ -1070,9 +1092,7 @@ pub fn view(
                 .iter()
                 .map(|(key, section_opt)| {
                     let label = t(locale, key);
-                    let label_text = text(label)
-                        .size(12)
-                        .shaping(Shaping::Advanced);
+                    let label_text = text(label).size(12).shaping(Shaping::Advanced);
                     let msg = if let Some(section) = section_opt {
                         Message::OpenSettingsSection(section.clone())
                     } else {
@@ -1084,10 +1104,7 @@ pub fn view(
                             is_dirty: false,
                         })
                     };
-                    button(
-                        container(label_text)
-                            .width(Length::Fill)
-                    )
+                    button(container(label_text).width(Length::Fill))
                         .on_press(msg)
                         .padding([3, 6])
                         .width(Length::Fill)
@@ -1095,28 +1112,17 @@ pub fn view(
                         .into()
                 })
                 .collect();
-            iced::widget::Column::with_children(items)
-                .spacing(1)
-                .into()
+            iced::widget::Column::with_children(items).spacing(1).into()
         }
         SidebarView::Tags => {
             // Per sidebar_views.allium TagsNav: 3 fixed-order sections
-            let sections = [
-                "tags.nav.cloud",
-                "tags.nav.manage",
-                "tags.nav.merge",
-            ];
+            let sections = ["tags.nav.cloud", "tags.nav.manage", "tags.nav.merge"];
             let items: Vec<Element<'static, Message>> = sections
                 .iter()
                 .map(|key| {
                     let label = t(locale, key);
-                    let label_text = text(label)
-                        .size(12)
-                        .shaping(Shaping::Advanced);
-                    button(
-                        container(label_text)
-                            .width(Length::Fill)
-                    )
+                    let label_text = text(label).size(12).shaping(Shaping::Advanced);
+                    button(container(label_text).width(Length::Fill))
                         .on_press(Message::OpenTab(Tab {
                             id: "tags".to_string(),
                             tab_type: TabType::Tags,
@@ -1130,26 +1136,18 @@ pub fn view(
                         .into()
                 })
                 .collect();
-            iced::widget::Column::with_children(items)
-                .spacing(1)
-                .into()
+            iced::widget::Column::with_children(items).spacing(1).into()
         }
-        _ => {
-            text(t(locale, placeholder_key(sidebar_view)))
-                .size(12)
-                .shaping(Shaping::Advanced)
-                .color(muted)
-                .into()
-        }
+        _ => text(t(locale, placeholder_key(sidebar_view)))
+            .size(12)
+            .shaping(Shaping::Advanced)
+            .color(muted)
+            .into(),
     };
 
-    let content = column![
-        header_row,
-        Space::with_height(8.0),
-        body,
-    ]
-    .spacing(4)
-    .padding(12);
+    let content = column![header_row, Space::with_height(8.0), body,]
+        .spacing(4)
+        .padding(12);
 
     // layout.allium: sidebar width is resizable, passed as parameter
     container(scrollable(content))

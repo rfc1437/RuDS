@@ -1,12 +1,11 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{post_status_to_str, post_translation_from_row, POST_TRANSLATION_COLUMNS};
+use crate::db::from_row::{
+    POST_TRANSLATION_COLUMNS, post_status_to_str, post_translation_from_row,
+};
 use crate::model::PostTranslation;
 
-pub fn insert_post_translation(
-    conn: &Connection,
-    t: &PostTranslation,
-) -> rusqlite::Result<()> {
+pub fn insert_post_translation(conn: &Connection, t: &PostTranslation) -> rusqlite::Result<()> {
     if !t.status.is_valid_for_translation() {
         return Err(rusqlite::Error::InvalidParameterName(
             "translation status must be draft or published".to_string(),
@@ -74,10 +73,7 @@ pub fn list_post_translations_by_post(
     rows.collect()
 }
 
-pub fn update_post_translation(
-    conn: &Connection,
-    t: &PostTranslation,
-) -> rusqlite::Result<()> {
+pub fn update_post_translation(conn: &Connection, t: &PostTranslation) -> rusqlite::Result<()> {
     if !t.status.is_valid_for_translation() {
         return Err(rusqlite::Error::InvalidParameterName(
             "translation status must be draft or published".to_string(),
@@ -104,10 +100,7 @@ pub fn update_post_translation(
 }
 
 pub fn delete_post_translation(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM post_translations WHERE id = ?1",
-        params![id],
-    )?;
+    conn.execute("DELETE FROM post_translations WHERE id = ?1", params![id])?;
     Ok(())
 }
 
@@ -125,8 +118,8 @@ pub fn delete_all_translations_for_post(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::model::PostStatus;
 
     fn setup() -> Database {

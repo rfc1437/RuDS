@@ -162,11 +162,9 @@ pub const POST_TRANSLATION_COLUMNS: &str = "\
     id, project_id, translation_for, language, title, excerpt, content, \
     status, file_path, checksum, created_at, updated_at, published_at";
 
-pub const POST_LINK_COLUMNS: &str =
-    "id, source_post_id, target_post_id, link_text, created_at";
+pub const POST_LINK_COLUMNS: &str = "id, source_post_id, target_post_id, link_text, created_at";
 
-pub const POST_MEDIA_COLUMNS: &str =
-    "id, project_id, post_id, media_id, sort_order, created_at";
+pub const POST_MEDIA_COLUMNS: &str = "id, project_id, post_id, media_id, sort_order, created_at";
 
 pub const MEDIA_COLUMNS: &str = "\
     id, project_id, filename, original_name, mime_type, size, \
@@ -189,8 +187,7 @@ pub const SCRIPT_COLUMNS: &str = "\
 
 pub const SETTING_COLUMNS: &str = "key, value, updated_at";
 
-pub const GENERATED_FILE_HASH_COLUMNS: &str =
-    "project_id, relative_path, content_hash, updated_at";
+pub const GENERATED_FILE_HASH_COLUMNS: &str = "project_id, relative_path, content_hash, updated_at";
 
 pub const DB_NOTIFICATION_COLUMNS: &str =
     "id, entity_type, entity_id, action, from_cli, seen_at, created_at";
@@ -418,7 +415,10 @@ mod tests {
     #[test]
     fn parse_post_status_valid() {
         assert_eq!(parse_post_status("draft").unwrap(), PostStatus::Draft);
-        assert_eq!(parse_post_status("published").unwrap(), PostStatus::Published);
+        assert_eq!(
+            parse_post_status("published").unwrap(),
+            PostStatus::Published
+        );
         assert_eq!(parse_post_status("archived").unwrap(), PostStatus::Archived);
     }
 
@@ -431,8 +431,14 @@ mod tests {
     fn parse_template_kind_valid() {
         assert_eq!(parse_template_kind("post").unwrap(), TemplateKind::Post);
         assert_eq!(parse_template_kind("list").unwrap(), TemplateKind::List);
-        assert_eq!(parse_template_kind("not_found").unwrap(), TemplateKind::NotFound);
-        assert_eq!(parse_template_kind("partial").unwrap(), TemplateKind::Partial);
+        assert_eq!(
+            parse_template_kind("not_found").unwrap(),
+            TemplateKind::NotFound
+        );
+        assert_eq!(
+            parse_template_kind("partial").unwrap(),
+            TemplateKind::Partial
+        );
     }
 
     #[test]
@@ -442,36 +448,69 @@ mod tests {
 
     #[test]
     fn parse_template_status_valid() {
-        assert_eq!(parse_template_status("draft").unwrap(), TemplateStatus::Draft);
-        assert_eq!(parse_template_status("published").unwrap(), TemplateStatus::Published);
+        assert_eq!(
+            parse_template_status("draft").unwrap(),
+            TemplateStatus::Draft
+        );
+        assert_eq!(
+            parse_template_status("published").unwrap(),
+            TemplateStatus::Published
+        );
     }
 
     #[test]
     fn parse_script_kind_valid() {
         assert_eq!(parse_script_kind("macro").unwrap(), ScriptKind::Macro);
         assert_eq!(parse_script_kind("utility").unwrap(), ScriptKind::Utility);
-        assert_eq!(parse_script_kind("transform").unwrap(), ScriptKind::Transform);
+        assert_eq!(
+            parse_script_kind("transform").unwrap(),
+            ScriptKind::Transform
+        );
     }
 
     #[test]
     fn parse_script_status_valid() {
         assert_eq!(parse_script_status("draft").unwrap(), ScriptStatus::Draft);
-        assert_eq!(parse_script_status("published").unwrap(), ScriptStatus::Published);
+        assert_eq!(
+            parse_script_status("published").unwrap(),
+            ScriptStatus::Published
+        );
     }
 
     #[test]
     fn parse_notification_entity_valid() {
-        assert_eq!(parse_notification_entity("post").unwrap(), NotificationEntity::Post);
-        assert_eq!(parse_notification_entity("media").unwrap(), NotificationEntity::Media);
-        assert_eq!(parse_notification_entity("script").unwrap(), NotificationEntity::Script);
-        assert_eq!(parse_notification_entity("template").unwrap(), NotificationEntity::Template);
+        assert_eq!(
+            parse_notification_entity("post").unwrap(),
+            NotificationEntity::Post
+        );
+        assert_eq!(
+            parse_notification_entity("media").unwrap(),
+            NotificationEntity::Media
+        );
+        assert_eq!(
+            parse_notification_entity("script").unwrap(),
+            NotificationEntity::Script
+        );
+        assert_eq!(
+            parse_notification_entity("template").unwrap(),
+            NotificationEntity::Template
+        );
     }
 
     #[test]
     fn parse_notification_action_valid() {
-        assert_eq!(parse_notification_action("created").unwrap(), NotificationAction::Created);
-        assert_eq!(parse_notification_action("updated").unwrap(), NotificationAction::Updated);
-        assert_eq!(parse_notification_action("deleted").unwrap(), NotificationAction::Deleted);
+        assert_eq!(
+            parse_notification_action("created").unwrap(),
+            NotificationAction::Created
+        );
+        assert_eq!(
+            parse_notification_action("updated").unwrap(),
+            NotificationAction::Updated
+        );
+        assert_eq!(
+            parse_notification_action("deleted").unwrap(),
+            NotificationAction::Deleted
+        );
     }
 
     // ── JSON helpers ─────────────────────────────────────────────────
@@ -504,11 +543,13 @@ mod tests {
              VALUES ('p1', 'Blog', 'blog', 'My blog', '/data', 1, 1000, 2000)",
             [],
         ).unwrap();
-        let p = c.query_row(
-            &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = 'p1'"),
-            [],
-            project_from_row,
-        ).unwrap();
+        let p = c
+            .query_row(
+                &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = 'p1'"),
+                [],
+                project_from_row,
+            )
+            .unwrap();
         assert_eq!(p.id, "p1");
         assert_eq!(p.name, "Blog");
         assert_eq!(p.slug, "blog");
@@ -527,7 +568,8 @@ mod tests {
             "INSERT INTO projects (id, name, slug, is_active, created_at, updated_at)
              VALUES ('p1', 'B', 'b', 0, 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         c.execute(
             "INSERT INTO posts (id, project_id, title, slug, excerpt, content, status, author,
              language, do_not_translate, template_slug, file_path, checksum,
@@ -541,11 +583,13 @@ mod tests {
              1000, 2000, NULL)",
             [],
         ).unwrap();
-        let p = c.query_row(
-            &format!("SELECT {POST_COLUMNS} FROM posts WHERE id = 'x'"),
-            [],
-            post_from_row,
-        ).unwrap();
+        let p = c
+            .query_row(
+                &format!("SELECT {POST_COLUMNS} FROM posts WHERE id = 'x'"),
+                [],
+                post_from_row,
+            )
+            .unwrap();
         assert_eq!(p.id, "x");
         assert_eq!(p.project_id, "p1");
         assert_eq!(p.title, "Hello");
@@ -575,19 +619,23 @@ mod tests {
             "INSERT INTO projects (id, name, slug, is_active, created_at, updated_at)
              VALUES ('p1', 'B', 'b', 0, 1000, 1000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         c.execute(
             "INSERT INTO templates (id, project_id, slug, title, kind, enabled, version,
              file_path, status, content, created_at, updated_at)
              VALUES ('t1', 'p1', 'default', 'Default', 'not_found', 0, 3,
              'templates/default.liquid', 'draft', 'html', 1000, 2000)",
             [],
-        ).unwrap();
-        let t = c.query_row(
-            &format!("SELECT {TEMPLATE_COLUMNS} FROM templates WHERE id = 't1'"),
-            [],
-            template_from_row,
-        ).unwrap();
+        )
+        .unwrap();
+        let t = c
+            .query_row(
+                &format!("SELECT {TEMPLATE_COLUMNS} FROM templates WHERE id = 't1'"),
+                [],
+                template_from_row,
+            )
+            .unwrap();
         assert_eq!(t.kind, TemplateKind::NotFound);
         assert!(!t.enabled);
         assert_eq!(t.version, 3);
@@ -604,11 +652,15 @@ mod tests {
              VALUES ('media', 'm1', 'deleted', 1, 5000, 1000)",
             [],
         ).unwrap();
-        let n = c.query_row(
-            &format!("SELECT {DB_NOTIFICATION_COLUMNS} FROM db_notifications WHERE entity_id = 'm1'"),
-            [],
-            db_notification_from_row,
-        ).unwrap();
+        let n = c
+            .query_row(
+                &format!(
+                    "SELECT {DB_NOTIFICATION_COLUMNS} FROM db_notifications WHERE entity_id = 'm1'"
+                ),
+                [],
+                db_notification_from_row,
+            )
+            .unwrap();
         assert_eq!(n.entity_type, NotificationEntity::Media);
         assert_eq!(n.entity_id, "m1");
         assert_eq!(n.action, NotificationAction::Deleted);

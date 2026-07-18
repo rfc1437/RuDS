@@ -1,4 +1,4 @@
-use bds_core::i18n::{translate, translate_with, UiLocale};
+use bds_core::i18n::{UiLocale, translate, translate_with};
 
 /// Shorthand for translate in view code.
 pub fn t(locale: UiLocale, key: &str) -> String {

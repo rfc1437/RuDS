@@ -107,10 +107,10 @@ mod tests {
 
     use tempfile::TempDir;
 
+    use crate::db::Database;
     use crate::db::queries::media::{insert_media, make_test_media};
     use crate::db::queries::post_media::list_post_media_by_post;
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::db::Database;
     use crate::util::sidecar::read_sidecar;
 
     fn setup() -> (Database, TempDir) {
@@ -182,12 +182,7 @@ mod tests {
         link_media_to_post(db.conn(), dir.path(), "p1", "post1", "m2", 1).unwrap();
 
         // Reverse the order: m2 first, m1 second
-        reorder_post_media(
-            db.conn(),
-            "post1",
-            &["m2".to_string(), "m1".to_string()],
-        )
-        .unwrap();
+        reorder_post_media(db.conn(), "post1", &["m2".to_string(), "m1".to_string()]).unwrap();
 
         let list = list_post_media_by_post(db.conn(), "post1").unwrap();
         assert_eq!(list.len(), 2);

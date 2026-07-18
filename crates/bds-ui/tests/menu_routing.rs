@@ -3,7 +3,7 @@
 //! Validates: all MenuAction variants registered, no collisions,
 //! bidirectional lookup, and i18n keys resolve in every locale.
 
-use bds_core::i18n::{translate, UiLocale};
+use bds_core::i18n::{UiLocale, translate};
 use bds_ui::platform::menu::MenuAction;
 
 #[test]

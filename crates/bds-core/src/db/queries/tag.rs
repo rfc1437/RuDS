@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{tag_from_row, TAG_COLUMNS};
+use crate::db::from_row::{TAG_COLUMNS, tag_from_row};
 use crate::model::Tag;
 
 pub fn insert_tag(conn: &Connection, tag: &Tag) -> rusqlite::Result<()> {
@@ -73,8 +73,8 @@ pub fn delete_tag(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();

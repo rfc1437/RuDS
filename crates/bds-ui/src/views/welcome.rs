@@ -1,5 +1,5 @@
-use iced::widget::{column, container, text};
 use iced::widget::text::Shaping;
+use iced::widget::{column, container, text};
 use iced::{Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -37,11 +37,12 @@ pub fn view(locale: UiLocale) -> Element<'static, Message> {
 }
 
 pub fn tab_placeholder(
+    locale: UiLocale,
     title: impl Into<String>,
     subtitle: Option<String>,
 ) -> Element<'static, Message> {
     let title = title.into();
-    let subtitle = subtitle.unwrap_or_else(|| "This tab is routed correctly, but its content surface is not implemented yet.".to_string());
+    let subtitle = subtitle.unwrap_or_else(|| t(locale, "common.tabNotImplemented"));
 
     container(
         column![

@@ -1,9 +1,9 @@
-/// Sidebar filter state per sidebar_views.allium PostsView / MediaView.
-///
-/// Per ui_data_flow.allium SidebarFilterIsolation:
-/// "Sidebar search/filter state is local to the sidebar component.
-///  Filtering never affects: active tab, editor content, selectedPostId.
-///  Only the visible list of items changes."
+//! Sidebar filter state per sidebar_views.allium PostsView / MediaView.
+//!
+//! Per ui_data_flow.allium SidebarFilterIsolation:
+//! "Sidebar search/filter state is local to the sidebar component.
+//!  Filtering never affects: active tab, editor content, selectedPostId.
+//!  Only the visible list of items changes."
 
 /// Calendar year/month archive filter.
 /// Per sidebar_views.allium CalendarFilter.

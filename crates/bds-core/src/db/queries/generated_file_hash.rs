@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::db::from_row::{generated_file_hash_from_row, GENERATED_FILE_HASH_COLUMNS};
+use crate::db::from_row::{GENERATED_FILE_HASH_COLUMNS, generated_file_hash_from_row};
 use crate::model::GeneratedFileHash;
 
 pub fn get_generated_file_hash(
@@ -17,13 +17,21 @@ pub fn get_generated_file_hash(
     )
 }
 
-pub fn upsert_generated_file_hash(conn: &Connection, hash: &GeneratedFileHash) -> rusqlite::Result<()> {
+pub fn upsert_generated_file_hash(
+    conn: &Connection,
+    hash: &GeneratedFileHash,
+) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO generated_file_hashes (project_id, relative_path, content_hash, updated_at)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(project_id, relative_path)
          DO UPDATE SET content_hash = excluded.content_hash, updated_at = excluded.updated_at",
-        params![hash.project_id, hash.relative_path, hash.content_hash, hash.updated_at],
+        params![
+            hash.project_id,
+            hash.relative_path,
+            hash.content_hash,
+            hash.updated_at
+        ],
     )?;
     Ok(())
 }
@@ -54,8 +62,8 @@ pub fn list_generated_file_hashes_by_project(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::Database;
+    use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
         let mut db = Database::open_in_memory().unwrap();

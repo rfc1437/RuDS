@@ -20,19 +20,41 @@ pub struct SiteValidationState {
 
 pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a, Message> {
     let run_button = if state.is_running {
-        button(text(t(locale, "siteValidation.running")).size(13).shaping(Shaping::Advanced))
+        button(
+            text(t(locale, "siteValidation.running"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
     } else {
-        button(text(t(locale, "siteValidation.run")).size(13).shaping(Shaping::Advanced))
-            .on_press(Message::RunSiteValidation)
+        button(
+            text(t(locale, "siteValidation.run"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::RunSiteValidation)
     };
-    let has_issues = !state.missing_files.is_empty() || !state.extra_files.is_empty() || !state.stale_files.is_empty();
+    let has_issues = !state.missing_files.is_empty()
+        || !state.extra_files.is_empty()
+        || !state.stale_files.is_empty();
     let apply_button = if state.is_applying {
-        button(text(t(locale, "siteValidation.applying")).size(13).shaping(Shaping::Advanced))
+        button(
+            text(t(locale, "siteValidation.applying"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
     } else if !state.is_running && state.error_message.is_none() && has_issues {
-        button(text(t(locale, "siteValidation.apply")).size(13).shaping(Shaping::Advanced))
-            .on_press(Message::ApplySiteValidation)
+        button(
+            text(t(locale, "siteValidation.apply"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
+        .on_press(Message::ApplySiteValidation)
     } else {
-        button(text(t(locale, "siteValidation.apply")).size(13).shaping(Shaping::Advanced))
+        button(
+            text(t(locale, "siteValidation.apply"))
+                .size(13)
+                .shaping(Shaping::Advanced),
+        )
     };
 
     let mut content = column![
@@ -57,26 +79,41 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
         ));
     } else if !state.has_run {
         content = content.push(help_text(t(locale, "siteValidation.idle")));
-    } else if state.missing_files.is_empty() && state.extra_files.is_empty() && state.stale_files.is_empty() {
+    } else if state.missing_files.is_empty()
+        && state.extra_files.is_empty()
+        && state.stale_files.is_empty()
+    {
         content = content.push(help_text(t(locale, "siteValidation.clean")));
     } else {
         if !state.missing_files.is_empty() {
             content = content.push(section(
-                format!("{} ({})", t(locale, "siteValidation.missing"), state.missing_files.len()),
+                format!(
+                    "{} ({})",
+                    t(locale, "siteValidation.missing"),
+                    state.missing_files.len()
+                ),
                 &state.missing_files,
                 Color::from_rgb(0.70, 0.25, 0.25),
             ));
         }
         if !state.extra_files.is_empty() {
             content = content.push(section(
-                format!("{} ({})", t(locale, "siteValidation.extra"), state.extra_files.len()),
+                format!(
+                    "{} ({})",
+                    t(locale, "siteValidation.extra"),
+                    state.extra_files.len()
+                ),
                 &state.extra_files,
                 Color::from_rgb(0.68, 0.48, 0.18),
             ));
         }
         if !state.stale_files.is_empty() {
             content = content.push(section(
-                format!("{} ({})", t(locale, "siteValidation.stale"), state.stale_files.len()),
+                format!(
+                    "{} ({})",
+                    t(locale, "siteValidation.stale"),
+                    state.stale_files.len()
+                ),
                 &state.stale_files,
                 Color::from_rgb(0.62, 0.32, 0.18),
             ));

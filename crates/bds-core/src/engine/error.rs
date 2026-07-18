@@ -72,10 +72,26 @@ mod tests {
 
     #[test]
     fn display_variants() {
-        assert!(EngineError::Parse("bad yaml".into()).to_string().contains("parse error"));
-        assert!(EngineError::NotFound("post 123".into()).to_string().contains("not found"));
-        assert!(EngineError::Conflict("slug taken".into()).to_string().contains("conflict"));
-        assert!(EngineError::Validation("title empty".into()).to_string().contains("validation"));
+        assert!(
+            EngineError::Parse("bad yaml".into())
+                .to_string()
+                .contains("parse error")
+        );
+        assert!(
+            EngineError::NotFound("post 123".into())
+                .to_string()
+                .contains("not found")
+        );
+        assert!(
+            EngineError::Conflict("slug taken".into())
+                .to_string()
+                .contains("conflict")
+        );
+        assert!(
+            EngineError::Validation("title empty".into())
+                .to_string()
+                .contains("validation")
+        );
     }
 
     #[test]

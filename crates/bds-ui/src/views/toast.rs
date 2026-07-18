@@ -1,5 +1,5 @@
-use iced::widget::{button, container, row, text, Space};
 use iced::widget::text::Shaping;
+use iced::widget::{Space, button, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
 use crate::app::Message;
@@ -95,7 +95,12 @@ pub fn view(toasts: &[Toast]) -> Option<Element<'static, Message>> {
             )
             .width(Length::Fill)
             .align_x(Alignment::Center)
-            .padding(Padding { top: 8.0, right: 0.0, bottom: 0.0, left: 0.0 }),
+            .padding(Padding {
+                top: 8.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            }),
         )
         .width(Length::Fill)
         .height(Length::Shrink)

@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
 use iced::widget::text::Shaping;
+use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
 use iced::{Alignment, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -209,7 +209,13 @@ impl Default for SettingsViewState {
             public_url: String::new(),
             main_language: "en".to_string(),
             blog_languages: vec!["en".to_string()],
-            available_languages: vec!["en".to_string(), "de".to_string(), "fr".to_string(), "it".to_string(), "es".to_string()],
+            available_languages: vec![
+                "en".to_string(),
+                "de".to_string(),
+                "fr".to_string(),
+                "it".to_string(),
+                "es".to_string(),
+            ],
             default_author: String::new(),
             max_posts_per_page: "50".to_string(),
             blogmark_category: String::new(),
@@ -255,11 +261,11 @@ impl SettingsViewState {
 
     fn ordered_sections(&self) -> Vec<SettingsSection> {
         let mut sections = SettingsSection::all().to_vec();
-        if let Some(active) = &self.active_section {
-            if let Some(index) = sections.iter().position(|section| section == active) {
-                let focused = sections.remove(index);
-                sections.insert(0, focused);
-            }
+        if let Some(active) = &self.active_section
+            && let Some(index) = sections.iter().position(|section| section == active)
+        {
+            let focused = sections.remove(index);
+            sections.insert(0, focused);
         }
         sections
     }
@@ -337,10 +343,7 @@ pub enum SettingsMsg {
 }
 
 /// Render the settings view.
-pub fn view<'a>(
-    state: &'a SettingsViewState,
-    locale: UiLocale,
-) -> Element<'a, Message> {
+pub fn view<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
     let search = text_input(&t(locale, "sidebar.filter.search"), &state.search_query)
         .on_input(|s| Message::Settings(SettingsMsg::SearchChanged(s)))
         .size(14);
@@ -388,38 +391,6 @@ pub fn view<'a>(
         .into()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{SettingsSection, SettingsViewState};
-
-    #[test]
-    fn focus_section_collapses_other_sections_and_clears_search() {
-        let mut state = SettingsViewState {
-            search_query: "publish".to_string(),
-            ..SettingsViewState::default()
-        };
-
-        state.focus_section(SettingsSection::Publishing);
-
-        assert_eq!(state.active_section, Some(SettingsSection::Publishing));
-        assert!(state.search_query.is_empty());
-        assert!(!state.collapsed.contains(&SettingsSection::Publishing));
-        assert!(state.collapsed.contains(&SettingsSection::Project));
-        assert!(state.collapsed.contains(&SettingsSection::MCP));
-    }
-
-    #[test]
-    fn focused_section_is_rendered_first() {
-        let mut state = SettingsViewState::default();
-        state.focus_section(SettingsSection::Technology);
-
-        let ordered = state.ordered_sections();
-
-        assert_eq!(ordered.first(), Some(&SettingsSection::Technology));
-        assert_eq!(ordered.len(), SettingsSection::all().len());
-    }
-}
-
 fn render_section<'a>(
     state: &'a SettingsViewState,
     section: &SettingsSection,
@@ -436,7 +407,9 @@ fn render_section<'a>(
         .spacing(8)
         .align_y(Alignment::Center),
     )
-    .on_press(Message::Settings(SettingsMsg::ToggleSection(section.clone())))
+    .on_press(Message::Settings(SettingsMsg::ToggleSection(
+        section.clone(),
+    )))
     .padding([6, 8])
     .width(Length::Fill)
     .style(|_: &Theme, _| button::Style::default());
@@ -456,9 +429,7 @@ fn render_section<'a>(
         SettingsSection::MCP => section_mcp(locale),
     };
 
-    column![header, content]
-        .spacing(4)
-        .into()
+    column![header, content].spacing(4).into()
 }
 
 fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
@@ -469,7 +440,10 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         |s| Message::Settings(SettingsMsg::ProjectNameChanged(s)),
     );
     let desc = column![
-        text(t(locale, "settings.projectDescription")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
+        text(t(locale, "settings.projectDescription"))
+            .size(12)
+            .color(inputs::LABEL_COLOR)
+            .shaping(Shaping::Advanced),
         text_editor(&state.project_description)
             .on_action(|a| Message::Settings(SettingsMsg::ProjectDescriptionAction(a)))
             .height(Length::Fixed(80.0))
@@ -477,12 +451,9 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
     ]
     .spacing(4);
     let data_path = row![
-        inputs::labeled_input(
-            &t(locale, "settings.dataPath"),
-            "",
-            &state.data_path,
-            |s| Message::Settings(SettingsMsg::DataPathChanged(s)),
-        ),
+        inputs::labeled_input(&t(locale, "settings.dataPath"), "", &state.data_path, |s| {
+            Message::Settings(SettingsMsg::DataPathChanged(s))
+        },),
         button(text(t(locale, "settings.browse")).size(12))
             .on_press(Message::Settings(SettingsMsg::BrowseDataPath))
             .padding([6, 12]),
@@ -512,14 +483,24 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
             .iter()
             .map(|language| {
                 let label = if *language == state.main_language {
-                    format!("{} ({})", language, t(locale, "settings.mainLanguageRequired"))
+                    format!(
+                        "{} ({})",
+                        language,
+                        t(locale, "settings.mainLanguageRequired")
+                    )
                 } else {
                     language.clone()
                 };
-                inputs::labeled_checkbox(&label, state.blog_languages.iter().any(|item| item == language), {
-                    let language = language.clone();
-                    move |_| Message::Settings(SettingsMsg::ToggleBlogLanguage(language.clone()))
-                })
+                inputs::labeled_checkbox(
+                    &label,
+                    state.blog_languages.iter().any(|item| item == language),
+                    {
+                        let language = language.clone();
+                        move |_| {
+                            Message::Settings(SettingsMsg::ToggleBlogLanguage(language.clone()))
+                        }
+                    },
+                )
             })
             .collect::<Vec<_>>(),
     )
@@ -539,7 +520,10 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
     let blogmark_category = inputs::labeled_select(
         &t(locale, "settings.blogmarkCategory"),
         &state.categories,
-        state.categories.iter().find(|row| row.name == state.blogmark_category),
+        state
+            .categories
+            .iter()
+            .find(|row| row.name == state.blogmark_category),
         |row| Message::Settings(SettingsMsg::BlogmarkCategoryChanged(row.name)),
     );
     let save = button(text(t(locale, "common.save")).size(13))
@@ -566,9 +550,9 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         blogmark_category,
         save,
     ]
-        .spacing(8)
-        .padding([0, 16])
-        .into()
+    .spacing(8)
+    .padding([0, 16])
+    .into()
 }
 
 fn section_editor<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
@@ -616,79 +600,112 @@ fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         .chain(state.template_options.iter().cloned())
         .collect::<Vec<_>>();
 
-    let category_rows = state.categories.iter().fold(column![].spacing(8), |column, category| {
-        let title = inputs::labeled_input(
-            &tw(locale, "settings.categoryTitle", &[("category", &category.name)]),
-            "",
-            &category.title,
-            {
-                let name = category.name.clone();
-                move |value| Message::Settings(SettingsMsg::CategoryTitleChanged(name.clone(), value))
-            },
-        );
-        let post_template = inputs::labeled_select(
-            &t(locale, "settings.categoryPostTemplate"),
-            &template_options,
-            Some(&category.post_template_slug),
-            {
-                let name = category.name.clone();
-                move |value| Message::Settings(SettingsMsg::CategoryPostTemplateChanged(name.clone(), value))
-            },
-        );
-        let list_template = inputs::labeled_select(
-            &t(locale, "settings.categoryListTemplate"),
-            &template_options,
-            Some(&category.list_template_slug),
-            {
-                let name = category.name.clone();
-                move |value| Message::Settings(SettingsMsg::CategoryListTemplateChanged(name.clone(), value))
-            },
-        );
-        let toggles = column![
-            inputs::labeled_checkbox(
-                &t(locale, "settings.categoryRenderInLists"),
-                category.render_in_lists,
+    let category_rows = state
+        .categories
+        .iter()
+        .fold(column![].spacing(8), |column, category| {
+            let title = inputs::labeled_input(
+                &tw(
+                    locale,
+                    "settings.categoryTitle",
+                    &[("category", &category.name)],
+                ),
+                "",
+                &category.title,
                 {
                     let name = category.name.clone();
-                    move |value| Message::Settings(SettingsMsg::CategoryRenderInListsChanged(name.clone(), value))
+                    move |value| {
+                        Message::Settings(SettingsMsg::CategoryTitleChanged(name.clone(), value))
+                    }
                 },
-            ),
-            inputs::labeled_checkbox(
-                &t(locale, "settings.categoryShowTitles"),
-                category.show_title,
+            );
+            let post_template = inputs::labeled_select(
+                &t(locale, "settings.categoryPostTemplate"),
+                &template_options,
+                Some(&category.post_template_slug),
                 {
                     let name = category.name.clone();
-                    move |value| Message::Settings(SettingsMsg::CategoryShowTitleChanged(name.clone(), value))
+                    move |value| {
+                        Message::Settings(SettingsMsg::CategoryPostTemplateChanged(
+                            name.clone(),
+                            value,
+                        ))
+                    }
                 },
-            ),
-        ]
-        .spacing(6);
-        let actions = row![
-            button(text(t(locale, "common.save")).size(13))
-                .on_press(Message::Settings(SettingsMsg::SaveCategory(category.name.clone())))
-                .style(inputs::primary_button)
-                .padding([6, 12]),
-            button(text(t(locale, "common.remove")).size(13))
-                .on_press_maybe((!category.is_protected).then(|| Message::Settings(SettingsMsg::RemoveCategory(category.name.clone()))))
-                .style(inputs::danger_button)
-                .padding([6, 12]),
-        ]
-        .spacing(8);
+            );
+            let list_template = inputs::labeled_select(
+                &t(locale, "settings.categoryListTemplate"),
+                &template_options,
+                Some(&category.list_template_slug),
+                {
+                    let name = category.name.clone();
+                    move |value| {
+                        Message::Settings(SettingsMsg::CategoryListTemplateChanged(
+                            name.clone(),
+                            value,
+                        ))
+                    }
+                },
+            );
+            let toggles = column![
+                inputs::labeled_checkbox(
+                    &t(locale, "settings.categoryRenderInLists"),
+                    category.render_in_lists,
+                    {
+                        let name = category.name.clone();
+                        move |value| {
+                            Message::Settings(SettingsMsg::CategoryRenderInListsChanged(
+                                name.clone(),
+                                value,
+                            ))
+                        }
+                    },
+                ),
+                inputs::labeled_checkbox(
+                    &t(locale, "settings.categoryShowTitles"),
+                    category.show_title,
+                    {
+                        let name = category.name.clone();
+                        move |value| {
+                            Message::Settings(SettingsMsg::CategoryShowTitleChanged(
+                                name.clone(),
+                                value,
+                            ))
+                        }
+                    },
+                ),
+            ]
+            .spacing(6);
+            let actions = row![
+                button(text(t(locale, "common.save")).size(13))
+                    .on_press(Message::Settings(SettingsMsg::SaveCategory(
+                        category.name.clone()
+                    )))
+                    .style(inputs::primary_button)
+                    .padding([6, 12]),
+                button(text(t(locale, "common.remove")).size(13))
+                    .on_press_maybe((!category.is_protected).then(|| Message::Settings(
+                        SettingsMsg::RemoveCategory(category.name.clone())
+                    )))
+                    .style(inputs::danger_button)
+                    .padding([6, 12]),
+            ]
+            .spacing(8);
 
-        column.push(
-            container(
-                column![
-                    text(category.name.clone()).size(15).color(Color::WHITE),
-                    title,
-                    toggles,
-                    row![post_template, list_template].spacing(12),
-                    actions,
-                ]
-                .spacing(8),
+            column.push(
+                container(
+                    column![
+                        text(category.name.clone()).size(15).color(Color::WHITE),
+                        title,
+                        toggles,
+                        row![post_template, list_template].spacing(12),
+                        actions,
+                    ]
+                    .spacing(8),
+                )
+                .padding(12),
             )
-            .padding(12),
-        )
-    });
+        });
 
     let add_row = row![
         inputs::labeled_input(
@@ -732,7 +749,12 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
         label: t(locale, "tags.noTemplate"),
         supports_vision: false,
     })
-    .chain(active_model_options.iter().filter(|option| option.supports_vision).cloned())
+    .chain(
+        active_model_options
+            .iter()
+            .filter(|option| option.supports_vision)
+            .cloned(),
+    )
     .collect::<Vec<_>>();
 
     let offline = inputs::labeled_checkbox(
@@ -786,23 +808,32 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     let default_model = inputs::labeled_select(
         &t(locale, "settings.defaultModel"),
         &model_options,
-        model_options.iter().find(|option| option.id == state.default_model),
+        model_options
+            .iter()
+            .find(|option| option.id == state.default_model),
         |option| Message::Settings(SettingsMsg::DefaultModelChanged(option.id)),
     );
     let title_model = inputs::labeled_select(
         &t(locale, "settings.titleModel"),
         &model_options,
-        model_options.iter().find(|option| option.id == state.title_model),
+        model_options
+            .iter()
+            .find(|option| option.id == state.title_model),
         |option| Message::Settings(SettingsMsg::TitleModelChanged(option.id)),
     );
     let image_model = inputs::labeled_select(
         &t(locale, "settings.imageAnalysisModel"),
         &image_model_options,
-        image_model_options.iter().find(|option| option.id == state.image_model),
+        image_model_options
+            .iter()
+            .find(|option| option.id == state.image_model),
         |option| Message::Settings(SettingsMsg::ImageModelChanged(option.id)),
     );
     let prompt = column![
-        text(t(locale, "settings.systemPrompt")).size(12).color(inputs::LABEL_COLOR).shaping(Shaping::Advanced),
+        text(t(locale, "settings.systemPrompt"))
+            .size(12)
+            .color(inputs::LABEL_COLOR)
+            .shaping(Shaping::Advanced),
         text_editor(&state.system_prompt)
             .on_action(|a| Message::Settings(SettingsMsg::SystemPromptAction(a)))
             .height(Length::Fixed(200.0))
@@ -822,11 +853,15 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
 
     column![
         offline,
-        text(t(locale, "settings.onlineEndpointSection")).size(12).color(inputs::LABEL_COLOR),
+        text(t(locale, "settings.onlineEndpointSection"))
+            .size(12)
+            .color(inputs::LABEL_COLOR),
         online_url,
         row![online_model, online_api_key].spacing(12),
         online_refresh,
-        text(t(locale, "settings.airplaneEndpointSection")).size(12).color(inputs::LABEL_COLOR),
+        text(t(locale, "settings.airplaneEndpointSection"))
+            .size(12)
+            .color(inputs::LABEL_COLOR),
         airplane_url,
         row![airplane_model, airplane_refresh].spacing(12),
         default_model,
@@ -835,9 +870,9 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
         prompt,
         btns,
     ]
-        .spacing(8)
-        .padding([0, 16])
-        .into()
+    .spacing(8)
+    .padding([0, 16])
+    .into()
 }
 
 fn section_technology<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
@@ -857,12 +892,9 @@ fn section_technology<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Ele
 }
 
 fn section_publishing<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
-    let host = inputs::labeled_input(
-        &t(locale, "settings.sshHost"),
-        "",
-        &state.ssh_host,
-        |s| Message::Settings(SettingsMsg::SshHostChanged(s)),
-    );
+    let host = inputs::labeled_input(&t(locale, "settings.sshHost"), "", &state.ssh_host, |s| {
+        Message::Settings(SettingsMsg::SshHostChanged(s))
+    });
     let user = inputs::labeled_input(
         &t(locale, "settings.sshUsername"),
         "",
@@ -938,4 +970,36 @@ fn section_mcp<'a>(locale: UiLocale) -> Element<'a, Message> {
         .size(13)
         .color(Color::from_rgb(0.5, 0.5, 0.5))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsSection, SettingsViewState};
+
+    #[test]
+    fn focus_section_collapses_other_sections_and_clears_search() {
+        let mut state = SettingsViewState {
+            search_query: "publish".to_string(),
+            ..SettingsViewState::default()
+        };
+
+        state.focus_section(SettingsSection::Publishing);
+
+        assert_eq!(state.active_section, Some(SettingsSection::Publishing));
+        assert!(state.search_query.is_empty());
+        assert!(!state.collapsed.contains(&SettingsSection::Publishing));
+        assert!(state.collapsed.contains(&SettingsSection::Project));
+        assert!(state.collapsed.contains(&SettingsSection::MCP));
+    }
+
+    #[test]
+    fn focused_section_is_rendered_first() {
+        let mut state = SettingsViewState::default();
+        state.focus_section(SettingsSection::Technology);
+
+        let ordered = state.ordered_sections();
+
+        assert_eq!(ordered.first(), Some(&SettingsSection::Technology));
+        assert_eq!(ordered.len(), SettingsSection::all().len());
+    }
 }

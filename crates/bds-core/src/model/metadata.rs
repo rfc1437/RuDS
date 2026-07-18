@@ -154,10 +154,15 @@ mod tests {
     fn max_posts_per_page_validation() {
         let mut meta = ProjectMetadata {
             name: "Test".into(),
-            description: None, public_url: None, main_language: None,
-            default_author: None, max_posts_per_page: 50, blogmark_category: None,
+            description: None,
+            public_url: None,
+            main_language: None,
+            default_author: None,
+            max_posts_per_page: 50,
+            blogmark_category: None,
             pico_theme: None,
-            semantic_similarity_enabled: false, blog_languages: vec![],
+            semantic_similarity_enabled: false,
+            blog_languages: vec![],
         };
         assert!(meta.validate().is_ok());
 

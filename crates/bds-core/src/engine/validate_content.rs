@@ -1,9 +1,9 @@
-/// Validation functions for template (Liquid) and script (Lua/Python) content.
-/// Per template.allium and script.allium, these are pre-publish gates.
-///
-/// Current implementation: basic structural checks.
-/// When a full Liquid parser crate is added, upgrade `validate_liquid` to
-/// attempt a real parse.  Similarly for `validate_script` with a Lua parser.
+//! Validation functions for template (Liquid) and script (Lua/Python) content.
+//! Per template.allium and script.allium, these are pre-publish gates.
+//!
+//! Current implementation: basic structural checks.
+//! When a full Liquid parser crate is added, upgrade `validate_liquid` to
+//! attempt a real parse. Similarly for `validate_script` with a Lua parser.
 
 /// Result of a validation check.
 #[derive(Debug, Clone)]
@@ -35,8 +35,10 @@ pub fn validate_liquid(content: &str) -> ValidationResult {
     let mut errors = Vec::new();
 
     // Check for unmatched Liquid block tags
-    let block_tags = ["if", "unless", "for", "case", "capture", "comment",
-                       "raw", "paginate", "tablerow", "block", "schema"];
+    let block_tags = [
+        "if", "unless", "for", "case", "capture", "comment", "raw", "paginate", "tablerow",
+        "block", "schema",
+    ];
 
     for tag in &block_tags {
         let open_pattern = format!("{{% {tag}");

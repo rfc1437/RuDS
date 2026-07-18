@@ -69,18 +69,17 @@ mod tests {
         let _ = db.migrate();
 
         let tmp = tempfile::tempdir().unwrap();
-        let p = engine::project::create_project(
-            db.conn(), "Test", Some(tmp.path().to_str().unwrap()),
-        ).unwrap();
+        let p =
+            engine::project::create_project(db.conn(), "Test", Some(tmp.path().to_str().unwrap()))
+                .unwrap();
 
         regenerate_calendar(db.conn(), tmp.path(), &p.id).unwrap();
 
         let cal_path = tmp.path().join("html").join("calendar.json");
         assert!(cal_path.exists());
 
-        let data: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&cal_path).unwrap()
-        ).unwrap();
+        let data: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cal_path).unwrap()).unwrap();
         assert!(data["years"].as_object().unwrap().is_empty());
     }
 }
