@@ -33,7 +33,7 @@ fn airplane_inactive(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 3.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -51,7 +51,7 @@ fn airplane_active(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 3.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -69,7 +69,7 @@ pub fn dropdown_trigger(_theme: &Theme, status: button::Status) -> button::Style
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 3.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -87,7 +87,7 @@ pub fn dropdown_item(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 2.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -100,7 +100,7 @@ pub fn dropdown_bg(_theme: &Theme) -> container::Style {
         border: Border {
             color: Color::from_rgb(0.30, 0.30, 0.35),
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 6.0.into(),
         },
         ..container::Style::default()
     }

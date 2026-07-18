@@ -1,9 +1,11 @@
 //! Verify that the Rust Diesel models read the compatibility fixture produced by bDS.
 
+mod support;
+
 use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 
-use bds_core::db::Database;
 use bds_core::db::queries::{
     media, post, post_link, post_media, post_translation, project, script, setting, tag, template,
 };
@@ -17,11 +19,21 @@ const GHOSTTY_ID: &str = "6745981d-da41-4cfd-80ec-95ad339acf6f";
 const CMUX_ID: &str = "2665bfaa-8251-468d-a710-a4cf34dd81e2";
 const SPIDER_ID: &str = "eb0cf9d7-6fbd-4b74-9be3-759d6e16f240";
 
-fn fixture_db() -> Database {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/compatibility-projects/rfc1437-sample/bds.db");
-    assert!(path.exists(), "fixture DB not found at {}", path.display());
-    Database::open(&path).unwrap()
+fn fixture_db() -> support::FixtureDatabase {
+    support::fixture_database()
+}
+
+#[test]
+fn fixture_database_files_are_not_modified_by_tests() {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/compatibility-projects/rfc1437-sample");
+    let paths = ["bds.db", "bds.db-shm", "bds.db-wal"].map(|name| directory.join(name));
+    let before = paths.each_ref().map(|path| fs::read(path).unwrap());
+
+    drop(fixture_db());
+
+    let after = paths.each_ref().map(|path| fs::read(path).unwrap());
+    assert_eq!(after, before);
 }
 
 #[test]

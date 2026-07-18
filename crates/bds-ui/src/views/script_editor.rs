@@ -132,10 +132,12 @@ pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, M
                 .into(),
             button(text(t(locale, "editor.run")).size(13))
                 .on_press(Message::ScriptEditor(ScriptEditorMsg::Run))
+                .style(inputs::secondary_button)
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "editor.checkSyntax")).size(13))
                 .on_press(Message::ScriptEditor(ScriptEditorMsg::CheckSyntax))
+                .style(inputs::secondary_button)
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "modal.confirmDelete.delete")).size(13))
@@ -200,6 +202,7 @@ pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, M
         });
     let meta_row2 = row![kind_select, entrypoint_input, enabled_check]
         .spacing(16)
+        .align_y(iced::Alignment::End)
         .width(Length::Fill);
 
     // Content editor (CodeEditor with syntax highlighting based on file extension)
@@ -208,21 +211,28 @@ pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, M
     } else {
         "lua"
     };
-    let content_section: Element<'a, Message> = column![
-        inputs::section_header(&t(locale, "editor.content")),
-        Element::from(
-            CodeEditor::new(&state.editor_buffer, highlighter(), syntax_ext,).on_change(|msg| {
-                match msg {
-                    EditorMessage::ContentChanged(s) => {
-                        Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s))
+    let content_section: Element<'a, Message> = inputs::card(
+        column![
+            inputs::section_header(&t(locale, "editor.content")),
+            Element::from(
+                CodeEditor::new(&state.editor_buffer, highlighter(), syntax_ext,).on_change(
+                    |msg| {
+                        match msg {
+                            EditorMessage::ContentChanged(s) => {
+                                Message::ScriptEditor(ScriptEditorMsg::ContentChanged(s))
+                            }
+                            EditorMessage::SaveRequested => {
+                                Message::ScriptEditor(ScriptEditorMsg::Save)
+                            }
+                        }
                     }
-                    EditorMessage::SaveRequested => Message::ScriptEditor(ScriptEditorMsg::Save),
-                }
-            })
-        ),
-    ]
-    .spacing(8)
-    .width(Length::Fill)
+                )
+            ),
+        ]
+        .spacing(10)
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
     .height(Length::Fill)
     .into();
 
@@ -248,18 +258,18 @@ pub fn view<'a>(state: &'a ScriptEditorState, locale: UiLocale) -> Element<'a, M
     .padding(8);
 
     // Top pane: header + metadata (scrollable for overflow)
-    let top_pane = scrollable(
-        column![header, meta_row1, meta_row2,]
+    let metadata = inputs::card(
+        column![meta_row1, meta_row2]
             .spacing(12)
-            .padding(16)
             .width(Length::Fill),
-    )
-    .height(Length::Shrink);
+    );
+    let top_pane = scrollable(column![header, metadata].spacing(12).width(Length::Fill))
+        .height(Length::Shrink);
 
     // Full layout: top pane (shrink), content (fill), validation + footer (shrink)
     column![top_pane, content_section, validation, footer,]
-        .spacing(4)
-        .padding([0, 16])
+        .spacing(8)
+        .padding(16)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

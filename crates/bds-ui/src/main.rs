@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use bds_ui::BdsApp;
+use bds_ui::components::inputs;
 
 fn main() -> iced::Result {
     let icon =
@@ -9,7 +10,7 @@ fn main() -> iced::Result {
 
     iced::application("bDS", BdsApp::update, BdsApp::view)
         .subscription(BdsApp::subscription)
-        .theme(|_| iced::Theme::Dark)
+        .theme(|_| inputs::app_theme())
         .window(iced::window::Settings {
             size: iced::Size::new(1200.0, 800.0),
             icon: Some(icon),

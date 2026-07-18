@@ -117,30 +117,32 @@ pub enum TagsMsg {
 
 /// Render the tags management view.
 pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Message> {
-    let section_nav = row![
-        section_tab(
-            &t(locale, "tags.nav.cloud"),
-            state.section == TagsSection::Cloud,
-            TagsSection::Cloud
-        ),
-        section_tab(
-            &t(locale, "tags.nav.manage"),
-            state.section == TagsSection::Manage,
-            TagsSection::Manage
-        ),
-        section_tab(
-            &t(locale, "tags.nav.merge"),
-            state.section == TagsSection::Merge,
-            TagsSection::Merge
-        ),
-        section_tab(
-            &t(locale, "tags.nav.discover"),
-            state.section == TagsSection::Discover,
-            TagsSection::Discover
-        ),
-    ]
-    .spacing(4)
-    .padding(8);
+    let section_nav = inputs::card(
+        row![
+            section_tab(
+                &t(locale, "tags.nav.cloud"),
+                state.section == TagsSection::Cloud,
+                TagsSection::Cloud
+            ),
+            section_tab(
+                &t(locale, "tags.nav.manage"),
+                state.section == TagsSection::Manage,
+                TagsSection::Manage
+            ),
+            section_tab(
+                &t(locale, "tags.nav.merge"),
+                state.section == TagsSection::Merge,
+                TagsSection::Merge
+            ),
+            section_tab(
+                &t(locale, "tags.nav.discover"),
+                state.section == TagsSection::Discover,
+                TagsSection::Discover
+            ),
+        ]
+        .spacing(6),
+    )
+    .padding(6);
 
     let content: Element<'a, Message> = match state.section {
         TagsSection::Cloud => view_cloud(state, locale),
@@ -150,33 +152,20 @@ pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Messa
     };
 
     column![section_nav, content]
+        .spacing(4)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
 }
 
 fn section_tab<'a>(label: &str, active: bool, section: TagsSection) -> Element<'a, Message> {
-    let color = if active {
-        Color::WHITE
-    } else {
-        Color::from_rgb(0.55, 0.58, 0.65)
-    };
-    button(text(label.to_string()).size(13).color(color))
+    button(text(label.to_string()).size(13))
         .on_press(Message::Tags(TagsMsg::SetSection(section)))
         .padding([6, 12])
-        .style(move |_theme: &Theme, _status| {
-            if active {
-                button::Style {
-                    background: Some(Background::Color(Color::from_rgb(0.25, 0.27, 0.33))),
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..iced::Border::default()
-                    },
-                    ..button::Style::default()
-                }
-            } else {
-                button::Style::default()
-            }
+        .style(if active {
+            inputs::primary_button
+        } else {
+            inputs::secondary_button
         })
         .into()
 }
@@ -212,8 +201,8 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
     } else {
         1.0
     };
-    const MIN_FONT: f32 = 11.0;
-    const MAX_FONT: f32 = 24.0;
+    const MIN_FONT: f32 = 12.0;
+    const MAX_FONT: f32 = 18.0;
 
     let chips: Vec<Element<'a, Message>> = state
         .tags
@@ -243,16 +232,17 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
             )
             .on_press(Message::Tags(TagsMsg::ToggleTagSelection(tag.id.clone())))
             .padding([vert_pad, 10])
-            .style(move |_: &Theme, _| button::Style {
-                background: Some(Background::Color(color)),
+            .style(move |_: &Theme, status| button::Style {
+                background: Some(Background::Color(match (selected, status) {
+                    (true, button::Status::Hovered) => Color::from_rgb(0.20, 0.24, 0.30),
+                    (true, _) => Color::from_rgb(0.17, 0.20, 0.25),
+                    (false, button::Status::Hovered) => Color::from_rgb(0.23, 0.24, 0.26),
+                    (false, _) => Color::from_rgb(0.18, 0.18, 0.19),
+                })),
                 border: iced::Border {
                     radius: 12.0.into(),
-                    width: if selected { 2.0 } else { 0.0 },
-                    color: if selected {
-                        Color::WHITE
-                    } else {
-                        Color::TRANSPARENT
-                    },
+                    width: if selected { 2.0 } else { 1.0 },
+                    color,
                 },
                 text_color: Color::WHITE,
                 ..button::Style::default()
@@ -277,6 +267,7 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
             .color(Color::from_rgb(0.75, 0.77, 0.82)),
             button(text(t(locale, "tags.clearSelection")).size(12))
                 .on_press(Message::Tags(TagsMsg::ClearSelection))
+                .style(inputs::secondary_button)
                 .padding([4, 8]),
         ]
         .spacing(8)
@@ -285,13 +276,15 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
     };
 
     scrollable(
-        column![
-            inputs::section_header(&t(locale, "tags.cloudSection")),
-            selection_summary,
-            row(chips).spacing(6).wrap(),
-        ]
-        .spacing(12)
-        .width(Length::Fill)
+        column![inputs::card(
+            column![
+                inputs::section_header(&t(locale, "tags.cloudSection")),
+                selection_summary,
+                row(chips).spacing(6).wrap(),
+            ]
+            .spacing(12)
+            .width(Length::Fill),
+        )]
         .padding(16),
     )
     .width(Length::Fill)
@@ -326,7 +319,9 @@ fn view_manage<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Me
 
     let search = text_input(&t(locale, "sidebar.filter.search"), &state.search_query)
         .on_input(|value| Message::Tags(TagsMsg::SearchChanged(value)))
-        .size(14);
+        .size(14)
+        .padding([8, 10])
+        .style(inputs::field_style);
 
     let filtered: Vec<&Tag> = state
         .tags
@@ -446,11 +441,16 @@ fn view_manage<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Me
 
     scrollable(
         column![
-            create_panel,
-            inputs::section_header(&t(locale, "tags.manageSection")),
-            search,
-            tag_list,
-            edit_panel,
+            inputs::card(create_panel),
+            inputs::card(
+                column![
+                    inputs::section_header(&t(locale, "tags.manageSection")),
+                    search,
+                    tag_list,
+                    edit_panel,
+                ]
+                .spacing(12)
+            ),
         ]
         .spacing(12)
         .padding(16)
@@ -491,56 +491,62 @@ fn view_merge<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
         })
         .unwrap_or_default();
 
-    column![
-        inputs::section_header(&t(locale, "tags.mergeSection")),
-        text(tw(
-            locale,
-            "tags.selectedCount",
-            &[("count", &state.selected_tags.len().to_string())]
-        ))
-        .size(12)
-        .color(Color::from_rgb(0.75, 0.77, 0.82)),
-        inputs::labeled_select(
-            &t(locale, "tags.mergeTarget"),
-            &tag_options,
-            selected_target,
-            |choice| Message::Tags(TagsMsg::SetMergeTarget(choice)),
-        ),
-        if merge_preview.is_empty() {
-            Element::from(Space::new(0, 0))
-        } else {
-            container(text(tw(locale, "tags.mergePreview", &[("tags", &merge_preview)])).size(12))
+    container(inputs::card(
+        column![
+            inputs::section_header(&t(locale, "tags.mergeSection")),
+            text(tw(
+                locale,
+                "tags.selectedCount",
+                &[("count", &state.selected_tags.len().to_string())]
+            ))
+            .size(12)
+            .color(Color::from_rgb(0.75, 0.77, 0.82)),
+            inputs::labeled_select(
+                &t(locale, "tags.mergeTarget"),
+                &tag_options,
+                selected_target,
+                |choice| Message::Tags(TagsMsg::SetMergeTarget(choice)),
+            ),
+            if merge_preview.is_empty() {
+                Element::from(Space::new(0, 0))
+            } else {
+                container(
+                    text(tw(locale, "tags.mergePreview", &[("tags", &merge_preview)])).size(12),
+                )
                 .padding([4, 0])
                 .into()
-        },
-        button(text(t(locale, "tags.merge")).size(13))
-            .on_press_maybe(
-                state
-                    .merge_target
-                    .is_some()
-                    .then_some(Message::Tags(TagsMsg::MergeTags))
-            )
-            .style(inputs::primary_button)
-            .padding([6, 16]),
-    ]
-    .spacing(12)
+            },
+            button(text(t(locale, "tags.merge")).size(13))
+                .on_press_maybe(
+                    state
+                        .merge_target
+                        .is_some()
+                        .then_some(Message::Tags(TagsMsg::MergeTags))
+                )
+                .style(inputs::primary_button)
+                .padding([6, 16]),
+        ]
+        .spacing(12),
+    ))
     .padding(16)
     .width(Length::Fill)
     .into()
 }
 
 fn view_discover<'a>(_state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Message> {
-    column![
-        inputs::section_header(&t(locale, "tags.discoverSection")),
-        text(t(locale, "tags.discoverDescription"))
-            .size(12)
-            .color(Color::from_rgb(0.60, 0.60, 0.65)),
-        button(text(t(locale, "tags.discoverButton")).size(13))
-            .on_press(Message::Tags(TagsMsg::SyncTags))
-            .style(inputs::primary_button)
-            .padding([6, 16]),
-    ]
-    .spacing(12)
+    container(inputs::card(
+        column![
+            inputs::section_header(&t(locale, "tags.discoverSection")),
+            text(t(locale, "tags.discoverDescription"))
+                .size(12)
+                .color(Color::from_rgb(0.60, 0.60, 0.65)),
+            button(text(t(locale, "tags.discoverButton")).size(13))
+                .on_press(Message::Tags(TagsMsg::SyncTags))
+                .style(inputs::primary_button)
+                .padding([6, 16]),
+        ]
+        .spacing(12),
+    ))
     .padding(16)
     .width(Length::Fill)
     .into()

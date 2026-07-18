@@ -396,7 +396,7 @@ pub fn view<'a>(
     )
     .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::ToggleQuickActions)))
     .padding([6, 16])
-    .style(status_bar::dropdown_trigger)
+    .style(inputs::secondary_button)
     .into();
 
     let mut header_action_items: Vec<Element<'a, Message>> = vec![
@@ -421,6 +421,7 @@ pub fn view<'a>(
             )
             .on_press(Message::PostEditor(PostEditorMsg::Duplicate))
             .padding([6, 16])
+            .style(inputs::secondary_button)
             .into(),
         );
     }
@@ -446,6 +447,7 @@ pub fn view<'a>(
             )
             .on_press(Message::PostEditor(PostEditorMsg::Discard))
             .padding([6, 16])
+            .style(inputs::secondary_button)
             .into(),
         );
     }
@@ -520,7 +522,7 @@ pub fn view<'a>(
         Space::new(0, 0).into()
     };
 
-    let header = column![header_row, header_menu].spacing(6);
+    let header = inputs::card(column![header_row, header_menu].spacing(6)).padding(10);
 
     // ── Collapsible Metadata Section ──
     let meta_toggle_label = if state.metadata_expanded {
@@ -535,15 +537,13 @@ pub fn view<'a>(
             .shaping(Shaping::Advanced),
     )
     .on_press(Message::PostEditor(PostEditorMsg::ToggleMetadata))
-    .padding([4, 0])
-    .style(|_, _| button::Style {
-        background: None,
-        ..button::Style::default()
-    });
+    .padding([8, 10])
+    .width(Length::Fill)
+    .style(inputs::disclosure_button);
 
     // ── Translation Flags Bar (inline with metadata toggle) ──
     let flags = state.translation_flags();
-    let meta_toggle_row: Element<'a, Message> = if flags.is_empty() {
+    let meta_toggle_content: Element<'a, Message> = if flags.is_empty() {
         meta_toggle.into()
     } else {
         let mut flag_row = row![].spacing(2);
@@ -560,11 +560,13 @@ pub fn view<'a>(
                 });
             flag_row = flag_row.push(btn);
         }
-        row![meta_toggle, Space::with_width(Length::Fill), flag_row]
+        row![meta_toggle, flag_row]
             .spacing(8)
             .align_y(iced::Alignment::Center)
             .into()
     };
+    let meta_toggle_row: Element<'a, Message> =
+        inputs::card(meta_toggle_content).padding([2, 4]).into();
 
     let metadata_section: Element<'a, Message> = if state.metadata_expanded && !on_translation {
         let title_input = inputs::labeled_input(
@@ -598,13 +600,6 @@ pub fn view<'a>(
             Some(&state.language),
             |lang| Message::PostEditor(PostEditorMsg::LanguageChanged(lang)),
         );
-        let detect_language = button(
-            text(t(locale, "editor.detectLanguage"))
-                .size(12)
-                .shaping(Shaping::Advanced),
-        )
-        .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::DetectLanguage)))
-        .padding([6, 12]);
         let template_input = inputs::labeled_input(
             &t(locale, "editor.templateSlug"),
             "",
@@ -616,9 +611,9 @@ pub fn view<'a>(
             state.do_not_translate,
             |b| Message::PostEditor(PostEditorMsg::ToggleDoNotTranslate(b)),
         );
-        let language_block = column![language_input, detect_language].spacing(6);
-        let meta_row2 = row![author_input, language_block, template_input, dnt]
+        let meta_row2 = row![author_input, language_input, template_input, dnt]
             .spacing(16)
+            .align_y(iced::Alignment::End)
             .width(Length::Fill);
 
         // Tags chip input
@@ -695,7 +690,7 @@ pub fn view<'a>(
         )
         .on_press(Message::PostEditor(PostEditorMsg::LinkExistingMedia))
         .padding([4, 10])
-        .style(|_: &Theme, _| button::Style::default())
+        .style(inputs::secondary_button)
         .into();
 
         let linked_media_header: Element<'a, Message> = row![
@@ -783,17 +778,19 @@ pub fn view<'a>(
             Column::with_children(items).spacing(6).into()
         };
 
-        column![
-            meta_row1,
-            meta_row2,
-            tags_section,
-            categories_section,
-            outlinks_section,
-            backlinks_section,
-            linked_media_section,
-        ]
-        .spacing(8)
-        .width(Length::Fill)
+        inputs::card(
+            column![
+                meta_row1,
+                meta_row2,
+                tags_section,
+                categories_section,
+                outlinks_section,
+                backlinks_section,
+                linked_media_section,
+            ]
+            .spacing(12)
+            .width(Length::Fill),
+        )
         .into()
     } else {
         Space::new(0, 0).into()
@@ -812,19 +809,19 @@ pub fn view<'a>(
             .shaping(Shaping::Advanced),
     )
     .on_press(Message::PostEditor(PostEditorMsg::ToggleExcerpt))
-    .padding([4, 0])
-    .style(|_, _| button::Style {
-        background: None,
-        ..button::Style::default()
-    });
+    .padding([8, 10])
+    .width(Length::Fill)
+    .style(inputs::disclosure_button);
+    let excerpt_toggle: Element<'a, Message> = inputs::card(excerpt_toggle).padding([2, 4]).into();
 
     let excerpt_section: Element<'a, Message> = if state.excerpt_expanded {
-        inputs::labeled_input(
+        inputs::card(inputs::labeled_input(
             &t(locale, "editor.excerpt"),
             &t(locale, "editor.excerptPlaceholder"),
             &state.excerpt,
             |s| Message::PostEditor(PostEditorMsg::ExcerptChanged(s)),
-        )
+        ))
+        .into()
     } else {
         Space::new(0, 0).into()
     };
@@ -866,6 +863,7 @@ pub fn view<'a>(
                 )
                 .on_press(Message::PostEditor(PostEditorMsg::InsertLink))
                 .padding([6, 16])
+                .style(inputs::secondary_button)
                 .into()
             } else {
                 Space::new(0, 0).into()
@@ -878,6 +876,7 @@ pub fn view<'a>(
                 )
                 .on_press(Message::PostEditor(PostEditorMsg::InsertMedia))
                 .padding([6, 16])
+                .style(inputs::secondary_button)
                 .into()
             } else {
                 Space::new(0, 0).into()
@@ -889,6 +888,7 @@ pub fn view<'a>(
             )
             .on_press(Message::PostEditor(PostEditorMsg::Gallery))
             .padding([6, 16])
+            .style(inputs::secondary_button)
             .into(),
         ],
     );
@@ -946,14 +946,14 @@ pub fn view<'a>(
             excerpt_toggle,
             excerpt_section,
         ]
-        .spacing(4)
+        .spacing(8)
         .width(Length::Fill),
     )
     .height(Length::Shrink);
 
     // ── Full layout: top pane (shrink), editor (fill), footer (shrink) ──
     column![top_pane, body_toolbar, editor_widget, footer,]
-        .spacing(4)
+        .spacing(8)
         .padding(16)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -998,7 +998,8 @@ fn chip_input_field<'a>(
             .on_input(on_input)
             .on_submit(on_submit)
             .size(13)
-            .padding([4, 6]),
+            .padding([8, 10])
+            .style(inputs::field_style),
     ]
     .spacing(4)
     .width(Length::Fill)

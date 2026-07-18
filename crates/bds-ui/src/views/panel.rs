@@ -26,7 +26,7 @@ fn tab_active(_theme: &Theme, _status: button::Status) -> button::Style {
         border: Border {
             color: Color::from_rgb(0.30, 0.55, 0.90),
             width: 0.0,
-            radius: 3.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -44,7 +44,7 @@ fn tab_inactive(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 3.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }

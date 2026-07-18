@@ -54,7 +54,7 @@ fn active_button_style(_theme: &Theme, _status: button::Status) -> button::Style
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 0.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }
@@ -72,7 +72,7 @@ fn inactive_button_style(_theme: &Theme, status: button::Status) -> button::Styl
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 0.0.into(),
+            radius: 6.0.into(),
         },
         ..button::Style::default()
     }

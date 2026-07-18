@@ -4,13 +4,14 @@ use iced::widget::text::Shaping;
 use iced::widget::{
     Space, button, checkbox, column, container, image, row, scrollable, text, text_input,
 };
-use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme, Vector};
 
 use bds_core::i18n::UiLocale;
 use bds_core::model::Media;
 use bds_core::util::paths::thumbnail_path;
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 use crate::views::post_editor::PostEditorMsg;
 
@@ -138,61 +139,27 @@ fn modal_box_style(_theme: &Theme) -> container::Style {
         border: Border {
             color: Color::from_rgb(0.30, 0.30, 0.35),
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 10.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+            offset: Vector::new(0.0, 8.0),
+            blur_radius: 28.0,
         },
         ..container::Style::default()
     }
 }
 
-fn cancel_button_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgb(0.28, 0.28, 0.33),
-        _ => Color::from_rgb(0.22, 0.22, 0.27),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: Color::from_rgb(0.80, 0.80, 0.85),
-        border: Border {
-            color: Color::from_rgb(0.35, 0.35, 0.40),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..button::Style::default()
-    }
+fn cancel_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    inputs::secondary_button(theme, status)
 }
 
-fn danger_button_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgb(0.85, 0.20, 0.20),
-        _ => Color::from_rgb(0.75, 0.15, 0.15),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: Color::WHITE,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 4.0.into(),
-        },
-        ..button::Style::default()
-    }
+fn danger_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    inputs::danger_button(theme, status)
 }
 
-fn confirm_button_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgb(0.20, 0.55, 0.85),
-        _ => Color::from_rgb(0.15, 0.45, 0.75),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: Color::WHITE,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 4.0.into(),
-        },
-        ..button::Style::default()
-    }
+fn confirm_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    inputs::primary_button(theme, status)
 }
 
 fn resolve_thumbnail_file(data_dir: Option<&Path>, media: &Media) -> Option<String> {
@@ -471,7 +438,8 @@ pub fn view(
             .size(13)
             .on_input(|s| Message::PostEditor(PostEditorMsg::PostInsertLinkSearch(s)))
             .padding([6, 10])
-            .width(Length::Fill);
+            .width(Length::Fill)
+            .style(inputs::field_style);
 
             let internal_content: Element<'static, Message> = if results.is_empty() {
                 column![
@@ -540,7 +508,7 @@ pub fn view(
                             border: Border {
                                 color: Color::from_rgb(0.30, 0.30, 0.35),
                                 width: 1.0,
-                                radius: 4.0.into(),
+                                radius: 6.0.into(),
                             },
                             ..button::Style::default()
                         }),
@@ -557,7 +525,8 @@ pub fn view(
                 .size(13)
                 .on_input(|s| Message::PostEditor(PostEditorMsg::PostInsertLinkUrlChanged(s)))
                 .padding([6, 10])
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .style(inputs::field_style),
                 text_input(
                     t(locale, "modal.postInsertLink.externalTextPlaceholder").as_str(),
                     &external_text,
@@ -565,7 +534,8 @@ pub fn view(
                 .size(13)
                 .on_input(|s| Message::PostEditor(PostEditorMsg::PostInsertLinkTextChanged(s)))
                 .padding([6, 10])
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .style(inputs::field_style),
                 Space::with_height(12.0),
                 row![
                     Space::with_width(Length::Fill),
@@ -594,7 +564,7 @@ pub fn view(
                 border: Border {
                     color: Color::from_rgb(0.30, 0.30, 0.35),
                     width: 1.0,
-                    radius: 4.0.into(),
+                    radius: 6.0.into(),
                 },
                 ..button::Style::default()
             })
@@ -659,7 +629,8 @@ pub fn view(
             .size(13)
             .on_input(|s| Message::PostEditor(PostEditorMsg::PostInsertMediaSearch(s)))
             .padding([6, 10])
-            .width(Length::Fill);
+            .width(Length::Fill)
+            .style(inputs::field_style);
 
             let media_items: Vec<Element<'static, Message>> = media_list
                 .iter()

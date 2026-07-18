@@ -31,7 +31,7 @@ fn toast_style(level: ToastLevel) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: toast_border(level),
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 8.0.into(),
         },
         ..container::Style::default()
     }

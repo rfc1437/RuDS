@@ -8,6 +8,7 @@ use bds_core::i18n::UiLocale;
 use bds_core::model::{Media, Post, Script, Template};
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 use crate::state::sidebar_filter::{CalendarYear, MediaFilter, PostFilter};
@@ -30,7 +31,10 @@ fn item_style(_theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: Color::from_rgb(0.80, 0.80, 0.85),
-        border: Border::default(),
+        border: Border {
+            radius: 6.0.into(),
+            ..Border::default()
+        },
         ..button::Style::default()
     }
 }
@@ -44,7 +48,10 @@ fn item_active_style(_theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: Color::WHITE,
-        border: Border::default(),
+        border: Border {
+            radius: 6.0.into(),
+            ..Border::default()
+        },
         ..button::Style::default()
     }
 }
@@ -54,7 +61,7 @@ fn thumbnail_container_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color::from_rgb(0.14, 0.14, 0.17))),
         border: Border {
-            radius: 4.0.into(),
+            radius: 6.0.into(),
             ..Border::default()
         },
         ..container::Style::default()
@@ -145,19 +152,8 @@ fn format_post_date(unix_ms: i64) -> String {
 }
 
 /// Search input style.
-fn search_input_style(_theme: &Theme, _status: text_input::Status) -> text_input::Style {
-    text_input::Style {
-        background: Background::Color(Color::from_rgb(0.12, 0.12, 0.15)),
-        border: Border {
-            color: Color::from_rgb(0.30, 0.30, 0.35),
-            width: 1.0,
-            radius: 3.0.into(),
-        },
-        icon: Color::from_rgb(0.50, 0.50, 0.55),
-        placeholder: Color::from_rgb(0.45, 0.45, 0.50),
-        value: Color::from_rgb(0.85, 0.85, 0.90),
-        selection: Color::from_rgba(0.35, 0.55, 0.85, 0.4),
-    }
+fn search_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    inputs::field_style(theme, status)
 }
 
 /// Style for filter toggle / clear buttons in the header.
@@ -169,7 +165,10 @@ fn filter_button_style(_theme: &Theme, status: button::Status) -> button::Style 
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: Color::from_rgb(0.60, 0.60, 0.65),
-        border: Border::default(),
+        border: Border {
+            radius: 6.0.into(),
+            ..Border::default()
+        },
         ..button::Style::default()
     }
 }
@@ -183,7 +182,10 @@ fn filter_button_active_style(_theme: &Theme, status: button::Status) -> button:
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: Color::from_rgb(0.55, 0.70, 0.95),
-        border: Border::default(),
+        border: Border {
+            radius: 6.0.into(),
+            ..Border::default()
+        },
         ..button::Style::default()
     }
 }
@@ -773,7 +775,7 @@ pub fn view(
                         is_transient: true,
                         is_dirty: false,
                     }))
-                    .padding([3, 6])
+                    .padding([5, 8])
                     .width(Length::Fill)
                     .style(style_fn)
                     .into()
@@ -1025,7 +1027,7 @@ pub fn view(
                                 is_transient: true,
                                 is_dirty: false,
                             }))
-                            .padding([3, 6])
+                            .padding([5, 8])
                             .width(Length::Fill)
                             .style(style_fn)
                             .into()
@@ -1065,7 +1067,7 @@ pub fn view(
                                 is_transient: true,
                                 is_dirty: false,
                             }))
-                            .padding([3, 6])
+                            .padding([5, 8])
                             .width(Length::Fill)
                             .style(style_fn)
                             .into()
@@ -1106,7 +1108,7 @@ pub fn view(
                     };
                     button(container(label_text).width(Length::Fill))
                         .on_press(msg)
-                        .padding([3, 6])
+                        .padding([5, 8])
                         .width(Length::Fill)
                         .style(item_style)
                         .into()
@@ -1130,7 +1132,7 @@ pub fn view(
                             is_transient: false,
                             is_dirty: false,
                         }))
-                        .padding([3, 6])
+                        .padding([5, 8])
                         .width(Length::Fill)
                         .style(item_style)
                         .into()

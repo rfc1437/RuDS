@@ -10,7 +10,7 @@ use iced::advanced::{Clipboard, Shell};
 use iced::event::Status;
 use iced::keyboard;
 use iced::mouse;
-use iced::{Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Theme};
+use iced::{Color, Element, Event, Length, Pixels, Point, Rectangle, Shadow, Size, Theme, Vector};
 
 use crate::buffer::EditorBuffer;
 use crate::highlight::Highlighter;
@@ -76,20 +76,32 @@ pub fn mono_metrics() -> &'static MonoMetrics {
     })
 }
 
-const GUTTER_WIDTH: f32 = 50.0;
+const GUTTER_WIDTH: f32 = 44.0;
+const TEXT_PADDING: f32 = 12.0;
 const FONT_SIZE: f32 = 14.0;
-const BG_COLOR: Color = Color::from_rgb(0.18, 0.20, 0.25);
-const GUTTER_BG: Color = Color::from_rgb(0.15, 0.17, 0.21);
-const TEXT_COLOR: Color = Color::from_rgb(0.85, 0.85, 0.85);
-const GUTTER_TEXT: Color = Color::from_rgb(0.45, 0.48, 0.55);
-const CURSOR_COLOR: Color = Color::from_rgb(0.9, 0.9, 0.2);
-const ACTIVE_LINE_NUM: Color = Color::from_rgb(0.75, 0.78, 0.85);
-const SELECTION_BG: Color = Color::from_rgba(0.26, 0.54, 0.79, 0.40);
+const TEXT_COLOR: Color = rgb8(0xD4, 0xD4, 0xD4);
+const GUTTER_TEXT: Color = rgb8(0x85, 0x85, 0x85);
+const CURSOR_COLOR: Color = rgb8(0xAE, 0xAF, 0xAD);
+const ACTIVE_LINE_NUM: Color = rgb8(0xC6, 0xC6, 0xC6);
+const SELECTION_BG: Color = rgba8(0x26, 0x4F, 0x78, 0.85);
 const SCROLLBAR_WIDTH: f32 = 10.0;
-const SCROLLBAR_TRACK: Color = Color::from_rgba(0.25, 0.27, 0.32, 0.5);
-const SCROLLBAR_THUMB: Color = Color::from_rgba(0.50, 0.53, 0.60, 0.7);
-const SCROLLBAR_THUMB_HOVER: Color = Color::from_rgba(0.60, 0.63, 0.70, 0.9);
+const SCROLLBAR_TRACK: Color = Color::TRANSPARENT;
+const SCROLLBAR_THUMB: Color = rgba8(0x79, 0x79, 0x79, 0.45);
+const SCROLLBAR_THUMB_HOVER: Color = rgba8(0x79, 0x79, 0x79, 0.75);
 const MIN_THUMB_HEIGHT: f32 = 20.0;
+
+const fn rgb8(red: u8, green: u8, blue: u8) -> Color {
+    rgba8(red, green, blue, 1.0)
+}
+
+const fn rgba8(red: u8, green: u8, blue: u8, alpha: f32) -> Color {
+    Color {
+        r: red as f32 / 255.0,
+        g: green as f32 / 255.0,
+        b: blue as f32 / 255.0,
+        a: alpha,
+    }
+}
 
 fn committed_text_input(text: Option<&str>, is_command_shortcut: bool) -> Option<&str> {
     if is_command_shortcut {
@@ -303,7 +315,7 @@ where
         &self,
         tree: &widget::Tree,
         renderer: &mut Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         _style: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
@@ -317,24 +329,33 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
+                border: iced::Border {
+                    color: Color::from_rgb8(0x35, 0x35, 0x35),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: Vector::new(0.0, 3.0),
+                    blur_radius: 14.0,
+                },
             },
-            BG_COLOR,
+            theme.palette().background,
         );
 
-        // Gutter background
-        let gutter_bounds = Rectangle {
-            width: GUTTER_WIDTH,
-            ..bounds
-        };
+        // Subtle gutter divider; the shared background keeps the editor visually light.
         renderer.fill_quad(
             renderer::Quad {
-                bounds: gutter_bounds,
+                bounds: Rectangle {
+                    x: bounds.x + GUTTER_WIDTH,
+                    y: bounds.y,
+                    width: 1.0,
+                    height: bounds.height,
+                },
                 border: iced::Border::default(),
                 shadow: iced::Shadow::default(),
             },
-            GUTTER_BG,
+            Color::from_rgb8(0x2B, 0x2B, 0x2B),
         );
 
         let metrics = mono_metrics();
@@ -349,7 +370,7 @@ where
         let highlighted = self.highlighter.highlight_lines(&full_text, syntax);
 
         let font = iced::Font::MONOSPACE;
-        let text_area_width = bounds.width - GUTTER_WIDTH - 8.0;
+        let text_area_width = bounds.width - GUTTER_WIDTH - TEXT_PADDING;
         let max_chars = if self.word_wrap && text_area_width > metrics.char_width {
             (text_area_width / metrics.char_width).floor() as usize
         } else {
@@ -382,7 +403,7 @@ where
             line_idx += 1;
         }
 
-        let text_x = bounds.x + GUTTER_WIDTH + 8.0;
+        let text_x = bounds.x + GUTTER_WIDTH + TEXT_PADDING;
 
         // Render visual rows
         for (vis_idx, &(line_idx, char_start, char_end, is_first)) in visual_rows.iter().enumerate()
@@ -666,7 +687,7 @@ where
         let state = tree.state.downcast_mut::<EditorState>();
         let bounds = layout.bounds();
         let metrics = mono_metrics();
-        let text_area_width = bounds.width - GUTTER_WIDTH - 8.0;
+        let text_area_width = bounds.width - GUTTER_WIDTH - TEXT_PADDING;
         let cpl = if self.word_wrap && text_area_width > metrics.char_width {
             (text_area_width / metrics.char_width).floor() as usize
         } else {
@@ -752,8 +773,8 @@ where
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
                         let vis_row = (pos.y / metrics.line_height) as usize;
-                        let raw_col =
-                            ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let raw_col = ((pos.x - GUTTER_WIDTH - TEXT_PADDING).max(0.0)
+                            / metrics.char_width) as usize;
                         let (line, char_off) =
                             visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
                                 .unwrap_or((buf.line_count().saturating_sub(1), 0));
@@ -792,8 +813,8 @@ where
                     if let Some(pos) = cursor.position_in(bounds) {
                         let mut buf = self.buffer.borrow_mut();
                         let vis_row = (pos.y / metrics.line_height) as usize;
-                        let raw_col =
-                            ((pos.x - GUTTER_WIDTH - 8.0).max(0.0) / metrics.char_width) as usize;
+                        let raw_col = ((pos.x - GUTTER_WIDTH - TEXT_PADDING).max(0.0)
+                            / metrics.char_width) as usize;
                         let (line, char_off) =
                             visual_to_logical(&buf, buf.scroll_offset(), vis_row, cpl)
                                 .unwrap_or((buf.line_count().saturating_sub(1), 0));

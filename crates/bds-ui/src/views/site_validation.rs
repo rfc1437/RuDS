@@ -5,6 +5,7 @@ use iced::{Background, Color, Element, Length, Theme};
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +26,8 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
                 .size(13)
                 .shaping(Shaping::Advanced),
         )
+        .style(inputs::primary_button)
+        .padding([6, 16])
     } else {
         button(
             text(t(locale, "siteValidation.run"))
@@ -32,6 +35,8 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
                 .shaping(Shaping::Advanced),
         )
         .on_press(Message::RunSiteValidation)
+        .style(inputs::primary_button)
+        .padding([6, 16])
     };
     let has_issues = !state.missing_files.is_empty()
         || !state.extra_files.is_empty()
@@ -42,6 +47,8 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
                 .size(13)
                 .shaping(Shaping::Advanced),
         )
+        .style(inputs::secondary_button)
+        .padding([6, 16])
     } else if !state.is_running && state.error_message.is_none() && has_issues {
         button(
             text(t(locale, "siteValidation.apply"))
@@ -49,12 +56,16 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
                 .shaping(Shaping::Advanced),
         )
         .on_press(Message::ApplySiteValidation)
+        .style(inputs::primary_button)
+        .padding([6, 16])
     } else {
         button(
             text(t(locale, "siteValidation.apply"))
                 .size(13)
                 .shaping(Shaping::Advanced),
         )
+        .style(inputs::secondary_button)
+        .padding([6, 16])
     };
 
     let mut content = column![
@@ -132,17 +143,12 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
 }
 
 fn help_text<'a>(value: String) -> Element<'a, Message> {
-    container(
+    inputs::card(
         text(value)
             .size(14)
             .shaping(Shaping::Advanced)
             .color(Color::from_rgb(0.66, 0.66, 0.72)),
     )
-    .padding(16)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.14, 0.14, 0.18))),
-        ..container::Style::default()
-    })
     .into()
 }
 
@@ -156,7 +162,7 @@ fn section<'a>(title: String, entries: &'a [String], accent: Color) -> Element<'
         )
     });
 
-    container(
+    inputs::card(
         column![
             text(title.to_string())
                 .size(16)
@@ -166,10 +172,5 @@ fn section<'a>(title: String, entries: &'a [String], accent: Color) -> Element<'
         ]
         .spacing(10),
     )
-    .padding(16)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.14, 0.14, 0.18))),
-        ..container::Style::default()
-    })
     .into()
 }

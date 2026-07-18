@@ -1,6 +1,6 @@
 use iced::widget::text::Shaping;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
-use iced::{Alignment, Color, Element, Length, Theme};
+use iced::{Alignment, Color, Element, Length};
 
 use bds_core::i18n::UiLocale;
 
@@ -347,7 +347,9 @@ pub enum SettingsMsg {
 pub fn view<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
     let search = text_input(&t(locale, "sidebar.filter.search"), &state.search_query)
         .on_input(|s| Message::Settings(SettingsMsg::SearchChanged(s)))
-        .size(14);
+        .size(14)
+        .padding([8, 10])
+        .style(inputs::field_style);
 
     let query_lower = state.search_query.to_lowercase();
 
@@ -369,6 +371,7 @@ pub fn view<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, M
                 .color(Color::from_rgb(0.7, 0.72, 0.78)),
             button(text(t(locale, "common.clear")).size(13))
                 .on_press(Message::Settings(SettingsMsg::SearchChanged(String::new())))
+                .style(inputs::secondary_button)
                 .padding([6, 12]),
         ]
         .spacing(8)
@@ -413,10 +416,10 @@ fn render_section<'a>(
     )))
     .padding([6, 8])
     .width(Length::Fill)
-    .style(|_: &Theme, _| button::Style::default());
+    .style(inputs::disclosure_button);
 
     if collapsed {
-        return column![header].into();
+        return inputs::card(header).padding([2, 4]).into();
     }
 
     let content: Element<'a, Message> = match section {
@@ -430,7 +433,7 @@ fn render_section<'a>(
         SettingsSection::MCP => section_mcp(locale),
     };
 
-    column![header, content].spacing(4).into()
+    inputs::card(column![header, content].spacing(8)).into()
 }
 
 fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
@@ -448,7 +451,8 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         text_editor(&state.project_description)
             .on_action(|a| Message::Settings(SettingsMsg::ProjectDescriptionAction(a)))
             .height(Length::Fixed(80.0))
-            .size(14),
+            .size(14)
+            .style(inputs::text_editor_style),
     ]
     .spacing(4);
     let data_path = row![
@@ -457,9 +461,11 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         },),
         button(text(t(locale, "settings.browse")).size(12))
             .on_press(Message::Settings(SettingsMsg::BrowseDataPath))
+            .style(inputs::secondary_button)
             .padding([6, 12]),
         button(text(t(locale, "settings.reset")).size(12))
             .on_press(Message::Settings(SettingsMsg::ResetDataPath))
+            .style(inputs::secondary_button)
             .padding([6, 12]),
     ]
     .spacing(8)
@@ -694,7 +700,7 @@ fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
             .spacing(8);
 
             column.push(
-                container(
+                inputs::card(
                     column![
                         text(category.name.clone()).size(15).color(Color::WHITE),
                         title,
@@ -721,6 +727,7 @@ fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
             .padding([6, 12]),
         button(text(t(locale, "settings.resetCategories")).size(13))
             .on_press(Message::Settings(SettingsMsg::ResetCategoriesToDefaults))
+            .style(inputs::secondary_button)
             .padding([6, 12]),
     ]
     .spacing(8)
@@ -788,6 +795,7 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     );
     let online_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
         .on_press(Message::Settings(SettingsMsg::RefreshOnlineModels))
+        .style(inputs::secondary_button)
         .padding([6, 16]);
 
     let airplane_url = inputs::labeled_input(
@@ -804,6 +812,7 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     );
     let airplane_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
         .on_press(Message::Settings(SettingsMsg::RefreshAirplaneModels))
+        .style(inputs::secondary_button)
         .padding([6, 16]);
 
     let default_model = inputs::labeled_select(
@@ -838,7 +847,8 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
         text_editor(&state.system_prompt)
             .on_action(|a| Message::Settings(SettingsMsg::SystemPromptAction(a)))
             .height(Length::Fixed(200.0))
-            .size(14),
+            .size(14)
+            .style(inputs::text_editor_style),
     ]
     .spacing(4);
     let btns = row![
@@ -848,6 +858,7 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
             .padding([6, 16]),
         button(text(t(locale, "settings.resetToDefault")).size(13))
             .on_press(Message::Settings(SettingsMsg::ResetSystemPrompt))
+            .style(inputs::secondary_button)
             .padding([6, 16]),
     ]
     .spacing(8);
@@ -930,30 +941,37 @@ fn section_data<'a>(locale: UiLocale) -> Element<'a, Message> {
     let rebuild_btns = column![
         button(text(t(locale, "settings.rebuildPosts")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildPosts))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildMedia")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildMedia))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildScripts")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildScripts))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildTemplates")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildTemplates))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildLinks")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildLinks))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildSearchIndex")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildSearchIndex))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.regenerateThumbnails")).size(13))
             .on_press(Message::Settings(SettingsMsg::RegenerateThumbnails))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .width(Length::Fill),
     ]
@@ -961,6 +979,7 @@ fn section_data<'a>(locale: UiLocale) -> Element<'a, Message> {
 
     let open = button(text(t(locale, "settings.openDataFolder")).size(13))
         .on_press(Message::Settings(SettingsMsg::OpenDataFolder))
+        .style(inputs::secondary_button)
         .padding([6, 16]);
 
     column![rebuild_btns, open]

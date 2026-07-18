@@ -1,7 +1,8 @@
 //! Executable checks for storage-related Allium claims.
 
+mod support;
+
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 use bds_core::db::Database;
 use bds_core::db::queries::{
@@ -13,12 +14,8 @@ use bds_core::model::{
 };
 use diesel::prelude::*;
 
-fn fixture_db() -> Database {
-    Database::open(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/compatibility-projects/rfc1437-sample/bds.db"),
-    )
-    .unwrap()
+fn fixture_db() -> support::FixtureDatabase {
+    support::fixture_database()
 }
 
 fn memory_db() -> Database {

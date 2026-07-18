@@ -7,6 +7,11 @@ This project has an allium spec in the folder specs/ - use it to verify behaviou
 
 Invariants and behaviours in the allium spec should be covered by unit tests of the application code, to make sure the spec is followed.
 
+## UI styling
+
+- Before implementing or changing UI, read and follow `docs/UI_STYLE_GUIDE.md`.
+- Reuse the shared styling primitives described there so new sidebars and editor areas remain consistent with the post editor.
+
 ## Plan Mode
 
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
@@ -45,4 +50,3 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - when creating rust source code, always follow what the allium spec is saying for that part
 - when tending the allium spec, make sure you validate the spec with the installed command line utility
 - don't be lazy. don't defer or skip implementations just because you have to write code for that, that is ridiculous. if the spec says something has to be there, it has to be there.
-

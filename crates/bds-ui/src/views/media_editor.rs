@@ -238,6 +238,7 @@ pub fn view<'a>(
                     .on_press_maybe(
                         ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::AnalyzeWithAi)),
                     )
+                    .style(inputs::secondary_button)
                     .padding([6, 16])
                     .into()
             } else {
@@ -247,12 +248,14 @@ pub fn view<'a>(
                 .on_press_maybe(
                     ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::DetectLanguage)),
                 )
+                .style(inputs::secondary_button)
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "editor.translate")).size(13))
                 .on_press_maybe(
                     ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::TranslateMetadata)),
                 )
+                .style(inputs::secondary_button)
                 .padding([6, 16])
                 .into(),
             button(text(t(locale, "common.save")).size(13))
@@ -287,7 +290,11 @@ pub fn view<'a>(
                         flag.language.clone(),
                     )))
                     .padding([4, 8])
-                    .style(|_: &iced::Theme, _| button::Style::default())
+                    .style(if flag.is_active {
+                        inputs::primary_button
+                    } else {
+                        inputs::secondary_button
+                    })
                     .into()
             })
             .collect();
@@ -331,6 +338,7 @@ pub fn view<'a>(
         .color(Color::from_rgb(0.55, 0.58, 0.65)),
     ]
     .padding(8);
+    let preview_card = inputs::card(column![preview, info].spacing(4)).padding(8);
 
     // Metadata fields
     let title_input = inputs::labeled_input(
@@ -385,6 +393,7 @@ pub fn view<'a>(
         Space::with_width(Length::Fill),
         button(text(t(locale, "editor.linkToPost")).size(12))
             .on_press(Message::MediaEditor(MediaEditorMsg::TogglePostPicker))
+            .style(inputs::secondary_button)
             .padding([4, 10]),
     ]
     .align_y(iced::Alignment::Center)
@@ -478,19 +487,29 @@ pub fn view<'a>(
     ]
     .padding(8);
 
-    let body = scrollable(
+    let metadata = inputs::card(
         column![
-            header,
-            flags_bar,
-            preview,
-            info,
             inputs::section_header(&t(locale, "editor.metadata")),
             meta_row1,
             meta_row2,
             meta_row3,
-            linked_posts_header,
-            post_picker,
-            linked_posts_list,
+        ]
+        .spacing(12)
+        .width(Length::Fill),
+    );
+    let linked_posts = inputs::card(
+        column![linked_posts_header, post_picker, linked_posts_list]
+            .spacing(10)
+            .width(Length::Fill),
+    );
+
+    let body = scrollable(
+        column![
+            header,
+            flags_bar,
+            preview_card,
+            metadata,
+            linked_posts,
             footer,
         ]
         .spacing(12)
