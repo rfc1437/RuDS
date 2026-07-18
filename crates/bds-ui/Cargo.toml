@@ -36,9 +36,10 @@ winresource = "0.1"
 
 [package.metadata.packager]
 product-name = "Blogging Desktop Server"
-identifier = "de.rfc1437.bds2"
+identifier = "de.rfc1437.ruds"
 description = "A desktop application for writing and publishing static blogs."
 before-packaging-command = "cargo build --release -p bds-ui"
+deep-link-protocols = [{ schemes = ["ruds"] }]
 icons = [
     "assets/app-icons/bds.icns",
     "assets/app-icons/bds.ico",

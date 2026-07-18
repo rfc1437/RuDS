@@ -67,12 +67,12 @@ The generated Lua documentation itself is a core requirement.
 
 Done:
 
-- Menu file parsing/rendering, Home-first normalization, macOS URL plumbing, and Blogmark deep-link parsing.
+- Menu file parsing/rendering and Home-first normalization.
+- macOS URL plumbing and the sole bDS2-compatible Blogmark action at `ruds://new-post`; RuDS neither registers nor accepts bDS2's `bds2://` scheme.
 
 Open:
 
 - OPML/menu editor UI.
-- Remaining application deep-link parity flows.
 - Replace the Menu Editor placeholder.
 
 ### CLI, MCP, and domain events — Open
@@ -89,12 +89,8 @@ Open:
 
 Done:
 
-- Blogmark deep-link parsing, content capture, post import, transform selection, and Lua transform execution.
-
-Open:
-
-- Complete the dedicated user-facing capture/review workflow where the current implicit flow does not cover the bDS2 behavior.
-- Close remaining transform-chain differences found against the specs and bDS2.
+- Blogmark bookmarklet copy, `ruds://new-post` parsing, content capture, post import, transform selection, and Lua transform execution.
+- bDS2-compatible delivery behavior without adding unsupported deep-link actions.
 
 ### Headless server — Open
 

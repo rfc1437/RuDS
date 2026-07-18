@@ -13,6 +13,40 @@ surface MenuManagementSurface {
         SyncMenuFromFilesystemRequested(project_id)
 }
 
+surface MenuEditorSurface {
+    facing _: MenuOperator
+
+    provides:
+        MenuEditorOpened(project_id)
+        MenuEntryDraftRequested(menu, selected_item, kind)
+        MenuEntryDraftCompleted(menu, selection_or_label)
+        MenuEntryDraftCancelled(menu)
+        MenuTreeEditRequested(menu, selected_item, operation, target_item, drop_position)
+        UpdateMenuRequested(items)
+
+    @guarantee EntryCreation
+        -- A new page/category draft is inserted directly after the selected
+        -- item, or as the first child when a submenu is selected. A page draft
+        -- can select an existing page; submitting free text instead creates a
+        -- submenu. A category draft can select an existing category or create
+        -- a new category from non-empty free text. Cancelling removes the draft.
+
+    @guarantee TreeEditing
+        -- Entries may move among siblings, indent only beneath a preceding
+        -- submenu, unindent to immediately after their parent, or be dragged
+        -- before/after an entry or inside a submenu. A drop onto itself, one of
+        -- its descendants, or inside a non-submenu has no effect.
+
+    @guarantee HomeProtection
+        -- The canonical Home entry cannot be moved, indented, unindented,
+        -- deleted, or dragged. Those actions are unavailable while it is
+        -- selected and remain no-ops if invoked indirectly.
+
+    @guarantee SaveFeedback
+        -- Save persists the current normalized tree through UpdateMenu and
+        -- informs the operator that the blog menu was saved.
+}
+
 value MenuItem {
     kind: page | submenu | category_archive | home
     label: String
@@ -70,4 +104,31 @@ rule SyncMenuFromFilesystem {
     -- Reloads menu from OPML, normalizes, writes back (round-trip repair).
     ensures: MenuLoaded(project_id, _)
     ensures: MenuFileWritten(_)
+}
+
+rule OpenMenuEditor {
+    when: MenuEditorOpened(project_id)
+    ensures: MenuLoaded(project_id, _)
+    ensures: MenuEditorReady(project_id)
+}
+
+rule StartMenuEntryDraft {
+    when: MenuEntryDraftRequested(menu, selected_item, kind)
+    requires: kind = page or kind = category_archive
+    ensures: MenuDraftInserted(menu, selected_item, kind)
+}
+
+rule CompleteMenuEntryDraft {
+    when: MenuEntryDraftCompleted(menu, selection_or_label)
+    ensures: MenuDraftResolved(menu, selection_or_label)
+}
+
+rule CancelMenuEntryDraft {
+    when: MenuEntryDraftCancelled(menu)
+    ensures: MenuDraftRemoved(menu)
+}
+
+rule EditMenuTree {
+    when: MenuTreeEditRequested(menu, selected_item, operation, target_item, drop_position)
+    ensures: MenuTreePreviewUpdated(menu)
 }

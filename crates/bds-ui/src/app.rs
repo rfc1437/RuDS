@@ -4427,6 +4427,16 @@ impl BdsApp {
             SettingsMsg::BlogmarkCategoryChanged(s) => {
                 state.blogmark_category = s;
             }
+            SettingsMsg::CopyBlogmarkBookmarklet => {
+                if let Some(project) = &self.active_project {
+                    let bookmarklet = engine::blogmark::bookmarklet(&project.id);
+                    self.notify(
+                        ToastLevel::Success,
+                        &t(self.ui_locale, "settings.blogmarkBookmarkletCopied"),
+                    );
+                    return iced::clipboard::write(bookmarklet);
+                }
+            }
             SettingsMsg::SaveProject => {
                 if let (Some(db), Some(data_dir), Some(project)) =
                     (&self.db, &self.data_dir, self.active_project.as_mut())

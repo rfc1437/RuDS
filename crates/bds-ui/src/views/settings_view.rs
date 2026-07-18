@@ -292,6 +292,7 @@ pub enum SettingsMsg {
     MaxPostsPerPageChanged(String),
     ImageImportConcurrencyChanged(String),
     BlogmarkCategoryChanged(String),
+    CopyBlogmarkBookmarklet,
     SaveProject,
     // Editor
     DefaultModeChanged(String),
@@ -543,6 +544,11 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
             .find(|row| row.name == state.blogmark_category),
         |row| Message::Settings(SettingsMsg::BlogmarkCategoryChanged(row.name)),
     );
+    let copy_blogmark_bookmarklet =
+        button(text(t(locale, "settings.copyBlogmarkBookmarklet")).size(13))
+            .on_press(Message::Settings(SettingsMsg::CopyBlogmarkBookmarklet))
+            .style(inputs::secondary_button)
+            .padding([6, 16]);
     let save = button(text(t(locale, "common.save")).size(13))
         .on_press(Message::Settings(SettingsMsg::SaveProject))
         .style(inputs::primary_button)
@@ -566,6 +572,7 @@ fn section_project<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
         max_posts,
         image_import_concurrency,
         blogmark_category,
+        copy_blogmark_bookmarklet,
         save,
     ]
     .spacing(8)

@@ -17,6 +17,34 @@ value GitSyncStatus {
     kind: local_only | remote_only | both
 }
 
+value GitFileStatus {
+    path: String
+    old_path: String?
+    kind: added | modified | deleted | renamed | untracked
+}
+
+value GitCommit {
+    hash: String
+    subject: String?
+    author: String?
+    date: String?
+    sync_status: GitSyncStatus
+}
+
+value GitRemoteState {
+    local_branch: String?
+    upstream_branch: String?
+    has_upstream: Boolean
+    ahead: Integer
+    behind: Integer
+}
+
+config {
+    local_timeout: Duration = 15.seconds
+    network_timeout: Duration = 120.seconds
+    file_history_limit: Integer = 50
+}
+
 surface GitSyncStatusSurface {
     context status: GitSyncStatus
 
@@ -46,14 +74,24 @@ surface GitRepositorySurface {
 surface GitControlSurface {
     facing _: GitOperator
 
+    exposes:
+        GitFileStatus
+        GitCommit
+        GitRemoteState
+
     provides:
         InitializeRepoRequested(project)
         GitStatusRequested(project)
         GitDiffRequested(project)
+        GitFileDiffRequested(project, file_path)
         GitHistoryRequested(project, branch)
+        GitFileHistoryRequested(project, file_path)
+        GitRemoteStateRequested(project)
+        GitRemoteSetRequested(project, remote_url)
         GitFetchRequested(project)
         GitPullRequested(project)
         GitPushRequested(project)
+        GitNetworkRunCancelled(project)
         GitCommitAllRequested(project, message)
         GitReconcileRequested(project, old_commit, new_commit)
         PruneLfsCacheRequested(project, retain_recent)
@@ -85,6 +123,13 @@ rule GetDiff {
     ensures: GitDiffReport(staged_diff, unstaged_diff)
 }
 
+rule GetFileDiff {
+    when: GitFileDiffRequested(project, file_path)
+    -- Returns the file at HEAD and in the working tree. A missing side is
+    -- represented by empty content so added and deleted files remain viewable.
+    ensures: GitFileDiffReport(file_path, original_content, modified_content)
+}
+
 rule GetHistory {
     when: GitHistoryRequested(project, branch)
     -- Returns commit history with sync status per commit
@@ -94,9 +139,32 @@ rule GetHistory {
         -- This drives the "push needed" / "pull needed" indicators
 }
 
+
+rule GetFileHistory {
+    when: GitFileHistoryRequested(project, file_path)
+    -- Follows renames and returns the newest config.file_history_limit commits.
+    -- A file with no history produces an empty report rather than an error.
+    ensures: GitFileHistoryReport(file_path, commits)
+}
+
+rule GetRemoteState {
+    when: GitRemoteStateRequested(project)
+    -- A repository without an upstream reports zero ahead/behind counts.
+    ensures: GitRemoteStateReport(project, local_branch, upstream_branch, ahead, behind)
+}
+
+rule SetRemote {
+    when: GitRemoteSetRequested(project, remote_url)
+    -- Creates origin when absent and replaces its URL when already configured.
+    ensures: GitRemoteUpdated(project, remote_url)
+}
+
 rule Fetch {
     when: GitFetchRequested(project)
     ensures: RemoteRefsUpdated(project)
+
+    @guidance
+        -- Network output is streamed live and the run can be cancelled.
 }
 
 rule Pull {
@@ -104,15 +172,29 @@ rule Pull {
     ensures: LocalBranchUpdated(project)
     ensures: GitReconcileRequested(project, previous_head(project), current_head(project))
         -- After pull, detect changed files and reconcile DB
+
+    @guidance
+        -- Pull is fast-forward-only. Network output is streamed live and the
+        -- run can be cancelled.
 }
 
 rule Push {
     when: GitPushRequested(project)
     ensures: RemoteBranchUpdated(project)
+
+    @guidance
+        -- Network output is streamed live and the run can be cancelled.
+}
+
+rule CancelNetworkRun {
+    when: GitNetworkRunCancelled(project)
+    ensures: RunningGitProcessTerminated(project)
+    ensures: GitNetworkRunFinished(project, cancelled)
 }
 
 rule CommitAll {
     when: GitCommitAllRequested(project, message)
+    requires: message != ""
     ensures: AllChangesStaged(project)
     ensures: CommitCreated(project, message)
 }
@@ -157,6 +239,18 @@ invariant StructuredAuthErrors {
     --   per platform (macOS/Windows/Linux)
     --   per provider (GitHub/GitLab/Gitea)
     -- Instead of raw git error messages
+}
+
+invariant BoundedGitExecution {
+    -- Local operations stop after config.local_timeout and network operations
+    -- stop after config.network_timeout. Timeout errors identify the operation
+    -- and preserve captured output; the spawned process is terminated.
+}
+
+invariant OfflineNetworkGate {
+    -- Fetch, pull, and push are refused by their UI/automation caller while
+    -- airplane mode is active. Repository inspection and local commits remain
+    -- available.
 }
 
 rule PruneLfsCache {

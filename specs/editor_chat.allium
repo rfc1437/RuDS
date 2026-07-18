@@ -36,9 +36,9 @@ value InlineSurface {
     actions: List<SurfaceAction>         -- card only
     columns: List<String>                -- table
     rows: List<List<String>>             -- table
-    chart_type: String?                  -- chart: bar/pie/line
+    chart_type: String?                  -- bar | stacked-bar | line | area | pie | donut | heatmap
     series: List<ChartSeries>            -- chart
-    max_value: Integer?                  -- chart
+    max_value: Decimal?                  -- chart
     label: String?                       -- metric
     value: String?                       -- metric
     items: List<String>                  -- list
@@ -53,14 +53,19 @@ value InlineSurface {
 
 value SurfaceAction {
     label: String
-    action: String
+    action: String                       -- navigation/view action from the allow-list below
     payload: Map
 }
 
 value ChartSeries {
     label: String
-    value: Integer
-    segments: List
+    value: Decimal
+    segments: List<ChartSegment>
+}
+
+value ChartSegment {
+    label: String
+    value: Decimal
 }
 
 value MindmapNode {
@@ -72,7 +77,7 @@ value MindmapNode {
 value FormField {
     key: String
     label: String
-    input_type: String
+    input_type: String                   -- text | textarea | select | checkbox | date | number
     placeholder: String?
     value: String?
     options: List<FieldOption>
@@ -201,14 +206,18 @@ surface ChatPanelSurface {
 
     @guarantee AssistantActionDispatch
         -- Assistant tool calls can trigger navigation actions:
-        --   open_post(id), open_media(id), open_settings(), etc.
+        --   open_post(id), open_media(id), open_settings(), open_chat(id),
+        --   switch_view(view), toggle_sidebar(), toggle_panel(), and
+        --   toggle_assistant_sidebar(). Snake-case and camel-case spellings
+        --   are equivalent. Unknown actions or invalid identifiers are refused
+        --   with a visible error and never execute arbitrary code.
         -- Actions dispatched through store, same as user clicks.
         -- Navigation actions open tabs with pin intent.
 
     @guarantee InlineSurfaceRendering
         -- Assistant render-tool calls produce structured inline surfaces
         -- rendered between message content and tool markers.
-        -- 9 surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
+        -- 10 surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
         -- Render tool names: render_card, render_chart, render_form, render_list,
         --   render_metric, render_mindmap, render_table, render_tabs.
         -- Unrecognized render names render as json (raw dump).
@@ -216,7 +225,23 @@ surface ChatPanelSurface {
         -- Form surfaces persist field values in conversation surface_state.
         -- Tab surfaces track selected_index in conversation surface_state.
         -- Surfaces can be dismissed, persisted in conversation surface_state.
+        -- Stable message/tool-index IDs bind all three kinds of state to the
+        -- same surface when a conversation is reopened.
+        -- Every non-dismissed surface is expanded. Existing surfaces remain
+        -- visible while later assistant content and surfaces stream in.
+        -- Form submission adds the current field values to the action payload.
         -- Form debounce: config.surface_form_debounce_ms.
+
+    @guarantee ChartSurfaceParity
+        -- Charts support bar, stacked-bar, line, area, pie, donut, and heatmap.
+        -- chartType and legacy chart_type inputs are accepted; absent type
+        -- defaults to bar. Stacked bars and heatmaps use labelled segments.
+        -- Non-numeric values are rendered as zero rather than breaking chat.
+
+    @guarantee StructuredSurfaceSafety
+        -- Surface payloads are rendered only through the fixed component set.
+        -- Raw assistant HTML or JavaScript is never executed. Unknown nested
+        -- content renders as text or an inspectable JSON value.
 
     @guarantee TokenTracking
         -- Token usage tracked per conversation.

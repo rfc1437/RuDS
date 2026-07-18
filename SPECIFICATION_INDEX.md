@@ -39,6 +39,7 @@ Diese Datei dient als Index zu allen Allium-Spezifikationen und Schema-Inventari
 | Datei | Scope | Status | Beschreibung |
 |-------|-------|--------|--------------|
 | `git.allium` | Extension A | ✅ Existiert | Git-Operationen, LFS, Reconciliation |
+| `import.allium` | Extension B | ✨ Neu | WordPress-WXR-Analyse, Konfliktprüfung und Importausführung |
 | `mcp.allium` | Extension G | ✅ Existiert | MCP-Server (Tools, Resources) |
 | `ai.allium` | Core/Extension C | ✅ Existiert | AI One-Shot Tasks und Chat |
 | `embedding.allium` | Extension D | ✅ Existiert | Semantic Similarity (HNSW) |

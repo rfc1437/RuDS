@@ -15,7 +15,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
 - SSH-agent-based SCP or rsync publishing.
-- Site, media, and translation validation plus Blogmark capture and Lua transforms.
+- Site, media, and translation validation plus `ruds://new-post` Blogmark capture and Lua transforms; bDS2 keeps its separate `bds2://` bookmarklet protocol.
 
 RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from CDNs. The preview is served by the Rust application and displayed by the operating-system webview.
 

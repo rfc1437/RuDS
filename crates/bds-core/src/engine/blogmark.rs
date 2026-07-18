@@ -15,6 +15,7 @@ const MAX_TITLE_LENGTH: usize = 200;
 const MAX_URL_LENGTH: usize = 2_048;
 const MAX_TOASTS_TOTAL: usize = 20;
 const MAX_TOAST_LENGTH: usize = 300;
+const BLOGMARK_SCHEME: &str = "ruds";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlogmarkCandidate {
@@ -36,7 +37,7 @@ pub struct BlogmarkImportResult {
 pub fn parse_deep_link(raw: &str) -> EngineResult<BlogmarkCandidate> {
     let parsed =
         Url::parse(raw).map_err(|_| EngineError::Validation("invalid blogmark URL".into()))?;
-    if parsed.scheme() != "bds2" {
+    if parsed.scheme() != BLOGMARK_SCHEME {
         return Err(EngineError::Validation(
             "unsupported blogmark scheme".into(),
         ));
@@ -64,6 +65,14 @@ pub fn parse_deep_link(raw: &str) -> EngineResult<BlogmarkCandidate> {
         categories: list_param(params.get("categories")),
         project_id: nonempty(params.get("project_id")),
     })
+}
+
+pub fn bookmarklet(project_id: &str) -> String {
+    let project_id =
+        url::form_urlencoded::byte_serialize(project_id.as_bytes()).collect::<String>();
+    format!(
+        "javascript:(()=>{{const t=encodeURIComponent(document.title||'');const u=encodeURIComponent(location.href||'');location.href='ruds://new-post?title='+t+'&url='+u+'&project_id={project_id}';}})();"
+    )
 }
 
 pub fn receive_deep_link(
@@ -281,7 +290,7 @@ mod tests {
     #[test]
     fn parses_and_hardens_blogmark_links() {
         let candidate = parse_deep_link(
-            "bds2://new-post?title=%00Hello&url=https%3A%2F%2Fuser%3Apass%40example.com%2Fa%23frag&tags=one%2Ctwo",
+            "ruds://new-post?title=%00Hello&url=https%3A%2F%2Fuser%3Apass%40example.com%2Fa%23frag&tags=one%2Ctwo",
         )
         .unwrap();
         assert_eq!(candidate.title, "Hello");
@@ -292,13 +301,22 @@ mod tests {
     #[test]
     fn rejects_other_schemes_and_actions() {
         assert!(parse_deep_link("bds://new-post?title=x").is_err());
-        assert!(parse_deep_link("bds2://other?title=x").is_err());
+        assert!(parse_deep_link("bds2://new-post?title=x").is_err());
+        assert!(parse_deep_link("ruds://other?title=x").is_err());
+    }
+
+    #[test]
+    fn bookmarklet_targets_only_ruds_and_the_selected_project() {
+        let value = bookmarklet("project & seven");
+        assert!(value.contains("ruds://new-post?"));
+        assert!(value.contains("project_id=project+%26+seven"));
+        assert!(!value.contains("bds2://"));
     }
 
     #[test]
     fn invalid_source_url_never_reaches_candidate() {
         let candidate =
-            parse_deep_link("bds2://new-post?title=x&url=javascript%3Aalert%281%29").unwrap();
+            parse_deep_link("ruds://new-post?title=x&url=javascript%3Aalert%281%29").unwrap();
         assert!(candidate.url.is_none());
     }
 
@@ -328,7 +346,7 @@ mod tests {
             db.conn(),
             directory.path(),
             &project.id,
-            "bds2://new-post?title=Example&url=https%3A%2F%2Fexample.com",
+            "ruds://new-post?title=Example&url=https%3A%2F%2Fexample.com",
         )
         .unwrap();
 

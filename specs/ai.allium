@@ -412,7 +412,7 @@ invariant ChatCancellation {
 
 invariant StructuredRenderTools {
     -- Chat may emit structured render payloads via tool calls prefixed "render_".
-    -- 9 inline surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
+    -- 10 inline surface types: card, chart, form, list, metric, mindmap, table, tabs, text, json.
     -- Render tool names: render_card, render_chart, render_form, render_list,
     --   render_metric, render_mindmap, render_table, render_tabs.
     -- Unrecognized render tool names render as JSON (raw dump).

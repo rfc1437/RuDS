@@ -22,6 +22,8 @@ fn desktop_packages_have_native_icons_and_cargo_commands() {
         "assets/app-icons/bds.png",
         "assets/app-icons/bds.ico",
         "assets/app-icons/bds.icns",
+        "identifier = \"de.rfc1437.ruds\"",
+        "deep-link-protocols = [{ schemes = [\"ruds\"] }]",
         "signing-identity = \"-\"",
     ] {
         assert!(manifest.contains(required), "missing {required}");

@@ -48,7 +48,12 @@ use "./action_patterns.allium" as action_patterns -- AI gating, translation chai
 
 -- Integration
 use "./git.allium" as git                   -- Git operations, LFS, reconciliation
+use "./import.allium" as wordpress_import   -- WordPress WXR analysis and execution
 use "./mcp.allium" as mcp                   -- MCP server (tools, resources, proposals)
+use "./cli.allium" as cli                   -- Headless automation commands
+use "./events.allium" as events             -- Multi-client domain event bus
+use "./server.allium" as server             -- Headless SSH engine host
+use "./tui.allium" as tui                   -- Terminal renderer and remote client
 use "./ai.allium" as ai                     -- AI one-shot tasks and chat
 use "./embedding.allium" as embedding       -- Semantic similarity (HNSW vectors)
 use "./cli_sync.allium" as cli_sync         -- CLI-to-app notification sync

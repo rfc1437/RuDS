@@ -1,0 +1,291 @@
+-- allium: 1
+-- WordPress WXR Import
+-- Scope: extension (saved analysis, conflict review, recoverable execution)
+-- Distilled from: ../bDS2/lib/bds/wxr_parser.ex,
+--                 ../bDS2/lib/bds/import_analysis.ex,
+--                 ../bDS2/lib/bds/import_execution.ex,
+--                 ../bDS2/lib/bds/import_definitions.ex,
+--                 ../bDS2/lib/bds/desktop/shell_live/import_editor*
+
+use "./project.allium" as project
+
+enum ImportItemStatus { new | update | conflict | content_duplicate | missing }
+enum ImportResolution { ignore | overwrite | import }
+
+value ImportedSite {
+    title: String
+    url: String?
+    language: String?
+}
+
+value ImportCandidate {
+    kind: post | page | media
+    source_id: Integer?
+    title: String
+    slug: String?
+    filename: String?
+    status: ImportItemStatus
+    resolution: ImportResolution?
+    existing_id: String?
+    author: String?
+    excerpt: String?
+    content: String?
+    source_status: String?
+    categories: List<String>
+    tags: List<String>
+    source_path: String?
+    parent_source_id: Integer?
+    created_at: Timestamp?
+    updated_at: Timestamp?
+    published_at: Timestamp?
+}
+
+value TaxonomyCandidate {
+    kind: category | tag
+    name: String
+    slug: String?
+    exists_in_project: Boolean
+    mapped_to: String?
+}
+
+value ImportCounts {
+    new_count: Integer
+    update_count: Integer
+    conflict_count: Integer
+    duplicate_count: Integer
+    missing_count: Integer
+}
+
+value ImportDateBucket {
+    year: Integer
+    post_count: Integer
+    media_count: Integer
+}
+
+value ImportMacroUsage {
+    name: String
+    total_count: Integer
+    post_slugs: List<String>
+}
+
+value ImportReport {
+    source_file: String
+    uploads_folder: String?
+    site: ImportedSite
+    posts: List<ImportCandidate>
+    pages: List<ImportCandidate>
+    media: List<ImportCandidate>
+    taxonomies: List<TaxonomyCandidate>
+    post_counts: ImportCounts
+    page_counts: ImportCounts
+    media_counts: ImportCounts
+    date_distribution: List<ImportDateBucket>
+    macros: List<ImportMacroUsage>
+}
+
+entity ImportDefinition {
+    project: project/Project
+    name: String
+    wxr_file_path: String?
+    uploads_folder_path: String?
+    last_analysis: ImportReport?
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+config {
+    transaction_batch_size: Integer = 500
+}
+
+surface ImportDefinitionSurface {
+    context definition: ImportDefinition
+
+    exposes:
+        definition.project
+        definition.name
+        definition.wxr_file_path when definition.wxr_file_path != null
+        definition.uploads_folder_path when definition.uploads_folder_path != null
+        definition.last_analysis when definition.last_analysis != null
+        definition.created_at
+        definition.updated_at
+}
+
+surface WordPressImportSurface {
+    facing _: ImportOperator
+
+    exposes:
+        ImportReport
+        ImportCandidate
+        TaxonomyCandidate
+
+    provides:
+        CreateImportDefinitionRequested(project, name)
+        RenameImportDefinitionRequested(definition, name)
+        SelectWxrFileRequested(definition, file_path)
+        SelectUploadsFolderRequested(definition, folder_path)
+        AnalyzeWxrRequested(definition)
+        ResolveImportConflictRequested(definition, kind, item_name, resolution)
+        MapImportTaxonomyRequested(definition, kind, source_name, target_name)
+        AutoMapImportTaxonomyRequested(definition, model)
+        ExecuteWordPressImportRequested(definition)
+        DeleteImportDefinitionRequested(definition)
+
+    @guarantee AnalysisReview
+        -- Analysis runs asynchronously and reports localized progress while it
+        -- loads project state, analyzes posts, pages and media, processes
+        -- taxonomy, and discovers WordPress shortcodes. The saved report shows
+        -- item counts, conflicts, missing uploads, year distribution, macro
+        -- usage, and importable totals before any project content is changed.
+
+    @guarantee ConflictReview
+        -- Conflicts default to ignore. The operator can keep ignoring, overwrite
+        -- the existing item, or import a second item with a unique slug.
+        -- Same-content updates and duplicates are reported but skipped during
+        -- execution, matching bDS2.
+
+    @guarantee TaxonomyReview
+        -- Existing terms are matched case-insensitively. New source categories
+        -- and tags may be mapped to existing project terms, cleared, or created
+        -- as new terms. Free-text category mappings are normalized before save.
+
+    @guarantee AiTaxonomyGate
+        -- Optional automatic taxonomy mapping uses the selected configured AI
+        -- model. In airplane mode it runs only through a configured local
+        -- endpoint; otherwise it is refused with localized guidance. The saved
+        -- report is updated only after a successful mapping response.
+
+    @guarantee ExecutionProgress
+        -- Execution is unavailable when the report contains no importable
+        -- items. While running, the editor shows phase, completed/total count,
+        -- current detail and estimated remaining time for taxonomy, posts,
+        -- media and pages, followed by a localized result summary or error.
+}
+
+rule CreateImportDefinition {
+    when: CreateImportDefinitionRequested(project, name)
+    ensures: ImportDefinition.created(
+        project: project,
+        name: name,
+        wxr_file_path: null,
+        uploads_folder_path: null,
+        last_analysis: null,
+        created_at: now,
+        updated_at: now
+    )
+}
+
+rule RenameImportDefinition {
+    when: RenameImportDefinitionRequested(definition, name)
+    ensures: definition.name = name
+    ensures: definition.updated_at = now
+}
+
+rule SelectWxrFile {
+    when: SelectWxrFileRequested(definition, file_path)
+    ensures: definition.wxr_file_path = file_path
+    ensures: definition.last_analysis = null
+    ensures: definition.updated_at = now
+}
+
+rule SelectUploadsFolder {
+    when: SelectUploadsFolderRequested(definition, folder_path)
+    ensures: definition.uploads_folder_path = folder_path
+    ensures: definition.updated_at = now
+}
+
+rule AnalyzeWxr {
+    when: AnalyzeWxrRequested(definition)
+    requires: definition.wxr_file_path != null
+    let report = analyze_wordpress_export(
+        definition.project,
+        definition.wxr_file_path,
+        definition.uploads_folder_path
+    )
+    ensures: definition.last_analysis = report
+    ensures: definition.updated_at = now
+}
+
+rule ResolveImportConflict {
+    when: ResolveImportConflictRequested(definition, kind, item_name, resolution)
+    requires: definition.last_analysis != null
+    requires: resolution = ignore or resolution = overwrite or resolution = import
+    ensures: definition.last_analysis = with_conflict_resolution(
+        definition.last_analysis,
+        kind,
+        item_name,
+        resolution
+    )
+    ensures: definition.updated_at = now
+}
+
+rule MapImportTaxonomy {
+    when: MapImportTaxonomyRequested(definition, kind, source_name, target_name)
+    requires: definition.last_analysis != null
+    ensures: definition.last_analysis = with_taxonomy_mapping(
+        definition.last_analysis,
+        kind,
+        source_name,
+        target_name
+    )
+    ensures: definition.updated_at = now
+}
+
+rule AutoMapImportTaxonomy {
+    when: AutoMapImportTaxonomyRequested(definition, model)
+    requires: definition.last_analysis != null
+    ensures: definition.last_analysis = with_ai_taxonomy_mappings(definition.last_analysis, model)
+    ensures: definition.updated_at = now
+}
+
+rule ExecuteWordPressImport {
+    when: ExecuteWordPressImportRequested(definition)
+    requires: definition.last_analysis != null
+    requires: importable_count(definition.last_analysis) > 0
+    ensures: WordPressImportExecuted(definition, result)
+
+    @guidance
+        -- New posts/pages use the source author or project default, preserve
+        -- source timestamps, taxonomy and published/draft status, and route
+        -- through normal post persistence/publishing. Pages also receive the
+        -- page category. Imported media route through normal media import,
+        -- preserve description as alt text, and link to an imported parent post
+        -- when its WordPress parent is known. Missing media are skipped.
+}
+
+rule DeleteImportDefinition {
+    when: DeleteImportDefinitionRequested(definition)
+    ensures: not exists definition
+}
+
+invariant WxrConversionParity {
+    -- A valid export requires an RSS channel and extracts site metadata, posts,
+    -- pages, attachments, categories and tags. Post HTML is converted to
+    -- Markdown and WordPress shortcodes become bDS [[macro ...]] calls.
+}
+
+invariant AnalysisClassification {
+    -- Posts/pages: same slug and checksum => update; same slug with different
+    -- content => conflict; checksum matching another post => content duplicate;
+    -- otherwise new. Media applies the same rules by original filename and
+    -- checksum, with missing selected-upload files classified as missing.
+}
+
+invariant CoreEngineReuse {
+    -- Execution uses the ordinary tag, post, publishing, media, filesystem,
+    -- search, embedding and domain-event paths. It does not create a parallel
+    -- import-only data model or bypass normal side effects.
+}
+
+invariant RecoverableExecution {
+    -- Taxonomy, posts, media and pages execute in that order. Each phase is
+    -- committed in batches of config.transaction_batch_size. A failure rolls
+    -- back the current batch and stops with a structured error; completed
+    -- batches remain available for inspection and a later retry.
+}
+
+invariant SafeUntrustedInput {
+    -- Unknown XML elements and report keys are ignored without creating
+    -- unbounded runtime identifiers. Malformed XML or a missing RSS channel
+    -- fails analysis without changing project content. Progress/reporting
+    -- callback failures never abort otherwise valid analysis or execution.
+}

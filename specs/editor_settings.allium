@@ -161,7 +161,8 @@ surface SettingsViewSurface {
         -- clipboard for pasting into a browser bookmark.
         -- The bookmarklet captures the active tab's document.title and
         -- location.href (each URI-encoded) and navigates to a
-        -- bds2://new-post?title=...&url=... deep link. When a project is active
+        -- ruds://new-post?title=...&url=... deep link. RuDS does not register or
+        -- accept bds2://, which remains owned by bDS2. When a project is active
         -- its id is appended as &project_id=... so the link targets that
         -- project regardless of which one is currently open.
 
