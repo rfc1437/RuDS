@@ -293,7 +293,7 @@ fn translate_post_ai(
             }),
         },
     )? {
-        OneShotResponse::Translation(result) => Ok(result),
+        (OneShotResponse::Translation(result), _usage) => Ok(result),
         _ => Err(EngineError::Parse(
             "unexpected post translation response".into(),
         )),
@@ -320,7 +320,7 @@ fn translate_media_ai(
             }),
         },
     )? {
-        OneShotResponse::MediaTranslation(result) => Ok(result),
+        (OneShotResponse::MediaTranslation(result), _usage) => Ok(result),
         _ => Err(EngineError::Parse(
             "unexpected media translation response".into(),
         )),

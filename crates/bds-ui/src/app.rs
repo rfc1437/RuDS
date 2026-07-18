@@ -2708,8 +2708,17 @@ impl BdsApp {
                 .then_with(|| left.0.to_lowercase().cmp(&right.0.to_lowercase()))
         });
         tag_items.truncate(40);
-        let max_count = tag_items.iter().map(|item| item.1).max().unwrap_or(1).max(1);
-        let min_count = tag_items.iter().map(|item| item.1).min().unwrap_or(max_count);
+        let max_count = tag_items
+            .iter()
+            .map(|item| item.1)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let min_count = tag_items
+            .iter()
+            .map(|item| item.1)
+            .min()
+            .unwrap_or(max_count);
         let range = (max_count - min_count).max(1) as f32;
         let mut tag_cloud = tag_items
             .into_iter()
@@ -5518,7 +5527,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::PostAnalysis(result)) => {
+            Ok((ai::OneShotResponse::PostAnalysis(result), _usage)) => {
                 self.active_modal = Some(modal::ModalState::AISuggestions {
                     target: modal::AiEntityTarget::Post(post_id.to_string()),
                     fields: vec![
@@ -5577,7 +5586,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::Taxonomy(result)) => {
+            Ok((ai::OneShotResponse::Taxonomy(result), _usage)) => {
                 self.active_modal = Some(modal::ModalState::AISuggestions {
                     target: modal::AiEntityTarget::Post(post_id.to_string()),
                     fields: vec![
@@ -5624,7 +5633,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::LanguageDetection(result)) => {
+            Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
                 if let Some(editor) = self.post_editors.get_mut(post_id) {
                     editor.language = result.language_code;
                     editor.mark_dirty();
@@ -5734,7 +5743,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::Translation(result)) => {
+            Ok((ai::OneShotResponse::Translation(result), _usage)) => {
                 if let Some(editor) = self.post_editors.get_mut(post_id) {
                     editor.switch_language(target_language);
                     editor.title = result.title.clone();
@@ -5798,7 +5807,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::ImageAnalysis(result)) => {
+            Ok((ai::OneShotResponse::ImageAnalysis(result), _usage)) => {
                 self.active_modal = Some(modal::ModalState::AISuggestions {
                     target: modal::AiEntityTarget::Media(media_id.to_string()),
                     fields: vec![
@@ -5853,7 +5862,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::LanguageDetection(result)) => {
+            Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
                 if let Some(editor) = self.media_editors.get_mut(media_id) {
                     editor.language = result.language_code;
                     editor.is_dirty = true;
@@ -5920,7 +5929,9 @@ impl BdsApp {
                     content: json!({ "text": format!("{}\n{}\n{}", state.title, state.alt, state.caption) }),
                 },
             ) {
-                Ok(ai::OneShotResponse::LanguageDetection(result)) => result.language_code,
+                Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
+                    result.language_code
+                }
                 Ok(_) => String::new(),
                 Err(error) => {
                     self.notify(ToastLevel::Error, &error.to_string());
@@ -5946,7 +5957,7 @@ impl BdsApp {
             }),
         };
         match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok(ai::OneShotResponse::MediaTranslation(result)) => {
+            Ok((ai::OneShotResponse::MediaTranslation(result), _usage)) => {
                 if let Some(editor) = self.media_editors.get_mut(media_id) {
                     editor.switch_language(target_language);
                     editor.title = result.title.clone();

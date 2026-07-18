@@ -135,6 +135,14 @@ pub struct MediaTranslationResult {
     pub caption: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OneShotResponse {
     Taxonomy(TaxonomySuggestion),
@@ -323,7 +331,7 @@ pub fn run_one_shot(
     conn: &Connection,
     offline_mode: bool,
     request: &OneShotRequest,
-) -> EngineResult<OneShotResponse> {
+) -> EngineResult<(OneShotResponse, TokenUsage)> {
     let settings = load_ai_settings(conn, offline_mode)?;
     let endpoint = active_endpoint(conn, offline_mode)?;
     let model = select_model(&settings, &endpoint, &request.operation)?;
@@ -370,7 +378,24 @@ pub fn run_one_shot(
         .ok_or_else(|| {
             EngineError::Parse("chat completions response missing message content".to_string())
         })?;
-    parse_one_shot_response(request, content)
+    let response = parse_one_shot_response(request, content)?;
+    Ok((response, parse_token_usage(&body)))
+}
+
+fn parse_token_usage(body: &Value) -> TokenUsage {
+    let usage = body.get("usage").unwrap_or(&Value::Null);
+    TokenUsage {
+        input_tokens: usage.get("prompt_tokens").and_then(Value::as_u64),
+        output_tokens: usage.get("completion_tokens").and_then(Value::as_u64),
+        cache_read_tokens: usage
+            .get("prompt_tokens_details")
+            .and_then(|details| details.get("cached_tokens"))
+            .and_then(Value::as_u64),
+        cache_write_tokens: usage
+            .get("completion_tokens_details")
+            .and_then(|details| details.get("cached_tokens"))
+            .and_then(Value::as_u64),
+    }
 }
 
 fn build_http_client() -> EngineResult<Client> {
@@ -823,7 +848,7 @@ mod tests {
                         || request.contains("Authorization: Bearer secret-token")
                 );
                 http_ok(
-                    r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
+                    r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
                 )
             },
             1,
@@ -842,7 +867,7 @@ mod tests {
         .unwrap();
         save_model_preferences(db.conn(), None, Some("gpt-4.1-mini"), None, "").unwrap();
 
-        let response = run_one_shot(
+        let (response, usage) = run_one_shot(
             db.conn(),
             false,
             &OneShotRequest {
@@ -852,6 +877,8 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.output_tokens, Some(5));
         assert_eq!(
             response,
             OneShotResponse::PostAnalysis(PostAnalysisResult {
@@ -900,7 +927,7 @@ mod tests {
                     "categories": ["engineering"]
                 }),
             },
-            r#"{"choices":[{"message":{"content":"{\"tags\":[\"rust\",\"preview\"],\"categories\":[\"engineering\"]}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"tags\":[\"rust\",\"preview\"],\"categories\":[\"engineering\"]}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -919,7 +946,7 @@ mod tests {
                 operation: OneShotOperation::AnalyzePost,
                 content: json!({"title":"Draft title","excerpt":"","content":"Body"}),
             },
-            r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -939,7 +966,7 @@ mod tests {
                 operation: OneShotOperation::DetectLanguage,
                 content: json!({"text": "Bonjour tout le monde"}),
             },
-            r#"{"choices":[{"message":{"content":"{\"language_code\":\"fr\"}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"language_code\":\"fr\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -963,7 +990,7 @@ mod tests {
                     "content": "Body"
                 }),
             },
-            r#"{"choices":[{"message":{"content":"{\"title\":\"Hallo\",\"excerpt\":\"Kurzfassung\",\"content\":\"Inhalt\"}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Hallo\",\"excerpt\":\"Kurzfassung\",\"content\":\"Inhalt\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -990,7 +1017,7 @@ mod tests {
                     "image_data_url": "data:image/jpeg;base64,abc123"
                 }),
             },
-            r#"{"choices":[{"message":{"content":"{\"title\":\"Hero image\",\"alt\":\"A scenic mountain\",\"caption\":\"Sunrise over the ridge\"}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Hero image\",\"alt\":\"A scenic mountain\",\"caption\":\"Sunrise over the ridge\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -1016,7 +1043,7 @@ mod tests {
                     "caption": "Morning light"
                 }),
             },
-            r#"{"choices":[{"message":{"content":"{\"title\":\"Montagna\",\"alt\":\"Cresta innevata\",\"caption\":\"Luce del mattino\"}"}}]}"#,
+            r#"{"choices":[{"message":{"content":"{\"title\":\"Montagna\",\"alt\":\"Cresta innevata\",\"caption\":\"Luce del mattino\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
         );
 
         assert_eq!(
@@ -1050,7 +1077,72 @@ mod tests {
         )
         .unwrap();
 
-        run_one_shot(db.conn(), true, &request).unwrap()
+        let (response, usage) = run_one_shot(db.conn(), true, &request).unwrap();
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            }
+        );
+        response
+    }
+
+    #[test]
+    fn parse_token_usage_normalizes_complete_usage() {
+        let usage = parse_token_usage(&json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 42,
+                "prompt_tokens_details": { "cached_tokens": 80 },
+                "completion_tokens_details": { "cached_tokens": 7 }
+            }
+        }));
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: Some(100),
+                output_tokens: Some(42),
+                cache_read_tokens: Some(80),
+                cache_write_tokens: Some(7),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_token_usage_leaves_missing_counters_null() {
+        let usage = parse_token_usage(&json!({
+            "usage": { "prompt_tokens": 100 }
+        }));
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: Some(100),
+                output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_token_usage_handles_absent_usage_object() {
+        assert_eq!(parse_token_usage(&json!({})), TokenUsage::default());
+    }
+
+    #[test]
+    fn parse_token_usage_ignores_non_numeric_counters() {
+        let usage = parse_token_usage(&json!({
+            "usage": {
+                "prompt_tokens": "many",
+                "completion_tokens": -3,
+                "prompt_tokens_details": { "cached_tokens": null },
+                "completion_tokens_details": "nope"
+            }
+        }));
+        assert_eq!(usage, TokenUsage::default());
     }
 
     fn spawn_test_server(

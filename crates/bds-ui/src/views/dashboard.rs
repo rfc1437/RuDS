@@ -265,8 +265,7 @@ fn tag_cloud<'a>(tags: &'a [DashboardTag], locale: UiLocale) -> Element<'a, Mess
     let words = tags
         .iter()
         .map(|tag| {
-            let bg =
-                parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
+            let bg = parse_color(tag.color.as_deref()).unwrap_or(Color::from_rgb(0.18, 0.21, 0.28));
             let fg = contrast_color(bg);
             tooltip(
                 container(text(tag.name.clone()).size(tag.font_size).color(fg))
@@ -324,7 +323,11 @@ fn category_cloud<'a>(
 }
 
 fn post_count_label(locale: UiLocale, count: usize) -> String {
-    tw(locale, "dashboard.postCount", &[("count", &count.to_string())])
+    tw(
+        locale,
+        "dashboard.postCount",
+        &[("count", &count.to_string())],
+    )
 }
 
 fn recent_posts<'a>(posts: &'a [DashboardRecentPost], locale: UiLocale) -> Element<'a, Message> {
