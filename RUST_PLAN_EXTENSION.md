@@ -165,33 +165,6 @@ Secondary content-capture workflow. Not required for core authoring with existin
 - external content can be captured and transformed into posts via the Blogmark pipeline
 - transform scripts execute reliably
 
-### Bucket I: Rich Markdown Editor
-
-#### Scope
-
-- WYSIWYG or hybrid markdown editing (comparable to the baseline app's rich editor)
-- macro syntax preview in editor
-- image insert dialog from linked media
-
-#### Why extension
-
-Core ships with the bds-editor syntax-highlighting plain-text editor and live preview. The baseline app defaults to a rich editor, so this is a user-facing regression that should be addressed after core stabilizes.
-
-#### Architecture advantage
-
-The bds-editor crate (ropey + syntect + cosmic-text) built during core provides the foundation for the rich editor. Incremental additions:
-
-- inline rendering of bold/italic/headers via cosmic-text mixed font styles
-- inline image preview via Iced image rendering within the custom widget
-- macro block preview (render macro output inline in the editor)
-- clickable links
-
-This is an evolution of the existing editor widget, not a separate technology decision.
-
-#### Done when
-
-- users can edit content with a rich editor comparable to the baseline app's editing experience
-
 ### Bucket K: Headless Server Mode
 
 #### Scope
@@ -263,8 +236,6 @@ Bucket F Menu Editing + Deep Links
 Bucket G MCP + Automation
   ↓
 Bucket H Blogmark + Transforms
-  ↓
-Bucket I Rich Editor (builds on bds-editor from core)
   ↓
 Bucket K Headless Server Mode
   ↓

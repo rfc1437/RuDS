@@ -164,7 +164,7 @@ surface PostEditorSurface {
         -- Markdown: code editor with markdown-with-macros language,
         --   highlighting [[macro ...]] syntax. Word wrap on, minimap off, 14px font.
         -- Preview: iframe showing rendered preview.
-        -- Note: visual/WYSIWYG mode not implemented; "visual" normalizes to markdown.
+        -- Markdown and Preview are the only editor modes.
 
     @guarantee DragDropImages
         -- Drop image file onto editor area triggers import chain.

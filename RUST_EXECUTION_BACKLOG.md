@@ -443,20 +443,6 @@ Code-vs-spec gaps from the 2026-07-18 spec sync. Each task names its authoritati
 
 - external content capture workflow
 
-### Bucket I: Rich Editor
-
-#### `bds-editor` (evolution)
-
-- inline bold/italic/header rendering via cosmic-text mixed font styles
-- inline image preview via Iced image rendering within the custom widget
-- macro block preview (render macro output inline)
-- clickable links
-
-#### `bds-ui`
-
-- rich editor mode toggle
-- image insert dialog from linked media
-
 ### Bucket J: A2UI Surfaces
 
 #### `bds-ui`

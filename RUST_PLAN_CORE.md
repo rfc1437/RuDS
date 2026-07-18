@@ -99,7 +99,7 @@ These map to extension Buckets G (CLI + events) and K/L (server, TUI) in RUST_PL
 - **Custom editor widget (bds-editor crate)**: syntax-highlighting markdown/Liquid/Lua editor built on ropey (rope buffer), syntect (syntax highlighting), and cosmic-text (font shaping and text layout). This is the highest-risk custom component and gets a proof-of-concept in Wave 0.
 - **Diesel + embedded migrations**: typed SQLite queries and generated schema, with migrations managed by `diesel_migrations`. Backend-only SQL is confined to connection setup and FTS5 operations.
 - **tokio as the async runtime**: preview server (axum), SSH publishing, file watching, and rfd async dialogs all require an async executor. tokio is the standard choice and is used workspace-wide. Synchronous engine code in bds-core does not use tokio directly — it remains callable from both async (bds-ui) and sync (bds-cli) contexts.
-- **Plain-text markdown editor first**: no WYSIWYG in core. Live preview is required. This is an intentional regression from the baseline app's rich editor. A rich editor can be added as an extension bucket after core ships — and the bds-editor widget provides a natural foundation for it.
+- **Markdown editor with live preview**: bds-editor provides syntax-highlighted Markdown editing, paired with the rendered preview required by the baseline workflow.
 - **Lua for user-authored scripting**: `mlua` with Lua 5.4. Only user-authored macros, transforms, and utility scripts run through Lua. Built-in macros are native Rust — see the macro architecture section below.
 - **One-shot AI operations are core scope**: six operations use a simple OpenAI-compatible HTTP client (`reqwest` + `serde_json`): (1) translate post, (2) translate media metadata, (3) image description / alt text, (4) post analysis (title + excerpt + slug suggestion), (5) taxonomy analysis (tag + category suggestions), (6) language detection. Two configurable endpoints: one for online use, one for airplane/offline mode (local model). These are fire-and-forget request/response calls — no streaming, no tool use, no chat history. The AI chat UI, streaming responses, and tool execution remain in Extension Bucket C.
 
@@ -211,7 +211,6 @@ bds-rust/
 - MCP and remote automation surfaces
 - Blogmark transform service (external content capture pipeline)
 - A2UI server-driven UI surfaces
-- WYSIWYG / rich markdown editor (builds on bds-editor foundation)
 
 ## Cross-Cutting Requirements
 
