@@ -13,6 +13,7 @@ surface MetadataMaintenanceSurface {
 
     provides:
         MetadataDiffRequested(project)
+        RebuildDatabaseRequested(project)
         RebuildFromFilesystemRequested(project, entity_type)
         RepairMetadataDiffItemRequested(project, direction, item)
 }
@@ -39,7 +40,8 @@ rule RunMetadataDiff {
     when: MetadataDiffRequested(project)
     -- Runs as background task via TaskManager
     -- Compares DB records against filesystem files for:
-    --   posts, translations, media, scripts, templates
+    --   project metadata (including a missing description), posts,
+    --   translations, media, Lua scripts, templates
     -- Detected fields: tags, categories, title, excerpt, author,
     --   language, status, templateSlug, dates
     for post in project.posts:
@@ -72,6 +74,22 @@ rule RunMetadataDiff {
     --   (media_translation), scripts, templates, and embeddings.
     -- Embedding diffs compare the stored content_hash against the live post
     --   content to detect vectors that need recomputation.
+}
+
+rule RebuildDatabase {
+    when: RebuildDatabaseRequested(project)
+    -- The filesystem is the complete source of truth for portable project data.
+    -- Existing project-scoped content and relationship rows are removed before
+    -- project.json, posts, translations, media sidecars and links, tags,
+    -- templates, and Lua scripts are imported. Python files in scripts/ are ignored.
+    ensures: ProjectMetadataImported(project, "meta/project.json")
+    ensures: post/RebuildPostsFromFiles(project)
+    ensures: media/RebuildMediaFromFiles(project)
+    ensures: script/RebuildScriptsFromFiles(project)
+    ensures: template/RebuildTemplatesFromFiles(project)
+    @guidance
+        -- Rebuilding media trusts persisted sidecar size, dimensions, and metadata.
+        -- Thumbnail regeneration remains a separate maintenance operation.
 }
 
 rule RepairMetadataDiffItem {

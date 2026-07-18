@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::db::DbConnection as Connection;
 use crate::engine::EngineResult;
 use crate::model::PublishingPreferences;
 use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
@@ -22,6 +23,25 @@ pub fn write_project_json(data_dir: &Path, meta: &ProjectMetadata) -> EngineResu
     let path = data_dir.join("meta").join("project.json");
     let json = serde_json::to_string_pretty(meta)?;
     atomic_write_str(&path, &json)?;
+    Ok(())
+}
+
+/// Copy the project fields persisted in both representations from project.json
+/// into the machine-local project row.
+pub fn sync_project_from_file(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    let metadata = read_project_json(data_dir)?;
+    metadata
+        .validate()
+        .map_err(crate::engine::EngineError::Validation)?;
+    let mut project = crate::db::queries::project::get_project_by_id(conn, project_id)?;
+    project.name = metadata.name;
+    project.description = metadata.description;
+    project.updated_at = crate::util::now_unix_ms();
+    crate::db::queries::project::update_project(conn, &project)?;
     Ok(())
 }
 

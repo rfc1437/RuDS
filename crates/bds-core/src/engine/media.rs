@@ -8,9 +8,10 @@ use walkdir::WalkDir;
 use crate::db::fts;
 use crate::db::queries::media as qm;
 use crate::db::queries::media_translation as qmt;
+use crate::db::queries::post as qp;
 use crate::db::queries::post_media as qpm;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Media, MediaTranslation};
+use crate::model::{Media, MediaTranslation, PostMedia};
 use crate::util::sidecar::{
     MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar,
 };
@@ -641,31 +642,6 @@ pub(crate) fn rebuild_canonical_media(
         .unwrap_or(&sidecar_rel)
         .to_string();
 
-    let abs_file = data_dir.join(&file_path);
-
-    // Get file size (if file exists)
-    let file_size = if abs_file.exists() {
-        fs::metadata(&abs_file)?.len() as i64
-    } else {
-        sc.size
-    };
-
-    // Get checksum (if file exists) — streamed to avoid loading large files into memory
-    let checksum = if abs_file.exists() {
-        Some(crate::util::file_hash(&abs_file)?)
-    } else {
-        None
-    };
-
-    // Get dimensions (if file exists and is an image)
-    let (width, height) = if abs_file.exists() {
-        image_dimensions(&abs_file)
-            .map(|(w, h)| (Some(w as i32), Some(h as i32)))
-            .unwrap_or((sc.width, sc.height))
-    } else {
-        (sc.width, sc.height)
-    };
-
     // Derive filename from file_path
     let filename = Path::new(&file_path)
         .file_name()
@@ -673,7 +649,7 @@ pub(crate) fn rebuild_canonical_media(
         .unwrap_or("")
         .to_string();
 
-    let now = now_unix_ms();
+    let linked_post_ids = sc.linked_post_ids.clone();
 
     let existing = qm::get_media_by_id(conn, &sc.id);
     let created = match existing {
@@ -681,9 +657,9 @@ pub(crate) fn rebuild_canonical_media(
             // Update existing media
             media.original_name = sc.original_name;
             media.mime_type = sc.mime_type;
-            media.size = file_size;
-            media.width = width;
-            media.height = height;
+            media.size = sc.size;
+            media.width = sc.width;
+            media.height = sc.height;
             media.title = sc.title;
             media.alt = sc.alt;
             media.caption = sc.caption;
@@ -691,9 +667,9 @@ pub(crate) fn rebuild_canonical_media(
             media.language = sc.language;
             media.file_path = file_path;
             media.sidecar_path = sidecar_rel;
-            media.checksum = checksum;
+            media.checksum = None;
             media.tags = sc.tags;
-            media.updated_at = now;
+            media.updated_at = sc.updated_at;
             qm::update_media(conn, &media)?;
             false
         }
@@ -704,9 +680,9 @@ pub(crate) fn rebuild_canonical_media(
                 filename,
                 original_name: sc.original_name,
                 mime_type: sc.mime_type,
-                size: file_size,
-                width,
-                height,
+                size: sc.size,
+                width: sc.width,
+                height: sc.height,
                 title: sc.title,
                 alt: sc.alt,
                 caption: sc.caption,
@@ -714,20 +690,35 @@ pub(crate) fn rebuild_canonical_media(
                 language: sc.language,
                 file_path,
                 sidecar_path: sidecar_rel,
-                checksum,
+                checksum: None,
                 tags: sc.tags,
                 created_at: sc.created_at,
-                updated_at: now,
+                updated_at: sc.updated_at,
             };
             qm::insert_media(conn, &media)?;
             true
         }
     };
 
-    // Regenerate thumbnails if the binary file exists
-    if abs_file.exists() {
-        let thumbnails_dir = data_dir.join("thumbnails");
-        let _ = generate_all_thumbnails(&abs_file, &thumbnails_dir, &sc.id);
+    let existing_post_ids: std::collections::HashSet<_> =
+        qpm::list_post_media_by_media(conn, &sc.id)?
+            .into_iter()
+            .map(|link| link.post_id)
+            .collect();
+    for post_id in linked_post_ids {
+        if !existing_post_ids.contains(&post_id) && qp::get_post_by_id(conn, &post_id).is_ok() {
+            qpm::link_media(
+                conn,
+                &PostMedia {
+                    id: Uuid::new_v4().to_string(),
+                    project_id: project_id.to_string(),
+                    post_id,
+                    media_id: sc.id.clone(),
+                    sort_order: 0,
+                    created_at: now_unix_ms(),
+                },
+            )?;
+        }
     }
 
     Ok(created)
@@ -1225,6 +1216,30 @@ alt: \"Ein Bild\"
         assert_eq!(report2.media_updated, 1);
         assert_eq!(report2.translations_created, 0);
         assert_eq!(report2.translations_updated, 1);
+    }
+
+    #[test]
+    fn rebuild_media_trusts_sidecars_without_generating_thumbnails() {
+        let (db, dir) = setup();
+        let media_subdir = dir.path().join("media/2024/01");
+        fs::create_dir_all(&media_subdir).unwrap();
+        DynamicImage::new_rgb8(100, 80)
+            .save(media_subdir.join("sidecar-only.png"))
+            .unwrap();
+        fs::write(
+            media_subdir.join("sidecar-only.png.meta"),
+            "---\nid: sidecar-only\noriginalName: \"photo.png\"\nmimeType: image/png\nsize: 123\nwidth: 640\nheight: 480\ncreatedAt: 2024-01-15T12:00:00.000Z\nupdatedAt: 2024-01-15T12:00:00.000Z\ntags: []\n---",
+        )
+        .unwrap();
+
+        rebuild_media_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+
+        let media = qm::get_media_by_id(db.conn(), "sidecar-only").unwrap();
+        assert_eq!(
+            (media.size, media.width, media.height),
+            (123, Some(640), Some(480))
+        );
+        assert!(!dir.path().join("thumbnails").exists());
     }
 
     #[test]

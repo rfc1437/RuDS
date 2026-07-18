@@ -255,13 +255,7 @@ fn sync_project_from_file(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<()> {
-    let metadata = crate::engine::meta::read_project_json(data_dir)?;
-    let mut project = qproject::get_project_by_id(conn, project_id)?;
-    project.name = metadata.name;
-    project.description = metadata.description;
-    project.updated_at = crate::util::now_unix_ms();
-    qproject::update_project(conn, &project)?;
-    Ok(())
+    crate::engine::meta::sync_project_from_file(conn, data_dir, project_id)
 }
 
 fn rewrite_project_from_database(
@@ -865,7 +859,7 @@ fn detect_orphan_files(
                 "posts" => ext == "md",
                 "media" => ext == "meta",
                 "templates" => ext == "liquid",
-                "scripts" => ext == "lua" || ext == "py",
+                "scripts" => ext == "lua",
                 _ => false,
             };
 
@@ -967,8 +961,8 @@ mod tests {
     use crate::db::queries::template::insert_template;
     use crate::engine::post::{create_post, publish_post};
     use crate::model::{
-        Media, Post, PostStatus, Script, ScriptKind, ScriptStatus, Template, TemplateKind,
-        TemplateStatus,
+        Media, Post, PostStatus, ProjectMetadata, Script, ScriptKind, ScriptStatus, Template,
+        TemplateKind, TemplateStatus,
     };
     use crate::util::frontmatter::{
         ScriptFrontmatter, TemplateFrontmatter, write_script_file, write_template_file,
@@ -1065,6 +1059,57 @@ mod tests {
         assert_eq!(title_diffs.len(), 1);
         assert_eq!(title_diffs[0].db_value, "Original Title");
         assert_eq!(title_diffs[0].file_value, "Tampered Title");
+    }
+
+    #[test]
+    fn detects_missing_project_description() {
+        let (db, dir) = setup();
+        crate::engine::meta::write_project_json(
+            dir.path(),
+            &ProjectMetadata {
+                name: "Project p1".into(),
+                description: None,
+                public_url: None,
+                main_language: None,
+                default_author: None,
+                max_posts_per_page: 50,
+                image_import_concurrency: 4,
+                blogmark_category: None,
+                pico_theme: None,
+                semantic_similarity_enabled: false,
+                blog_languages: vec![],
+            },
+        )
+        .unwrap();
+
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+        let project = report
+            .diffs
+            .iter()
+            .find(|item| item.entity_type == "project")
+            .unwrap();
+        assert!(project.fields.iter().any(|field| {
+            field.field_name == "description"
+                && field.db_value == "A test project"
+                && field.file_value.is_empty()
+        }));
+    }
+
+    #[test]
+    fn ignores_python_scripts_during_orphan_scan() {
+        let (db, dir) = setup();
+        let scripts = dir.path().join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(scripts.join("legacy.py"), "print('legacy')").unwrap();
+
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+
+        assert!(
+            report
+                .orphans
+                .iter()
+                .all(|orphan| !orphan.file_path.ends_with(".py"))
+        );
     }
 
     #[test]
