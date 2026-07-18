@@ -1,263 +1,132 @@
-# bDS Rust Rewrite — Extension Plan
+# RuDS Extension Plan
 
 ## Goal
 
-Deliver the rest of current-app parity and the advanced tooling that is valuable, but not required to ship a production-capable Rust replacement for everyday authoring and publishing.
+Extensions add migration, collaboration, automation, alternate clients, and advanced discovery on top of the core blogging workflow. They must reuse core engines and formats, remain reachable through real UI or automation surfaces, and preserve airplane-mode and localization rules.
 
-Extensions begin only after the core plan is already usable end to end.
+Status describes the current source code as of 2026-07-18. Core one-shot AI, publishing, rendering, and integrity work is tracked in [RUST_PLAN_CORE.md](RUST_PLAN_CORE.md).
 
-## Extension Principles
+## Current Extension Status
 
-1. No extension may break the core compatibility contract.
-2. Extensions must reuse core models, engines, and persistence rules rather than invent parallel formats.
-3. UI features must still be tied to underlying functionality; no placeholder shells.
-4. AI features remain gated by offline mode and must prefer local models or provide explicit user feedback when unavailable. One-shot AI operations (6 operations: translate post/media, image alt text, post analysis, taxonomy analysis, language detection) are part of core with two configurable OpenAI-compatible endpoints (online + airplane mode), and respect the same offline gating.
-5. Extensions use the same Iced + muda + rfd platform stack as core. No additional UI frameworks.
+### Git and richer validation — Partly done
 
-## Extension Buckets
+Done:
 
-### Bucket A: Git And Validation Tooling
+- Site, media, translation, and metadata-diff engines and UI views.
 
-#### Scope
+Open:
 
-- `GitEngine` via `git2` crate (shell out for LFS operations — no LFS library binding)
-- Git sidebar
-- diff view
-- commit, fetch, pull, push
-- richer site validation views
-- richer metadata diff UI
+- `GitEngine`, repository status, history, diff view, commit, fetch, pull, push, and LFS command integration.
+- Replace the Git sidebar and Git log placeholders with working flows.
 
-#### Why extension
+### WordPress import — Open
 
-Helpful for operators, but not required to create, preview, generate, and publish content.
+Open:
 
-#### Done when
+- WXR parsing, import analysis, recoverable execution, saved import definitions, and import UI.
+- The existing media importer is core functionality and does not implement this workflow.
 
-- users can inspect repo state and diffs from within the app
-- Git actions work reliably enough to replace the current Git tooling
+### Conversational AI and agent tools — Open
 
-### Bucket B: Import And Migration Tooling
+Open:
 
-#### Scope
+- Conversation persistence and chat UI.
+- Streaming OpenAI-compatible responses and tool-call parsing.
+- Tools over posts, media, templates, search, and other core engines.
+- Agent integrations such as Claude Code and Copilot where required by the specs.
+- Replace the current Chat placeholders with the working feature.
 
-- WXR parser
-- import analysis
-- import execution
-- saved import definitions
+Core endpoint settings, offline gating, key storage, model discovery, and six one-shot operations are already implemented.
 
-#### Why extension
+### Embeddings, semantic search, and duplicates — Open
 
-Important onboarding feature, but not required to operate existing bDS projects.
+Existing source contains schema placeholders only.
 
-#### Done when
+Open:
 
-- WordPress import flows are usable and recoverable
-- import results match the current app's expectations closely enough for fixture-based tests
+- Embedding generation and persistence.
+- Vector index and semantic search.
+- Duplicate detection, dismissed-pair handling, metadata integrity, and UI.
+- Replace the Find Duplicates placeholder.
 
-### Bucket C: AI Chat And Tool Use
+### Translation QA and documentation UX — Partly done
 
-#### Scope
+Done:
 
-- chat UI (sidebar panel with conversation history)
-- streaming responses via `reqwest` (SSE / chunked transfer)
-- tool use against local engines (post lookup, media search, template info, etc.)
-- multi-turn conversation management
-- model and credential settings UI (extends the core AI endpoint configuration)
+- Translation validation engine and report view.
 
-One-shot AI operations (translation, image alt text, title suggestion) are already in core scope. This bucket adds the interactive, conversational AI layer on top.
+Open:
 
-The AI client extends the core `reqwest` + `serde_json` client with streaming support and tool-call parsing. Works with any OpenAI-compatible endpoint: OpenAI, Anthropic-via-proxy, local Ollama, etc.
+- In-app project documentation browser.
+- Browsable Lua API documentation and examples.
+- Replace Documentation and API Documentation placeholders.
 
-#### Hard constraints
+The generated Lua documentation itself is a core requirement.
 
-- offline mode gates all automatic AI work
-- cloud providers are disabled when offline mode is enabled
-- local providers remain usable when allowed
-- unavailable operations produce explicit user-visible feedback
+### Menu editor and deep links — Partly done
 
-#### Done when
+Done:
 
-- AI chat is useful for content-related queries and actions without weakening the app's offline guarantees
-- Streaming and tool use work reliably with at least one OpenAI-compatible provider
+- Menu file parsing/rendering, Home-first normalization, macOS URL plumbing, and Blogmark deep-link parsing.
 
-### Bucket D: Search, Embeddings, And Duplicate Detection
+Open:
 
-#### Scope
+- OPML/menu editor UI.
+- Remaining application deep-link parity flows.
+- Replace the Menu Editor placeholder.
 
-- ONNX embeddings via `ort` (ONNX Runtime Rust bindings)
-- HNSW vector index via `usearch`
-- semantic search UI
-- duplicate detection UI
+### CLI, MCP, and domain events — Open
 
-#### Why extension
+Open:
 
-Improves discovery and cleanup, but not required for core publishing flows.
+- Implement `bds-cli`; its current binary is only a stub.
+- Commands from `cli.allium` and `cli_sync.allium` using the same project, database, engines, and settings as the desktop app.
+- MCP tools/resources and proposal-based writes from `mcp.allium`.
+- Domain event bus from `events.allium` for desktop, CLI, TUI, and future remote clients.
+- Replace the MCP settings placeholder.
 
-#### Done when
+### Blogmark and transform pipeline — Mostly done
 
-- near-duplicate detection and semantic search are trustworthy on real projects
+Done:
 
-### Bucket E: Translation QA And Documentation UX
+- Blogmark deep-link parsing, content capture, post import, transform selection, and Lua transform execution.
 
-#### Scope
+Open:
 
-- translation validation engine and report view
-- in-app documentation browser
-- richer scripting docs browser and examples
+- Complete the dedicated user-facing capture/review workflow where the current implicit flow does not cover the bDS2 behavior.
+- Close remaining transform-chain differences found against the specs and bDS2.
 
-#### Why extension
+### Headless server — Open
 
-Operationally valuable, but the core release can ship with generated markdown docs and without dedicated browsing surfaces.
+Open:
 
-#### Done when
+- Desktop/server/TUI boot-mode selection.
+- Headless engine host and SSH transport.
+- Private host-key and authorized-key management.
+- Desktop connection flow for remote projects.
 
-- translation integrity issues are discoverable before publish
-- docs are comfortably browsable in-app
+### Terminal UI — Open
 
-### Bucket F: Menu Editing And Deep Links
+Open:
 
-#### Scope
+- Terminal renderer over shared application workflows.
+- Sidebar/editor navigation, editing, publishing, and live domain-event updates.
+- Remote operation through the headless server.
 
-- menu editor UI for OPML/menu documents
-- deep-link protocol handling beyond core app-open behaviors
+### A2UI surfaces — Open
 
-#### Why extension
+Open:
 
-Core must read menu documents for rendering compatibility, but editing them can follow once the main authoring path is stable.
+- A2UI component renderer, surface state/data flow, and AI-assistant integration.
 
-#### Done when
+## Suggested Order
 
-- users can inspect and edit menus from the Rust app
-- deep links cover parity flows from the current app
+1. Git workflow and WordPress import.
+2. CLI, MCP, and domain events.
+3. Conversational AI and agent tools.
+4. Embeddings and duplicate detection.
+5. Documentation and menu UX.
+6. Headless server and TUI.
+7. A2UI after conversational AI exists.
 
-### Bucket G: MCP And Automation Surfaces
-
-#### Scope
-
-- workspace CLI per `cli.allium`: `rebuild | repair | render | upload | push | pull | post | media | gallery | config | project | lua` — boots the same repo, settings, and database as the desktop app, with no listeners and no window; logging to the rotating log file
-- MCP server per `mcp.allium` (translation tools, stats and media resources, proposal workflow)
-- domain event bus per `events.allium`: every successful entity mutation (posts, media, tags, templates, scripts) broadcasts `(entity, entity_id, action)`; global settings changes broadcast a settings event. One topic/payload shape covers in-app mutations and external CLI writes, replacing the old `db_notifications` polling design. The bus also feeds the TUI (Bucket L) and any future multi-client sync.
-
-#### Why extension
-
-Useful ecosystem surface, not required to replace the desktop app itself.
-
-#### Done when
-
-- automation consumers can drive the Rust app safely and consistently
-- CLI changes are detected and surfaced to the running desktop app via the event bus
-
-### Bucket H: Blogmark And Transform Pipeline
-
-#### Scope
-
-- `BlogmarkTransformService`
-- external content capture (bookmarklet) workflow
-- transform script execution chain
-- integration with Lua transform scripts
-
-#### Why extension
-
-Secondary content-capture workflow. Not required for core authoring with existing projects.
-
-#### Done when
-
-- external content can be captured and transformed into posts via the Blogmark pipeline
-- transform scripts execute reliably
-
-### Bucket K: Headless Server Mode
-
-#### Scope
-
-Per `server.allium`:
-
-- boot modes `desktop | server | tui` resolved from an environment variable at application start
-- headless server: full engine, no window, SSH transport for remote TUI/GUI clients
-- SSH key material (host key + authorized_keys, mode 600) generated on first boot into the private OS app-data dir — never the repo or the project folder
-- GUI "connect to server" flow
-
-#### Why extension
-
-Client/server split is new bDS2 capability, not needed to replace the desktop app for local use.
-
-#### Done when
-
-- the app can run headless and accept an SSH-transported client session against real project data
-
-### Bucket L: Terminal UI
-
-#### Scope
-
-Per `tui.allium` — a second renderer over the same shared UI core:
-
-- sidebar views (posts, media, templates, scripts, tags, settings, git) with sidebar/editor focus model and vim-style + arrow navigation that skips section headers
-- post editor driving the same workflow as the GUI: canonical-language edits update the post, other languages update translations, publish routes through the same pipeline
-- live updates via the domain event bus (Bucket G)
-
-#### Why extension
-
-Second renderer; requires the shared UI core and (for remote use) Bucket K.
-
-#### Done when
-
-- everyday authoring (browse, edit, publish) works in a terminal against the same project data as the GUI
-
-### Bucket J: A2UI Server-Driven Surfaces
-
-#### Scope
-
-- A2UI component renderer (layout, input, display, chart, etc.)
-- A2UI surface manager for bidirectional data flow
-- integration with AI assistant outputs
-
-#### Why extension
-
-Tightly coupled to the AI feature set (Bucket C). Not required until AI features are active.
-
-#### Done when
-
-- AI-generated dynamic UI surfaces render correctly in the app
-
-## Suggested Extension Ordering
-
-```text
-Bucket A Git + Validation
-  ↓
-Bucket B Import
-  ↓
-Bucket C AI
-  ↓
-Bucket D Embeddings + Duplicates
-  ↓
-Bucket E Translation QA + Docs UX
-  ↓
-Bucket F Menu Editing + Deep Links
-  ↓
-Bucket G MCP + Automation
-  ↓
-Bucket H Blogmark + Transforms
-  ↓
-Bucket K Headless Server Mode
-  ↓
-Bucket L Terminal UI (after Buckets G + K)
-  ↓
-Bucket J A2UI Surfaces (after Bucket C)
-```
-
-The ordering is pragmatic, not mandatory. Git and validation are the closest to operational parity, so they should land first after core.
-
-## Extension Verification
-
-Every extension still inherits the core verification baseline plus extension-specific tests:
-
-- Git fixtures for repo state and diff rendering
-- WXR fixtures for import
-- mocked SSE and provider fixtures for AI
-- embedding fixtures for semantic search and duplicate detection
-- translation fixture projects with intentional integrity failures
-- OPML fixtures for menu editing
-
-## Out Of Scope For Now
-
-- cross-platform packaging polish beyond what the core and extension work naturally require
-- feature work that introduces new persistence formats before full parity is reached
+The order may change when an extension directly unlocks a concrete user workflow; it must not create a parallel data model or bypass core engines.

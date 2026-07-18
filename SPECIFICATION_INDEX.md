@@ -207,11 +207,8 @@ Diese Datei dient als Index zu allen Allium-Spezifikationen und Schema-Inventari
 
 | Datei | Beschreibung |
 |-------|--------------|
-| `RUST_PLAN.md` | Haupt-Plan mit Non-Negotiable Constraints |
-| `RUST_PLAN_CORE.md` | Detaillierter Core-Plan (886 Zeilen) |
-| `RUST_PLAN_EXTENSION.md` | Extension Buckets A-J |
-| `RUST_EXECUTION_BACKLOG.md` | Milestone-basierte Aufgabenliste |
-| `RUST_COMPATIBILITY_MATRIX_TEMPLATE.md` | Vorlage für Metadata-Inventory |
+| `RUST_PLAN_CORE.md` | Core-Umfang mit aktuellem Implementierungsstand und offenen Punkten |
+| `RUST_PLAN_EXTENSION.md` | Extensions mit aktuellem Implementierungsstand und offenen Punkten |
 
 ## Spezifikations-Abdeckungs-Analyse
 

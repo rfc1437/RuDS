@@ -25,6 +25,7 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 
 ## Important facts
 
+- update `README.md` whenever a user-visible feature is added, removed, or materially changed; keep it a compact overview with relevant pointers
 - published posts don't have body in the database, the body content is only in the file
 - functionality you implement have to be tied to UI
 - UI you implement has to be tied to functionality
