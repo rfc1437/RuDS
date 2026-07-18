@@ -1,7 +1,6 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::GeneratedFileHashRecord;
 use crate::db::schema::generated_file_hashes;
 use crate::model::GeneratedFileHash;
 
@@ -14,9 +13,8 @@ pub fn get_generated_file_hash(
         generated_file_hashes::table
             .filter(generated_file_hashes::project_id.eq(project_id))
             .filter(generated_file_hashes::relative_path.eq(relative_path))
-            .select(GeneratedFileHashRecord::as_select())
+            .select(GeneratedFileHash::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -26,7 +24,7 @@ pub fn upsert_generated_file_hash(
 ) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(generated_file_hashes::table)
-            .values(GeneratedFileHashRecord::from(hash))
+            .values(hash.clone())
             .on_conflict((
                 generated_file_hashes::project_id,
                 generated_file_hashes::relative_path,
@@ -38,36 +36,6 @@ pub fn upsert_generated_file_hash(
             ))
             .execute(c)
             .map(|_| ())
-    })
-}
-
-pub fn delete_generated_file_hash(
-    conn: &DbConnection,
-    project_id: &str,
-    relative_path: &str,
-) -> QueryResult<()> {
-    conn.with(|c| {
-        diesel::delete(
-            generated_file_hashes::table
-                .filter(generated_file_hashes::project_id.eq(project_id))
-                .filter(generated_file_hashes::relative_path.eq(relative_path)),
-        )
-        .execute(c)
-        .map(|_| ())
-    })
-}
-
-pub fn list_generated_file_hashes_by_project(
-    conn: &DbConnection,
-    project_id: &str,
-) -> QueryResult<Vec<GeneratedFileHash>> {
-    conn.with(|c| {
-        generated_file_hashes::table
-            .filter(generated_file_hashes::project_id.eq(project_id))
-            .order(generated_file_hashes::relative_path)
-            .select(GeneratedFileHashRecord::as_select())
-            .load(c)
-            .map(|rows: Vec<GeneratedFileHashRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 

@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::PostLinkRecord;
 use crate::db::schema::post_links;
 use crate::model::PostLink;
 
 pub fn insert_post_link(conn: &DbConnection, link: &PostLink) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(post_links::table)
-            .values(PostLinkRecord::from(link))
+            .values(link.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -38,9 +37,8 @@ pub fn list_links_by_source(
         post_links::table
             .filter(post_links::source_post_id.eq(source_post_id))
             .order(post_links::created_at)
-            .select(PostLinkRecord::as_select())
+            .select(PostLink::as_select())
             .load(c)
-            .map(|rows: Vec<PostLinkRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 
@@ -52,9 +50,8 @@ pub fn list_links_by_target(
         post_links::table
             .filter(post_links::target_post_id.eq(target_post_id))
             .order(post_links::created_at)
-            .select(PostLinkRecord::as_select())
+            .select(PostLink::as_select())
             .load(c)
-            .map(|rows: Vec<PostLinkRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 

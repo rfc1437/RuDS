@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use iced::widget::text::Shaping;
@@ -78,6 +78,7 @@ pub fn view<'a>(
     panel_visible: bool,
     panel_tab: PanelTab,
     task_snapshots: &'a [TaskSnapshot],
+    collapsed_task_groups: &'a HashSet<String>,
     output_entries: &'a [OutputEntry],
     // Sidebar data
     sidebar_posts: &'a [Post],
@@ -168,6 +169,7 @@ pub fn view<'a>(
         right_col = right_col.push(panel::view(
             panel_tab,
             task_snapshots,
+            collapsed_task_groups,
             output_entries,
             post_outlinks,
             post_backlinks,

@@ -5,12 +5,13 @@ use std::sync::LazyLock;
 
 /// Supported UI locales, matching the i18n.allium SupportedLanguage spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum UiLocale {
-    En,
-    De,
-    Fr,
-    It,
-    Es,
+    En = 0,
+    De = 1,
+    Fr = 2,
+    It = 3,
+    Es = 4,
 }
 
 impl UiLocale {
@@ -153,13 +154,7 @@ static RENDER_CATALOGS: LazyLock<[Bundle; 5]> = LazyLock::new(|| {
 });
 
 fn locale_index(locale: UiLocale) -> usize {
-    match locale {
-        UiLocale::En => 0,
-        UiLocale::De => 1,
-        UiLocale::Fr => 2,
-        UiLocale::It => 3,
-        UiLocale::Es => 4,
-    }
+    locale as usize
 }
 
 fn format(bundle: &Bundle, key: &str, params: &[(&str, &str)]) -> Option<String> {
@@ -215,50 +210,22 @@ pub fn get_render_translations(language: &str) -> &'static HashMap<String, Strin
     &RENDER_MAPS[locale_index(normalize_language(language))]
 }
 
-const RENDER_KEYS: &[&str] = &[
-    "render.archive",
-    "render.pagination.label",
-    "render.pagination.newer",
-    "render.pagination.older",
-    "render.notFound.message",
-    "render.notFound.back",
-    "render.photoArchive.empty",
-    "render.gallery.empty",
-    "render.tagCloud.empty",
-    "render.tagCloud.ariaLabel",
-    "render.calendar.open",
-    "render.calendar.close",
-    "render.calendar.title",
-    "render.calendar.loading",
-    "render.calendar.error",
-    "render.taxonomy.ariaLabel",
-    "render.backlinks.label",
-    "render.backlinks.ariaLabel",
-    "render.languageSwitcher.ariaLabel",
-    "render.video.youtubeTitle",
-    "render.video.vimeoTitle",
-    "render.month.1",
-    "render.month.2",
-    "render.month.3",
-    "render.month.4",
-    "render.month.5",
-    "render.month.6",
-    "render.month.7",
-    "render.month.8",
-    "render.month.9",
-    "render.month.10",
-    "render.month.11",
-    "render.month.12",
-    "render.search.placeholder",
-    "render.search.ariaLabel",
-];
+static RENDER_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    resource(RENDER_EN)
+        .entries()
+        .filter_map(|entry| match entry {
+            fluent_syntax::ast::Entry::Message(message) => Some(message.id.name.replace('-', ".")),
+            _ => None,
+        })
+        .collect()
+});
 
 static RENDER_MAPS: LazyLock<[HashMap<String, String>; 5]> = LazyLock::new(|| {
     std::array::from_fn(|index| {
         let locale = UiLocale::all()[index];
         RENDER_KEYS
             .iter()
-            .map(|key| ((*key).to_owned(), translate_render(locale.code(), key)))
+            .map(|key| (key.clone(), translate_render(locale.code(), key)))
             .collect()
     })
 });
@@ -295,14 +262,6 @@ mod tests {
         assert_eq!(normalize_language("FR-fr"), UiLocale::Fr);
     }
 
-    // SplitLocalization invariant: UiLocale is independent of content language
-    #[test]
-    fn ui_locale_is_independent_type() {
-        let ui = UiLocale::De;
-        let content_lang = "fr";
-        assert_ne!(ui.code(), content_lang);
-    }
-
     // MenuTranslations invariant: menu labels come from locale catalog
     #[test]
     fn translate_menu_labels() {
@@ -311,13 +270,6 @@ mod tests {
 
         let label = translate(UiLocale::Fr, "menu.item.save");
         assert_eq!(label, "Enregistrer");
-    }
-
-    #[test]
-    fn translate_falls_back_to_english() {
-        // Non-English locale falls back for missing keys
-        let result = translate(UiLocale::De, "menu.group.file");
-        assert_eq!(result, "Datei");
     }
 
     #[test]

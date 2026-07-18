@@ -1,14 +1,45 @@
 use iced::widget::text::Shaping;
-use iced::widget::{Space, button, column, container, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 use crate::state::navigation::{OutputEntry, PanelTab, TaskSnapshot};
 use crate::state::tabs::{Tab, TabType};
 use crate::views::post_editor::ResolvedPostLink;
+use std::collections::HashSet;
+
+fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Message> {
+    let progress = snapshot
+        .progress
+        .map(|value| format!(" ({:.0}%)", value * 100.0))
+        .unwrap_or_default();
+    let phase = snapshot
+        .message
+        .as_deref()
+        .map(|message| format!(" — {message}"))
+        .unwrap_or_default();
+    let label = text(format!(
+        "{} — {}{}{}",
+        snapshot.label, snapshot.status, progress, phase
+    ))
+    .size(11)
+    .shaping(Shaping::Advanced)
+    .color(Color::from_rgb(0.70, 0.70, 0.75));
+    let mut content = row![label].align_y(Alignment::Center).spacing(8);
+    if snapshot.is_cancellable {
+        content = content.push(Space::with_width(Length::Fill)).push(
+            button(text(t(locale, "tasks.cancelTask")).size(11))
+                .on_press(Message::CancelTask(snapshot.id))
+                .padding([3, 8])
+                .style(inputs::secondary_button),
+        );
+    }
+    content.into()
+}
 
 /// Panel background style.
 fn panel_style(_theme: &Theme) -> container::Style {
@@ -71,6 +102,7 @@ fn close_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
 pub fn view(
     panel_tab: PanelTab,
     task_snapshots: &[TaskSnapshot],
+    collapsed_task_groups: &HashSet<String>,
     output_entries: &[OutputEntry],
     post_outlinks: &[ResolvedPostLink],
     post_backlinks: &[ResolvedPostLink],
@@ -169,32 +201,54 @@ pub fn view(
                 .padding(8)
                 .into()
             } else {
-                // Per layout.allium: last 10 tasks, newest first
-                let items: Vec<Element<'static, Message>> = task_snapshots
-                    .iter()
-                    .rev()
-                    .take(10)
-                    .map(|snap| {
-                        let progress_str = snap
-                            .progress
-                            .map(|p| format!(" ({:.0}%)", p * 100.0))
-                            .unwrap_or_default();
-                        let phase_str = snap
-                            .message
-                            .as_deref()
-                            .map(|m| format!(" \u{2014} {m}"))
-                            .unwrap_or_default();
-                        let status_text = format!(
-                            "{} \u{2014} {}{}{}",
-                            snap.label, snap.status, progress_str, phase_str,
-                        );
-                        text(status_text)
-                            .size(11)
-                            .shaping(Shaping::Advanced)
-                            .color(Color::from_rgb(0.70, 0.70, 0.75))
-                            .into()
-                    })
-                    .collect();
+                let visible = task_snapshots.iter().rev().take(10).collect::<Vec<_>>();
+                let mut rendered_groups = HashSet::new();
+                let mut items: Vec<Element<'static, Message>> = Vec::new();
+                for snapshot in &visible {
+                    let Some(group_id) = snapshot.group_id.as_ref() else {
+                        items.push(task_row(snapshot, locale));
+                        continue;
+                    };
+                    if !rendered_groups.insert(group_id.clone()) {
+                        continue;
+                    }
+                    let members = visible
+                        .iter()
+                        .copied()
+                        .filter(|member| member.group_id.as_ref() == Some(group_id))
+                        .collect::<Vec<_>>();
+                    let progress_values = members
+                        .iter()
+                        .filter_map(|member| member.progress)
+                        .collect::<Vec<_>>();
+                    let progress = (!progress_values.is_empty()).then(|| {
+                        format!(
+                            " ({:.0}%)",
+                            progress_values.iter().sum::<f32>() / progress_values.len() as f32
+                                * 100.0
+                        )
+                    });
+                    let collapsed = collapsed_task_groups.contains(group_id);
+                    let group_name = snapshot.group_name.as_deref().unwrap_or(group_id);
+                    items.push(
+                        button(
+                            row![
+                                text(if collapsed { "\u{25b8}" } else { "\u{25be}" }).size(11),
+                                text(format!("{}{}", group_name, progress.unwrap_or_default()))
+                                    .size(11)
+                            ]
+                            .spacing(6),
+                        )
+                        .on_press(Message::ToggleTaskGroup(group_id.clone()))
+                        .width(Length::Fill)
+                        .padding([3, 6])
+                        .style(inputs::disclosure_button)
+                        .into(),
+                    );
+                    if !collapsed {
+                        items.extend(members.into_iter().map(|member| task_row(member, locale)));
+                    }
+                }
                 scrollable(
                     iced::widget::Column::with_children(items)
                         .spacing(4)

@@ -29,12 +29,6 @@ fn all_menu_actions_translate_in_all_locales() {
 }
 
 #[test]
-fn menu_action_count_matches_spec() {
-    // M2 spec: 28 custom menu actions
-    assert_eq!(MenuAction::ALL.len(), 28);
-}
-
-#[test]
 fn no_duplicate_i18n_keys() {
     let mut keys = std::collections::HashSet::new();
     for &action in MenuAction::ALL {

@@ -5,7 +5,7 @@ use diesel::sqlite::Sqlite;
 use rust_stemmers::{Algorithm, Stemmer};
 
 use crate::db::DbConnection as Connection;
-use crate::db::schema::{post_translations, posts};
+use crate::db::schema::{media, post_translations, posts};
 use crate::util::calendar_range_unix_ms;
 
 diesel::define_sql_function!(fn instr(haystack: Text, needle: Text) -> diesel::sql_types::Integer);
@@ -457,11 +457,92 @@ pub fn search_media(conn: &Connection, query: &str, language: &str) -> QueryResu
     })
 }
 
+#[derive(Default)]
+pub struct MediaSearchFilters<'a> {
+    pub project_id: Option<&'a str>,
+    pub tags: Option<&'a [String]>,
+    pub year: Option<i32>,
+    pub month: Option<u32>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug)]
+pub struct MediaSearchResults {
+    pub media_ids: Vec<String>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+pub fn search_media_filtered(
+    conn: &Connection,
+    query: &str,
+    language: &str,
+    filters: &MediaSearchFilters<'_>,
+) -> QueryResult<MediaSearchResults> {
+    let ranked_ids = search_media(conn, query, language)?;
+    let offset = filters.offset.unwrap_or(0);
+    if ranked_ids.is_empty() {
+        return Ok(MediaSearchResults {
+            media_ids: Vec::new(),
+            total: 0,
+            offset,
+            limit: filters.limit.unwrap_or(0),
+        });
+    }
+
+    let matching_ids = conn.with(|connection| {
+        let mut filtered = media::table
+            .filter(media::id.eq_any(&ranked_ids))
+            .into_boxed();
+        if let Some(project_id) = filters.project_id {
+            filtered = filtered.filter(media::project_id.eq(project_id));
+        }
+        if let Some(year) = filters.year {
+            let (start, end) = calendar_range_unix_ms(year, filters.month).ok_or_else(|| {
+                diesel::result::Error::SerializationError("invalid calendar range".into())
+            })?;
+            filtered = filtered.filter(media::created_at.ge(start).and(media::created_at.lt(end)));
+        }
+        if let Some(tags) = filters.tags {
+            for tag in tags {
+                filtered = filtered.filter(
+                    instr(
+                        lower(media::tags),
+                        serde_json::to_string(&tag.to_lowercase()).unwrap(),
+                    )
+                    .gt(0),
+                );
+            }
+        }
+        filtered.select(media::id).load::<String>(connection)
+    })?;
+    let matching_ids = matching_ids
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let mut media_ids = ranked_ids
+        .into_iter()
+        .filter(|id| matching_ids.contains(id))
+        .collect::<Vec<_>>();
+    let total = media_ids.len();
+    let limit = filters.limit.unwrap_or(total);
+    media_ids = media_ids.into_iter().skip(offset).take(limit).collect();
+    Ok(MediaSearchResults {
+        media_ids,
+        total,
+        offset,
+        limit,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::db::queries::media::{insert_media, make_test_media};
     use crate::db::queries::post::{insert_post, make_test_post};
+    use crate::db::queries::project::{insert_project, make_test_project};
     use crate::model::PostStatus;
 
     fn setup() -> Database {
@@ -650,6 +731,50 @@ mod tests {
 
         let results = search_media(db.conn(), "sunset", "en").unwrap();
         assert_eq!(results, vec!["media-1"]);
+    }
+
+    #[test]
+    fn filtered_media_search_honors_project_tags_and_pagination() {
+        let db = setup();
+        insert_project(db.conn(), &make_test_project("p1", "one")).unwrap();
+        insert_project(db.conn(), &make_test_project("p2", "two")).unwrap();
+        for (id, project, tags) in [
+            ("m1", "p1", vec!["nature".to_string()]),
+            ("m2", "p1", vec!["city".to_string()]),
+            ("m3", "p2", vec!["nature".to_string()]),
+        ] {
+            let mut media = make_test_media(id, project);
+            media.tags = tags.clone();
+            insert_media(db.conn(), &media).unwrap();
+            index_media(
+                db.conn(),
+                id,
+                Some("Shared sunset"),
+                None,
+                None,
+                &media.original_name,
+                &tags,
+                &[],
+                "en",
+            )
+            .unwrap();
+        }
+
+        let tags = vec!["nature".to_string()];
+        let results = search_media_filtered(
+            db.conn(),
+            "sunset",
+            "en",
+            &MediaSearchFilters {
+                project_id: Some("p1"),
+                tags: Some(&tags),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(results.total, 1);
+        assert_eq!(results.media_ids, ["m1"]);
     }
 
     #[test]

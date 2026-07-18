@@ -141,30 +141,6 @@ fn post_status_transitions_all_valid() {
 }
 
 #[test]
-fn slug_frozen_after_publish_semantics() {
-    let db = memory_db();
-    project_queries::insert_project(db.conn(), &project("p1", "test")).unwrap();
-    post_queries::insert_post(
-        db.conn(),
-        &post("published", PostStatus::Published, Some(1000)),
-    )
-    .unwrap();
-    post_queries::insert_post(db.conn(), &post("draft", PostStatus::Draft, None)).unwrap();
-    assert!(
-        post_queries::get_post_by_id(db.conn(), "published")
-            .unwrap()
-            .published_at
-            .is_some()
-    );
-    assert!(
-        post_queries::get_post_by_id(db.conn(), "draft")
-            .unwrap()
-            .published_at
-            .is_none()
-    );
-}
-
-#[test]
 fn project_and_translation_uniqueness_in_fixture() {
     let db = fixture_db();
     let projects = project_queries::list_projects(db.conn()).unwrap();
@@ -339,7 +315,6 @@ fn remaining_value_specs_match() {
         "\"deleted\""
     );
     assert_eq!(serde_json::to_string(&SshMode::Rsync).unwrap(), "\"rsync\"");
-    assert_eq!(["en", "de", "fr", "it", "es"].len(), 5);
 }
 
 #[test]

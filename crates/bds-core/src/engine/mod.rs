@@ -2,7 +2,6 @@ pub mod ai;
 pub mod auto_translation;
 pub mod blogmark;
 pub mod calendar;
-pub mod context;
 pub mod error;
 pub mod generation;
 pub mod media;
@@ -27,5 +26,4 @@ pub mod validate_media;
 pub mod validate_site;
 pub mod validate_translations;
 
-pub use context::EngineContext;
 pub use error::{EngineError, EngineResult};

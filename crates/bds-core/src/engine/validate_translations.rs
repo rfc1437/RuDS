@@ -55,25 +55,7 @@ pub struct TranslationValidationReport {
 /// Per-item progress callback: (current_item, total_items, item_description).
 pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
 
-/// Validate all translations in a project against consistency rules.
-pub fn validate_translations(
-    conn: &Connection,
-    data_dir: &Path,
-    project_id: &str,
-    blog_languages: &[String],
-    main_language: &str,
-) -> EngineResult<TranslationValidationReport> {
-    validate_translations_with_progress(
-        conn,
-        data_dir,
-        project_id,
-        blog_languages,
-        main_language,
-        None,
-    )
-}
-
-/// Like `validate_translations` but with optional per-item progress.
+/// Validate all translations with optional per-item progress.
 pub fn validate_translations_with_progress(
     conn: &Connection,
     data_dir: &Path,

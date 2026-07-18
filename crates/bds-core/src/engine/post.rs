@@ -1163,18 +1163,6 @@ pub fn post_insert_media(media_id: &str, is_image: bool, original_name: &str) ->
     }
 }
 
-/// Get posts linked from a given post (outlinks).
-pub fn list_post_outlinks(conn: &Connection, post_id: &str) -> EngineResult<Vec<String>> {
-    let links = ql::list_links_by_source(conn, post_id)?;
-    Ok(links.into_iter().map(|l| l.target_post_id).collect())
-}
-
-/// Get posts linking to a given post (backlinks).
-pub fn list_post_backlinks(conn: &Connection, post_id: &str) -> EngineResult<Vec<String>> {
-    let links = ql::list_links_by_target(conn, post_id)?;
-    Ok(links.into_iter().map(|l| l.source_post_id).collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

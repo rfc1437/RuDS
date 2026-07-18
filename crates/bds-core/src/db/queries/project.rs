@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::ProjectRecord;
 use crate::db::schema::projects;
 use crate::model::Project;
 
 pub fn insert_project(conn: &DbConnection, project: &Project) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(projects::table)
-            .values(ProjectRecord::from(project))
+            .values(project.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -18,9 +17,8 @@ pub fn get_project_by_id(conn: &DbConnection, id: &str) -> QueryResult<Project> 
     conn.with(|c| {
         projects::table
             .filter(projects::id.eq(id))
-            .select(ProjectRecord::as_select())
+            .select(Project::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -28,9 +26,8 @@ pub fn get_project_by_slug(conn: &DbConnection, slug: &str) -> QueryResult<Proje
     conn.with(|c| {
         projects::table
             .filter(projects::slug.eq(slug))
-            .select(ProjectRecord::as_select())
+            .select(Project::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -38,9 +35,8 @@ pub fn get_active_project(conn: &DbConnection) -> QueryResult<Project> {
     conn.with(|c| {
         projects::table
             .filter(projects::is_active.eq(1))
-            .select(ProjectRecord::as_select())
+            .select(Project::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -62,16 +58,15 @@ pub fn list_projects(conn: &DbConnection) -> QueryResult<Vec<Project>> {
     conn.with(|c| {
         projects::table
             .order(projects::name)
-            .select(ProjectRecord::as_select())
+            .select(Project::as_select())
             .load(c)
-            .map(|rows: Vec<ProjectRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 
 pub fn update_project(conn: &DbConnection, project: &Project) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(projects::table.filter(projects::id.eq(&project.id)))
-            .set(ProjectRecord::from(project))
+            .set(project.clone())
             .execute(c)
             .map(|_| ())
     })

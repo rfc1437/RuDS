@@ -6,7 +6,7 @@ use walkdir::WalkDir;
 
 use crate::db::queries::script as qs;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Script, ScriptKind, ScriptStatus};
+use crate::model::{Script, ScriptStatus};
 use crate::util::frontmatter::read_script_file;
 use crate::util::now_unix_ms;
 
@@ -16,16 +16,6 @@ pub struct ScriptRebuildReport {
     pub created: usize,
     pub updated: usize,
     pub errors: Vec<String>,
-}
-
-/// Parse a script kind string from frontmatter into a `ScriptKind`.
-fn parse_script_kind(s: &str) -> Result<ScriptKind, String> {
-    match s {
-        "macro" => Ok(ScriptKind::Macro),
-        "utility" => Ok(ScriptKind::Utility),
-        "transform" => Ok(ScriptKind::Transform),
-        other => Err(format!("unknown script kind: '{other}'")),
-    }
 }
 
 /// Rebuild scripts from the filesystem into the database.
@@ -92,7 +82,7 @@ pub(crate) fn rebuild_single_script(
         .to_string_lossy()
         .to_string();
 
-    let kind = parse_script_kind(&fm.kind).map_err(EngineError::Parse)?;
+    let kind = fm.kind.parse().map_err(EngineError::Parse)?;
     let now = now_unix_ms();
 
     // File exists on disk -> Published; content is None in DB
@@ -142,6 +132,7 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::queries::project::{insert_project, make_test_project};
+    use crate::model::ScriptKind;
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {

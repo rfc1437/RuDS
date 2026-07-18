@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::PostMediaRecord;
 use crate::db::schema::post_media;
 use crate::model::PostMedia;
 
 pub fn link_media(conn: &DbConnection, pm: &PostMedia) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(post_media::table)
-            .values(PostMediaRecord::from(pm))
+            .values(pm.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -39,9 +38,8 @@ pub fn list_post_media_by_post(conn: &DbConnection, post_id: &str) -> QueryResul
         post_media::table
             .filter(post_media::post_id.eq(post_id))
             .order(post_media::sort_order)
-            .select(PostMediaRecord::as_select())
+            .select(PostMedia::as_select())
             .load(c)
-            .map(|rows: Vec<PostMediaRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 
@@ -53,9 +51,8 @@ pub fn list_post_media_by_media(
         post_media::table
             .filter(post_media::media_id.eq(media_id))
             .order(post_media::created_at)
-            .select(PostMediaRecord::as_select())
+            .select(PostMedia::as_select())
             .load(c)
-            .map(|rows: Vec<PostMediaRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 

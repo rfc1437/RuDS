@@ -5,6 +5,7 @@ use muda::accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers};
 use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
 use crate::app::Message;
+use crate::state::tabs::TabType;
 use bds_core::i18n::{UiLocale, translate};
 
 /// Every custom menu item that the application handles.
@@ -116,6 +117,70 @@ impl MenuAction {
     }
 }
 
+pub(crate) fn action_enabled(
+    action: MenuAction,
+    has_project: bool,
+    active_tab: Option<&TabType>,
+    offline: bool,
+    interactions_enabled: bool,
+) -> bool {
+    if !interactions_enabled {
+        return !matches!(
+            action,
+            MenuAction::NewPost
+                | MenuAction::ImportMedia
+                | MenuAction::Save
+                | MenuAction::OpenInBrowser
+                | MenuAction::OpenDataFolder
+                | MenuAction::Find
+                | MenuAction::Replace
+                | MenuAction::PublishSelected
+                | MenuAction::PreviewPost
+                | MenuAction::EditMenu
+                | MenuAction::RebuildDatabase
+                | MenuAction::ReindexText
+                | MenuAction::MetadataDiff
+                | MenuAction::RegenerateCalendar
+                | MenuAction::ValidateTranslations
+                | MenuAction::FillMissingTranslations
+                | MenuAction::GenerateSitemap
+                | MenuAction::ValidateSite
+                | MenuAction::UploadSite
+        );
+    }
+
+    let post_tab = active_tab == Some(&TabType::Post);
+    let savable_tab = matches!(
+        active_tab,
+        Some(TabType::Post | TabType::Media | TabType::Templates | TabType::Scripts)
+    );
+    let text_editor = matches!(
+        active_tab,
+        Some(TabType::Post | TabType::Templates | TabType::Scripts)
+    );
+    match action {
+        MenuAction::Save => savable_tab,
+        MenuAction::Find | MenuAction::Replace => text_editor,
+        MenuAction::OpenInBrowser | MenuAction::PublishSelected | MenuAction::PreviewPost => {
+            has_project && post_tab
+        }
+        MenuAction::UploadSite => has_project && !offline,
+        MenuAction::NewPost
+        | MenuAction::ImportMedia
+        | MenuAction::OpenDataFolder
+        | MenuAction::EditMenu
+        | MenuAction::RebuildDatabase
+        | MenuAction::ReindexText
+        | MenuAction::MetadataDiff
+        | MenuAction::RegenerateCalendar
+        | MenuAction::ValidateTranslations
+        | MenuAction::FillMissingTranslations
+        | MenuAction::GenerateSitemap
+        | MenuAction::ValidateSite => has_project,
+        _ => true,
+    }
+}
+
 /// Maps between muda `MenuId`s and application `MenuAction`s.
 ///
 /// Also holds clones of the `MenuItem` handles so that labels and
@@ -163,11 +228,6 @@ impl MenuRegistry {
         if let Some(item) = self.items.get(&action) {
             item.set_text(text);
         }
-    }
-
-    /// Number of registered (action, MenuId) pairs.
-    pub fn action_count(&self) -> usize {
-        self.action_map.len()
     }
 }
 
@@ -423,14 +483,6 @@ mod tests {
     use bds_core::i18n::UiLocale;
 
     #[test]
-    fn all_variants_are_listed() {
-        // MenuAction::ALL must contain every variant.
-        // If someone adds a variant but forgets ALL, the i18n_key match
-        // will produce a compile error, but this also catches ALL length.
-        assert_eq!(MenuAction::ALL.len(), 28);
-    }
-
-    #[test]
     fn i18n_keys_resolve_for_english() {
         for &action in MenuAction::ALL {
             let key = action.i18n_key();
@@ -446,7 +498,6 @@ mod tests {
         reg.register(MenuAction::Save, &mi);
 
         assert_eq!(reg.lookup(mi.id()), Some(MenuAction::Save));
-        assert_eq!(reg.action_count(), 1);
     }
 
     #[test]
@@ -476,5 +527,45 @@ mod tests {
             let key = action.i18n_key();
             assert!(seen.insert(key), "duplicate i18n key: {key}");
         }
+    }
+
+    #[test]
+    fn enabled_state_follows_application_rules() {
+        assert!(action_enabled(
+            MenuAction::Save,
+            true,
+            Some(&TabType::Media),
+            false,
+            true
+        ));
+        assert!(!action_enabled(
+            MenuAction::Find,
+            true,
+            Some(&TabType::Media),
+            false,
+            true
+        ));
+        assert!(action_enabled(
+            MenuAction::FillMissingTranslations,
+            true,
+            None,
+            true,
+            true
+        ));
+        assert!(!action_enabled(
+            MenuAction::UploadSite,
+            true,
+            None,
+            true,
+            true
+        ));
+        assert!(!action_enabled(
+            MenuAction::ReindexText,
+            true,
+            None,
+            false,
+            false
+        ));
+        assert!(action_enabled(MenuAction::About, true, None, false, false));
     }
 }

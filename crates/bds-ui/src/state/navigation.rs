@@ -56,9 +56,12 @@ pub enum PanelTab {
 pub struct TaskSnapshot {
     pub id: u64,
     pub label: String,
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
     pub status: String,
     pub progress: Option<f32>,
     pub message: Option<String>,
+    pub is_cancellable: bool,
 }
 
 /// A single line of output shown in the panel.

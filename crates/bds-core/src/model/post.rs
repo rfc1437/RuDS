@@ -1,6 +1,10 @@
+use diesel::ExpressionMethods;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, diesel::AsExpression, diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 #[serde(rename_all = "lowercase")]
 pub enum PostStatus {
     Draft,
@@ -9,9 +13,30 @@ pub enum PostStatus {
 }
 
 impl PostStatus {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Published => "published",
+            Self::Archived => "archived",
+        }
+    }
+
     /// Returns true if this status is valid for a translation (draft or published only).
     pub fn is_valid_for_translation(&self) -> bool {
         matches!(self, PostStatus::Draft | PostStatus::Published)
+    }
+}
+
+impl std::str::FromStr for PostStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "draft" => Ok(Self::Draft),
+            "published" => Ok(Self::Published),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("invalid PostStatus: {value}")),
+        }
     }
 }
 
@@ -19,7 +44,18 @@ impl PostStatus {
 ///
 /// NOTE: `content` is null for published posts — body lives in the filesystem
 /// `.md` file only. Draft content is stored in DB.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+)]
+#[diesel(table_name = crate::db::schema::posts, check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(treat_none_as_default_value = false, treat_none_as_null = true)]
 pub struct Post {
     pub id: String,
     pub project_id: String,
@@ -36,6 +72,10 @@ pub struct Post {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     #[serde(default)]
+    #[diesel(
+        deserialize_as = crate::db::types::DbBool,
+        serialize_as = crate::db::types::DbBool
+    )]
     pub do_not_translate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_slug: Option<String>,
@@ -44,9 +84,17 @@ pub struct Post {
     pub checksum: Option<String>,
     /// JSON-serialized string array in DB.
     #[serde(default)]
+    #[diesel(
+        deserialize_as = crate::db::types::DbStringList,
+        serialize_as = crate::db::types::DbStringList
+    )]
     pub tags: Vec<String>,
     /// JSON-serialized string array in DB.
     #[serde(default)]
+    #[diesel(
+        deserialize_as = crate::db::types::DbStringList,
+        serialize_as = crate::db::types::DbStringList
+    )]
     pub categories: Vec<String>,
     // Published snapshot fields (used for diff detection)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,7 +116,21 @@ pub struct Post {
 
 /// A translation of a post into another language.
 /// Matches the `post_translations` table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+)]
+#[diesel(
+    table_name = crate::db::schema::post_translations,
+    check_for_backend(diesel::sqlite::Sqlite)
+)]
+#[diesel(treat_none_as_default_value = false, treat_none_as_null = true)]
 pub struct PostTranslation {
     pub id: String,
     pub project_id: String,
@@ -91,7 +153,10 @@ pub struct PostTranslation {
 
 /// A link between two posts (tracked for backlinks).
 /// Matches the `post_links` table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, diesel::Queryable, diesel::Selectable, diesel::Insertable,
+)]
+#[diesel(table_name = crate::db::schema::post_links, check_for_backend(diesel::sqlite::Sqlite))]
 pub struct PostLink {
     pub id: String,
     pub source_post_id: String,
@@ -103,7 +168,10 @@ pub struct PostLink {
 
 /// Association between a post and media item.
 /// Matches the `post_media` table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, diesel::Queryable, diesel::Selectable, diesel::Insertable,
+)]
+#[diesel(table_name = crate::db::schema::post_media, check_for_backend(diesel::sqlite::Sqlite))]
 pub struct PostMedia {
     pub id: String,
     pub project_id: String,

@@ -1,5 +1,149 @@
 use crate::model::{Post, PostTranslation};
 use crate::util::timestamp::{iso_to_unix_ms, unix_ms_to_iso};
+use serde::{Deserialize, Deserializer};
+
+fn scalar_string(value: serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(value) => Some(value),
+        serde_yaml::Value::Number(value) => Some(value.to_string()),
+        serde_yaml::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn deserialize_scalar_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    scalar_string(serde_yaml::Value::deserialize(deserializer)?)
+        .ok_or_else(|| serde::de::Error::custom("expected a scalar string"))
+}
+
+fn deserialize_optional_scalar_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?.and_then(scalar_string))
+}
+
+fn deserialize_optional_nonempty_scalar_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_optional_scalar_string(deserializer)?.filter(|value| !value.is_empty()))
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
+        .and_then(|value| value.as_str().map(str::to_owned)))
+}
+
+fn deserialize_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    serde_yaml::Value::deserialize(deserializer)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| serde::de::Error::custom("expected a string"))
+}
+
+fn deserialize_optional_nonempty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_optional_string(deserializer)?.filter(|value| !value.is_empty()))
+}
+
+fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_yaml::Value::deserialize(deserializer)? {
+        serde_yaml::Value::Sequence(values) => values
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_scalar_string(deserializer)?;
+    iso_to_unix_ms(&value).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_timestamp<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_optional_scalar_string(deserializer)?
+        .and_then(|value| iso_to_unix_ms(&value).ok()))
+}
+
+fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_optional_string(deserializer)?.and_then(|value| iso_to_unix_ms(&value).ok()))
+}
+
+fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
+        .and_then(scalar_string)
+        .is_some_and(|value| value == "true"))
+}
+
+fn deserialize_bool_default_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
+        .and_then(scalar_string)
+        .is_none_or(|value| value == "true"))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_version() -> i32 {
+    1
+}
+
+fn default_entrypoint() -> String {
+    "render".to_owned()
+}
+
+fn deserialize_version<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
+        .and_then(scalar_string)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1))
+}
+
+fn deserialize_entrypoint<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
+        .and_then(scalar_string)
+        .unwrap_or_else(default_entrypoint))
+}
 
 /// Split content at `---` delimiters into (yaml, body).
 /// Returns `None` if the content does not start with `---`.
@@ -25,21 +169,48 @@ pub fn format_frontmatter(yaml: &str, body: &str) -> String {
 // --- Post Frontmatter ---
 
 /// Parsed post frontmatter fields (camelCase for YAML compatibility).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PostFrontmatter {
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub id: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub title: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub slug: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub status: String,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub created_at: i64,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub tags: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub categories: Vec<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nonempty_scalar_string"
+    )]
     pub excerpt: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nonempty_scalar_string"
+    )]
     pub author: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nonempty_scalar_string"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nonempty_scalar_string"
+    )]
     pub template_slug: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_bool")]
     pub do_not_translate: bool,
+    #[serde(default, deserialize_with = "deserialize_optional_timestamp")]
     pub published_at: Option<i64>,
 }
 
@@ -50,10 +221,7 @@ impl PostFrontmatter {
             id: post.id.clone(),
             title: post.title.clone(),
             slug: post.slug.clone(),
-            status: serde_json::to_string(&post.status)
-                .unwrap_or_default()
-                .trim_matches('"')
-                .to_string(),
+            status: post.status.as_str().to_owned(),
             created_at: post.created_at,
             updated_at: post.updated_at,
             tags: post.tags.clone(),
@@ -130,56 +298,7 @@ impl PostFrontmatter {
 
     /// Parse from a YAML string.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {e}"))?;
-        let map = doc
-            .as_mapping()
-            .ok_or("frontmatter is not a YAML mapping")?;
-
-        let get_str = |key: &str| -> Option<String> {
-            map.get(serde_yaml::Value::String(key.to_string()))
-                .and_then(|v| match v {
-                    serde_yaml::Value::String(s) => Some(s.clone()),
-                    serde_yaml::Value::Number(n) => Some(n.to_string()),
-                    serde_yaml::Value::Bool(b) => Some(b.to_string()),
-                    _ => None,
-                })
-        };
-
-        let get_string_list = |key: &str| -> Vec<String> {
-            map.get(serde_yaml::Value::String(key.to_string()))
-                .and_then(|v| v.as_sequence())
-                .map(|seq| {
-                    seq.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-
-        let get_timestamp = |key: &str| -> Result<i64, String> {
-            let s = get_str(key).ok_or(format!("missing required field '{key}'"))?;
-            iso_to_unix_ms(&s)
-        };
-
-        Ok(Self {
-            id: get_str("id").ok_or("missing 'id'")?,
-            title: get_str("title").ok_or("missing 'title'")?,
-            slug: get_str("slug").ok_or("missing 'slug'")?,
-            status: get_str("status").ok_or("missing 'status'")?,
-            created_at: get_timestamp("createdAt")?,
-            updated_at: get_timestamp("updatedAt")?,
-            tags: get_string_list("tags"),
-            categories: get_string_list("categories"),
-            excerpt: get_str("excerpt").filter(|s| !s.is_empty()),
-            author: get_str("author").filter(|s| !s.is_empty()),
-            language: get_str("language").filter(|s| !s.is_empty()),
-            template_slug: get_str("templateSlug").filter(|s| !s.is_empty()),
-            do_not_translate: get_str("doNotTranslate")
-                .map(|s| s == "true")
-                .unwrap_or(false),
-            published_at: get_str("publishedAt").and_then(|s| iso_to_unix_ms(&s).ok()),
-        })
+        serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))
     }
 }
 
@@ -199,16 +318,26 @@ pub fn read_post_file(content: &str) -> Result<(PostFrontmatter, String), String
 // --- Translation Frontmatter ---
 
 /// Parsed translation frontmatter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TranslationFrontmatter {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub id: Option<String>,
+    #[serde(deserialize_with = "deserialize_string")]
     pub translation_for: String,
+    #[serde(deserialize_with = "deserialize_string")]
     pub language: String,
+    #[serde(deserialize_with = "deserialize_string")]
     pub title: String,
+    #[serde(default, deserialize_with = "deserialize_optional_nonempty_string")]
     pub excerpt: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub status: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
     pub created_at: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
     pub updated_at: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
     pub published_at: Option<i64>,
 }
 
@@ -220,12 +349,7 @@ impl TranslationFrontmatter {
             language: t.language.clone(),
             title: t.title.clone(),
             excerpt: t.excerpt.clone(),
-            status: Some(
-                serde_json::to_string(&t.status)
-                    .unwrap_or_default()
-                    .trim_matches('"')
-                    .to_string(),
-            ),
+            status: Some(t.status.as_str().to_owned()),
             created_at: Some(t.created_at),
             updated_at: Some(t.updated_at),
             published_at: t.published_at,
@@ -261,29 +385,7 @@ impl TranslationFrontmatter {
     }
 
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {e}"))?;
-        let map = doc
-            .as_mapping()
-            .ok_or("frontmatter is not a YAML mapping")?;
-
-        let get_str = |key: &str| -> Option<String> {
-            map.get(serde_yaml::Value::String(key.to_string()))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        };
-
-        Ok(Self {
-            id: get_str("id"),
-            translation_for: get_str("translationFor").ok_or("missing 'translationFor'")?,
-            language: get_str("language").ok_or("missing 'language'")?,
-            title: get_str("title").ok_or("missing 'title'")?,
-            excerpt: get_str("excerpt").filter(|s| !s.is_empty()),
-            status: get_str("status"),
-            created_at: get_str("createdAt").and_then(|value| iso_to_unix_ms(&value).ok()),
-            updated_at: get_str("updatedAt").and_then(|value| iso_to_unix_ms(&value).ok()),
-            published_at: get_str("publishedAt").and_then(|value| iso_to_unix_ms(&value).ok()),
-        })
+        serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))
     }
 }
 
@@ -303,16 +405,29 @@ pub fn read_translation_file(content: &str) -> Result<(TranslationFrontmatter, S
 // --- Template Frontmatter ---
 
 /// Parsed template frontmatter (double-quoted strings, matching TypeScript output).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TemplateFrontmatter {
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_scalar_string")]
     pub project_id: Option<String>,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub slug: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub title: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub kind: String,
+    #[serde(
+        default = "default_true",
+        deserialize_with = "deserialize_bool_default_true"
+    )]
     pub enabled: bool,
+    #[serde(default = "default_version", deserialize_with = "deserialize_version")]
     pub version: i32,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub created_at: i64,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub updated_at: i64,
 }
 
@@ -341,37 +456,7 @@ impl TemplateFrontmatter {
     }
 
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {e}"))?;
-        let map = doc.as_mapping().ok_or("not a YAML mapping")?;
-
-        let get_str = |key: &str| -> Option<String> {
-            map.get(serde_yaml::Value::String(key.to_string()))
-                .and_then(|v| match v {
-                    serde_yaml::Value::String(s) => Some(s.clone()),
-                    serde_yaml::Value::Number(n) => Some(n.to_string()),
-                    serde_yaml::Value::Bool(b) => Some(b.to_string()),
-                    _ => None,
-                })
-        };
-
-        Ok(Self {
-            id: get_str("id").ok_or("missing 'id'")?,
-            project_id: get_str("projectId"),
-            slug: get_str("slug").ok_or("missing 'slug'")?,
-            title: get_str("title").ok_or("missing 'title'")?,
-            kind: get_str("kind").ok_or("missing 'kind'")?,
-            enabled: get_str("enabled").map(|s| s == "true").unwrap_or(true),
-            version: get_str("version")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(1),
-            created_at: get_str("createdAt")
-                .and_then(|s| iso_to_unix_ms(&s).ok())
-                .ok_or("missing 'createdAt'")?,
-            updated_at: get_str("updatedAt")
-                .and_then(|s| iso_to_unix_ms(&s).ok())
-                .ok_or("missing 'updatedAt'")?,
-        })
+        serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))
     }
 }
 
@@ -390,17 +475,34 @@ pub fn write_template_file(fm: &TemplateFrontmatter, body: &str) -> String {
 // --- Script Frontmatter ---
 
 /// Parsed script frontmatter (double-quoted strings like templates, plus entrypoint).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScriptFrontmatter {
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_scalar_string")]
     pub project_id: Option<String>,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub slug: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub title: String,
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub kind: String,
+    #[serde(
+        default = "default_entrypoint",
+        deserialize_with = "deserialize_entrypoint"
+    )]
     pub entrypoint: String,
+    #[serde(
+        default = "default_true",
+        deserialize_with = "deserialize_bool_default_true"
+    )]
     pub enabled: bool,
+    #[serde(default = "default_version", deserialize_with = "deserialize_version")]
     pub version: i32,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub created_at: i64,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub updated_at: i64,
 }
 
@@ -430,38 +532,7 @@ impl ScriptFrontmatter {
     }
 
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {e}"))?;
-        let map = doc.as_mapping().ok_or("not a YAML mapping")?;
-
-        let get_str = |key: &str| -> Option<String> {
-            map.get(serde_yaml::Value::String(key.to_string()))
-                .and_then(|v| match v {
-                    serde_yaml::Value::String(s) => Some(s.clone()),
-                    serde_yaml::Value::Number(n) => Some(n.to_string()),
-                    serde_yaml::Value::Bool(b) => Some(b.to_string()),
-                    _ => None,
-                })
-        };
-
-        Ok(Self {
-            id: get_str("id").ok_or("missing 'id'")?,
-            project_id: get_str("projectId"),
-            slug: get_str("slug").ok_or("missing 'slug'")?,
-            title: get_str("title").ok_or("missing 'title'")?,
-            kind: get_str("kind").ok_or("missing 'kind'")?,
-            entrypoint: get_str("entrypoint").unwrap_or_else(|| "render".to_string()),
-            enabled: get_str("enabled").map(|s| s == "true").unwrap_or(true),
-            version: get_str("version")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(1),
-            created_at: get_str("createdAt")
-                .and_then(|s| iso_to_unix_ms(&s).ok())
-                .ok_or("missing 'createdAt'")?,
-            updated_at: get_str("updatedAt")
-                .and_then(|s| iso_to_unix_ms(&s).ok())
-                .ok_or("missing 'updatedAt'")?,
-        })
+        serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))
     }
 }
 
@@ -549,6 +620,27 @@ mod tests {
     #[test]
     fn split_no_frontmatter() {
         assert!(split_frontmatter("no frontmatter here").is_none());
+    }
+
+    #[test]
+    fn derived_deserialization_preserves_lenient_scalar_coercion() {
+        let yaml = "id: 42\ntitle: true\nslug: 7\nstatus: false\ncreatedAt: '2026-01-02T03:04:05.000Z'\nupdatedAt: '2026-01-02T03:04:05.000Z'\ntags: [rust, 2]\ncategories: invalid\nauthor: 9\ndoNotTranslate: true";
+        let parsed = PostFrontmatter::from_yaml(yaml).unwrap();
+
+        assert_eq!(parsed.id, "42");
+        assert_eq!(parsed.title, "true");
+        assert_eq!(parsed.slug, "7");
+        assert_eq!(parsed.status, "false");
+        assert_eq!(parsed.tags, vec!["rust"]);
+        assert!(parsed.categories.is_empty());
+        assert_eq!(parsed.author.as_deref(), Some("9"));
+        assert!(parsed.do_not_translate);
+    }
+
+    #[test]
+    fn translation_frontmatter_remains_string_only() {
+        let yaml = "translationFor: 42\nlanguage: en\ntitle: Title";
+        assert!(TranslationFrontmatter::from_yaml(yaml).is_err());
     }
 
     #[test]

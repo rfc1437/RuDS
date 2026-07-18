@@ -64,7 +64,7 @@ pub fn fill_missing_translations(
     main_language: &str,
     blog_languages: &[String],
     offline_mode: bool,
-    mut on_progress: impl FnMut(f32, &str),
+    mut on_progress: impl FnMut(f32, &str) -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
     fill_missing_translations_with(
         conn,
@@ -90,7 +90,7 @@ fn fill_missing_translations_with(
     blog_languages: &[String],
     post_translator: &mut dyn FnMut(&Post, &str) -> EngineResult<TranslationResult>,
     media_translator: &mut dyn FnMut(&Media, &str) -> EngineResult<MediaTranslationResult>,
-    on_progress: &mut dyn FnMut(f32, &str),
+    on_progress: &mut dyn FnMut(f32, &str) -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
     let configured = configured_languages(main_language, blog_languages);
     if configured.len() <= 1 {
@@ -100,12 +100,17 @@ fn fill_missing_translations_with(
         });
     }
     let posts = qp::list_posts_by_project(conn, project_id)?;
-    on_progress(0.0, "Scanning published posts");
+    if !on_progress(0.0, "Scanning published posts") {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
     let mut work = Vec::new();
     for post in posts
         .into_iter()
         .filter(|post| post.status == PostStatus::Published && !post.do_not_translate)
     {
+        if !on_progress(0.0, "Scanning published posts") {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         for language in missing_languages(conn, &post, &configured)? {
             work.push((post.clone(), language));
         }
@@ -119,10 +124,12 @@ fn fill_missing_translations_with(
 
     let mut report = FillMissingTranslationsReport::default();
     for (index, (post, language)) in work.iter().enumerate() {
-        on_progress(
+        if !on_progress(
             0.15 + (index as f32 / work.len() as f32) * 0.85,
             &format!("{} → {language}", post.title),
-        );
+        ) {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         match translate_one_post(
             conn,
             data_dir,
@@ -144,7 +151,9 @@ fn fill_missing_translations_with(
             }
         }
     }
-    on_progress(1.0, "Translation batch complete");
+    if !on_progress(1.0, "Translation batch complete") {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
     Ok(report)
 }
 
@@ -156,6 +165,7 @@ pub fn translate_missing_for_post(
     main_language: &str,
     blog_languages: &[String],
     offline_mode: bool,
+    is_cancelled: impl Fn() -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
     let post = qp::get_post_by_id(conn, post_id)?;
     let configured = configured_languages(main_language, blog_languages);
@@ -165,6 +175,9 @@ pub fn translate_missing_for_post(
         ..Default::default()
     };
     for language in targets {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         let result = translate_one_post(
             conn,
             data_dir,
@@ -369,7 +382,7 @@ mod tests {
                 })
             },
             &mut |_media, _language| unreachable!(),
-            &mut |_, _| {},
+            &mut |_, _| true,
         )
         .unwrap();
 
@@ -433,9 +446,30 @@ mod tests {
             &["de".into()],
             &mut |_, _| panic!("translator must not run"),
             &mut |_, _| panic!("translator must not run"),
-            &mut |_, _| {},
+            &mut |_, _| true,
         )
         .unwrap();
         assert!(report.nothing_to_do);
+    }
+
+    #[test]
+    fn batch_stops_when_progress_callback_cancels() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        let dir = TempDir::new().unwrap();
+
+        let result = fill_missing_translations_with(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "en",
+            &["de".into()],
+            &mut |_, _| panic!("translator must not run"),
+            &mut |_, _| panic!("translator must not run"),
+            &mut |_, _| false,
+        );
+
+        assert!(matches!(result, Err(EngineError::Validation(message)) if message == "cancelled"));
     }
 }

@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::{TemplateRecord, convert, convert_all};
 use crate::db::schema::templates;
 use crate::model::Template;
 
 pub fn insert_template(conn: &DbConnection, t: &Template) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(templates::table)
-            .values(TemplateRecord::from(t))
+            .values(t.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -18,9 +17,8 @@ pub fn get_template_by_id(conn: &DbConnection, id: &str) -> QueryResult<Template
     conn.with(|c| {
         templates::table
             .filter(templates::id.eq(id))
-            .select(TemplateRecord::as_select())
+            .select(Template::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -33,9 +31,8 @@ pub fn get_template_by_slug(
         templates::table
             .filter(templates::project_id.eq(project_id))
             .filter(templates::slug.eq(slug))
-            .select(TemplateRecord::as_select())
+            .select(Template::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -47,16 +44,15 @@ pub fn list_templates_by_project(
         templates::table
             .filter(templates::project_id.eq(project_id))
             .order(templates::title)
-            .select(TemplateRecord::as_select())
+            .select(Template::as_select())
             .load(c)
-            .and_then(convert_all)
     })
 }
 
 pub fn update_template(conn: &DbConnection, t: &Template) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(templates::table.filter(templates::id.eq(&t.id)))
-            .set(TemplateRecord::from(t))
+            .set(t.clone())
             .execute(c)
             .map(|_| ())
     })

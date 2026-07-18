@@ -6,7 +6,7 @@ use walkdir::WalkDir;
 
 use crate::db::queries::template as qt;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Template, TemplateKind, TemplateStatus};
+use crate::model::{Template, TemplateStatus};
 use crate::util::frontmatter::read_template_file;
 use crate::util::now_unix_ms;
 
@@ -16,17 +16,6 @@ pub struct TemplateRebuildReport {
     pub created: usize,
     pub updated: usize,
     pub errors: Vec<String>,
-}
-
-/// Parse a template kind string from frontmatter into a `TemplateKind`.
-fn parse_template_kind(s: &str) -> Result<TemplateKind, String> {
-    match s {
-        "post" => Ok(TemplateKind::Post),
-        "list" => Ok(TemplateKind::List),
-        "not_found" | "notFound" | "not-found" => Ok(TemplateKind::NotFound),
-        "partial" => Ok(TemplateKind::Partial),
-        other => Err(format!("unknown template kind: '{other}'")),
-    }
 }
 
 /// Rebuild templates from the filesystem into the database.
@@ -93,7 +82,7 @@ pub(crate) fn rebuild_single_template(
         .to_string_lossy()
         .to_string();
 
-    let kind = parse_template_kind(&fm.kind).map_err(EngineError::Parse)?;
+    let kind = fm.kind.parse().map_err(EngineError::Parse)?;
     let now = now_unix_ms();
 
     // File exists on disk -> Published; content is None in DB
@@ -141,6 +130,7 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::queries::project::{insert_project, make_test_project};
+    use crate::model::TemplateKind;
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {

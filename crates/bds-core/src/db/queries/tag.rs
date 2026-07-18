@@ -2,7 +2,6 @@ use diesel::prelude::*;
 use diesel::sql_types::Text;
 
 use crate::db::DbConnection;
-use crate::db::from_row::TagRecord;
 use crate::db::schema::tags;
 use crate::model::Tag;
 
@@ -11,7 +10,7 @@ diesel::define_sql_function!(fn lower(value: Text) -> Text);
 pub fn insert_tag(conn: &DbConnection, tag: &Tag) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(tags::table)
-            .values(TagRecord::from(tag))
+            .values(tag.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -21,9 +20,8 @@ pub fn get_tag_by_id(conn: &DbConnection, id: &str) -> QueryResult<Tag> {
     conn.with(|c| {
         tags::table
             .filter(tags::id.eq(id))
-            .select(TagRecord::as_select())
+            .select(Tag::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -36,9 +34,8 @@ pub fn get_tag_by_project_and_name(
         tags::table
             .filter(tags::project_id.eq(project_id))
             .filter(lower(tags::name).eq(name.to_lowercase()))
-            .select(TagRecord::as_select())
+            .select(Tag::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -47,16 +44,15 @@ pub fn list_tags_by_project(conn: &DbConnection, project_id: &str) -> QueryResul
         tags::table
             .filter(tags::project_id.eq(project_id))
             .order(tags::name)
-            .select(TagRecord::as_select())
+            .select(Tag::as_select())
             .load(c)
-            .map(|rows: Vec<TagRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 
 pub fn update_tag(conn: &DbConnection, tag: &Tag) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(tags::table.filter(tags::id.eq(&tag.id)))
-            .set(TagRecord::from(tag))
+            .set(tag.clone())
             .execute(c)
             .map(|_| ())
     })

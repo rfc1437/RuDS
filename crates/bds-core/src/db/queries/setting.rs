@@ -1,7 +1,6 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::SettingRecord;
 use crate::db::schema::settings;
 use crate::model::Setting;
 
@@ -9,9 +8,8 @@ pub fn get_setting_by_key(conn: &DbConnection, key: &str) -> QueryResult<Setting
     conn.with(|c| {
         settings::table
             .filter(settings::key.eq(key))
-            .select(SettingRecord::as_select())
+            .select(Setting::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -43,9 +41,8 @@ pub fn list_all_settings(conn: &DbConnection) -> QueryResult<Vec<Setting>> {
     conn.with(|c| {
         settings::table
             .order(settings::key)
-            .select(SettingRecord::as_select())
+            .select(Setting::as_select())
             .load(c)
-            .map(|rows: Vec<SettingRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 

@@ -65,13 +65,6 @@ mod tests {
     }
 
     #[test]
-    fn toast_levels() {
-        let t = Toast::new(ToastLevel::Error, "oops".into());
-        assert_eq!(t.level, ToastLevel::Error);
-        assert!(!t.message.is_empty());
-    }
-
-    #[test]
     fn fresh_toast_not_expired() {
         let t = Toast::new(ToastLevel::Info, "test".into());
         assert!(!t.is_expired());

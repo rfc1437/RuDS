@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::{ScriptRecord, convert, convert_all};
 use crate::db::schema::scripts;
 use crate::model::Script;
 
 pub fn insert_script(conn: &DbConnection, s: &Script) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(scripts::table)
-            .values(ScriptRecord::from(s))
+            .values(s.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -18,9 +17,8 @@ pub fn get_script_by_id(conn: &DbConnection, id: &str) -> QueryResult<Script> {
     conn.with(|c| {
         scripts::table
             .filter(scripts::id.eq(id))
-            .select(ScriptRecord::as_select())
+            .select(Script::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -33,9 +31,8 @@ pub fn get_script_by_slug(
         scripts::table
             .filter(scripts::project_id.eq(project_id))
             .filter(scripts::slug.eq(slug))
-            .select(ScriptRecord::as_select())
+            .select(Script::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -44,16 +41,15 @@ pub fn list_scripts_by_project(conn: &DbConnection, project_id: &str) -> QueryRe
         scripts::table
             .filter(scripts::project_id.eq(project_id))
             .order(scripts::title)
-            .select(ScriptRecord::as_select())
+            .select(Script::as_select())
             .load(c)
-            .and_then(convert_all)
     })
 }
 
 pub fn update_script(conn: &DbConnection, s: &Script) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(scripts::table.filter(scripts::id.eq(&s.id)))
-            .set(ScriptRecord::from(s))
+            .set(s.clone())
             .execute(c)
             .map(|_| ())
     })

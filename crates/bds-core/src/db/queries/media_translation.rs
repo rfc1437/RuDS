@@ -1,14 +1,13 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::MediaTranslationRecord;
 use crate::db::schema::media_translations;
 use crate::model::MediaTranslation;
 
 pub fn insert_media_translation(conn: &DbConnection, t: &MediaTranslation) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(media_translations::table)
-            .values(MediaTranslationRecord::from(t))
+            .values(t.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -23,9 +22,8 @@ pub fn get_media_translation_by_media_and_language(
         media_translations::table
             .filter(media_translations::translation_for.eq(translation_for))
             .filter(media_translations::language.eq(language))
-            .select(MediaTranslationRecord::as_select())
+            .select(MediaTranslation::as_select())
             .first(c)
-            .map(Into::into)
     })
 }
 
@@ -37,16 +35,15 @@ pub fn list_media_translations_by_media(
         media_translations::table
             .filter(media_translations::translation_for.eq(translation_for))
             .order(media_translations::language)
-            .select(MediaTranslationRecord::as_select())
+            .select(MediaTranslation::as_select())
             .load(c)
-            .map(|rows: Vec<MediaTranslationRecord>| rows.into_iter().map(Into::into).collect())
     })
 }
 
 pub fn upsert_media_translation(conn: &DbConnection, t: &MediaTranslation) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(media_translations::table)
-            .values(MediaTranslationRecord::from(t))
+            .values(t.clone())
             .on_conflict((
                 media_translations::translation_for,
                 media_translations::language,

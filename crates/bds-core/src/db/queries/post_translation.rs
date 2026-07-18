@@ -1,7 +1,6 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::from_row::{PostTranslationRecord, convert, convert_all};
 use crate::db::schema::post_translations;
 use crate::model::PostTranslation;
 
@@ -13,7 +12,7 @@ pub fn insert_post_translation(conn: &DbConnection, t: &PostTranslation) -> Quer
     }
     conn.with(|c| {
         diesel::insert_into(post_translations::table)
-            .values(PostTranslationRecord::from(t))
+            .values(t.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -23,9 +22,8 @@ pub fn get_post_translation_by_id(conn: &DbConnection, id: &str) -> QueryResult<
     conn.with(|c| {
         post_translations::table
             .filter(post_translations::id.eq(id))
-            .select(PostTranslationRecord::as_select())
+            .select(PostTranslation::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -38,9 +36,8 @@ pub fn get_post_translation_by_post_and_language(
         post_translations::table
             .filter(post_translations::translation_for.eq(translation_for))
             .filter(post_translations::language.eq(language))
-            .select(PostTranslationRecord::as_select())
+            .select(PostTranslation::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -52,9 +49,8 @@ pub fn list_post_translations_by_post(
         post_translations::table
             .filter(post_translations::translation_for.eq(translation_for))
             .order(post_translations::language)
-            .select(PostTranslationRecord::as_select())
+            .select(PostTranslation::as_select())
             .load(c)
-            .and_then(convert_all)
     })
 }
 
@@ -66,7 +62,7 @@ pub fn update_post_translation(conn: &DbConnection, t: &PostTranslation) -> Quer
     }
     conn.with(|c| {
         diesel::update(post_translations::table.filter(post_translations::id.eq(&t.id)))
-            .set(PostTranslationRecord::from(t))
+            .set(t.clone())
             .execute(c)
             .map(|_| ())
     })

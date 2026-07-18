@@ -7,7 +7,7 @@ pub fn content_hash(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     let result = hasher.finalize();
-    hex::encode(result)
+    encode_hex(result)
 }
 
 /// Compute a hex-encoded SHA-256 hash of a file by streaming (8 KB chunks).
@@ -22,22 +22,15 @@ pub fn file_hash(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hex::encode(hasher.finalize()))
+    Ok(encode_hex(hasher.finalize()))
 }
 
-// sha2 doesn't include hex encoding, so we use a tiny inline helper.
-mod hex {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        let bytes = bytes.as_ref();
-        let mut s = String::with_capacity(bytes.len() * 2);
-        for &b in bytes {
-            s.push(HEX_CHARS[(b >> 4) as usize] as char);
-            s.push(HEX_CHARS[(b & 0xf) as usize] as char);
-        }
-        s
-    }
+fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

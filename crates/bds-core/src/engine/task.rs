@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Unique task identifier.
@@ -13,14 +13,6 @@ pub enum TaskStatus {
     Completed,
     Failed(String),
     Cancelled,
-}
-
-/// Progress update for a task.
-#[derive(Debug, Clone)]
-pub struct TaskProgress {
-    pub task_id: TaskId,
-    pub message: String,
-    pub percent: Option<f32>,
 }
 
 /// Immutable task state exposed to UI consumers.
@@ -57,6 +49,7 @@ pub struct TaskManager {
     max_concurrent: usize,
     next_id: Mutex<TaskId>,
     tasks: Mutex<Vec<TaskEntry>>,
+    state_changed: Condvar,
 }
 
 impl TaskManager {
@@ -66,6 +59,7 @@ impl TaskManager {
             max_concurrent,
             next_id: Mutex::new(1),
             tasks: Mutex::new(Vec::new()),
+            state_changed: Condvar::new(),
         }
     }
 
@@ -117,24 +111,20 @@ impl TaskManager {
         id
     }
 
-    /// Try to start a queued task. Returns true if the task was moved to
-    /// Running, false if concurrency is at capacity or the task is not Queued.
-    pub fn try_start(&self, task_id: TaskId) -> bool {
+    /// Block a worker until its task may run. Returns false if cancelled.
+    pub fn wait_until_runnable(&self, task_id: TaskId) -> bool {
         let mut tasks = self.tasks.lock().unwrap();
-        let running = tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Running)
-            .count();
-        if running >= self.max_concurrent {
-            return false;
+        loop {
+            match tasks
+                .iter()
+                .find(|task| task.id == task_id)
+                .map(|task| &task.status)
+            {
+                Some(TaskStatus::Running) => return true,
+                Some(TaskStatus::Pending) => tasks = self.state_changed.wait(tasks).unwrap(),
+                _ => return false,
+            }
         }
-        if let Some(entry) = tasks.iter_mut().find(|t| t.id == task_id)
-            && entry.status == TaskStatus::Pending
-        {
-            entry.status = TaskStatus::Running;
-            return true;
-        }
-        false
     }
 
     /// Mark a task as completed.
@@ -148,6 +138,7 @@ impl TaskManager {
             entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
+        self.state_changed.notify_all();
     }
 
     /// Mark a task as failed with an error message.
@@ -161,6 +152,7 @@ impl TaskManager {
             entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
+        self.state_changed.notify_all();
     }
 
     /// Cancel a task by setting its cancel flag and status.
@@ -174,6 +166,7 @@ impl TaskManager {
             entry.finished_at = Some(Instant::now());
         }
         Self::promote_next(&mut tasks, self.max_concurrent);
+        self.state_changed.notify_all();
     }
 
     /// Check whether a task has been cancelled.
@@ -223,24 +216,6 @@ impl TaskManager {
         });
     }
 
-    /// Return the label of a task.
-    pub fn label(&self, task_id: TaskId) -> Option<String> {
-        let tasks = self.tasks.lock().unwrap();
-        tasks
-            .iter()
-            .find(|t| t.id == task_id)
-            .map(|t| t.label.clone())
-    }
-
-    /// Return the id of the first queued task (FIFO order).
-    pub fn next_queued(&self) -> Option<TaskId> {
-        let tasks = self.tasks.lock().unwrap();
-        tasks
-            .iter()
-            .find(|t| t.status == TaskStatus::Pending)
-            .map(|t| t.id)
-    }
-
     /// Update progress for a running task. Throttled to at most once per 250ms.
     pub fn report_progress(&self, task_id: TaskId, progress: Option<f32>, message: Option<String>) {
         let mut tasks = self.tasks.lock().unwrap();
@@ -267,15 +242,6 @@ impl TaskManager {
             .iter()
             .find(|t| t.id == task_id)
             .and_then(|t| t.progress)
-    }
-
-    /// Return the current message of a task.
-    pub fn message(&self, task_id: TaskId) -> Option<String> {
-        let tasks = self.tasks.lock().unwrap();
-        tasks
-            .iter()
-            .find(|t| t.id == task_id)
-            .and_then(|t| t.message.clone())
     }
 
     /// Return a snapshot of all tasks for UI display.
@@ -331,35 +297,6 @@ pub const PROGRESS_THROTTLE_MS: u64 = 250;
 pub const RECENT_FINISHED_LIMIT: usize = 10;
 pub const FINISHED_TASK_TTL: Duration = Duration::from_secs(60 * 60);
 
-/// Throttles progress reporting to avoid flooding.
-pub struct ProgressThrottle {
-    interval_ms: u64,
-    last_report: Mutex<Option<Instant>>,
-}
-
-impl ProgressThrottle {
-    /// Create a throttle with the given interval in milliseconds.
-    pub fn new(interval_ms: u64) -> Self {
-        Self {
-            interval_ms,
-            last_report: Mutex::new(None),
-        }
-    }
-
-    /// Returns true if enough time has elapsed since the last report.
-    pub fn should_report(&self) -> bool {
-        let mut last = self.last_report.lock().unwrap();
-        let now = Instant::now();
-        match *last {
-            Some(prev) if now.duration_since(prev).as_millis() < self.interval_ms as u128 => false,
-            _ => {
-                *last = Some(now);
-                true
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,11 +327,9 @@ mod tests {
         let c = mgr.submit("third"); // queued
 
         assert_eq!(mgr.status(a), Some(TaskStatus::Running));
-        assert_eq!(mgr.next_queued(), Some(b));
-
         mgr.complete(a); // should auto-promote b
         assert_eq!(mgr.status(b), Some(TaskStatus::Running));
-        assert_eq!(mgr.next_queued(), Some(c));
+        assert_eq!(mgr.status(c), Some(TaskStatus::Pending));
     }
 
     #[test]
@@ -482,6 +417,35 @@ mod tests {
     }
 
     #[test]
+    fn queued_task_waits_for_a_slot() {
+        let mgr = std::sync::Arc::new(TaskManager::new(1));
+        let running = mgr.submit("running");
+        let queued = mgr.submit("queued");
+        let waiter = {
+            let mgr = mgr.clone();
+            std::thread::spawn(move || mgr.wait_until_runnable(queued))
+        };
+
+        assert!(!waiter.is_finished());
+        mgr.complete(running);
+        assert!(waiter.join().unwrap());
+    }
+
+    #[test]
+    fn cancelling_queued_task_stops_its_waiter() {
+        let mgr = std::sync::Arc::new(TaskManager::new(1));
+        let _running = mgr.submit("running");
+        let queued = mgr.submit("queued");
+        let waiter = {
+            let mgr = mgr.clone();
+            std::thread::spawn(move || mgr.wait_until_runnable(queued))
+        };
+
+        mgr.cancel(queued);
+        assert!(!waiter.join().unwrap());
+    }
+
+    #[test]
     fn cancel_precondition_ignores_completed() {
         let mgr = TaskManager::default();
         let id = mgr.submit("task");
@@ -496,19 +460,6 @@ mod tests {
         let id = mgr.submit("upload");
         mgr.report_progress(id, Some(0.5), Some("halfway".into()));
         assert_eq!(mgr.progress(id), Some(0.5));
-        assert_eq!(mgr.message(id), Some("halfway".into()));
-    }
-
-    #[test]
-    fn progress_throttle_initial_reports() {
-        let throttle = ProgressThrottle::new(PROGRESS_THROTTLE_MS);
-        assert!(throttle.should_report());
-    }
-
-    #[test]
-    fn progress_throttle_suppresses_rapid() {
-        let throttle = ProgressThrottle::new(PROGRESS_THROTTLE_MS);
-        assert!(throttle.should_report());
-        assert!(!throttle.should_report());
+        assert_eq!(mgr.snapshots()[0].message.as_deref(), Some("halfway"));
     }
 }

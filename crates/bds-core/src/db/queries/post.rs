@@ -4,7 +4,6 @@ use diesel::sql_types::Text;
 use diesel::sqlite::Sqlite;
 
 use crate::db::DbConnection;
-use crate::db::from_row::{PostRecord, convert, convert_all, post_status_to_str};
 use crate::db::schema::posts;
 use crate::model::{Post, PostStatus};
 use crate::util::calendar_range_unix_ms;
@@ -15,7 +14,7 @@ diesel::define_sql_function!(fn lower(value: Text) -> Text);
 pub fn insert_post(conn: &DbConnection, post: &Post) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(posts::table)
-            .values(PostRecord::from(post))
+            .values(post.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -25,9 +24,8 @@ pub fn get_post_by_id(conn: &DbConnection, id: &str) -> QueryResult<Post> {
     conn.with(|c| {
         posts::table
             .filter(posts::id.eq(id))
-            .select(PostRecord::as_select())
+            .select(Post::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -40,9 +38,8 @@ pub fn get_post_by_project_and_slug(
         posts::table
             .filter(posts::project_id.eq(project_id))
             .filter(posts::slug.eq(slug))
-            .select(PostRecord::as_select())
+            .select(Post::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -51,34 +48,15 @@ pub fn list_posts_by_project(conn: &DbConnection, project_id: &str) -> QueryResu
         posts::table
             .filter(posts::project_id.eq(project_id))
             .order(posts::created_at.desc())
-            .select(PostRecord::as_select())
+            .select(Post::as_select())
             .load(c)
-            .and_then(convert_all)
-    })
-}
-
-pub fn list_posts_by_project_limited(
-    conn: &DbConnection,
-    project_id: &str,
-    limit: i64,
-    offset: i64,
-) -> QueryResult<Vec<Post>> {
-    conn.with(|c| {
-        posts::table
-            .filter(posts::project_id.eq(project_id))
-            .order(posts::created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .select(PostRecord::as_select())
-            .load(c)
-            .and_then(convert_all)
     })
 }
 
 pub fn update_post(conn: &DbConnection, post: &Post) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(posts::table.filter(posts::id.eq(&post.id)))
-            .set(PostRecord::from(post))
+            .set(post.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -93,7 +71,7 @@ pub fn update_post_status(
     conn.with(|c| {
         diesel::update(posts::table.filter(posts::id.eq(id)))
             .set((
-                posts::status.eq(post_status_to_str(status)),
+                posts::status.eq(status.as_str()),
                 posts::updated_at.eq(updated_at),
             ))
             .execute(c)
@@ -307,17 +285,17 @@ pub fn list_posts_filtered(
                 .order(posts::created_at.desc())
                 .limit(limit)
                 .offset(offset)
-                .select(PostRecord::as_select())
+                .select(Post::as_select())
                 .load(c)?
         } else if content_filters {
-            let mut records: Vec<PostRecord> = post_query(project_id, filters, false, false)
+            let mut records: Vec<Post> = post_query(project_id, filters, false, false)
                 .filter(posts::status.eq("draft"))
-                .select(PostRecord::as_select())
+                .select(Post::as_select())
                 .load(c)?;
             records.extend(
                 post_query(project_id, filters, true, true)
-                    .select(PostRecord::as_select())
-                    .load::<PostRecord>(c)?,
+                    .select(Post::as_select())
+                    .load::<Post>(c)?,
             );
             records.sort_unstable_by_key(|record| std::cmp::Reverse(record.created_at));
             records
@@ -330,10 +308,10 @@ pub fn list_posts_filtered(
                 .order(posts::created_at.desc())
                 .limit(limit)
                 .offset(offset)
-                .select(PostRecord::as_select())
+                .select(Post::as_select())
                 .load(c)?
         };
-        convert_all(records)
+        Ok(records)
     })
 }
 
@@ -542,6 +520,29 @@ mod tests {
         let fetched = get_post_by_id(db.conn(), "x1").unwrap();
         assert_eq!(fetched.status, PostStatus::Published);
         assert_eq!(fetched.updated_at, 5000);
+    }
+
+    #[test]
+    fn malformed_persisted_types_fail_deserialization() {
+        let db = setup();
+        insert_post(db.conn(), &make_post("x1", "hello")).unwrap();
+        db.conn()
+            .with(|connection| {
+                diesel::update(posts::table.filter(posts::id.eq("x1")))
+                    .set(posts::status.eq("unknown"))
+                    .execute(connection)
+            })
+            .unwrap();
+        assert!(get_post_by_id(db.conn(), "x1").is_err());
+
+        db.conn()
+            .with(|connection| {
+                diesel::update(posts::table.filter(posts::id.eq("x1")))
+                    .set((posts::status.eq("draft"), posts::tags.eq("not-json")))
+                    .execute(connection)
+            })
+            .unwrap();
+        assert!(get_post_by_id(db.conn(), "x1").is_err());
     }
 
     #[test]

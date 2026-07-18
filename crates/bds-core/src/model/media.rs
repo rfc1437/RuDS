@@ -1,8 +1,20 @@
+use diesel::ExpressionMethods;
 use serde::{Deserialize, Serialize};
 
 /// A media item (image, video, etc.).
 /// Matches the `media` table schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+)]
+#[diesel(table_name = crate::db::schema::media, check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(treat_none_as_default_value = false, treat_none_as_null = true)]
 pub struct Media {
     pub id: String,
     pub project_id: String,
@@ -30,6 +42,10 @@ pub struct Media {
     pub checksum: Option<String>,
     /// JSON-serialized string array in DB.
     #[serde(default)]
+    #[diesel(
+        deserialize_as = crate::db::types::DbStringList,
+        serialize_as = crate::db::types::DbStringList
+    )]
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -37,7 +53,21 @@ pub struct Media {
 
 /// A translation of media metadata into another language.
 /// Matches the `media_translations` table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+)]
+#[diesel(
+    table_name = crate::db::schema::media_translations,
+    check_for_backend(diesel::sqlite::Sqlite)
+)]
+#[diesel(treat_none_as_default_value = false, treat_none_as_null = true)]
 pub struct MediaTranslation {
     pub id: String,
     pub project_id: String,

@@ -802,6 +802,7 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "fluent-bundle",
+ "fluent-syntax",
  "image 0.25.10",
  "keyring",
  "libsqlite3-sys",

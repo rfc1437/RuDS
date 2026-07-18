@@ -3,7 +3,6 @@ use diesel::prelude::*;
 use diesel::sql_types::Text;
 
 use crate::db::DbConnection;
-use crate::db::from_row::{MediaRecord, convert, convert_all};
 use crate::db::schema::media;
 use crate::model::Media;
 use crate::util::calendar_range_unix_ms;
@@ -13,7 +12,7 @@ diesel::define_sql_function!(fn instr(haystack: Text, needle: Text) -> Integer);
 pub fn insert_media(conn: &DbConnection, m: &Media) -> QueryResult<()> {
     conn.with(|c| {
         diesel::insert_into(media::table)
-            .values(MediaRecord::from(m))
+            .values(m.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -23,9 +22,8 @@ pub fn get_media_by_id(conn: &DbConnection, id: &str) -> QueryResult<Media> {
     conn.with(|c| {
         media::table
             .filter(media::id.eq(id))
-            .select(MediaRecord::as_select())
+            .select(Media::as_select())
             .first(c)
-            .and_then(convert)
     })
 }
 
@@ -34,27 +32,8 @@ pub fn list_media_by_project(conn: &DbConnection, project_id: &str) -> QueryResu
         media::table
             .filter(media::project_id.eq(project_id))
             .order(media::created_at.desc())
-            .select(MediaRecord::as_select())
+            .select(Media::as_select())
             .load(c)
-            .and_then(convert_all)
-    })
-}
-
-pub fn list_media_by_project_limited(
-    conn: &DbConnection,
-    project_id: &str,
-    limit: i64,
-    offset: i64,
-) -> QueryResult<Vec<Media>> {
-    conn.with(|c| {
-        media::table
-            .filter(media::project_id.eq(project_id))
-            .order(media::created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .select(MediaRecord::as_select())
-            .load(c)
-            .and_then(convert_all)
     })
 }
 
@@ -70,7 +49,7 @@ pub fn count_media_by_project(conn: &DbConnection, project_id: &str) -> QueryRes
 pub fn update_media(conn: &DbConnection, m: &Media) -> QueryResult<()> {
     conn.with(|c| {
         diesel::update(media::table.filter(media::id.eq(&m.id)))
-            .set(MediaRecord::from(m))
+            .set(m.clone())
             .execute(c)
             .map(|_| ())
     })
@@ -140,9 +119,8 @@ pub fn list_media_filtered(
             .order(media::created_at.desc())
             .limit(limit)
             .offset(offset)
-            .select(MediaRecord::as_select())
+            .select(Media::as_select())
             .load(c)
-            .and_then(convert_all)
     })
 }
 

@@ -27,7 +27,7 @@ objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 
 [dev-dependencies]
-fluent-syntax = "0.12"
+fluent-syntax = { workspace = true }
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
 

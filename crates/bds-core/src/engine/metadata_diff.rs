@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
-use crate::db::from_row::{script_kind_to_str, template_kind_to_str};
 use crate::db::queries::media as qm;
 use crate::db::queries::media_translation as qmt;
 use crate::db::queries::post as qp;
@@ -14,7 +13,7 @@ use crate::db::queries::project as qproject;
 use crate::db::queries::script as qs;
 use crate::db::queries::template as qtpl;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Media, MediaTranslation, Post, PostStatus, PostTranslation, Script, Template};
+use crate::model::{Media, MediaTranslation, Post, PostTranslation, Script, Template};
 use crate::util::frontmatter::{
     ScriptFrontmatter, TemplateFrontmatter, read_post_file, read_script_file, read_template_file,
     read_translation_file, write_post_file, write_script_file, write_template_file,
@@ -371,7 +370,7 @@ fn rewrite_script_from_database(
         project_id: Some(script.project_id),
         slug: script.slug,
         title: script.title,
-        kind: script_kind_to_str(&script.kind).to_owned(),
+        kind: script.kind.as_str().to_owned(),
         entrypoint: script.entrypoint,
         enabled: script.enabled,
         version: script.version,
@@ -399,7 +398,7 @@ fn rewrite_template_from_database(
         project_id: Some(template.project_id),
         slug: template.slug,
         title: template.title,
-        kind: template_kind_to_str(&template.kind).to_owned(),
+        kind: template.kind.as_str().to_owned(),
         enabled: template.enabled,
         version: template.version,
         created_at: template.created_at,
@@ -427,14 +426,6 @@ fn tags_to_json(tags: &[String]) -> String {
     serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
 }
 
-fn status_to_str(s: &PostStatus) -> &'static str {
-    match s {
-        PostStatus::Draft => "draft",
-        PostStatus::Published => "published",
-        PostStatus::Archived => "archived",
-    }
-}
-
 fn compare_field(fields: &mut Vec<DiffField>, name: &str, db_val: &str, file_val: &str) {
     if db_val != file_val {
         fields.push(DiffField {
@@ -459,12 +450,7 @@ fn diff_post(data_dir: &Path, post: &Post) -> EngineResult<Option<EntityDiff>> {
 
     compare_field(&mut fields, "title", &post.title, &fm.title);
     compare_field(&mut fields, "slug", &post.slug, &fm.slug);
-    compare_field(
-        &mut fields,
-        "status",
-        status_to_str(&post.status),
-        &fm.status,
-    );
+    compare_field(&mut fields, "status", post.status.as_str(), &fm.status);
     compare_field(
         &mut fields,
         "tags",
@@ -700,12 +686,7 @@ fn diff_template(data_dir: &Path, tpl: &Template) -> EngineResult<Option<EntityD
     let mut fields = Vec::new();
 
     compare_field(&mut fields, "title", &tpl.title, &fm.title);
-    compare_field(
-        &mut fields,
-        "kind",
-        template_kind_to_str(&tpl.kind),
-        &fm.kind,
-    );
+    compare_field(&mut fields, "kind", tpl.kind.as_str(), &fm.kind);
     compare_field(
         &mut fields,
         "enabled",
@@ -743,12 +724,7 @@ fn diff_script(data_dir: &Path, script: &Script) -> EngineResult<Option<EntityDi
     let mut fields = Vec::new();
 
     compare_field(&mut fields, "title", &script.title, &fm.title);
-    compare_field(
-        &mut fields,
-        "kind",
-        script_kind_to_str(&script.kind),
-        &fm.kind,
-    );
+    compare_field(&mut fields, "kind", script.kind.as_str(), &fm.kind);
     compare_field(
         &mut fields,
         "entrypoint",
