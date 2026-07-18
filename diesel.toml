@@ -1,0 +1,8 @@
+[migrations_directory]
+dir = "crates/bds-core/migrations"
+
+[print_schema]
+file = "crates/bds-core/src/db/schema.rs"
+patch_file = "crates/bds-core/src/db/schema.patch"
+with_docs = false
+filter = { except_tables = ["posts_fts", "media_fts"] }

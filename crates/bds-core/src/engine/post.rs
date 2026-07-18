@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::{Connection, params};
+use crate::db::DbConnection as Connection;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -189,7 +189,7 @@ pub fn update_post(
 
 /// Publish a post: write file, clear content, set published_at.
 pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
-    let mut post = qp::get_post_by_id(conn, post_id)?;
+    let post = qp::get_post_by_id(conn, post_id)?;
 
     // Require Draft or Archived status
     match post.status {
@@ -201,10 +201,27 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
         }
     }
 
-    // Compute file_path from created_at + slug
-    // Use a savepoint for atomicity
-    // Note: savepoint auto-rolls-back if not released (on error propagation)
-    conn.execute_batch("SAVEPOINT publish_post")?;
+    conn.begin_savepoint()?;
+    match publish_post_in_savepoint(conn, data_dir, post) {
+        Ok(post) => {
+            conn.release_savepoint()?;
+            Ok(post)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
+}
+
+fn publish_post_in_savepoint(
+    conn: &Connection,
+    data_dir: &Path,
+    mut post: Post,
+) -> EngineResult<Post> {
+    let post_id = post.id.clone();
+
+    // Compute file_path from created_at + slug.
     let rel_path = post_file_path(post.created_at, &post.slug);
     let abs_path = data_dir.join(&rel_path);
 
@@ -245,7 +262,7 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
 
     qp::set_published_snapshot(
         conn,
-        post_id,
+        &post_id,
         &post.title,
         &body,
         &tags_json,
@@ -256,27 +273,24 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     )?;
 
     // Set file_path and checksum in DB
-    qp::set_post_file_path(conn, post_id, &post.file_path, now)?;
-    conn.execute(
-        "UPDATE posts SET checksum = ?1 WHERE id = ?2",
-        params![post.checksum, post_id],
-    )?;
+    qp::set_post_file_path(conn, &post_id, &post.file_path, now)?;
+    qp::set_post_checksum(conn, &post_id, post.checksum.as_deref())?;
 
     // Clear content in DB
-    qp::clear_post_content(conn, post_id, now)?;
+    qp::clear_post_content(conn, &post_id, now)?;
     post.content = None;
 
     // Set status = Published
-    qp::update_post_status(conn, post_id, &PostStatus::Published, now)?;
+    qp::update_post_status(conn, &post_id, &PostStatus::Published, now)?;
 
     // Publish all translations
-    let translations = qt::list_post_translations_by_post(conn, post_id)?;
+    let translations = qt::list_post_translations_by_post(conn, &post_id)?;
     for mut t in translations {
         publish_translation(conn, data_dir, &mut t, &post)?;
     }
 
     // Parse inter-post links and update link graph
-    ql::delete_links_by_source(conn, post_id)?;
+    ql::delete_links_by_source(conn, &post_id)?;
     let link_body = if let Some(ref pc) = post.published_content {
         pc.as_str()
     } else {
@@ -287,7 +301,7 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
         if let Ok(target) = qp::get_post_by_project_and_slug(conn, &post.project_id, target_slug) {
             let link = PostLink {
                 id: Uuid::new_v4().to_string(),
-                source_post_id: post_id.to_string(),
+                source_post_id: post_id.clone(),
                 target_post_id: target.id.clone(),
                 link_text: Some(link_text.clone()),
                 created_at: now,
@@ -298,8 +312,6 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
 
     // Re-index FTS
     fts_index_post(conn, &post)?;
-
-    conn.execute_batch("RELEASE publish_post")?;
 
     Ok(post)
 }
@@ -515,16 +527,10 @@ pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineR
 
     // Delete post links (source and target)
     ql::delete_links_by_source(conn, post_id)?;
-    conn.execute(
-        "DELETE FROM post_links WHERE target_post_id = ?1",
-        params![post_id],
-    )?;
+    ql::delete_links_by_target(conn, post_id)?;
 
     // Delete post-media associations
-    conn.execute(
-        "DELETE FROM post_media WHERE post_id = ?1",
-        params![post_id],
-    )?;
+    crate::db::queries::post_media::delete_post_media_by_post(conn, post_id)?;
 
     // Remove from FTS
     fts::remove_post_from_index(conn, post_id)?;
@@ -882,13 +888,6 @@ fn publish_translation(
     t.content = None;
 
     qt::update_post_translation(conn, t)?;
-    // Clear content after update (the update already set content=None via the struct)
-    // but we also do an explicit clear to be safe
-    conn.execute(
-        "UPDATE post_translations SET content = NULL WHERE id = ?1",
-        params![t.id],
-    )?;
-
     Ok(())
 }
 
@@ -1149,7 +1148,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();

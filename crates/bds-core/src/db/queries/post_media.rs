@@ -1,65 +1,80 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{POST_MEDIA_COLUMNS, post_media_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::PostMediaRecord;
+use crate::db::schema::post_media;
 use crate::model::PostMedia;
 
-pub fn link_media(conn: &Connection, pm: &PostMedia) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO post_media (id, project_id, post_id, media_id, sort_order, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            pm.id,
-            pm.project_id,
-            pm.post_id,
-            pm.media_id,
-            pm.sort_order,
-            pm.created_at,
-        ],
-    )?;
-    Ok(())
+pub fn link_media(conn: &DbConnection, pm: &PostMedia) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(post_media::table)
+            .values(PostMediaRecord::from(pm))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn unlink_media(conn: &Connection, post_id: &str, media_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM post_media WHERE post_id = ?1 AND media_id = ?2",
-        params![post_id, media_id],
-    )?;
-    Ok(())
+pub fn unlink_media(conn: &DbConnection, post_id: &str, media_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(
+            post_media::table
+                .filter(post_media::post_id.eq(post_id))
+                .filter(post_media::media_id.eq(media_id)),
+        )
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
-pub fn list_post_media_by_post(
-    conn: &Connection,
-    post_id: &str,
-) -> rusqlite::Result<Vec<PostMedia>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_MEDIA_COLUMNS} FROM post_media WHERE post_id = ?1 ORDER BY sort_order"
-    ))?;
-    let rows = stmt.query_map(params![post_id], post_media_from_row)?;
-    rows.collect()
+pub fn delete_post_media_by_post(conn: &DbConnection, post_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(post_media::table.filter(post_media::post_id.eq(post_id)))
+            .execute(c)
+            .map(|_| ())
+    })
+}
+
+pub fn list_post_media_by_post(conn: &DbConnection, post_id: &str) -> QueryResult<Vec<PostMedia>> {
+    conn.with(|c| {
+        post_media::table
+            .filter(post_media::post_id.eq(post_id))
+            .order(post_media::sort_order)
+            .select(PostMediaRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<PostMediaRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 pub fn list_post_media_by_media(
-    conn: &Connection,
+    conn: &DbConnection,
     media_id: &str,
-) -> rusqlite::Result<Vec<PostMedia>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_MEDIA_COLUMNS} FROM post_media WHERE media_id = ?1 ORDER BY created_at"
-    ))?;
-    let rows = stmt.query_map(params![media_id], post_media_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<PostMedia>> {
+    conn.with(|c| {
+        post_media::table
+            .filter(post_media::media_id.eq(media_id))
+            .order(post_media::created_at)
+            .select(PostMediaRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<PostMediaRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 pub fn update_sort_order(
-    conn: &Connection,
+    conn: &DbConnection,
     post_id: &str,
     media_id: &str,
     sort_order: i32,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE post_media SET sort_order = ?1 WHERE post_id = ?2 AND media_id = ?3",
-        params![sort_order, post_id, media_id],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(
+            post_media::table
+                .filter(post_media::post_id.eq(post_id))
+                .filter(post_media::media_id.eq(media_id)),
+        )
+        .set(post_media::sort_order.eq(sort_order))
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
 #[cfg(test)]
@@ -67,19 +82,14 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::queries::media::{insert_media, make_test_media};
+    use crate::db::queries::post::{insert_post, make_test_post};
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-                 VALUES ('post1', 'p1', 'Hello', 'hello', 'draft', 1000, 1000)",
-                [],
-            )
-            .unwrap();
+        insert_post(db.conn(), &make_test_post("post1", "p1", "hello")).unwrap();
         insert_media(db.conn(), &make_test_media("m1", "p1")).unwrap();
         insert_media(db.conn(), &make_test_media("m2", "p1")).unwrap();
         db

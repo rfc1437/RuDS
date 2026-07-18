@@ -1,15 +1,57 @@
-use rusqlite::Connection;
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Text};
+use diesel::sqlite::Sqlite;
 use rust_stemmers::{Algorithm, Stemmer};
 
+use crate::db::DbConnection as Connection;
+use crate::db::schema::{post_translations, posts};
 use crate::util::calendar_range_unix_ms;
+
+diesel::define_sql_function!(fn instr(haystack: Text, needle: Text) -> diesel::sql_types::Integer);
+diesel::define_sql_function!(fn lower(value: Text) -> Text);
+
+#[derive(QueryableByName)]
+#[diesel(check_for_backend(Sqlite))]
+struct PostIdRow {
+    #[diesel(sql_type = Text)]
+    post_id: String,
+}
+
+#[derive(QueryableByName)]
+#[diesel(check_for_backend(Sqlite))]
+struct MediaIdRow {
+    #[diesel(sql_type = Text)]
+    media_id: String,
+}
+
+#[derive(QueryableByName)]
+#[diesel(check_for_backend(Sqlite))]
+struct TableCountRow {
+    #[diesel(sql_type = BigInt)]
+    count: i64,
+}
+
+/// Whether both application FTS5 virtual tables are present.
+pub fn tables_exist(conn: &Connection) -> QueryResult<bool> {
+    conn.with(|c| {
+        diesel::sql_query(
+            "SELECT COUNT(*) AS count FROM sqlite_master \
+             WHERE type = 'table' AND name IN ('posts_fts', 'media_fts')",
+        )
+        .get_result::<TableCountRow>(c)
+        .map(|row| row.count == 2)
+    })
+}
 
 /// Create FTS5 virtual tables at runtime (not in migrations per spec).
 ///
 /// Schema follows specs/schema.allium: multi-column FTS5 with separate fields
 /// for weighted search. Not content-sync — we manually manage stemmed content.
-pub fn ensure_fts_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+pub fn ensure_fts_tables(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| {
+        c.batch_execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
             post_id UNINDEXED,
             title,
             excerpt,
@@ -25,8 +67,16 @@ pub fn ensure_fts_tables(conn: &Connection) -> rusqlite::Result<()> {
             original_name,
             tags
         );",
-    )?;
-    Ok(())
+        )
+    })
+}
+
+pub fn clear_indexes(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| c.batch_execute("DELETE FROM posts_fts; DELETE FROM media_fts;"))
+}
+
+pub fn drop_post_index(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| c.batch_execute("DROP TABLE posts_fts"))
 }
 
 /// Map ISO 639-1 language code to Snowball stemmer algorithm.
@@ -98,7 +148,7 @@ pub fn index_post(
     categories: &[String],
     translations: &[PostTranslationFts],
     language: &str,
-) -> rusqlite::Result<()> {
+) -> QueryResult<()> {
     // Remove existing entry
     remove_post_from_index(conn, post_id)?;
 
@@ -133,11 +183,10 @@ pub fn index_post(
     let stemmed_tags = stem_text(&tags.join(" "), language);
     let stemmed_categories = stem_text(&categories.join(" "), language);
 
-    conn.execute(
-        "INSERT INTO posts_fts (post_id, title, excerpt, content, tags, categories) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![post_id, stemmed_title, stemmed_excerpt, stemmed_content, stemmed_tags, stemmed_categories],
-    )?;
-    Ok(())
+    conn.with(|c| diesel::sql_query("INSERT INTO posts_fts (post_id, title, excerpt, content, tags, categories) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind::<Text, _>(post_id).bind::<Text, _>(stemmed_title).bind::<Text, _>(stemmed_excerpt)
+        .bind::<Text, _>(stemmed_content).bind::<Text, _>(stemmed_tags).bind::<Text, _>(stemmed_categories)
+        .execute(c).map(|_| ()))
 }
 
 /// Index a media item in the FTS table with separate columns per spec.
@@ -157,7 +206,7 @@ pub fn index_media(
     tags: &[String],
     translations: &[MediaTranslationFts],
     language: &str,
-) -> rusqlite::Result<()> {
+) -> QueryResult<()> {
     remove_media_from_index(conn, media_id)?;
 
     // Title column: media title + all translation titles
@@ -193,42 +242,41 @@ pub fn index_media(
     let stemmed_name = stem_text(original_name, language);
     let stemmed_tags = stem_text(&tags.join(" "), language);
 
-    conn.execute(
-        "INSERT INTO media_fts (media_id, title, alt, caption, original_name, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![media_id, stemmed_title, stemmed_alt, stemmed_caption, stemmed_name, stemmed_tags],
-    )?;
-    Ok(())
+    conn.with(|c| diesel::sql_query("INSERT INTO media_fts (media_id, title, alt, caption, original_name, tags) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind::<Text, _>(media_id).bind::<Text, _>(stemmed_title).bind::<Text, _>(stemmed_alt)
+        .bind::<Text, _>(stemmed_caption).bind::<Text, _>(stemmed_name).bind::<Text, _>(stemmed_tags)
+        .execute(c).map(|_| ()))
 }
 
 /// Remove a post from the FTS index.
-pub fn remove_post_from_index(conn: &Connection, post_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM posts_fts WHERE post_id = ?1",
-        rusqlite::params![post_id],
-    )?;
-    Ok(())
+pub fn remove_post_from_index(conn: &Connection, post_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::sql_query("DELETE FROM posts_fts WHERE post_id = ?")
+            .bind::<Text, _>(post_id)
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 /// Remove a media item from the FTS index.
-pub fn remove_media_from_index(conn: &Connection, media_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM media_fts WHERE media_id = ?1",
-        rusqlite::params![media_id],
-    )?;
-    Ok(())
+pub fn remove_media_from_index(conn: &Connection, media_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::sql_query("DELETE FROM media_fts WHERE media_id = ?")
+            .bind::<Text, _>(media_id)
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 /// Search posts by full-text query. Returns matching post IDs.
-pub fn search_posts(
-    conn: &Connection,
-    query: &str,
-    language: &str,
-) -> rusqlite::Result<Vec<String>> {
+pub fn search_posts(conn: &Connection, query: &str, language: &str) -> QueryResult<Vec<String>> {
     let stemmed = stem_text(query, language);
-    let mut stmt =
-        conn.prepare("SELECT post_id FROM posts_fts WHERE posts_fts MATCH ?1 ORDER BY rank")?;
-    let rows = stmt.query_map(rusqlite::params![stemmed], |row| row.get::<_, String>(0))?;
-    rows.collect()
+    conn.with(|c| {
+        diesel::sql_query("SELECT post_id FROM posts_fts WHERE posts_fts MATCH ? ORDER BY rank")
+            .bind::<Text, _>(stemmed)
+            .load::<PostIdRow>(c)
+            .map(|rows| rows.into_iter().map(|row| row.post_id).collect())
+    })
 }
 
 /// Filters for post search.
@@ -262,7 +310,7 @@ pub fn search_posts_filtered(
     query: &str,
     language: &str,
     filters: &PostSearchFilters,
-) -> rusqlite::Result<SearchResults> {
+) -> QueryResult<SearchResults> {
     // Get FTS matches first
     let fts_ids = search_posts(conn, query, language)?;
     if fts_ids.is_empty() {
@@ -274,115 +322,64 @@ pub fn search_posts_filtered(
         });
     }
 
-    // Apply filters by querying posts table
-    let placeholders: Vec<String> = fts_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
-        .collect();
-    let mut sql = format!(
-        "SELECT id FROM posts WHERE id IN ({}) ",
-        placeholders.join(",")
-    );
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = fts_ids
-        .iter()
-        .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    let mut param_idx = fts_ids.len() + 1;
-
-    if let Some(status) = filters.status {
-        sql.push_str(&format!("AND status = ?{param_idx} "));
-        params.push(Box::new(status.to_string()));
-        param_idx += 1;
-    }
-
-    if let Some(tags) = filters.tags {
-        // Filter posts whose JSON tags array contains ALL specified tags (case-insensitive)
-        for tag in tags {
-            sql.push_str(&format!(
-                "AND EXISTS (SELECT 1 FROM json_each(posts.tags) WHERE LOWER(json_each.value) = LOWER(?{param_idx})) "
-            ));
-            params.push(Box::new(tag.clone()));
-            param_idx += 1;
-        }
-    }
-
-    if let Some(categories) = filters.categories {
-        // Filter posts whose JSON categories array contains ALL specified categories (case-insensitive)
-        for cat in categories {
-            sql.push_str(&format!(
-                "AND EXISTS (SELECT 1 FROM json_each(posts.categories) WHERE LOWER(json_each.value) = LOWER(?{param_idx})) "
-            ));
-            params.push(Box::new(cat.clone()));
-            param_idx += 1;
-        }
-    }
-
-    if let Some(year) = filters.year {
-        let (start, end) =
-            calendar_range_unix_ms(year, filters.month).ok_or(rusqlite::Error::InvalidQuery)?;
-        sql.push_str(&format!(
-            "AND created_at >= ?{param_idx} AND created_at < ?{} ",
-            param_idx + 1
-        ));
-        params.push(Box::new(start));
-        params.push(Box::new(end));
-        param_idx += 2;
-    }
-
-    if let Some(lang) = filters.language {
-        sql.push_str(&format!(
-            "AND (language = ?{param_idx} OR language IS NULL) "
-        ));
-        params.push(Box::new(lang.to_string()));
-        param_idx += 1;
-    }
-
-    if let Some(missing_lang) = filters.missing_translation_language {
-        sql.push_str(&format!(
-            "AND NOT EXISTS (SELECT 1 FROM post_translations WHERE post_translations.translation_for = posts.id AND post_translations.language = ?{param_idx}) "
-        ));
-        params.push(Box::new(missing_lang.to_string()));
-        param_idx += 1;
-    }
-
-    if let Some(from_ts) = filters.from {
-        sql.push_str(&format!("AND created_at >= ?{param_idx} "));
-        params.push(Box::new(from_ts));
-        param_idx += 1;
-    }
-
-    if let Some(to_ts) = filters.to {
-        sql.push_str(&format!("AND created_at <= ?{param_idx} "));
-        params.push(Box::new(to_ts));
-        param_idx += 1;
-    }
-
-    let _ = param_idx; // suppress unused warning
-
-    // First get total count (without LIMIT/OFFSET)
-    let count_sql = sql.replace("SELECT id FROM posts", "SELECT COUNT(*) FROM posts");
-    let total: usize = {
-        let mut stmt = conn.prepare(&count_sql)?;
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-        stmt.query_row(params_refs.as_slice(), |row| row.get::<_, usize>(0))?
-    };
-
-    sql.push_str("ORDER BY created_at DESC ");
-
     let offset = filters.offset.unwrap_or(0);
+    let mut post_ids = conn.with(|c| {
+        let mut query = posts::table.filter(posts::id.eq_any(fts_ids)).into_boxed();
+        if let Some(status) = filters.status {
+            query = query.filter(posts::status.eq(status));
+        }
+        if let Some(tags) = filters.tags {
+            for tag in tags {
+                query = query.filter(
+                    instr(
+                        lower(posts::tags),
+                        serde_json::to_string(&tag.to_lowercase()).unwrap(),
+                    )
+                    .gt(0),
+                );
+            }
+        }
+        if let Some(categories) = filters.categories {
+            for category in categories {
+                query = query.filter(
+                    instr(
+                        lower(posts::categories),
+                        serde_json::to_string(&category.to_lowercase()).unwrap(),
+                    )
+                    .gt(0),
+                );
+            }
+        }
+        if let Some(year) = filters.year {
+            let (start, end) = calendar_range_unix_ms(year, filters.month).ok_or_else(|| {
+                diesel::result::Error::SerializationError("invalid calendar range".into())
+            })?;
+            query = query.filter(posts::created_at.ge(start).and(posts::created_at.lt(end)));
+        }
+        if let Some(language) = filters.language {
+            query = query.filter(posts::language.eq(language).or(posts::language.is_null()));
+        }
+        if let Some(language) = filters.missing_translation_language {
+            query = query.filter(diesel::dsl::not(diesel::dsl::exists(
+                post_translations::table
+                    .filter(post_translations::translation_for.eq(posts::id))
+                    .filter(post_translations::language.eq(language)),
+            )));
+        }
+        if let Some(from) = filters.from {
+            query = query.filter(posts::created_at.ge(from));
+        }
+        if let Some(to) = filters.to {
+            query = query.filter(posts::created_at.le(to));
+        }
+        query
+            .order(posts::created_at.desc())
+            .select(posts::id)
+            .load::<String>(c)
+    })?;
+    let total = post_ids.len();
     let limit = filters.limit.unwrap_or(total);
-
-    if filters.limit.is_some() {
-        sql.push_str(&format!("LIMIT {limit} "));
-        sql.push_str(&format!("OFFSET {offset} "));
-    }
-
-    let mut stmt = conn.prepare(&sql)?;
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?;
-    let post_ids: Vec<String> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    post_ids = post_ids.into_iter().skip(offset).take(limit).collect();
     Ok(SearchResults {
         post_ids,
         total,
@@ -392,41 +389,51 @@ pub fn search_posts_filtered(
 }
 
 /// Search media by full-text query. Returns matching media IDs.
-pub fn search_media(
-    conn: &Connection,
-    query: &str,
-    language: &str,
-) -> rusqlite::Result<Vec<String>> {
+pub fn search_media(conn: &Connection, query: &str, language: &str) -> QueryResult<Vec<String>> {
     let stemmed = stem_text(query, language);
-    let mut stmt =
-        conn.prepare("SELECT media_id FROM media_fts WHERE media_fts MATCH ?1 ORDER BY rank")?;
-    let rows = stmt.query_map(rusqlite::params![stemmed], |row| row.get::<_, String>(0))?;
-    rows.collect()
+    conn.with(|c| {
+        diesel::sql_query("SELECT media_id FROM media_fts WHERE media_fts MATCH ? ORDER BY rank")
+            .bind::<Text, _>(stemmed)
+            .load::<MediaIdRow>(c)
+            .map(|rows| rows.into_iter().map(|row| row.media_id).collect())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::db::queries::post::{insert_post, make_test_post};
+    use crate::model::PostStatus;
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         db
     }
 
+    fn insert_test_post(
+        db: &Database,
+        id: &str,
+        slug: &str,
+        title: &str,
+        status: PostStatus,
+        timestamp: i64,
+    ) {
+        let mut post = make_test_post(id, "p1", slug);
+        post.title = title.into();
+        post.status = status;
+        post.created_at = timestamp;
+        post.updated_at = timestamp;
+        insert_post(db.conn(), &post).unwrap();
+    }
+
     #[test]
     fn fts_tables_created() {
         let db = setup();
-        let count: i64 = db.conn()
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('posts_fts', 'media_fts')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 2);
+        assert!(search_posts(db.conn(), "nothing", "en").unwrap().is_empty());
+        assert!(search_media(db.conn(), "nothing", "en").unwrap().is_empty());
     }
 
     #[test]
@@ -438,16 +445,30 @@ mod tests {
     #[test]
     fn fts_multi_column_schema() {
         let db = setup();
-        // Verify posts_fts has the expected columns by inserting into each
-        db.conn().execute(
-            "INSERT INTO posts_fts (post_id, title, excerpt, content, tags, categories) VALUES ('p1', 'T', 'E', 'C', 'tg', 'ct')",
-            [],
-        ).unwrap();
-        // Verify media_fts has the expected columns
-        db.conn().execute(
-            "INSERT INTO media_fts (media_id, title, alt, caption, original_name, tags) VALUES ('m1', 'T', 'A', 'C', 'N', 'tg')",
-            [],
-        ).unwrap();
+        index_post(
+            db.conn(),
+            "p1",
+            "T",
+            Some("E"),
+            Some("C"),
+            &["tg".into()],
+            &["ct".into()],
+            &[],
+            "en",
+        )
+        .unwrap();
+        index_media(
+            db.conn(),
+            "m1",
+            Some("T"),
+            Some("A"),
+            Some("C"),
+            "N",
+            &["tg".into()],
+            &[],
+            "en",
+        )
+        .unwrap();
     }
 
     #[test]
@@ -694,16 +715,22 @@ mod tests {
         // Insert a post in the posts table (needed for the filter query to join)
         use crate::db::queries::project::{insert_project, make_test_project};
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
-        db.conn().execute(
-            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('post1', 'p1', 'Test Post', 'test', 'published', 1700000000000, 1700000000000)",
-            [],
-        ).unwrap();
-        db.conn().execute(
-            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('post2', 'p1', 'Draft Post', 'draft-post', 'draft', 1700000000000, 1700000000000)",
-            [],
-        ).unwrap();
+        insert_test_post(
+            &db,
+            "post1",
+            "test",
+            "Test Post",
+            PostStatus::Published,
+            1700000000000,
+        );
+        insert_test_post(
+            &db,
+            "post2",
+            "draft-post",
+            "Draft Post",
+            PostStatus::Draft,
+            1700000000000,
+        );
 
         index_post(
             db.conn(),
@@ -750,20 +777,22 @@ mod tests {
         // 2023-06-15 in unix ms
         let ts_2023: i64 = 1686873600000;
 
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('p2024', 'p1', 'Year 2024', 'y2024', 'draft', ?1, ?1)",
-                rusqlite::params![ts_2024],
-            )
-            .unwrap();
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('p2023', 'p1', 'Year 2023', 'y2023', 'draft', ?1, ?1)",
-                rusqlite::params![ts_2023],
-            )
-            .unwrap();
+        insert_test_post(
+            &db,
+            "p2024",
+            "y2024",
+            "Year 2024",
+            PostStatus::Draft,
+            ts_2024,
+        );
+        insert_test_post(
+            &db,
+            "p2023",
+            "y2023",
+            "Year 2023",
+            PostStatus::Draft,
+            ts_2023,
+        );
 
         index_post(
             db.conn(),
@@ -808,11 +837,14 @@ mod tests {
         for i in 0..5 {
             let id = format!("p{i}");
             let slug = format!("post-{i}");
-            db.conn().execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-                 VALUES (?1, 'p1', 'Searchable', ?2, 'draft', ?3, ?3)",
-                rusqlite::params![id, slug, 1700000000000i64 - i as i64 * 1000],
-            ).unwrap();
+            insert_test_post(
+                &db,
+                &id,
+                &slug,
+                "Searchable",
+                PostStatus::Draft,
+                1700000000000i64 - i as i64 * 1000,
+            );
             index_post(
                 db.conn(),
                 &id,

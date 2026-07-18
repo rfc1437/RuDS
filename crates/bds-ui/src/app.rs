@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
+use bds_core::db::DbQueryError as SqlError;
 use chrono::Datelike;
 use iced::{Element, Subscription, Task, window};
-use rusqlite::Error as SqlError;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -297,7 +297,7 @@ fn persist_post_editor_preview_state_impl(
                 .map_err(|e| e.to_string())?;
                 Ok(PersistedPostState::Translation(Box::new(translation)))
             }
-            Err(SqlError::QueryReturnedNoRows) => {
+            Err(SqlError::NotFound) => {
                 let translation = PostTranslation {
                     id: Uuid::new_v4().to_string(),
                     project_id: post.project_id,
@@ -342,7 +342,7 @@ fn persist_post_editor_preview_state_impl(
                         state.slug
                     ));
                 }
-                Ok(_) | Err(SqlError::QueryReturnedNoRows) => {}
+                Ok(_) | Err(SqlError::NotFound) => {}
                 Err(error) => return Err(error.to_string()),
             }
         }
@@ -1587,7 +1587,7 @@ impl BdsApp {
                         let message = tw(
                             self.ui_locale,
                             "common.operationFailed",
-                            &[("operation", &label), ("error", &err)],
+                            &[("operation", &label), ("error", err)],
                         );
                         self.notify(ToastLevel::Error, &message);
                     }
@@ -7061,7 +7061,7 @@ mod tests {
     }
 
     fn setup() -> (Database, Project, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         let project = make_project();
@@ -7215,7 +7215,7 @@ mod tests {
         )
         .unwrap();
         let published = post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
-        db.conn().execute("DROP TABLE posts_fts", []).unwrap();
+        bds_core::db::fts::drop_post_index(db.conn()).unwrap();
 
         let mut editor_post =
             bds_core::db::queries::post::get_post_by_id(db.conn(), &published.id).unwrap();
@@ -7275,7 +7275,7 @@ mod tests {
             Some("Inhalt"),
         )
         .unwrap();
-        db.conn().execute("DROP TABLE posts_fts", []).unwrap();
+        bds_core::db::fts::drop_post_index(db.conn()).unwrap();
 
         let editor_post =
             bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
@@ -7853,6 +7853,7 @@ mod tests {
         let mut second_post =
             bds_core::db::queries::post::get_post_by_id(db.conn(), &second.id).unwrap();
         second_post.status = PostStatus::Published;
+        second_post.updated_at = first.updated_at + 1;
         bds_core::db::queries::post::update_post(db.conn(), &second_post).unwrap();
         bds_core::engine::tag::discover_tags(db.conn(), tmp.path(), &project.id).unwrap();
 
@@ -8050,7 +8051,7 @@ mod tests {
     fn query_sidebar_posts_filters_status_language_and_date_range() {
         let (_db, project, tmp) = setup();
         let db_path = tmp.path().join("sidebar.db");
-        let mut db = Database::open(&db_path).unwrap();
+        let db = Database::open(&db_path).unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         insert_project(db.conn(), &project).unwrap();

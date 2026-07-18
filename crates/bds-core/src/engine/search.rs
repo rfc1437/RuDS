@@ -1,6 +1,6 @@
 //! Full-text search reindexing engine functions.
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 
 use crate::db::fts;
 use crate::db::queries::{media as media_q, media_translation, post as post_q, post_translation};
@@ -32,8 +32,7 @@ pub fn reindex_all_with_progress(
     on_item: Option<ItemProgressFn>,
 ) -> EngineResult<ReindexReport> {
     // Wipe existing FTS content
-    conn.execute("DELETE FROM posts_fts", [])?;
-    conn.execute("DELETE FROM media_fts", [])?;
+    fts::clear_indexes(conn)?;
 
     // Reindex all posts
     let posts = post_q::list_posts_by_project(conn, project_id)?;
@@ -124,7 +123,7 @@ mod tests {
     use crate::engine;
 
     fn setup() -> (Database, String) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         let _ = db.migrate();
         ensure_fts_tables(db.conn()).unwrap();
 

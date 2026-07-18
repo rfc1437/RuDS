@@ -1,92 +1,70 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{
-    SCRIPT_COLUMNS, script_from_row, script_kind_to_str, script_status_to_str,
-};
+use crate::db::DbConnection;
+use crate::db::from_row::{ScriptRecord, convert, convert_all};
+use crate::db::schema::scripts;
 use crate::model::Script;
 
-pub fn insert_script(conn: &Connection, s: &Script) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO scripts (
-            id, project_id, slug, title, kind, entrypoint, enabled, version,
-            file_path, status, content, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            s.id,
-            s.project_id,
-            s.slug,
-            s.title,
-            script_kind_to_str(&s.kind),
-            s.entrypoint,
-            s.enabled as i64,
-            s.version,
-            s.file_path,
-            script_status_to_str(&s.status),
-            s.content,
-            s.created_at,
-            s.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn insert_script(conn: &DbConnection, s: &Script) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(scripts::table)
+            .values(ScriptRecord::from(s))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn get_script_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Script> {
-    conn.query_row(
-        &format!("SELECT {SCRIPT_COLUMNS} FROM scripts WHERE id = ?1"),
-        params![id],
-        script_from_row,
-    )
+pub fn get_script_by_id(conn: &DbConnection, id: &str) -> QueryResult<Script> {
+    conn.with(|c| {
+        scripts::table
+            .filter(scripts::id.eq(id))
+            .select(ScriptRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn get_script_by_slug(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     slug: &str,
-) -> rusqlite::Result<Script> {
-    conn.query_row(
-        &format!("SELECT {SCRIPT_COLUMNS} FROM scripts WHERE project_id = ?1 AND slug = ?2"),
-        params![project_id, slug],
-        script_from_row,
-    )
+) -> QueryResult<Script> {
+    conn.with(|c| {
+        scripts::table
+            .filter(scripts::project_id.eq(project_id))
+            .filter(scripts::slug.eq(slug))
+            .select(ScriptRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
-pub fn list_scripts_by_project(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<Vec<Script>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {SCRIPT_COLUMNS} FROM scripts WHERE project_id = ?1 ORDER BY title"
-    ))?;
-    let rows = stmt.query_map(params![project_id], script_from_row)?;
-    rows.collect()
+pub fn list_scripts_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<Script>> {
+    conn.with(|c| {
+        scripts::table
+            .filter(scripts::project_id.eq(project_id))
+            .order(scripts::title)
+            .select(ScriptRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
-pub fn update_script(conn: &Connection, s: &Script) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE scripts SET
-            slug = ?1, title = ?2, kind = ?3, entrypoint = ?4, enabled = ?5,
-            version = ?6, file_path = ?7, status = ?8, content = ?9, updated_at = ?10
-         WHERE id = ?11",
-        params![
-            s.slug,
-            s.title,
-            script_kind_to_str(&s.kind),
-            s.entrypoint,
-            s.enabled as i64,
-            s.version,
-            s.file_path,
-            script_status_to_str(&s.status),
-            s.content,
-            s.updated_at,
-            s.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_script(conn: &DbConnection, s: &Script) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(scripts::table.filter(scripts::id.eq(&s.id)))
+            .set(ScriptRecord::from(s))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_script(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM scripts WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_script(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(scripts::table.filter(scripts::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 #[cfg(test)]
@@ -97,7 +75,7 @@ mod tests {
     use crate::model::{ScriptKind, ScriptStatus};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

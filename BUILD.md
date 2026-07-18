@@ -55,8 +55,8 @@ rustup default stable
 
 No additional system packages beyond the above. Key crates use bundled/vendored native code:
 
-- `rusqlite` with `bundled` feature compiles SQLite from source
-- `refinery` manages SQL migrations against rusqlite
+- `diesel` provides the typed SQLite query layer
+- `diesel_migrations` embeds migrations; `libsqlite3-sys` bundles SQLite
 - `iced` uses wgpu which links to Metal (macOS) or Vulkan (Linux/Windows) at runtime
 - `muda` uses native platform menu APIs (NSMenu on macOS, GTK on Linux, Win32 on Windows)
 - `rfd` uses native platform dialog APIs (NSOpenPanel on macOS, GTK on Linux, Win32 on Windows)

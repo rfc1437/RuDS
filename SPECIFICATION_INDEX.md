@@ -247,8 +247,8 @@ Alle kritischen Lücken geschlossen:
 
 ### Wave 0 (Foundation)
 1. Cargo-Workspace aufsetzen (bds-core, bds-editor, bds-ui, bds-cli)
-2. SQLite-Connection mit rusqlite (bundled, vtab)
-3. Refinery-Migration-Loader
+2. SQLite-Connection mit Diesel (gebündeltes SQLite)
+3. Eingebettete Diesel-Migrationen
 4. bds-editor PoC (ropey + syntect + cosmic-text)
 5. Iced App Shell mit muda-Menüs
 6. Slug-Compatibility-Tests (deunicode vs transliteration)

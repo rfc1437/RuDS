@@ -1,36 +1,52 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{SETTING_COLUMNS, setting_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::SettingRecord;
+use crate::db::schema::settings;
 use crate::model::Setting;
 
-pub fn get_setting_by_key(conn: &Connection, key: &str) -> rusqlite::Result<Setting> {
-    conn.query_row(
-        &format!("SELECT {SETTING_COLUMNS} FROM settings WHERE key = ?1"),
-        params![key],
-        setting_from_row,
-    )
+pub fn get_setting_by_key(conn: &DbConnection, key: &str) -> QueryResult<Setting> {
+    conn.with(|c| {
+        settings::table
+            .filter(settings::key.eq(key))
+            .select(SettingRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
 pub fn set_setting_value(
-    conn: &Connection,
+    conn: &DbConnection,
     key: &str,
     value: &str,
     updated_at: i64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        params![key, value, updated_at],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(settings::table)
+            .values((
+                settings::key.eq(key),
+                settings::value.eq(value),
+                settings::updated_at.eq(updated_at),
+            ))
+            .on_conflict(settings::key)
+            .do_update()
+            .set((
+                settings::value.eq(value),
+                settings::updated_at.eq(updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn list_all_settings(conn: &Connection) -> rusqlite::Result<Vec<Setting>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {SETTING_COLUMNS} FROM settings ORDER BY key"
-    ))?;
-    let rows = stmt.query_map([], setting_from_row)?;
-    rows.collect()
+pub fn list_all_settings(conn: &DbConnection) -> QueryResult<Vec<Setting>> {
+    conn.with(|c| {
+        settings::table
+            .order(settings::key)
+            .select(SettingRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<SettingRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 #[cfg(test)]
@@ -39,7 +55,7 @@ mod tests {
     use crate::db::Database;
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         db
     }

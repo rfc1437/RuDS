@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// Shared context passed to engine operations.
 pub struct EngineContext<'a> {
-    pub conn: &'a rusqlite::Connection,
+    pub conn: &'a crate::db::DbConnection,
     pub project_id: String,
     pub data_dir: PathBuf,
 }

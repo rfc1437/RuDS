@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 
 use crate::db::queries::media as mq;
 use crate::db::queries::post_media as pmq;

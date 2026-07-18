@@ -729,8 +729,8 @@ value Fts5MediaSchema {
 -- ============================================================================
 
 value MigrationVersion {
-    -- Schema version tracking via refinery migrations
-    -- Current version: 0007 (scripts and templates draft lifecycle)
-    -- Migration files located in: migrations/
+    -- Schema version tracking via embedded Diesel migrations
+    -- Current version: 20260718000000 (initial compatible schema baseline)
+    -- Migration directories located in: crates/bds-core/migrations/
     -- Note: Migration list documented in comments, not as Allium value
 }

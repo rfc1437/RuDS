@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 use uuid::Uuid;
 
 use crate::db::queries::project as q;
@@ -64,7 +64,7 @@ pub fn ensure_default_project(
 ) -> EngineResult<Project> {
     match q::get_project_by_id(conn, DEFAULT_PROJECT_ID) {
         Ok(p) => Ok(p),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
+        Err(diesel::result::Error::NotFound) => {
             let now = now_unix_ms();
             let project = Project {
                 id: DEFAULT_PROJECT_ID.to_string(),
@@ -94,7 +94,7 @@ pub fn ensure_default_project(
 pub fn get_active_project(conn: &Connection) -> EngineResult<Option<Project>> {
     match q::get_active_project(conn) {
         Ok(p) => Ok(Some(p)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(diesel::result::Error::NotFound) => Ok(None),
         Err(e) => Err(EngineError::Db(e)),
     }
 }
@@ -280,7 +280,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         let dir = TempDir::new().unwrap();
         (db, dir)

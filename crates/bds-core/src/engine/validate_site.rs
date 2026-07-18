@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
 use crate::db::queries;

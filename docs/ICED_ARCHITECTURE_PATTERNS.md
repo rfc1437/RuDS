@@ -48,5 +48,5 @@ Iced 0.13, wgpu renderer, muda for native menus, rfd for file dialogs.
 - Top-level app state lives in `BdsApp` struct (db connection, open buffers, UI flags).
 - Child widget state in `widget::tree::State` -- survives across `view()` calls as long as widget identity matches.
 - `EditorBuffer` (rope-based text buffer via ropey) owned by `BdsApp`, passed as `&mut` to widget on `view()` and `on_event()`.
-- Database connection (`rusqlite::Connection`) opened once at startup, held in `BdsApp`, not cloned.
+- Database connection (`bds_core::db::Database`) opened once at startup, held in `BdsApp`, not cloned.
 - No global mutable state -- everything flows through the `Message` -> `update()` -> `view()` cycle.

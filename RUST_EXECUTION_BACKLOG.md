@@ -24,8 +24,8 @@ Rules:
 ### `bds-core`
 
 - ~~create workspace and crate boundaries (bds-core, bds-editor, bds-ui, bds-cli)~~ **DONE**
-- ~~add SQLite connection management via `rusqlite` (bundled, vtab features)~~ **DONE**
-- ~~add migration loader via `refinery`~~ **DONE** (refinery `embed_migrations!` with V1__initial_schema.sql)
+- ~~add typed SQLite connection and query layer via `diesel`~~ **DONE**
+- ~~add embedded migration loader via `diesel_migrations`~~ **DONE**
 - ~~define initial shared model modules with `serde` derives~~ **DONE**
 - ~~add checksum (`sha2`) and slug (`deunicode`) utilities~~ **DONE**
 - ~~establish error handling conventions: `thiserror` for bds-core, `anyhow` for bds-ui/bds-cli~~ **DONE**
@@ -274,7 +274,7 @@ Rules:
 
 ## Milestone M6: bDS2 Spec Parity
 
-Code-vs-spec gaps from the 2026-07-18 spec sync. Each task names its authoritative spec. Schema changes go through proper refinery migrations, and every new metadata field must be wired into publishing, metadata-diff, and rebuild-from-filesystem together.
+Code-vs-spec gaps from the 2026-07-18 spec sync. Each task names its authoritative spec. Schema changes go through generated Diesel migrations, and every new metadata field must be wired into publishing, metadata-diff, and rebuild-from-filesystem together.
 
 ### `bds-core/util`
 

@@ -97,7 +97,7 @@ These map to extension Buckets G (CLI + events) and K/L (server, TUI) in RUST_PL
 - **rfd for file dialogs**: cross-platform native open/save/folder dialogs. NSOpenPanel/NSSavePanel on macOS, equivalents elsewhere.
 - **objc2 for macOS lifecycle shim** (cfg-gated): thin bridge for `application:openFile:`, `application:openURLs:`, and other `NSApplicationDelegate` hooks that muda/rfd do not cover. ~50 lines of platform code.
 - **Custom editor widget (bds-editor crate)**: syntax-highlighting markdown/Liquid/Lua editor built on ropey (rope buffer), syntect (syntax highlighting), and cosmic-text (font shaping and text layout). This is the highest-risk custom component and gets a proof-of-concept in Wave 0.
-- **rusqlite + embedded SQL migrations**: no ORM. SQL stays explicit. Migrations managed via `refinery`.
+- **Diesel + embedded migrations**: typed SQLite queries and generated schema, with migrations managed by `diesel_migrations`. Backend-only SQL is confined to connection setup and FTS5 operations.
 - **tokio as the async runtime**: preview server (axum), SSH publishing, file watching, and rfd async dialogs all require an async executor. tokio is the standard choice and is used workspace-wide. Synchronous engine code in bds-core does not use tokio directly — it remains callable from both async (bds-ui) and sync (bds-cli) contexts.
 - **Plain-text markdown editor first**: no WYSIWYG in core. Live preview is required. This is an intentional regression from the baseline app's rich editor. A rich editor can be added as an extension bucket after core ships — and the bds-editor widget provides a natural foundation for it.
 - **Lua for user-authored scripting**: `mlua` with Lua 5.4. Only user-authored macros, transforms, and utility scripts run through Lua. Built-in macros are native Rust — see the macro architecture section below.
@@ -311,7 +311,7 @@ The Rust app uses `deunicode` for Unicode-to-ASCII conversion in slugs; it must 
 
 The app has two independent search systems — do not conflate them:
 
-1. **FTS5 (in-app search)**: SQLite FTS5 virtual tables (`posts_fts`, `media_fts`) power the desktop app's search UI. These require custom Snowball tokenizers registered via `rusqlite`'s `fts5_tokenizer` API (using the `rust-stemmers` crate) for 24-language stemmed search. Both indexing and query-time stemming must match the content language. This is Wave 1 scope.
+1. **FTS5 (in-app search)**: SQLite FTS5 virtual tables (`posts_fts`, `media_fts`) power the desktop app's search UI. Text is Snowball-stemmed in application code before indexing and querying. FTS5 virtual-table and `MATCH` operations form the explicitly isolated raw-SQL backend boundary; ordinary filtering uses Diesel's typed query builder. This is Wave 1 scope.
 
 2. **Pagefind (generated site search)**: a client-side search index bundled with the generated static site. Pagefind indexes the generated HTML files and produces JavaScript/WASM artifacts that power search on the published website. This is Wave 4 scope, added to the generation pipeline via the `pagefind` crate's Rust library API.
 
@@ -333,8 +333,9 @@ All crate choices for core scope, organized by subsystem. This prevents ad-hoc t
 
 | Crate | Purpose | Notes |
 |---|---|---|
-| `rusqlite` (bundled, vtab) | SQLite database access | Bundled compiles SQLite from source, vtab enables FTS5 |
-| `refinery` | SQL migration management | Replaces hand-rolled migration loader |
+| `diesel` (sqlite) | Typed SQLite database access | Query builder and generated schema |
+| `diesel_migrations` | Embedded migration management | Runs generated Diesel migrations at startup |
+| `libsqlite3-sys` (bundled) | SQLite native library | Compiles SQLite from source with FTS5 |
 | `uuid` (v4) | Entity identifiers | |
 | `serde` + `serde_json` | Serialization/deserialization | Used everywhere |
 | `serde_yaml` | YAML frontmatter parsing/writing | Posts, translations, media sidecars |
@@ -504,8 +505,9 @@ Core release happens only after M5.
 
 ```toml
 # Core
-rusqlite = { version = "0.33", features = ["bundled", "vtab"] }
-refinery = { version = "0.8", features = ["rusqlite"] }
+diesel = { version = "2.3", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2.3"
+libsqlite3-sys = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

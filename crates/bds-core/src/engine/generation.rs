@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::db::DbConnection as Connection;
 use chrono::{DateTime, TimeZone, Utc};
 use pagefind::api::PagefindIndex;
 use pagefind::options::PagefindServiceConfig;
-use rusqlite::Connection;
 use walkdir::WalkDir;
 
 use crate::db::queries;

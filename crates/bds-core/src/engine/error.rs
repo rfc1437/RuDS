@@ -3,7 +3,8 @@ use std::fmt;
 /// Errors produced by engine operations.
 #[derive(Debug)]
 pub enum EngineError {
-    Db(rusqlite::Error),
+    Db(diesel::result::Error),
+    DbConnection(diesel::ConnectionError),
     Io(std::io::Error),
     Parse(String),
     NotFound(String),
@@ -15,6 +16,7 @@ impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Db(e) => write!(f, "database error: {e}"),
+            Self::DbConnection(e) => write!(f, "database connection error: {e}"),
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
             Self::NotFound(msg) => write!(f, "not found: {msg}"),
@@ -28,15 +30,31 @@ impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Db(e) => Some(e),
+            Self::DbConnection(e) => Some(e),
             Self::Io(e) => Some(e),
             _ => None,
         }
     }
 }
 
-impl From<rusqlite::Error> for EngineError {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<diesel::result::Error> for EngineError {
+    fn from(e: diesel::result::Error) -> Self {
         Self::Db(e)
+    }
+}
+
+impl From<diesel::ConnectionError> for EngineError {
+    fn from(e: diesel::ConnectionError) -> Self {
+        Self::DbConnection(e)
+    }
+}
+
+impl From<crate::db::DatabaseError> for EngineError {
+    fn from(e: crate::db::DatabaseError) -> Self {
+        match e {
+            crate::db::DatabaseError::Connection(e) => Self::DbConnection(e),
+            crate::db::DatabaseError::Query(e) => Self::Db(e),
+        }
     }
 }
 

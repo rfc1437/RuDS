@@ -1,139 +1,111 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{
-    POST_TRANSLATION_COLUMNS, post_status_to_str, post_translation_from_row,
-};
+use crate::db::DbConnection;
+use crate::db::from_row::{PostTranslationRecord, convert, convert_all};
+use crate::db::schema::post_translations;
 use crate::model::PostTranslation;
 
-pub fn insert_post_translation(conn: &Connection, t: &PostTranslation) -> rusqlite::Result<()> {
+pub fn insert_post_translation(conn: &DbConnection, t: &PostTranslation) -> QueryResult<()> {
     if !t.status.is_valid_for_translation() {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "translation status must be draft or published".to_string(),
+        return Err(diesel::result::Error::SerializationError(
+            "translation status must be draft or published".into(),
         ));
     }
-    conn.execute(
-        "INSERT INTO post_translations (
-            id, project_id, translation_for, language, title, excerpt, content,
-            status, file_path, checksum, created_at, updated_at, published_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            t.id,
-            t.project_id,
-            t.translation_for,
-            t.language,
-            t.title,
-            t.excerpt,
-            t.content,
-            post_status_to_str(&t.status),
-            t.file_path,
-            t.checksum,
-            t.created_at,
-            t.updated_at,
-            t.published_at,
-        ],
-    )?;
-    Ok(())
+    conn.with(|c| {
+        diesel::insert_into(post_translations::table)
+            .values(PostTranslationRecord::from(t))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn get_post_translation_by_id(
-    conn: &Connection,
-    id: &str,
-) -> rusqlite::Result<PostTranslation> {
-    conn.query_row(
-        &format!("SELECT {POST_TRANSLATION_COLUMNS} FROM post_translations WHERE id = ?1"),
-        params![id],
-        post_translation_from_row,
-    )
+pub fn get_post_translation_by_id(conn: &DbConnection, id: &str) -> QueryResult<PostTranslation> {
+    conn.with(|c| {
+        post_translations::table
+            .filter(post_translations::id.eq(id))
+            .select(PostTranslationRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn get_post_translation_by_post_and_language(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
     language: &str,
-) -> rusqlite::Result<PostTranslation> {
-    conn.query_row(
-        &format!(
-            "SELECT {POST_TRANSLATION_COLUMNS} FROM post_translations
-             WHERE translation_for = ?1 AND language = ?2"
-        ),
-        params![translation_for, language],
-        post_translation_from_row,
-    )
+) -> QueryResult<PostTranslation> {
+    conn.with(|c| {
+        post_translations::table
+            .filter(post_translations::translation_for.eq(translation_for))
+            .filter(post_translations::language.eq(language))
+            .select(PostTranslationRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn list_post_translations_by_post(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
-) -> rusqlite::Result<Vec<PostTranslation>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_TRANSLATION_COLUMNS} FROM post_translations
-         WHERE translation_for = ?1 ORDER BY language"
-    ))?;
-    let rows = stmt.query_map(params![translation_for], post_translation_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<PostTranslation>> {
+    conn.with(|c| {
+        post_translations::table
+            .filter(post_translations::translation_for.eq(translation_for))
+            .order(post_translations::language)
+            .select(PostTranslationRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
-pub fn update_post_translation(conn: &Connection, t: &PostTranslation) -> rusqlite::Result<()> {
+pub fn update_post_translation(conn: &DbConnection, t: &PostTranslation) -> QueryResult<()> {
     if !t.status.is_valid_for_translation() {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "translation status must be draft or published".to_string(),
+        return Err(diesel::result::Error::SerializationError(
+            "translation status must be draft or published".into(),
         ));
     }
-    conn.execute(
-        "UPDATE post_translations SET
-            title = ?1, excerpt = ?2, content = ?3, status = ?4,
-            file_path = ?5, checksum = ?6, updated_at = ?7, published_at = ?8
-         WHERE id = ?9",
-        params![
-            t.title,
-            t.excerpt,
-            t.content,
-            post_status_to_str(&t.status),
-            t.file_path,
-            t.checksum,
-            t.updated_at,
-            t.published_at,
-            t.id,
-        ],
-    )?;
-    Ok(())
+    conn.with(|c| {
+        diesel::update(post_translations::table.filter(post_translations::id.eq(&t.id)))
+            .set(PostTranslationRecord::from(t))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_post_translation(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM post_translations WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_post_translation(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(post_translations::table.filter(post_translations::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn delete_all_translations_for_post(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM post_translations WHERE translation_for = ?1",
-        params![translation_for],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(
+            post_translations::table.filter(post_translations::translation_for.eq(translation_for)),
+        )
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::db::queries::post::{insert_post, make_test_post};
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::model::PostStatus;
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
-        // insert a parent post
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-                 VALUES ('post1', 'p1', 'Hello', 'hello', 'draft', 1000, 1000)",
-                [],
-            )
-            .unwrap();
+        insert_post(db.conn(), &make_test_post("post1", "p1", "hello")).unwrap();
         db
     }
 

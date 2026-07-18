@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 
 use crate::db::queries::{post as post_q, post_translation};
 use crate::engine::EngineResult;

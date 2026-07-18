@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
+use crate::db::schema::{posts, tags};
+use diesel::prelude::*;
 use uuid::Uuid;
 
 use crate::db::queries::template as qt;
@@ -383,36 +385,40 @@ fn validate_liquid_blocks(content: &str) -> Result<(), String> {
 }
 
 fn count_posts_using_template(conn: &Connection, slug: &str) -> EngineResult<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM posts WHERE template_slug = ?1",
-        rusqlite::params![slug],
-        |row| row.get(0),
-    )?;
+    let count: i64 = conn.with(|c| {
+        posts::table
+            .filter(posts::template_slug.eq(slug))
+            .count()
+            .get_result(c)
+    })?;
     Ok(count as usize)
 }
 
 fn count_tags_using_template(conn: &Connection, slug: &str) -> EngineResult<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tags WHERE post_template_slug = ?1",
-        rusqlite::params![slug],
-        |row| row.get(0),
-    )?;
+    let count: i64 = conn.with(|c| {
+        tags::table
+            .filter(tags::post_template_slug.eq(slug))
+            .count()
+            .get_result(c)
+    })?;
     Ok(count as usize)
 }
 
 fn null_template_slug_on_posts(conn: &Connection, slug: &str) -> EngineResult<()> {
-    conn.execute(
-        "UPDATE posts SET template_slug = NULL WHERE template_slug = ?1",
-        rusqlite::params![slug],
-    )?;
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::template_slug.eq(slug)))
+            .set(posts::template_slug.eq(None::<String>))
+            .execute(c)
+    })?;
     Ok(())
 }
 
 fn null_template_slug_on_tags(conn: &Connection, slug: &str) -> EngineResult<()> {
-    conn.execute(
-        "UPDATE tags SET post_template_slug = NULL WHERE post_template_slug = ?1",
-        rusqlite::params![slug],
-    )?;
+    conn.with(|c| {
+        diesel::update(tags::table.filter(tags::post_template_slug.eq(slug)))
+            .set(tags::post_template_slug.eq(None::<String>))
+            .execute(c)
+    })?;
     Ok(())
 }
 
@@ -424,7 +430,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         let dir = TempDir::new().unwrap();

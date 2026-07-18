@@ -1,92 +1,82 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{MEDIA_TRANSLATION_COLUMNS, media_translation_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::MediaTranslationRecord;
+use crate::db::schema::media_translations;
 use crate::model::MediaTranslation;
 
-pub fn insert_media_translation(conn: &Connection, t: &MediaTranslation) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO media_translations (
-            id, project_id, translation_for, language, title, alt, caption,
-            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            t.id,
-            t.project_id,
-            t.translation_for,
-            t.language,
-            t.title,
-            t.alt,
-            t.caption,
-            t.created_at,
-            t.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn insert_media_translation(conn: &DbConnection, t: &MediaTranslation) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(media_translations::table)
+            .values(MediaTranslationRecord::from(t))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn get_media_translation_by_media_and_language(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
     language: &str,
-) -> rusqlite::Result<MediaTranslation> {
-    conn.query_row(
-        &format!(
-            "SELECT {MEDIA_TRANSLATION_COLUMNS} FROM media_translations
-             WHERE translation_for = ?1 AND language = ?2"
-        ),
-        params![translation_for, language],
-        media_translation_from_row,
-    )
+) -> QueryResult<MediaTranslation> {
+    conn.with(|c| {
+        media_translations::table
+            .filter(media_translations::translation_for.eq(translation_for))
+            .filter(media_translations::language.eq(language))
+            .select(MediaTranslationRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
 pub fn list_media_translations_by_media(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
-) -> rusqlite::Result<Vec<MediaTranslation>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {MEDIA_TRANSLATION_COLUMNS} FROM media_translations
-         WHERE translation_for = ?1 ORDER BY language"
-    ))?;
-    let rows = stmt.query_map(params![translation_for], media_translation_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<MediaTranslation>> {
+    conn.with(|c| {
+        media_translations::table
+            .filter(media_translations::translation_for.eq(translation_for))
+            .order(media_translations::language)
+            .select(MediaTranslationRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<MediaTranslationRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
-pub fn upsert_media_translation(conn: &Connection, t: &MediaTranslation) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO media_translations (
-            id, project_id, translation_for, language, title, alt, caption,
-            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(translation_for, language) DO UPDATE SET
-            title = excluded.title,
-            alt = excluded.alt,
-            caption = excluded.caption,
-            updated_at = excluded.updated_at",
-        params![
-            t.id,
-            t.project_id,
-            t.translation_for,
-            t.language,
-            t.title,
-            t.alt,
-            t.caption,
-            t.created_at,
-            t.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn upsert_media_translation(conn: &DbConnection, t: &MediaTranslation) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(media_translations::table)
+            .values(MediaTranslationRecord::from(t))
+            .on_conflict((
+                media_translations::translation_for,
+                media_translations::language,
+            ))
+            .do_update()
+            .set((
+                media_translations::title.eq(&t.title),
+                media_translations::alt.eq(&t.alt),
+                media_translations::caption.eq(&t.caption),
+                media_translations::updated_at.eq(t.updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn delete_media_translation(
-    conn: &Connection,
+    conn: &DbConnection,
     translation_for: &str,
     language: &str,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM media_translations WHERE translation_for = ?1 AND language = ?2",
-        params![translation_for, language],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(
+            media_translations::table
+                .filter(media_translations::translation_for.eq(translation_for))
+                .filter(media_translations::language.eq(language)),
+        )
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
 #[cfg(test)]
@@ -97,7 +87,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         insert_media(db.conn(), &make_test_media("m1", "p1")).unwrap();

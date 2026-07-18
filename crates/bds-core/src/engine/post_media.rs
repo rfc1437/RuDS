@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 use uuid::Uuid;
 
 use crate::db::queries::media as qm;
@@ -109,22 +109,17 @@ mod tests {
 
     use crate::db::Database;
     use crate::db::queries::media::{insert_media, make_test_media};
+    use crate::db::queries::post::{insert_post, make_test_post};
     use crate::db::queries::post_media::list_post_media_by_post;
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::util::sidecar::read_sidecar;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         let dir = TempDir::new().unwrap();
-        // Create a post
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, file_path, created_at, updated_at) VALUES ('post1', 'p1', 'Test', 'test', 'draft', '', 1000, 1000)",
-                [],
-            )
-            .unwrap();
+        insert_post(db.conn(), &make_test_post("post1", "p1", "test")).unwrap();
         (db, dir)
     }
 
@@ -197,13 +192,10 @@ mod tests {
         let (db, dir) = setup();
         insert_test_media(&db, dir.path(), "m1");
 
-        // Create a second post
-        db.conn()
-            .execute(
-                "INSERT INTO posts (id, project_id, title, slug, status, file_path, created_at, updated_at) VALUES ('post2', 'p1', 'Test2', 'test2', 'draft', '', 2000, 2000)",
-                [],
-            )
-            .unwrap();
+        let mut post = make_test_post("post2", "p1", "test2");
+        post.created_at = 2000;
+        post.updated_at = 2000;
+        insert_post(db.conn(), &post).unwrap();
 
         link_media_to_post(db.conn(), dir.path(), "p1", "post1", "m1", 0).unwrap();
         link_media_to_post(db.conn(), dir.path(), "p1", "post2", "m1", 0).unwrap();

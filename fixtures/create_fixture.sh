@@ -27,6 +27,7 @@ sqlite3 "$FIXTURE_DB" "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"
 sqlite3 "$SRC_DB" ".schema" \
     | grep -v "sqlite_sequence" \
     | grep -v "^CREATE TABLE IF NOT EXISTS \"refinery_schema_history\"" \
+    | sed '/^CREATE TABLE __diesel_schema_migrations/,/^);$/d' \
     | sed '/^CREATE TABLE refinery_schema_history/,/^);$/d' \
     | sqlite3 "$FIXTURE_DB"
 

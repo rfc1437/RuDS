@@ -1,9 +1,8 @@
--- ================================================================
--- CORE ENTITIES
--- ================================================================
+-- Generated with Diesel CLI, then completed with the constraints and defaults
+-- that SQLite's schema introspection cannot reproduce.
 
 CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
     description TEXT,
@@ -14,7 +13,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE TABLE IF NOT EXISTS posts (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     title TEXT NOT NULL,
     slug TEXT NOT NULL,
@@ -43,7 +42,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS posts_project_slug_idx
     ON posts(project_id, slug);
 
 CREATE TABLE IF NOT EXISTS post_translations (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     translation_for TEXT NOT NULL REFERENCES posts(id),
     language TEXT NOT NULL,
@@ -62,7 +61,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS post_translations_translation_language_idx
     ON post_translations(translation_for, language);
 
 CREATE TABLE IF NOT EXISTS media (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     filename TEXT NOT NULL,
     original_name TEXT NOT NULL,
@@ -84,7 +83,7 @@ CREATE TABLE IF NOT EXISTS media (
 );
 
 CREATE TABLE IF NOT EXISTS media_translations (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     translation_for TEXT NOT NULL REFERENCES media(id),
     language TEXT NOT NULL,
@@ -99,7 +98,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS media_translations_translation_language_idx
     ON media_translations(translation_for, language);
 
 CREATE TABLE IF NOT EXISTS tags (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     name TEXT NOT NULL,
     color TEXT,
@@ -109,10 +108,10 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS tags_project_name_idx
-    ON tags(project_id, name);
+    ON tags(project_id, name COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS templates (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     slug TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -120,7 +119,7 @@ CREATE TABLE IF NOT EXISTS templates (
     enabled INTEGER NOT NULL DEFAULT 1,
     version INTEGER NOT NULL DEFAULT 1,
     file_path TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'published',
+    status TEXT NOT NULL DEFAULT 'draft',
     content TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -130,7 +129,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS templates_project_slug_idx
     ON templates(project_id, slug);
 
 CREATE TABLE IF NOT EXISTS scripts (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     slug TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -139,7 +138,7 @@ CREATE TABLE IF NOT EXISTS scripts (
     enabled INTEGER NOT NULL DEFAULT 1,
     version INTEGER NOT NULL DEFAULT 1,
     file_path TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'published',
+    status TEXT NOT NULL DEFAULT 'draft',
     content TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -148,12 +147,8 @@ CREATE TABLE IF NOT EXISTS scripts (
 CREATE UNIQUE INDEX IF NOT EXISTS scripts_project_slug_idx
     ON scripts(project_id, slug);
 
--- ================================================================
--- RELATIONSHIP TABLES
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS post_links (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     source_post_id TEXT NOT NULL REFERENCES posts(id),
     target_post_id TEXT NOT NULL REFERENCES posts(id),
     link_text TEXT,
@@ -161,7 +156,7 @@ CREATE TABLE IF NOT EXISTS post_links (
 );
 
 CREATE TABLE IF NOT EXISTS post_media (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     post_id TEXT NOT NULL REFERENCES posts(id),
     media_id TEXT NOT NULL REFERENCES media(id),
@@ -172,12 +167,8 @@ CREATE TABLE IF NOT EXISTS post_media (
 CREATE UNIQUE INDEX IF NOT EXISTS post_media_post_media_idx
     ON post_media(post_id, media_id);
 
--- ================================================================
--- METADATA TABLES
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
+    key TEXT NOT NULL PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -192,12 +183,8 @@ CREATE TABLE IF NOT EXISTS generated_file_hashes (
 CREATE UNIQUE INDEX IF NOT EXISTS generated_file_hashes_project_path_idx
     ON generated_file_hashes(project_id, relative_path);
 
--- ================================================================
--- AI / CHAT TABLES (read-only in Rust core, must not error)
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS chat_conversations (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     title TEXT NOT NULL,
     model TEXT,
     copilot_session_id TEXT,
@@ -206,20 +193,22 @@ CREATE TABLE IF NOT EXISTS chat_conversations (
 );
 
 CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL REFERENCES chat_conversations(id),
     role TEXT NOT NULL,
     content TEXT,
     tool_call_id TEXT,
     tool_calls TEXT,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ai_providers (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     env TEXT,
-    npm TEXT,
+    package_ref TEXT,
     api TEXT,
     doc TEXT,
     updated_at INTEGER NOT NULL
@@ -248,7 +237,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
     max_output_tokens INTEGER NOT NULL DEFAULT 0,
     interleaved TEXT,
     status TEXT,
-    provider_npm TEXT,
+    provider_package_ref TEXT,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (provider, model_id)
 );
@@ -262,16 +251,12 @@ CREATE TABLE IF NOT EXISTS ai_model_modalities (
 );
 
 CREATE TABLE IF NOT EXISTS ai_catalog_meta (
-    key TEXT PRIMARY KEY,
+    key TEXT NOT NULL PRIMARY KEY,
     value TEXT NOT NULL
 );
 
--- ================================================================
--- EMBEDDINGS TABLES (read-only in Rust core, must not error)
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS embedding_keys (
-    label INTEGER PRIMARY KEY,
+    label INTEGER NOT NULL PRIMARY KEY,
     post_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -279,7 +264,7 @@ CREATE TABLE IF NOT EXISTS embedding_keys (
 );
 
 CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     post_id_a TEXT NOT NULL,
     post_id_b TEXT NOT NULL,
@@ -289,12 +274,8 @@ CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
 CREATE UNIQUE INDEX IF NOT EXISTS dismissed_pairs_idx
     ON dismissed_duplicate_pairs(project_id, post_id_a, post_id_b);
 
--- ================================================================
--- IMPORT TABLES (read-only in Rust core, must not error)
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS import_definitions (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
     name TEXT NOT NULL,
     wxr_file_path TEXT,
@@ -304,12 +285,8 @@ CREATE TABLE IF NOT EXISTS import_definitions (
     updated_at INTEGER NOT NULL
 );
 
--- ================================================================
--- NOTIFICATION TABLES
--- ================================================================
-
 CREATE TABLE IF NOT EXISTS db_notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     action TEXT NOT NULL,

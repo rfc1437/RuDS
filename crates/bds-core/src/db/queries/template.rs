@@ -1,90 +1,73 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{
-    TEMPLATE_COLUMNS, template_from_row, template_kind_to_str, template_status_to_str,
-};
+use crate::db::DbConnection;
+use crate::db::from_row::{TemplateRecord, convert, convert_all};
+use crate::db::schema::templates;
 use crate::model::Template;
 
-pub fn insert_template(conn: &Connection, t: &Template) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO templates (
-            id, project_id, slug, title, kind, enabled, version,
-            file_path, status, content, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            t.id,
-            t.project_id,
-            t.slug,
-            t.title,
-            template_kind_to_str(&t.kind),
-            t.enabled as i64,
-            t.version,
-            t.file_path,
-            template_status_to_str(&t.status),
-            t.content,
-            t.created_at,
-            t.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn insert_template(conn: &DbConnection, t: &Template) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(templates::table)
+            .values(TemplateRecord::from(t))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn get_template_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Template> {
-    conn.query_row(
-        &format!("SELECT {TEMPLATE_COLUMNS} FROM templates WHERE id = ?1"),
-        params![id],
-        template_from_row,
-    )
+pub fn get_template_by_id(conn: &DbConnection, id: &str) -> QueryResult<Template> {
+    conn.with(|c| {
+        templates::table
+            .filter(templates::id.eq(id))
+            .select(TemplateRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn get_template_by_slug(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     slug: &str,
-) -> rusqlite::Result<Template> {
-    conn.query_row(
-        &format!("SELECT {TEMPLATE_COLUMNS} FROM templates WHERE project_id = ?1 AND slug = ?2"),
-        params![project_id, slug],
-        template_from_row,
-    )
+) -> QueryResult<Template> {
+    conn.with(|c| {
+        templates::table
+            .filter(templates::project_id.eq(project_id))
+            .filter(templates::slug.eq(slug))
+            .select(TemplateRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn list_templates_by_project(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
-) -> rusqlite::Result<Vec<Template>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {TEMPLATE_COLUMNS} FROM templates WHERE project_id = ?1 ORDER BY title"
-    ))?;
-    let rows = stmt.query_map(params![project_id], template_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<Template>> {
+    conn.with(|c| {
+        templates::table
+            .filter(templates::project_id.eq(project_id))
+            .order(templates::title)
+            .select(TemplateRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
-pub fn update_template(conn: &Connection, t: &Template) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE templates SET
-            slug = ?1, title = ?2, kind = ?3, enabled = ?4, version = ?5,
-            file_path = ?6, status = ?7, content = ?8, updated_at = ?9
-         WHERE id = ?10",
-        params![
-            t.slug,
-            t.title,
-            template_kind_to_str(&t.kind),
-            t.enabled as i64,
-            t.version,
-            t.file_path,
-            template_status_to_str(&t.status),
-            t.content,
-            t.updated_at,
-            t.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_template(conn: &DbConnection, t: &Template) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(templates::table.filter(templates::id.eq(&t.id)))
+            .set(TemplateRecord::from(t))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_template(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM templates WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_template(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(templates::table.filter(templates::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 #[cfg(test)]
@@ -95,7 +78,7 @@ mod tests {
     use crate::model::{TemplateKind, TemplateStatus};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

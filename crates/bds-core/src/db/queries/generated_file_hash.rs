@@ -1,62 +1,74 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{GENERATED_FILE_HASH_COLUMNS, generated_file_hash_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::GeneratedFileHashRecord;
+use crate::db::schema::generated_file_hashes;
 use crate::model::GeneratedFileHash;
 
 pub fn get_generated_file_hash(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     relative_path: &str,
-) -> rusqlite::Result<GeneratedFileHash> {
-    conn.query_row(
-        &format!(
-            "SELECT {GENERATED_FILE_HASH_COLUMNS} FROM generated_file_hashes WHERE project_id = ?1 AND relative_path = ?2"
-        ),
-        params![project_id, relative_path],
-        generated_file_hash_from_row,
-    )
+) -> QueryResult<GeneratedFileHash> {
+    conn.with(|c| {
+        generated_file_hashes::table
+            .filter(generated_file_hashes::project_id.eq(project_id))
+            .filter(generated_file_hashes::relative_path.eq(relative_path))
+            .select(GeneratedFileHashRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
 pub fn upsert_generated_file_hash(
-    conn: &Connection,
+    conn: &DbConnection,
     hash: &GeneratedFileHash,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO generated_file_hashes (project_id, relative_path, content_hash, updated_at)
-         VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(project_id, relative_path)
-         DO UPDATE SET content_hash = excluded.content_hash, updated_at = excluded.updated_at",
-        params![
-            hash.project_id,
-            hash.relative_path,
-            hash.content_hash,
-            hash.updated_at
-        ],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(generated_file_hashes::table)
+            .values(GeneratedFileHashRecord::from(hash))
+            .on_conflict((
+                generated_file_hashes::project_id,
+                generated_file_hashes::relative_path,
+            ))
+            .do_update()
+            .set((
+                generated_file_hashes::content_hash.eq(&hash.content_hash),
+                generated_file_hashes::updated_at.eq(hash.updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn delete_generated_file_hash(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     relative_path: &str,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM generated_file_hashes WHERE project_id = ?1 AND relative_path = ?2",
-        params![project_id, relative_path],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(
+            generated_file_hashes::table
+                .filter(generated_file_hashes::project_id.eq(project_id))
+                .filter(generated_file_hashes::relative_path.eq(relative_path)),
+        )
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
 pub fn list_generated_file_hashes_by_project(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
-) -> rusqlite::Result<Vec<GeneratedFileHash>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {GENERATED_FILE_HASH_COLUMNS} FROM generated_file_hashes WHERE project_id = ?1 ORDER BY relative_path"
-    ))?;
-    let rows = stmt.query_map(params![project_id], generated_file_hash_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<GeneratedFileHash>> {
+    conn.with(|c| {
+        generated_file_hashes::table
+            .filter(generated_file_hashes::project_id.eq(project_id))
+            .order(generated_file_hashes::relative_path)
+            .select(GeneratedFileHashRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<GeneratedFileHashRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 #[cfg(test)]
@@ -66,7 +78,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

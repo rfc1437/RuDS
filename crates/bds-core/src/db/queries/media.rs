@@ -1,120 +1,87 @@
-use rusqlite::{Connection, params};
+use chrono::{Datelike, TimeZone, Utc};
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 
-use crate::db::from_row::{MEDIA_COLUMNS, media_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::{MediaRecord, convert, convert_all};
+use crate::db::schema::media;
 use crate::model::Media;
 use crate::util::calendar_range_unix_ms;
 
-fn tags_to_json(tags: &[String]) -> String {
-    serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
+diesel::define_sql_function!(fn instr(haystack: Text, needle: Text) -> Integer);
+
+pub fn insert_media(conn: &DbConnection, m: &Media) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(media::table)
+            .values(MediaRecord::from(m))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn insert_media(conn: &Connection, m: &Media) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO media (
-            id, project_id, filename, original_name, mime_type, size,
-            width, height, title, alt, caption, author, language,
-            file_path, sidecar_path, checksum, tags, created_at, updated_at
-         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6,
-            ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19
-         )",
-        params![
-            m.id,
-            m.project_id,
-            m.filename,
-            m.original_name,
-            m.mime_type,
-            m.size,
-            m.width,
-            m.height,
-            m.title,
-            m.alt,
-            m.caption,
-            m.author,
-            m.language,
-            m.file_path,
-            m.sidecar_path,
-            m.checksum,
-            tags_to_json(&m.tags),
-            m.created_at,
-            m.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn get_media_by_id(conn: &DbConnection, id: &str) -> QueryResult<Media> {
+    conn.with(|c| {
+        media::table
+            .filter(media::id.eq(id))
+            .select(MediaRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
-pub fn get_media_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Media> {
-    conn.query_row(
-        &format!("SELECT {MEDIA_COLUMNS} FROM media WHERE id = ?1"),
-        params![id],
-        media_from_row,
-    )
-}
-
-pub fn list_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Media>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {MEDIA_COLUMNS} FROM media WHERE project_id = ?1 ORDER BY created_at DESC"
-    ))?;
-    let rows = stmt.query_map(params![project_id], media_from_row)?;
-    rows.collect()
+pub fn list_media_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<Media>> {
+    conn.with(|c| {
+        media::table
+            .filter(media::project_id.eq(project_id))
+            .order(media::created_at.desc())
+            .select(MediaRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
 pub fn list_media_by_project_limited(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     limit: i64,
     offset: i64,
-) -> rusqlite::Result<Vec<Media>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {MEDIA_COLUMNS} FROM media WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
-    ))?;
-    let rows = stmt.query_map(params![project_id, limit, offset], media_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<Media>> {
+    conn.with(|c| {
+        media::table
+            .filter(media::project_id.eq(project_id))
+            .order(media::created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .select(MediaRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
-pub fn count_media_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM media WHERE project_id = ?1",
-        params![project_id],
-        |row| row.get(0),
-    )
+pub fn count_media_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<i64> {
+    conn.with(|c| {
+        media::table
+            .filter(media::project_id.eq(project_id))
+            .count()
+            .get_result(c)
+    })
 }
 
-pub fn update_media(conn: &Connection, m: &Media) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE media SET
-            filename = ?1, original_name = ?2, mime_type = ?3, size = ?4,
-            width = ?5, height = ?6, title = ?7, alt = ?8, caption = ?9,
-            author = ?10, language = ?11, file_path = ?12, sidecar_path = ?13,
-            checksum = ?14, tags = ?15, updated_at = ?16
-         WHERE id = ?17",
-        params![
-            m.filename,
-            m.original_name,
-            m.mime_type,
-            m.size,
-            m.width,
-            m.height,
-            m.title,
-            m.alt,
-            m.caption,
-            m.author,
-            m.language,
-            m.file_path,
-            m.sidecar_path,
-            m.checksum,
-            tags_to_json(&m.tags),
-            m.updated_at,
-            m.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_media(conn: &DbConnection, m: &Media) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(media::table.filter(media::id.eq(&m.id)))
+            .set(MediaRecord::from(m))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_media(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM media WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_media(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(media::table.filter(media::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 // ── Filtered queries (per sidebar_views.allium MediaView) ───
@@ -140,95 +107,86 @@ impl MediaFilterParams {
 
 /// List media with optional filters applied.
 pub fn list_media_filtered(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     filters: &MediaFilterParams,
     limit: i64,
     offset: i64,
-) -> rusqlite::Result<Vec<Media>> {
-    let mut conditions = vec!["project_id = ?1".to_string()];
-    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    param_values.push(Box::new(project_id.to_string()));
-
-    if !filters.search_query.is_empty() {
-        let idx = param_values.len() + 1;
-        let pattern = format!("%{}%", filters.search_query.replace('%', "\\%"));
-        conditions.push(format!(
-            "(COALESCE(title, original_name) LIKE ?{idx} ESCAPE '\\')"
-        ));
-        param_values.push(Box::new(pattern));
-    }
-
-    if let Some(year) = filters.year {
-        let (start, end) =
-            calendar_range_unix_ms(year, filters.month).ok_or(rusqlite::Error::InvalidQuery)?;
-        let idx1 = param_values.len() + 1;
-        let idx2 = param_values.len() + 2;
-        conditions.push(format!("(created_at >= ?{idx1} AND created_at < ?{idx2})"));
-        param_values.push(Box::new(start));
-        param_values.push(Box::new(end));
-    }
-
-    for tag in &filters.tags {
-        let idx = param_values.len() + 1;
-        let pattern = format!("%\"{}\"%", tag.replace('"', "\\\""));
-        conditions.push(format!("(tags LIKE ?{idx})"));
-        param_values.push(Box::new(pattern));
-    }
-
-    let where_clause = conditions.join(" AND ");
-    let idx_limit = param_values.len() + 1;
-    let idx_offset = param_values.len() + 2;
-    param_values.push(Box::new(limit));
-    param_values.push(Box::new(offset));
-
-    let sql = format!(
-        "SELECT {MEDIA_COLUMNS} FROM media WHERE {where_clause} ORDER BY created_at DESC LIMIT ?{idx_limit} OFFSET ?{idx_offset}"
-    );
-
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-        param_values.iter().map(|b| b.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_refs.as_slice(), media_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<Media>> {
+    conn.with(|c| {
+        let mut query = media::table
+            .filter(media::project_id.eq(project_id))
+            .into_boxed();
+        if !filters.search_query.is_empty() {
+            query = query.filter(
+                media::title
+                    .is_not_null()
+                    .and(instr(media::title.assume_not_null(), &filters.search_query).gt(0))
+                    .or(media::title
+                        .is_null()
+                        .and(instr(media::original_name, &filters.search_query).gt(0))),
+            );
+        }
+        if let Some(year) = filters.year {
+            let (start, end) = calendar_range_unix_ms(year, filters.month).ok_or_else(|| {
+                diesel::result::Error::SerializationError("invalid calendar range".into())
+            })?;
+            query = query.filter(media::created_at.ge(start).and(media::created_at.lt(end)));
+        }
+        for tag in &filters.tags {
+            query = query.filter(instr(media::tags, serde_json::to_string(tag).unwrap()).gt(0));
+        }
+        query
+            .order(media::created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .select(MediaRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
 /// Year/month counts for the media calendar archive widget.
 pub fn media_calendar_counts(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
-) -> rusqlite::Result<Vec<(i32, u32, usize)>> {
-    let mut stmt = conn.prepare(
-        "SELECT
-            CAST(strftime('%Y', created_at / 1000, 'unixepoch') AS INTEGER) AS y,
-            CAST(strftime('%m', created_at / 1000, 'unixepoch') AS INTEGER) AS m,
-            COUNT(*) AS cnt
-         FROM media
-         WHERE project_id = ?1
-         GROUP BY y, m
-         ORDER BY y DESC, m DESC",
-    )?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        Ok((
-            row.get::<_, i32>(0)?,
-            row.get::<_, u32>(1)?,
-            row.get::<_, usize>(2)?,
-        ))
-    })?;
-    rows.collect()
+) -> QueryResult<Vec<(i32, u32, usize)>> {
+    conn.with(|c| {
+        let timestamps = media::table
+            .filter(media::project_id.eq(project_id))
+            .select(media::created_at)
+            .load::<i64>(c)?;
+        let mut counts = std::collections::BTreeMap::new();
+        for timestamp in timestamps {
+            let date = Utc
+                .timestamp_millis_opt(timestamp)
+                .single()
+                .ok_or_else(|| {
+                    diesel::result::Error::DeserializationError("invalid timestamp".into())
+                })?;
+            *counts.entry((date.year(), date.month())).or_insert(0) += 1;
+        }
+        Ok(counts
+            .into_iter()
+            .rev()
+            .map(|((year, month), count)| (year, month, count))
+            .collect())
+    })
 }
 
 /// Collect all distinct tag values across media for a project.
-pub fn distinct_media_tags(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT tags FROM media WHERE project_id = ?1 AND tags != '[]'")?;
-    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+pub fn distinct_media_tags(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<String>> {
+    let rows = conn.with(|c| {
+        media::table
+            .filter(media::project_id.eq(project_id))
+            .filter(media::tags.ne("[]"))
+            .select(media::tags)
+            .distinct()
+            .load::<String>(c)
+    })?;
     let mut all_tags = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str
-            && let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str)
-        {
+        if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
             all_tags.extend(tags);
         }
     }
@@ -268,7 +226,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

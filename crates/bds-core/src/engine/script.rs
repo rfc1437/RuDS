@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 use uuid::Uuid;
 
 use crate::db::queries::script as qs;
@@ -305,7 +305,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         let dir = TempDir::new().unwrap();

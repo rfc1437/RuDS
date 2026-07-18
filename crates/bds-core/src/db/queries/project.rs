@@ -1,90 +1,88 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{PROJECT_COLUMNS, project_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::ProjectRecord;
+use crate::db::schema::projects;
 use crate::model::Project;
 
-pub fn insert_project(conn: &Connection, project: &Project) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO projects (id, name, slug, description, data_path, is_active, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            project.id,
-            project.name,
-            project.slug,
-            project.description,
-            project.data_path,
-            project.is_active as i64,
-            project.created_at,
-            project.updated_at,
-        ],
-    )?;
-    Ok(())
+pub fn insert_project(conn: &DbConnection, project: &Project) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(projects::table)
+            .values(ProjectRecord::from(project))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn get_project_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Project> {
-    conn.query_row(
-        &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?1"),
-        params![id],
-        project_from_row,
-    )
+pub fn get_project_by_id(conn: &DbConnection, id: &str) -> QueryResult<Project> {
+    conn.with(|c| {
+        projects::table
+            .filter(projects::id.eq(id))
+            .select(ProjectRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
-pub fn get_project_by_slug(conn: &Connection, slug: &str) -> rusqlite::Result<Project> {
-    conn.query_row(
-        &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE slug = ?1"),
-        params![slug],
-        project_from_row,
-    )
+pub fn get_project_by_slug(conn: &DbConnection, slug: &str) -> QueryResult<Project> {
+    conn.with(|c| {
+        projects::table
+            .filter(projects::slug.eq(slug))
+            .select(ProjectRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
-pub fn get_active_project(conn: &Connection) -> rusqlite::Result<Project> {
-    conn.query_row(
-        &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE is_active = 1 LIMIT 1"),
-        [],
-        project_from_row,
-    )
+pub fn get_active_project(conn: &DbConnection) -> QueryResult<Project> {
+    conn.with(|c| {
+        projects::table
+            .filter(projects::is_active.eq(1))
+            .select(ProjectRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
-pub fn set_active_project(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("UPDATE projects SET is_active = 0 WHERE is_active = 1", [])?;
-    tx.execute(
-        "UPDATE projects SET is_active = 1 WHERE id = ?1",
-        params![id],
-    )?;
-    tx.commit()?;
-    Ok(())
+pub fn set_active_project(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        c.transaction(|c| {
+            diesel::update(projects::table.filter(projects::is_active.eq(1)))
+                .set(projects::is_active.eq(0))
+                .execute(c)?;
+            diesel::update(projects::table.filter(projects::id.eq(id)))
+                .set(projects::is_active.eq(1))
+                .execute(c)?;
+            Ok(())
+        })
+    })
 }
 
-pub fn list_projects(conn: &Connection) -> rusqlite::Result<Vec<Project>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {PROJECT_COLUMNS} FROM projects ORDER BY name"
-    ))?;
-    let rows = stmt.query_map([], project_from_row)?;
-    rows.collect()
+pub fn list_projects(conn: &DbConnection) -> QueryResult<Vec<Project>> {
+    conn.with(|c| {
+        projects::table
+            .order(projects::name)
+            .select(ProjectRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<ProjectRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
-pub fn update_project(conn: &Connection, project: &Project) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE projects SET name = ?1, slug = ?2, description = ?3, data_path = ?4,
-         is_active = ?5, updated_at = ?6
-         WHERE id = ?7",
-        params![
-            project.name,
-            project.slug,
-            project.description,
-            project.data_path,
-            project.is_active as i64,
-            project.updated_at,
-            project.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_project(conn: &DbConnection, project: &Project) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(projects::table.filter(projects::id.eq(&project.id)))
+            .set(ProjectRecord::from(project))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_project(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_project(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(projects::table.filter(projects::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 /// Test helper: create a minimal Project value (available to sibling test modules).
@@ -108,7 +106,7 @@ mod tests {
     use crate::db::Database;
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         db
     }

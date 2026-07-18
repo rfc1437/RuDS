@@ -8,7 +8,7 @@ use bds_core::engine::project;
 use tempfile::TempDir;
 
 fn setup() -> (Database, TempDir) {
-    let mut db = Database::open_in_memory().unwrap();
+    let db = Database::open_in_memory().unwrap();
     db.migrate().unwrap();
     let dir = TempDir::new().unwrap();
     (db, dir)

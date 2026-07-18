@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 
 use crate::db::queries::post as post_q;
 use crate::engine::EngineResult;
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn calendar_empty_project() {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         let _ = db.migrate();
 
         let tmp = tempfile::tempdir().unwrap();

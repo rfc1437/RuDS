@@ -1,8 +1,8 @@
 use std::time::Duration;
 
+use crate::db::DbConnection as Connection;
 use keyring::Entry;
 use reqwest::blocking::Client;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -681,7 +681,7 @@ fn get_optional_setting(conn: &Connection, key: &str) -> EngineResult<Option<Str
     match setting::get_setting_by_key(conn, key) {
         Ok(setting) if setting.value.trim().is_empty() => Ok(None),
         Ok(setting) => Ok(Some(setting.value)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(diesel::result::Error::NotFound) => Ok(None),
         Err(error) => Err(EngineError::Db(error)),
     }
 }
@@ -724,7 +724,7 @@ mod tests {
     use crate::db::Database;
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         db
     }

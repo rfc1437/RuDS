@@ -17,7 +17,6 @@ chrono = { workspace = true }
 open = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
-rusqlite = { workspace = true }
 uuid = { workspace = true }
 wry = "0.55"
 

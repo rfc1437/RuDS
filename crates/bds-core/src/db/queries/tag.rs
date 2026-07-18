@@ -1,73 +1,73 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 
-use crate::db::from_row::{TAG_COLUMNS, tag_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::TagRecord;
+use crate::db::schema::tags;
 use crate::model::Tag;
 
-pub fn insert_tag(conn: &Connection, tag: &Tag) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO tags (id, project_id, name, color, post_template_slug, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            tag.id,
-            tag.project_id,
-            tag.name,
-            tag.color,
-            tag.post_template_slug,
-            tag.created_at,
-            tag.updated_at,
-        ],
-    )?;
-    Ok(())
+diesel::define_sql_function!(fn lower(value: Text) -> Text);
+
+pub fn insert_tag(conn: &DbConnection, tag: &Tag) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(tags::table)
+            .values(TagRecord::from(tag))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn get_tag_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Tag> {
-    conn.query_row(
-        &format!("SELECT {TAG_COLUMNS} FROM tags WHERE id = ?1"),
-        params![id],
-        tag_from_row,
-    )
+pub fn get_tag_by_id(conn: &DbConnection, id: &str) -> QueryResult<Tag> {
+    conn.with(|c| {
+        tags::table
+            .filter(tags::id.eq(id))
+            .select(TagRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
 pub fn get_tag_by_project_and_name(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     name: &str,
-) -> rusqlite::Result<Tag> {
-    conn.query_row(
-        &format!(
-            "SELECT {TAG_COLUMNS} FROM tags WHERE project_id = ?1 AND LOWER(name) = LOWER(?2)"
-        ),
-        params![project_id, name],
-        tag_from_row,
-    )
+) -> QueryResult<Tag> {
+    conn.with(|c| {
+        tags::table
+            .filter(tags::project_id.eq(project_id))
+            .filter(lower(tags::name).eq(name.to_lowercase()))
+            .select(TagRecord::as_select())
+            .first(c)
+            .map(Into::into)
+    })
 }
 
-pub fn list_tags_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Tag>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {TAG_COLUMNS} FROM tags WHERE project_id = ?1 ORDER BY name"
-    ))?;
-    let rows = stmt.query_map(params![project_id], tag_from_row)?;
-    rows.collect()
+pub fn list_tags_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<Tag>> {
+    conn.with(|c| {
+        tags::table
+            .filter(tags::project_id.eq(project_id))
+            .order(tags::name)
+            .select(TagRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<TagRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
-pub fn update_tag(conn: &Connection, tag: &Tag) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE tags SET name = ?1, color = ?2, post_template_slug = ?3, updated_at = ?4
-         WHERE id = ?5",
-        params![
-            tag.name,
-            tag.color,
-            tag.post_template_slug,
-            tag.updated_at,
-            tag.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_tag(conn: &DbConnection, tag: &Tag) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(tags::table.filter(tags::id.eq(&tag.id)))
+            .set(TagRecord::from(tag))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_tag(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_tag(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(tags::table.filter(tags::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 #[cfg(test)]
@@ -77,7 +77,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

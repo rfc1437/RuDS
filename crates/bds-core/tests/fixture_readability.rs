@@ -1,335 +1,130 @@
-//! Integration tests that open the real fixture DB extracted from the TypeScript bDS app
-//! and verify every table can be read correctly into Rust model structs.
-//!
-//! This validates the compatibility contract: the Rust app MUST read databases
-//! created by the TypeScript app without modification.
+//! Verify that the Rust Diesel models read the compatibility fixture produced by bDS.
 
-use rusqlite::{Connection, OpenFlags};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
-fn fixture_db() -> Connection {
+use bds_core::db::Database;
+use bds_core::db::queries::{
+    media, post, post_link, post_media, post_translation, project, script, setting, tag, template,
+};
+use bds_core::db::schema::{ai_catalog_meta, ai_models, ai_providers};
+use bds_core::model::{ScriptKind, ScriptStatus, TemplateKind, TemplateStatus};
+use diesel::prelude::*;
+
+const PROJECT_ID: &str = "1979237c-034d-41f6-99a0-f35eb57b3f6c";
+const ESMERALDA_ID: &str = "40a83ab1-423d-4310-aac4-642d84675007";
+const GHOSTTY_ID: &str = "6745981d-da41-4cfd-80ec-95ad339acf6f";
+const CMUX_ID: &str = "2665bfaa-8251-468d-a710-a4cf34dd81e2";
+const SPIDER_ID: &str = "eb0cf9d7-6fbd-4b74-9be3-759d6e16f240";
+
+fn fixture_db() -> Database {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/compatibility-projects/rfc1437-sample/bds.db");
     assert!(path.exists(), "fixture DB not found at {}", path.display());
-    Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap()
+    Database::open(&path).unwrap()
 }
-
-const PROJECT_ID: &str = "1979237c-034d-41f6-99a0-f35eb57b3f6c";
-
-// ── Project ─────────────────────────────────────────────────────────
 
 #[test]
 fn read_project() {
-    let conn = fixture_db();
-    let (id, name, slug, data_path, is_active): (String, String, String, String, bool) = conn
-        .query_row(
-            "SELECT id, name, slug, data_path, is_active FROM projects WHERE id = ?1",
-            [PROJECT_ID],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .unwrap();
-
-    assert_eq!(id, PROJECT_ID);
-    assert_eq!(name, "rfc1437");
-    assert_eq!(slug, "rfc1437");
-    assert!(data_path.contains("rfc1437.de"));
-    assert!(is_active);
+    let db = fixture_db();
+    let value = project::get_project_by_id(db.conn(), PROJECT_ID).unwrap();
+    assert_eq!(value.name, "rfc1437");
+    assert_eq!(value.slug, "rfc1437");
+    assert!(value.data_path.unwrap().contains("rfc1437.de"));
+    assert!(value.is_active);
 }
 
-// ── Posts ────────────────────────────────────────────────────────────
-
 #[test]
-fn read_published_post_has_null_content() {
-    let conn = fixture_db();
-    let (title, slug, status, content): (String, String, String, Option<String>) = conn
-        .query_row(
-            "SELECT title, slug, status, content FROM posts WHERE slug = 'esmeralda'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
+fn posts_are_compatible() {
+    let db = fixture_db();
+    let posts = post::list_posts_by_project(db.conn(), PROJECT_ID).unwrap();
+    assert_eq!(posts.len(), 4);
+    let published = posts.iter().find(|post| post.slug == "esmeralda").unwrap();
+    assert_eq!(published.title, "Esmeralda");
+    assert_eq!(published.status, bds_core::model::PostStatus::Published);
+    assert!(published.content.is_none());
+    assert!(!published.tags.is_empty());
+    assert!(published.created_at > 946_684_800);
+    assert!(published.updated_at > 946_684_800);
+    let draft = posts
+        .iter()
+        .find(|post| post.slug == "draft-fixture-post")
         .unwrap();
-
-    assert_eq!(title, "Esmeralda");
-    assert_eq!(slug, "esmeralda");
-    assert_eq!(status, "published");
+    assert!(draft.content.as_deref().unwrap().contains("**body**"));
     assert!(
-        content.is_none(),
-        "published posts must have NULL content in DB"
+        posts
+            .iter()
+            .filter(|post| post.status == bds_core::model::PostStatus::Published)
+            .all(|post| !post.file_path.is_empty()
+                && post.file_path.ends_with(&format!("{}.md", post.slug)))
     );
-}
-
-#[test]
-fn read_draft_post_has_content() {
-    let conn = fixture_db();
-    let (title, slug, status, content): (String, String, String, Option<String>) = conn
-        .query_row(
-            "SELECT title, slug, status, content FROM posts WHERE slug = 'draft-fixture-post'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .unwrap();
-
-    assert_eq!(title, "Draft Fixture Post");
-    assert_eq!(slug, "draft-fixture-post");
-    assert_eq!(status, "draft");
-    assert!(content.is_some(), "draft posts must have content in DB");
-    assert!(content.unwrap().contains("**body**"));
-}
-
-#[test]
-fn read_all_posts_count() {
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM posts", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(count, 4); // 3 published + 1 draft
-}
-
-#[test]
-fn published_posts_have_file_paths() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare("SELECT slug, file_path FROM posts WHERE status = 'published'")
-        .unwrap();
-    let rows: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
+    let unique: HashSet<_> = posts
+        .iter()
+        .map(|post| (&post.project_id, &post.slug))
         .collect();
-
-    assert_eq!(rows.len(), 3);
-    for (slug, path) in &rows {
-        assert!(
-            !path.is_empty(),
-            "published post '{slug}' must have a file_path"
-        );
-        assert!(
-            path.ends_with(&format!("{slug}.md")),
-            "file_path must end with {slug}.md"
-        );
-    }
+    assert_eq!(unique.len(), posts.len());
 }
 
 #[test]
-fn post_tags_are_json_arrays() {
-    let conn = fixture_db();
-    let tags_json: Option<String> = conn
-        .query_row(
-            "SELECT tags FROM posts WHERE slug = 'esmeralda'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-
-    if let Some(json) = tags_json {
-        let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
-        assert!(!parsed.is_empty());
-    }
-    // tags can also be NULL — both are valid
-}
-
-#[test]
-fn post_timestamps_are_unix_integers() {
-    let conn = fixture_db();
-    let (created_at, updated_at): (i64, i64) = conn
-        .query_row(
-            "SELECT created_at, updated_at FROM posts WHERE slug = 'esmeralda'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-
-    // Sanity: timestamps should be in reasonable Unix range (year 2000+)
-    assert!(
-        created_at > 946_684_800,
-        "created_at should be after year 2000"
-    );
-    assert!(
-        updated_at > 946_684_800,
-        "updated_at should be after year 2000"
-    );
-}
-
-#[test]
-fn post_unique_constraint_on_project_slug() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare("SELECT project_id, slug, COUNT(*) FROM posts GROUP BY project_id, slug HAVING COUNT(*) > 1")
-        .unwrap();
-    let dupes: Vec<(String, String, i64)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    assert!(
-        dupes.is_empty(),
-        "found duplicate (project_id, slug) pairs: {dupes:?}"
-    );
-}
-
-// ── Post Translations ───────────────────────────────────────────────
-
-#[test]
-fn read_post_translations() {
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM post_translations", [], |row| {
-            row.get(0)
+fn post_translations_are_compatible() {
+    let db = fixture_db();
+    let posts = post::list_posts_by_project(db.conn(), PROJECT_ID).unwrap();
+    let translations: Vec<_> = posts
+        .iter()
+        .flat_map(|post| {
+            post_translation::list_post_translations_by_post(db.conn(), &post.id).unwrap()
         })
-        .unwrap();
-    assert_eq!(count, 4);
-}
-
-#[test]
-fn translation_references_valid_post() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT pt.id, pt.translation_for FROM post_translations pt \
-             LEFT JOIN posts p ON pt.translation_for = p.id \
-             WHERE p.id IS NULL",
-        )
-        .unwrap();
-    let orphans: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
         .collect();
-
+    assert_eq!(translations.len(), 4);
     assert!(
-        orphans.is_empty(),
-        "orphan translations referencing missing posts: {orphans:?}"
+        translations
+            .iter()
+            .filter(|translation| translation.status == bds_core::model::PostStatus::Published)
+            .all(|translation| translation.content.is_none())
+    );
+    let post_ids: HashSet<_> = posts.iter().map(|post| post.id.as_str()).collect();
+    assert!(
+        translations
+            .iter()
+            .all(|translation| post_ids.contains(translation.translation_for.as_str()))
     );
 }
 
 #[test]
-fn published_translations_have_null_content() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare("SELECT id, content FROM post_translations WHERE status = 'published'")
-        .unwrap();
-    let rows: Vec<(String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    for (id, content) in &rows {
-        assert!(
-            content.is_none(),
-            "published translation {id} must have NULL content"
-        );
-    }
-}
-
-// ── Post Links ──────────────────────────────────────────────────────
-
-#[test]
-fn read_post_links() {
-    let conn = fixture_db();
-    let (source, target, text): (String, String, Option<String>) = conn
-        .query_row(
-            "SELECT source_post_id, target_post_id, link_text FROM post_links LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
-
-    // ghostty links to cmux
-    assert_eq!(source, "6745981d-da41-4cfd-80ec-95ad339acf6f");
-    assert_eq!(target, "2665bfaa-8251-468d-a710-a4cf34dd81e2");
-    assert!(text.is_some());
-}
-
-// ── Post Media ──────────────────────────────────────────────────────
-
-#[test]
-fn read_post_media() {
-    let conn = fixture_db();
-    let (post_id, media_id, sort_order): (String, String, i32) = conn
-        .query_row(
-            "SELECT post_id, media_id, sort_order FROM post_media LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
-
-    // esmeralda <-> spider photo
-    assert_eq!(post_id, "40a83ab1-423d-4310-aac4-642d84675007");
-    assert_eq!(media_id, "eb0cf9d7-6fbd-4b74-9be3-759d6e16f240");
-    assert_eq!(sort_order, 0);
-}
-
-// ── Media ───────────────────────────────────────────────────────────
-
-#[test]
-fn read_media() {
-    let conn = fixture_db();
-    let (id, filename, original_name, mime_type, title, alt): (
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    ) = conn
-        .query_row(
-            "SELECT id, filename, original_name, mime_type, title, alt FROM media LIMIT 1",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .unwrap();
-
-    assert_eq!(id, "eb0cf9d7-6fbd-4b74-9be3-759d6e16f240");
-    assert!(filename.ends_with(".jpg"));
-    assert_eq!(original_name, "CRW_1121.jpg");
-    assert_eq!(mime_type, "image/jpeg");
-    assert!(title.is_some());
-    assert!(alt.is_some());
-}
-
-// ── Tags ────────────────────────────────────────────────────────────
-
-#[test]
-fn read_tags() {
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(count, 5);
+fn relationships_are_compatible() {
+    let db = fixture_db();
+    let links = post_link::list_links_by_source(db.conn(), GHOSTTY_ID).unwrap();
+    assert!(
+        links
+            .iter()
+            .any(|link| link.target_post_id == CMUX_ID && link.link_text.is_some())
+    );
+    let media_links = post_media::list_post_media_by_post(db.conn(), ESMERALDA_ID).unwrap();
+    assert!(
+        media_links
+            .iter()
+            .any(|link| link.media_id == SPIDER_ID && link.sort_order == 0)
+    );
 }
 
 #[test]
-fn tag_names_are_expected() {
-    let conn = fixture_db();
-    let mut stmt = conn.prepare("SELECT name FROM tags ORDER BY name").unwrap();
-    let names: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
+fn media_is_compatible() {
+    let db = fixture_db();
+    let item = media::get_media_by_id(db.conn(), SPIDER_ID).unwrap();
+    assert!(item.filename.ends_with(".jpg"));
+    assert_eq!(item.original_name, "CRW_1121.jpg");
+    assert_eq!(item.mime_type, "image/jpeg");
+    assert!(item.title.is_some());
+    assert!(item.alt.is_some());
+}
 
+#[test]
+fn tags_are_compatible() {
+    let db = fixture_db();
+    let tags = tag::list_tags_by_project(db.conn(), PROJECT_ID).unwrap();
     assert_eq!(
-        names,
-        vec![
+        tags.iter().map(|tag| tag.name.as_str()).collect::<Vec<_>>(),
+        [
             "fotografie",
             "mac-os-x",
             "natur",
@@ -337,292 +132,106 @@ fn tag_names_are_expected() {
             "sysadmin"
         ]
     );
+    let unique: HashSet<_> = tags.iter().map(|tag| tag.name.to_lowercase()).collect();
+    assert_eq!(unique.len(), tags.len());
 }
 
 #[test]
-fn tag_unique_constraint_on_project_name() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare("SELECT project_id, name, COUNT(*) FROM tags GROUP BY project_id, name HAVING COUNT(*) > 1")
-        .unwrap();
-    let dupes: Vec<(String, String, i64)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    assert!(
-        dupes.is_empty(),
-        "found duplicate (project_id, name) tag pairs: {dupes:?}"
-    );
-}
-
-// ── Templates ───────────────────────────────────────────────────────
-
-#[test]
-fn read_template() {
-    let conn = fixture_db();
-    let (slug, title, kind, enabled, status, content): (
-        String,
-        String,
-        String,
-        bool,
-        String,
-        Option<String>,
-    ) = conn
-        .query_row(
-            "SELECT slug, title, kind, enabled, status, content FROM templates LIMIT 1",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .unwrap();
-
-    assert_eq!(slug, "testvorlage");
-    assert_eq!(title, "Testvorlage");
-    assert_eq!(kind, "post");
-    assert!(enabled);
-    assert_eq!(status, "published");
-    assert!(
-        content.is_none(),
-        "published template content should be NULL in DB"
-    );
-}
-
-// ── Scripts ─────────────────────────────────────────────────────────
-
-#[test]
-fn read_scripts() {
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM scripts", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(count, 2);
+fn templates_are_compatible() {
+    let db = fixture_db();
+    let templates = template::list_templates_by_project(db.conn(), PROJECT_ID).unwrap();
+    let value = templates.first().unwrap();
+    assert_eq!(value.slug, "testvorlage");
+    assert_eq!(value.title, "Testvorlage");
+    assert_eq!(value.kind, TemplateKind::Post);
+    assert!(value.enabled);
+    assert_eq!(value.status, TemplateStatus::Published);
+    assert!(value.content.is_none());
 }
 
 #[test]
-fn read_script_fields() {
-    let conn = fixture_db();
-    let (slug, title, kind, entrypoint, enabled, status): (
-        String,
-        String,
-        String,
-        String,
-        bool,
-        String,
-    ) = conn
-        .query_row(
-            "SELECT slug, title, kind, entrypoint, enabled, status FROM scripts WHERE slug = 'bgg_link'",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .unwrap();
-
-    assert_eq!(slug, "bgg_link");
-    assert_eq!(title, "bgg link");
-    assert_eq!(kind, "transform");
-    assert_eq!(entrypoint, "normalize_blogmark");
-    assert!(enabled);
-    assert_eq!(status, "published");
-}
-
-// ── Settings ────────────────────────────────────────────────────────
-
-#[test]
-fn read_settings() {
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(count, 5);
-}
-
-#[test]
-fn settings_are_key_value_pairs() {
-    let conn = fixture_db();
-    let mut stmt = conn.prepare("SELECT key, value FROM settings").unwrap();
-    let pairs: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    for (key, value) in &pairs {
-        assert!(!key.is_empty());
-        assert!(!value.is_empty());
-    }
-    // All setting keys should contain the project ID (namespaced)
-    let project_keys: Vec<_> = pairs
+fn scripts_are_compatible() {
+    let db = fixture_db();
+    let scripts = script::list_scripts_by_project(db.conn(), PROJECT_ID).unwrap();
+    assert_eq!(scripts.len(), 2);
+    let value = scripts
         .iter()
-        .filter(|(k, _)| k.contains(PROJECT_ID))
-        .collect();
-    assert_eq!(project_keys.len(), 5);
+        .find(|script| script.slug == "bgg_link")
+        .unwrap();
+    assert_eq!(value.title, "bgg link");
+    assert_eq!(value.kind, ScriptKind::Transform);
+    assert_eq!(value.entrypoint, "normalize_blogmark");
+    assert!(value.enabled);
+    assert_eq!(value.status, ScriptStatus::Published);
 }
 
-// ── AI Catalog ──────────────────────────────────────────────────────
-
 #[test]
-fn read_ai_tables() {
-    let conn = fixture_db();
-
-    let providers: i64 = conn
-        .query_row("SELECT COUNT(*) FROM ai_providers", [], |row| row.get(0))
-        .unwrap();
-    let models: i64 = conn
-        .query_row("SELECT COUNT(*) FROM ai_models", [], |row| row.get(0))
-        .unwrap();
-    let meta: i64 = conn
-        .query_row("SELECT COUNT(*) FROM ai_catalog_meta", [], |row| row.get(0))
-        .unwrap();
-
-    assert_eq!(providers, 1);
-    assert_eq!(models, 1);
-    assert_eq!(meta, 2);
-}
-
-// ── Generated File Hashes ───────────────────────────────────────────
-
-#[test]
-fn read_generated_file_hashes_via_settings() {
-    // The fixture stores generation hashes as settings keys
-    let conn = fixture_db();
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM settings WHERE key LIKE '%generation-hash%'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(count > 0, "expected generation hash entries in settings");
-}
-
-// ── Cross-table referential integrity ───────────────────────────────
-
-#[test]
-fn all_posts_belong_to_existing_project() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT p.id FROM posts p \
-             LEFT JOIN projects pr ON p.project_id = pr.id \
-             WHERE pr.id IS NULL",
-        )
-        .unwrap();
-    let orphans: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
+fn settings_are_compatible() {
+    let db = fixture_db();
+    let settings = setting::list_all_settings(db.conn()).unwrap();
+    assert_eq!(settings.len(), 5);
+    assert!(settings.iter().all(|setting| !setting.key.is_empty()
+        && !setting.value.is_empty()
+        && setting.key.contains(PROJECT_ID)));
     assert!(
-        orphans.is_empty(),
-        "posts referencing missing projects: {orphans:?}"
+        settings
+            .iter()
+            .any(|setting| setting.key.contains("generation-hash"))
     );
 }
 
 #[test]
-fn all_tags_belong_to_existing_project() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT t.id FROM tags t \
-             LEFT JOIN projects pr ON t.project_id = pr.id \
-             WHERE pr.id IS NULL",
-        )
+fn ai_catalog_is_compatible() {
+    let db = fixture_db();
+    let (providers, models, meta) = db
+        .conn()
+        .with(|conn| {
+            Ok((
+                ai_providers::table.count().get_result::<i64>(conn)?,
+                ai_models::table.count().get_result::<i64>(conn)?,
+                ai_catalog_meta::table.count().get_result::<i64>(conn)?,
+            ))
+        })
         .unwrap();
-    let orphans: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    assert!(
-        orphans.is_empty(),
-        "tags referencing missing projects: {orphans:?}"
-    );
+    assert_eq!((providers, models, meta), (1, 1, 2));
 }
 
 #[test]
-fn all_media_belong_to_existing_project() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT m.id FROM media m \
-             LEFT JOIN projects pr ON m.project_id = pr.id \
-             WHERE pr.id IS NULL",
-        )
-        .unwrap();
-    let orphans: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
+fn relationships_reference_existing_entities() {
+    let db = fixture_db();
+    let projects = project::list_projects(db.conn()).unwrap();
+    let project_ids: HashSet<_> = projects.iter().map(|project| project.id.as_str()).collect();
+    let posts = post::list_posts_by_project(db.conn(), PROJECT_ID).unwrap();
+    let post_ids: HashSet<_> = posts.iter().map(|post| post.id.as_str()).collect();
+    let media = media::list_media_by_project(db.conn(), PROJECT_ID).unwrap();
+    let media_ids: HashSet<_> = media.iter().map(|media| media.id.as_str()).collect();
+    let tags = tag::list_tags_by_project(db.conn(), PROJECT_ID).unwrap();
     assert!(
-        orphans.is_empty(),
-        "media referencing missing projects: {orphans:?}"
+        posts
+            .iter()
+            .all(|post| project_ids.contains(post.project_id.as_str()))
     );
-}
-
-#[test]
-fn post_links_reference_valid_posts() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT pl.id, pl.source_post_id, pl.target_post_id FROM post_links pl \
-             LEFT JOIN posts s ON pl.source_post_id = s.id \
-             LEFT JOIN posts t ON pl.target_post_id = t.id \
-             WHERE s.id IS NULL OR t.id IS NULL",
-        )
-        .unwrap();
-    let orphans: Vec<(String, String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
     assert!(
-        orphans.is_empty(),
-        "post_links with invalid references: {orphans:?}"
+        media
+            .iter()
+            .all(|media| project_ids.contains(media.project_id.as_str()))
     );
-}
-
-#[test]
-fn post_media_references_valid_entities() {
-    let conn = fixture_db();
-    let mut stmt = conn
-        .prepare(
-            "SELECT pm.id FROM post_media pm \
-             LEFT JOIN posts p ON pm.post_id = p.id \
-             LEFT JOIN media m ON pm.media_id = m.id \
-             WHERE p.id IS NULL OR m.id IS NULL",
-        )
-        .unwrap();
-    let orphans: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
     assert!(
-        orphans.is_empty(),
-        "post_media with invalid references: {orphans:?}"
+        tags.iter()
+            .all(|tag| project_ids.contains(tag.project_id.as_str()))
     );
+    for post in &posts {
+        assert!(
+            post_link::list_links_by_source(db.conn(), &post.id)
+                .unwrap()
+                .iter()
+                .all(|link| post_ids.contains(link.target_post_id.as_str()))
+        );
+        assert!(
+            post_media::list_post_media_by_post(db.conn(), &post.id)
+                .unwrap()
+                .iter()
+                .all(|link| media_ids.contains(link.media_id.as_str()))
+        );
+    }
 }

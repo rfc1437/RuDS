@@ -3,9 +3,9 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
+use crate::db::DbConnection as Connection;
 use chrono::{Datelike, TimeZone, Utc};
 use rayon::prelude::*;
-use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use crate::db::queries;

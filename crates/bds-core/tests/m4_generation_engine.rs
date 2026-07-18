@@ -89,7 +89,7 @@ fn make_list_template(slug: &str, content: &str) -> Template {
 }
 
 fn setup() -> (Database, TempDir) {
-    let mut db = Database::open_in_memory().unwrap();
+    let db = Database::open_in_memory().unwrap();
     db.migrate().unwrap();
     insert_project(db.conn(), &make_project()).unwrap();
     let dir = TempDir::new().unwrap();

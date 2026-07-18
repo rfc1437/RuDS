@@ -1,82 +1,77 @@
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
 
-use crate::db::from_row::{POST_LINK_COLUMNS, post_link_from_row};
+use crate::db::DbConnection;
+use crate::db::from_row::PostLinkRecord;
+use crate::db::schema::post_links;
 use crate::model::PostLink;
 
-pub fn insert_post_link(conn: &Connection, link: &PostLink) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO post_links (id, source_post_id, target_post_id, link_text, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            link.id,
-            link.source_post_id,
-            link.target_post_id,
-            link.link_text,
-            link.created_at,
-        ],
-    )?;
-    Ok(())
+pub fn insert_post_link(conn: &DbConnection, link: &PostLink) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(post_links::table)
+            .values(PostLinkRecord::from(link))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_links_by_source(conn: &Connection, source_post_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM post_links WHERE source_post_id = ?1",
-        params![source_post_id],
-    )?;
-    Ok(())
+pub fn delete_links_by_source(conn: &DbConnection, source_post_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(post_links::table.filter(post_links::source_post_id.eq(source_post_id)))
+            .execute(c)
+            .map(|_| ())
+    })
+}
+
+pub fn delete_links_by_target(conn: &DbConnection, target_post_id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(post_links::table.filter(post_links::target_post_id.eq(target_post_id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn list_links_by_source(
-    conn: &Connection,
+    conn: &DbConnection,
     source_post_id: &str,
-) -> rusqlite::Result<Vec<PostLink>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_LINK_COLUMNS} FROM post_links WHERE source_post_id = ?1 ORDER BY created_at"
-    ))?;
-    let rows = stmt.query_map(params![source_post_id], post_link_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<PostLink>> {
+    conn.with(|c| {
+        post_links::table
+            .filter(post_links::source_post_id.eq(source_post_id))
+            .order(post_links::created_at)
+            .select(PostLinkRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<PostLinkRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 pub fn list_links_by_target(
-    conn: &Connection,
+    conn: &DbConnection,
     target_post_id: &str,
-) -> rusqlite::Result<Vec<PostLink>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_LINK_COLUMNS} FROM post_links WHERE target_post_id = ?1 ORDER BY created_at"
-    ))?;
-    let rows = stmt.query_map(params![target_post_id], post_link_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<PostLink>> {
+    conn.with(|c| {
+        post_links::table
+            .filter(post_links::target_post_id.eq(target_post_id))
+            .order(post_links::created_at)
+            .select(PostLinkRecord::as_select())
+            .load(c)
+            .map(|rows: Vec<PostLinkRecord>| rows.into_iter().map(Into::into).collect())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::db::queries::post::{insert_post, make_test_post};
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
-        let c = db.conn();
-        c.execute(
-            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('a', 'p1', 'A', 'a', 'draft', 1000, 1000)",
-            [],
-        )
-        .unwrap();
-        c.execute(
-            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('b', 'p1', 'B', 'b', 'draft', 1000, 1000)",
-            [],
-        )
-        .unwrap();
-        c.execute(
-            "INSERT INTO posts (id, project_id, title, slug, status, created_at, updated_at)
-             VALUES ('c', 'p1', 'C', 'c', 'draft', 1000, 1000)",
-            [],
-        )
-        .unwrap();
+        insert_post(db.conn(), &make_test_post("a", "p1", "a")).unwrap();
+        insert_post(db.conn(), &make_test_post("b", "p1", "b")).unwrap();
+        insert_post(db.conn(), &make_test_post("c", "p1", "c")).unwrap();
         db
     }
 

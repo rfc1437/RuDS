@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use crate::db::DbConnection as Connection;
 use chrono::{Datelike, TimeZone, Utc};
-use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::db::queries::generated_file_hash as qhash;

@@ -453,7 +453,7 @@ mod tests {
         meta::write_project_json(dir.path(), &make_metadata()).unwrap();
 
         let db_path = dir.path().join("bds.db");
-        let mut db = Database::open(&db_path).unwrap();
+        let db = Database::open(&db_path).unwrap();
         db.migrate().unwrap();
         queries::project::insert_project(
             db.conn(),

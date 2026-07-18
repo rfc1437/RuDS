@@ -1,169 +1,142 @@
-use rusqlite::{Connection, params};
+use chrono::{Datelike, TimeZone, Utc};
+use diesel::prelude::*;
+use diesel::sql_types::Text;
+use diesel::sqlite::Sqlite;
 
-use crate::db::from_row::{POST_COLUMNS, post_from_row, post_status_to_str};
+use crate::db::DbConnection;
+use crate::db::from_row::{PostRecord, convert, convert_all, post_status_to_str};
+use crate::db::schema::posts;
 use crate::model::{Post, PostStatus};
 use crate::util::calendar_range_unix_ms;
 
-fn tags_to_json(tags: &[String]) -> String {
-    serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
+diesel::define_sql_function!(fn instr(haystack: Text, needle: Text) -> Integer);
+diesel::define_sql_function!(fn lower(value: Text) -> Text);
+
+pub fn insert_post(conn: &DbConnection, post: &Post) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::insert_into(posts::table)
+            .values(PostRecord::from(post))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn insert_post(conn: &Connection, post: &Post) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO posts (
-            id, project_id, title, slug, excerpt, content, status, author,
-            language, do_not_translate, template_slug, file_path, checksum,
-            tags, categories,
-            published_title, published_content, published_tags,
-            published_categories, published_excerpt,
-            created_at, updated_at, published_at
-         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-            ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15,
-            ?16, ?17, ?18, ?19, ?20,
-            ?21, ?22, ?23
-         )",
-        params![
-            post.id,
-            post.project_id,
-            post.title,
-            post.slug,
-            post.excerpt,
-            post.content,
-            post_status_to_str(&post.status),
-            post.author,
-            post.language,
-            post.do_not_translate as i64,
-            post.template_slug,
-            post.file_path,
-            post.checksum,
-            tags_to_json(&post.tags),
-            tags_to_json(&post.categories),
-            post.published_title,
-            post.published_content,
-            post.published_tags,
-            post.published_categories,
-            post.published_excerpt,
-            post.created_at,
-            post.updated_at,
-            post.published_at,
-        ],
-    )?;
-    Ok(())
-}
-
-pub fn get_post_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Post> {
-    conn.query_row(
-        &format!("SELECT {POST_COLUMNS} FROM posts WHERE id = ?1"),
-        params![id],
-        post_from_row,
-    )
+pub fn get_post_by_id(conn: &DbConnection, id: &str) -> QueryResult<Post> {
+    conn.with(|c| {
+        posts::table
+            .filter(posts::id.eq(id))
+            .select(PostRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
 pub fn get_post_by_project_and_slug(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     slug: &str,
-) -> rusqlite::Result<Post> {
-    conn.query_row(
-        &format!("SELECT {POST_COLUMNS} FROM posts WHERE project_id = ?1 AND slug = ?2"),
-        params![project_id, slug],
-        post_from_row,
-    )
+) -> QueryResult<Post> {
+    conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .filter(posts::slug.eq(slug))
+            .select(PostRecord::as_select())
+            .first(c)
+            .and_then(convert)
+    })
 }
 
-pub fn list_posts_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<Post>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_COLUMNS} FROM posts WHERE project_id = ?1 ORDER BY created_at DESC"
-    ))?;
-    let rows = stmt.query_map(params![project_id], post_from_row)?;
-    rows.collect()
+pub fn list_posts_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<Post>> {
+    conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .order(posts::created_at.desc())
+            .select(PostRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
 pub fn list_posts_by_project_limited(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     limit: i64,
     offset: i64,
-) -> rusqlite::Result<Vec<Post>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_COLUMNS} FROM posts WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
-    ))?;
-    let rows = stmt.query_map(params![project_id, limit, offset], post_from_row)?;
-    rows.collect()
+) -> QueryResult<Vec<Post>> {
+    conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .order(posts::created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .select(PostRecord::as_select())
+            .load(c)
+            .and_then(convert_all)
+    })
 }
 
-pub fn update_post(conn: &Connection, post: &Post) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE posts SET
-            title = ?1, slug = ?2, excerpt = ?3, content = ?4, status = ?5,
-            author = ?6, language = ?7, do_not_translate = ?8, template_slug = ?9,
-            file_path = ?10, checksum = ?11, tags = ?12, categories = ?13,
-            published_title = ?14, published_content = ?15, published_tags = ?16,
-            published_categories = ?17, published_excerpt = ?18,
-            created_at = ?19, updated_at = ?20, published_at = ?21
-         WHERE id = ?22",
-        params![
-            post.title,
-            post.slug,
-            post.excerpt,
-            post.content,
-            post_status_to_str(&post.status),
-            post.author,
-            post.language,
-            post.do_not_translate as i64,
-            post.template_slug,
-            post.file_path,
-            post.checksum,
-            tags_to_json(&post.tags),
-            tags_to_json(&post.categories),
-            post.published_title,
-            post.published_content,
-            post.published_tags,
-            post.published_categories,
-            post.published_excerpt,
-            post.created_at,
-            post.updated_at,
-            post.published_at,
-            post.id,
-        ],
-    )?;
-    Ok(())
+pub fn update_post(conn: &DbConnection, post: &Post) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(&post.id)))
+            .set(PostRecord::from(post))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn update_post_status(
-    conn: &Connection,
+    conn: &DbConnection,
     id: &str,
     status: &PostStatus,
     updated_at: i64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE posts SET status = ?1, updated_at = ?2 WHERE id = ?3",
-        params![post_status_to_str(status), updated_at, id],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(id)))
+            .set((
+                posts::status.eq(post_status_to_str(status)),
+                posts::updated_at.eq(updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn clear_post_content(conn: &Connection, id: &str, updated_at: i64) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE posts SET content = NULL, updated_at = ?1 WHERE id = ?2",
-        params![updated_at, id],
-    )?;
-    Ok(())
+pub fn clear_post_content(conn: &DbConnection, id: &str, updated_at: i64) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(id)))
+            .set((
+                posts::content.eq(None::<String>),
+                posts::updated_at.eq(updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 pub fn set_post_file_path(
-    conn: &Connection,
+    conn: &DbConnection,
     id: &str,
     file_path: &str,
     updated_at: i64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE posts SET file_path = ?1, updated_at = ?2 WHERE id = ?3",
-        params![file_path, updated_at, id],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(id)))
+            .set((
+                posts::file_path.eq(file_path),
+                posts::updated_at.eq(updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
+}
+
+pub fn set_post_checksum(conn: &DbConnection, id: &str, checksum: Option<&str>) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(id)))
+            .set(posts::checksum.eq(checksum))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
 #[expect(
@@ -171,7 +144,7 @@ pub fn set_post_file_path(
     reason = "arguments mirror the published snapshot columns"
 )]
 pub fn set_published_snapshot(
-    conn: &Connection,
+    conn: &DbConnection,
     id: &str,
     title: &str,
     content: &str,
@@ -180,38 +153,38 @@ pub fn set_published_snapshot(
     excerpt: Option<&str>,
     published_at: i64,
     updated_at: i64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE posts SET
-            published_title = ?1, published_content = ?2, published_tags = ?3,
-            published_categories = ?4, published_excerpt = ?5,
-            published_at = ?6, updated_at = ?7
-         WHERE id = ?8",
-        params![
-            title,
-            content,
-            tags,
-            categories,
-            excerpt,
-            published_at,
-            updated_at,
-            id
-        ],
-    )?;
-    Ok(())
+) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::update(posts::table.filter(posts::id.eq(id)))
+            .set((
+                posts::published_title.eq(title),
+                posts::published_content.eq(content),
+                posts::published_tags.eq(tags),
+                posts::published_categories.eq(categories),
+                posts::published_excerpt.eq(excerpt),
+                posts::published_at.eq(published_at),
+                posts::updated_at.eq(updated_at),
+            ))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn delete_post(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM posts WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn delete_post(conn: &DbConnection, id: &str) -> QueryResult<()> {
+    conn.with(|c| {
+        diesel::delete(posts::table.filter(posts::id.eq(id)))
+            .execute(c)
+            .map(|_| ())
+    })
 }
 
-pub fn count_posts_by_project(conn: &Connection, project_id: &str) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM posts WHERE project_id = ?1",
-        params![project_id],
-        |row| row.get(0),
-    )
+pub fn count_posts_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<i64> {
+    conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .count()
+            .get_result(c)
+    })
 }
 
 // ── Filtered queries (per sidebar_views.allium PostsView) ───
@@ -266,163 +239,155 @@ impl PostFilterParams {
 ///
 /// Returns all matching posts (up to `limit`), ordered by created_at DESC.
 /// Caller splits into draft/published/archived sections.
+fn post_query<'a>(
+    project_id: &'a str,
+    filters: &'a PostFilterParams,
+    apply_filters: bool,
+    exclude_drafts: bool,
+) -> posts::BoxedQuery<'a, Sqlite> {
+    let mut query = posts::table
+        .filter(posts::project_id.eq(project_id))
+        .into_boxed();
+
+    let page = serde_json::to_string("page").unwrap();
+    if filters.pages_only {
+        query = query.filter(instr(lower(posts::categories), page.clone()).gt(0));
+    } else if filters.exclude_pages {
+        query = query.filter(instr(lower(posts::categories), page).eq(0));
+    }
+
+    if exclude_drafts {
+        query = query.filter(posts::status.ne("draft"));
+    }
+    if !apply_filters {
+        return query;
+    }
+
+    if !filters.search_query.is_empty() {
+        query = query.filter(instr(posts::title, &filters.search_query).gt(0));
+    }
+    if let Some(status) = &filters.status {
+        query = query.filter(posts::status.eq(status));
+    }
+    if let Some(language) = &filters.language {
+        query = query.filter(posts::language.eq(language).or(posts::language.is_null()));
+    }
+    if let Some(year) = filters.year
+        && let Some((start, end)) = calendar_range_unix_ms(year, filters.month)
+    {
+        query = query.filter(posts::created_at.ge(start).and(posts::created_at.lt(end)));
+    }
+    for tag in &filters.tags {
+        query = query.filter(instr(posts::tags, serde_json::to_string(tag).unwrap()).gt(0));
+    }
+    for category in &filters.categories {
+        query =
+            query.filter(instr(posts::categories, serde_json::to_string(category).unwrap()).gt(0));
+    }
+    if let Some(from) = filters.from {
+        query = query.filter(posts::created_at.ge(from));
+    }
+    if let Some(to) = filters.to {
+        query = query.filter(posts::created_at.le(to));
+    }
+    query
+}
+
 pub fn list_posts_filtered(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     filters: &PostFilterParams,
     limit: i64,
     offset: i64,
-) -> rusqlite::Result<Vec<Post>> {
-    // Build dynamic WHERE clause
-    let mut conditions = vec!["p.project_id = ?1".to_string()];
-    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    param_values.push(Box::new(project_id.to_string()));
-
-    // pages_only / exclude_pages
-    if filters.pages_only {
-        conditions.push("LOWER(p.categories) LIKE '%\"page\"%'".to_string());
-    } else if filters.exclude_pages {
-        conditions.push("LOWER(p.categories) NOT LIKE '%\"page\"%'".to_string());
-    }
-
-    // For non-draft posts, apply filters. Drafts always pass.
-    // We build this as: (status = 'draft') OR (filter conditions)
-    let mut filter_conditions: Vec<String> = Vec::new();
-
-    if !filters.search_query.is_empty() {
-        let idx = param_values.len() + 1;
-        let pattern = format!("%{}%", filters.search_query.replace('%', "\\%"));
-        filter_conditions.push(format!("(p.title LIKE ?{idx} ESCAPE '\\')"));
-        param_values.push(Box::new(pattern));
-    }
-
-    if let Some(status) = &filters.status {
-        let idx = param_values.len() + 1;
-        filter_conditions.push(format!("(p.status = ?{idx})"));
-        param_values.push(Box::new(status.clone()));
-    }
-
-    if let Some(language) = &filters.language {
-        let idx = param_values.len() + 1;
-        filter_conditions.push(format!("(p.language = ?{idx} OR p.language IS NULL)"));
-        param_values.push(Box::new(language.clone()));
-    }
-
-    if let Some(year) = filters.year {
-        let (start, end) =
-            calendar_range_unix_ms(year, filters.month).ok_or(rusqlite::Error::InvalidQuery)?;
-        let idx1 = param_values.len() + 1;
-        let idx2 = param_values.len() + 2;
-        filter_conditions.push(format!(
-            "(p.created_at >= ?{idx1} AND p.created_at < ?{idx2})"
-        ));
-        param_values.push(Box::new(start));
-        param_values.push(Box::new(end));
-    }
-
-    for tag in &filters.tags {
-        let idx = param_values.len() + 1;
-        let pattern = format!("%\"{}\"%", tag.replace('"', "\\\""));
-        filter_conditions.push(format!("(p.tags LIKE ?{idx})"));
-        param_values.push(Box::new(pattern));
-    }
-
-    for cat in &filters.categories {
-        let idx = param_values.len() + 1;
-        let pattern = format!("%\"{}\"%", cat.replace('"', "\\\""));
-        filter_conditions.push(format!("(p.categories LIKE ?{idx})"));
-        param_values.push(Box::new(pattern));
-    }
-
-    if let Some(from) = filters.from {
-        let idx = param_values.len() + 1;
-        filter_conditions.push(format!("(p.created_at >= ?{idx})"));
-        param_values.push(Box::new(from));
-    }
-
-    if let Some(to) = filters.to {
-        let idx = param_values.len() + 1;
-        filter_conditions.push(format!("(p.created_at <= ?{idx})"));
-        param_values.push(Box::new(to));
-    }
-
-    // Without an explicit status filter, drafts remain visible regardless of the
-    // rest of the active filters.
-    if !filter_conditions.is_empty() {
-        let combined = filter_conditions.join(" AND ");
-        if filters.status.is_some() {
-            conditions.push(format!("({combined})"));
+) -> QueryResult<Vec<Post>> {
+    conn.with(|c| {
+        let content_filters = filters.has_active_filters();
+        let records = if filters.status.is_some() {
+            post_query(project_id, filters, true, false)
+                .order(posts::created_at.desc())
+                .limit(limit)
+                .offset(offset)
+                .select(PostRecord::as_select())
+                .load(c)?
+        } else if content_filters {
+            let mut records: Vec<PostRecord> = post_query(project_id, filters, false, false)
+                .filter(posts::status.eq("draft"))
+                .select(PostRecord::as_select())
+                .load(c)?;
+            records.extend(
+                post_query(project_id, filters, true, true)
+                    .select(PostRecord::as_select())
+                    .load::<PostRecord>(c)?,
+            );
+            records.sort_unstable_by_key(|record| std::cmp::Reverse(record.created_at));
+            records
+                .into_iter()
+                .skip(offset.max(0) as usize)
+                .take(limit.max(0) as usize)
+                .collect()
         } else {
-            conditions.push(format!("(p.status = 'draft' OR ({combined}))"));
-        }
-    }
-
-    let where_clause = conditions.join(" AND ");
-    let idx_limit = param_values.len() + 1;
-    let idx_offset = param_values.len() + 2;
-    param_values.push(Box::new(limit));
-    param_values.push(Box::new(offset));
-
-    let sql = format!(
-        "SELECT {POST_COLUMNS} FROM posts p WHERE {where_clause} ORDER BY p.created_at DESC LIMIT ?{idx_limit} OFFSET ?{idx_offset}"
-    );
-
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-        param_values.iter().map(|b| b.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_refs.as_slice(), post_from_row)?;
-    rows.collect()
+            post_query(project_id, filters, false, false)
+                .order(posts::created_at.desc())
+                .limit(limit)
+                .offset(offset)
+                .select(PostRecord::as_select())
+                .load(c)?
+        };
+        convert_all(records)
+    })
 }
 
 /// Year/month counts for the calendar archive widget.
 /// Returns (year, month, count) tuples, ordered by year DESC, month DESC.
 pub fn post_calendar_counts(
-    conn: &Connection,
+    conn: &DbConnection,
     project_id: &str,
     pages_only: bool,
     exclude_pages: bool,
-) -> rusqlite::Result<Vec<(i32, u32, usize)>> {
-    let page_filter = if pages_only {
-        " AND LOWER(categories) LIKE '%\"page\"%'"
-    } else if exclude_pages {
-        " AND LOWER(categories) NOT LIKE '%\"page\"%'"
-    } else {
-        ""
-    };
-
-    let sql = format!(
-        "SELECT
-            CAST(strftime('%Y', created_at / 1000, 'unixepoch') AS INTEGER) AS y,
-            CAST(strftime('%m', created_at / 1000, 'unixepoch') AS INTEGER) AS m,
-            COUNT(*) AS cnt
-         FROM posts
-         WHERE project_id = ?1{page_filter}
-         GROUP BY y, m
-         ORDER BY y DESC, m DESC"
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        Ok((
-            row.get::<_, i32>(0)?,
-            row.get::<_, u32>(1)?,
-            row.get::<_, usize>(2)?,
-        ))
-    })?;
-    rows.collect()
+) -> QueryResult<Vec<(i32, u32, usize)>> {
+    conn.with(|c| {
+        let rows = posts::table
+            .filter(posts::project_id.eq(project_id))
+            .select((posts::created_at, posts::categories))
+            .load::<(i64, String)>(c)?;
+        let mut counts = std::collections::BTreeMap::new();
+        for (timestamp, categories) in rows {
+            let categories: Vec<String> = serde_json::from_str(&categories).unwrap_or_default();
+            let is_page = categories
+                .iter()
+                .any(|category| category.eq_ignore_ascii_case("page"));
+            if (pages_only && !is_page) || (exclude_pages && is_page) {
+                continue;
+            }
+            let date = Utc
+                .timestamp_millis_opt(timestamp)
+                .single()
+                .ok_or_else(|| {
+                    diesel::result::Error::DeserializationError("invalid timestamp".into())
+                })?;
+            *counts.entry((date.year(), date.month())).or_insert(0) += 1;
+        }
+        Ok(counts
+            .into_iter()
+            .rev()
+            .map(|((year, month), count)| (year, month, count))
+            .collect())
+    })
 }
 
 /// Collect all distinct tag values across posts for a project.
-pub fn distinct_post_tags(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT tags FROM posts WHERE project_id = ?1 AND tags != '[]'")?;
-    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+pub fn distinct_post_tags(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<String>> {
+    let rows = conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .filter(posts::tags.ne("[]"))
+            .select(posts::tags)
+            .distinct()
+            .load::<String>(c)
+    })?;
     let mut all_tags = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str
-            && let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str)
-        {
+        if let Ok(tags) = serde_json::from_str::<Vec<String>>(&json_str) {
             all_tags.extend(tags);
         }
     }
@@ -430,23 +395,51 @@ pub fn distinct_post_tags(conn: &Connection, project_id: &str) -> rusqlite::Resu
 }
 
 /// Collect all distinct category values across posts for a project.
-pub fn distinct_post_categories(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT categories FROM posts WHERE project_id = ?1 AND categories != '[]'",
-    )?;
-    let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+pub fn distinct_post_categories(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<String>> {
+    let rows = conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .filter(posts::categories.ne("[]"))
+            .select(posts::categories)
+            .distinct()
+            .load::<String>(c)
+    })?;
     let mut all_cats = std::collections::BTreeSet::new();
     for json_str in rows {
-        if let Ok(json_str) = json_str
-            && let Ok(cats) = serde_json::from_str::<Vec<String>>(&json_str)
-        {
+        if let Ok(cats) = serde_json::from_str::<Vec<String>>(&json_str) {
             all_cats.extend(cats);
         }
     }
     Ok(all_cats.into_iter().collect())
+}
+
+#[cfg(test)]
+pub fn make_test_post(id: &str, project_id: &str, slug: &str) -> Post {
+    Post {
+        id: id.into(),
+        project_id: project_id.into(),
+        title: id.into(),
+        slug: slug.into(),
+        excerpt: None,
+        content: None,
+        status: PostStatus::Draft,
+        author: None,
+        language: None,
+        do_not_translate: false,
+        template_slug: None,
+        file_path: String::new(),
+        checksum: None,
+        tags: Vec::new(),
+        categories: Vec::new(),
+        published_title: None,
+        published_content: None,
+        published_tags: None,
+        published_categories: None,
+        published_excerpt: None,
+        created_at: 1000,
+        updated_at: 1000,
+        published_at: None,
+    }
 }
 
 #[cfg(test)]
@@ -456,7 +449,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
 
     fn setup() -> Database {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
         db

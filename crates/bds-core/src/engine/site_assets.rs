@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 
 use crate::engine::{EngineError, EngineResult};
 use crate::render::{GeneratedWriteOutcome, write_generated_bytes};

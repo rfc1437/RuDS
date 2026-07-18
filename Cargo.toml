@@ -15,8 +15,6 @@ license = "MIT"
 [workspace.dependencies]
 # Foundation
 base64 = "0.22"
-rusqlite = { version = "0.33", features = ["bundled", "vtab"] }
-refinery = { version = "0.8", features = ["rusqlite"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,6 +41,9 @@ rayon = "1.10"
 pagefind = "1.5.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+diesel = { version = "2.3.11", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2.3.2"
+libsqlite3-sys = { version = "0.37.0", features = ["bundled"] }
 
 # UI framework
 iced = { version = "0.13", features = ["wgpu", "advanced", "image", "svg", "tokio"] }

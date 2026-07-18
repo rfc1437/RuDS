@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
 use crate::db::from_row::{script_kind_to_str, template_kind_to_str};
@@ -629,7 +629,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (Database, TempDir) {
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
         ensure_fts_tables(db.conn()).unwrap();
         insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
