@@ -380,6 +380,7 @@ fn view_manage<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Me
                     width: if selected { 1.0 } else { 0.0 },
                     color: Color::from_rgb(0.35, 0.45, 0.65),
                 },
+                text_color: Color::WHITE,
                 ..button::Style::default()
             })
             .into()
