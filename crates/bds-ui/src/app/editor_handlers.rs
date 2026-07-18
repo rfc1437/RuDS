@@ -432,13 +432,19 @@ impl BdsApp {
             && let Some(state) = self.media_editors.get_mut(&tab_id)
         {
             match msg {
+                MediaEditorMsg::ToggleQuickActions => {
+                    state.quick_actions_open = !state.quick_actions_open;
+                }
                 MediaEditorMsg::AnalyzeWithAi => {
+                    state.quick_actions_open = false;
                     deferred = DeferredMediaAction::Analyze(tab_id.clone());
                 }
                 MediaEditorMsg::DetectLanguage => {
+                    state.quick_actions_open = false;
                     deferred = DeferredMediaAction::DetectLanguage(tab_id.clone());
                 }
                 MediaEditorMsg::TranslateMetadata => {
+                    state.quick_actions_open = false;
                     deferred = DeferredMediaAction::OpenTranslate(tab_id.clone());
                 }
                 MediaEditorMsg::TranslateTo(target_language) => {
