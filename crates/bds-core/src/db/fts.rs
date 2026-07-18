@@ -32,6 +32,30 @@ struct TableCountRow {
     count: i64,
 }
 
+#[derive(QueryableByName)]
+#[diesel(check_for_backend(Sqlite))]
+struct ColumnNameRow {
+    #[diesel(sql_type = Text)]
+    name: String,
+}
+
+const CREATE_FTS_TABLES: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+            post_id UNINDEXED,
+            title,
+            excerpt,
+            content,
+            tags,
+            categories
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
+            media_id UNINDEXED,
+            title,
+            alt,
+            caption,
+            original_name,
+            tags
+        );";
+
 /// Whether both application FTS5 virtual tables are present.
 pub fn tables_exist(conn: &Connection) -> QueryResult<bool> {
     conn.with(|c| {
@@ -49,30 +73,64 @@ pub fn tables_exist(conn: &Connection) -> QueryResult<bool> {
 /// Schema follows specs/schema.allium: multi-column FTS5 with separate fields
 /// for weighted search. Not content-sync — we manually manage stemmed content.
 pub fn ensure_fts_tables(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| c.batch_execute(CREATE_FTS_TABLES))
+}
+
+/// Whether the runtime-managed FTS tables have the current deployed schema.
+pub fn schema_is_current(conn: &Connection) -> QueryResult<bool> {
     conn.with(|c| {
-        c.batch_execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
-            post_id UNINDEXED,
-            title,
-            excerpt,
-            content,
-            tags,
-            categories
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
-            media_id UNINDEXED,
-            title,
-            alt,
-            caption,
-            original_name,
-            tags
-        );",
-        )
+        let post_columns =
+            diesel::sql_query("SELECT name FROM pragma_table_info('posts_fts') ORDER BY cid")
+                .load::<ColumnNameRow>(c)?
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>();
+        let media_columns =
+            diesel::sql_query("SELECT name FROM pragma_table_info('media_fts') ORDER BY cid")
+                .load::<ColumnNameRow>(c)?
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>();
+
+        Ok(post_columns
+            == [
+                "post_id",
+                "title",
+                "excerpt",
+                "content",
+                "tags",
+                "categories",
+            ]
+            && media_columns
+                == [
+                    "media_id",
+                    "title",
+                    "alt",
+                    "caption",
+                    "original_name",
+                    "tags",
+                ])
     })
 }
 
-pub fn clear_indexes(conn: &Connection) -> QueryResult<()> {
-    conn.with(|c| c.batch_execute("DELETE FROM posts_fts; DELETE FROM media_fts;"))
+/// Replace the derived FTS tables without touching user-authored data.
+pub fn recreate_tables(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| {
+        c.batch_execute("DROP TABLE IF EXISTS posts_fts; DROP TABLE IF EXISTS media_fts;")?;
+        c.batch_execute(CREATE_FTS_TABLES)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn install_deployed_schema_for_test(conn: &Connection) -> QueryResult<()> {
+    conn.with(|c| {
+        c.batch_execute(
+            "DROP TABLE posts_fts;
+             DROP TABLE media_fts;
+             CREATE VIRTUAL TABLE posts_fts USING fts5(post_id UNINDEXED, content);
+             CREATE VIRTUAL TABLE media_fts USING fts5(media_id UNINDEXED, content);",
+        )
+    })
 }
 
 pub fn drop_post_index(conn: &Connection) -> QueryResult<()> {

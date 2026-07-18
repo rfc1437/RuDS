@@ -440,9 +440,21 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
     post.status = PostStatus::Published;
     post.checksum = checksum;
     post.updated_at = now_unix_ms();
-    qp::update_post(conn, &post)?;
-    fts_index_post(conn, &post)?;
-    Ok(post)
+    conn.begin_savepoint()?;
+    match (|| {
+        qp::update_post(conn, &post)?;
+        fts_index_post(conn, &post)?;
+        Ok(post)
+    })() {
+        Ok(post) => {
+            conn.release_savepoint()?;
+            Ok(post)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
 }
 
 /// Create a new draft post by duplicating an existing post.
@@ -1427,6 +1439,93 @@ mod tests {
         assert_eq!(discarded.content, None);
         assert_eq!(discarded.language.as_deref(), Some("en"));
         assert!(!discarded.do_not_translate);
+    }
+
+    #[test]
+    fn discard_works_after_deployed_search_index_schema_is_repaired() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Deployed Schema",
+            Some("published body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Draft Title"),
+            None,
+            None,
+            Some("draft body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        crate::db::fts::install_deployed_schema_for_test(db.conn()).unwrap();
+
+        assert!(crate::engine::search::prepare_search_index(db.conn()).unwrap());
+        crate::engine::search::rebuild_search_index(db.conn(), None).unwrap();
+        let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_eq!(discarded.title, "Deployed Schema");
+        assert_eq!(discarded.status, PostStatus::Published);
+        assert!(!crate::engine::search::search_index_rebuild_required(db.conn()).unwrap());
+    }
+
+    #[test]
+    fn discard_rolls_back_when_search_index_update_fails() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Published Title",
+            Some("published body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Draft Title"),
+            None,
+            None,
+            Some("draft body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        crate::db::fts::install_deployed_schema_for_test(db.conn()).unwrap();
+
+        assert!(discard_post_draft(db.conn(), dir.path(), &post.id).is_err());
+        let unchanged = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(unchanged.title, "Draft Title");
+        assert_eq!(unchanged.status, PostStatus::Draft);
+        assert_eq!(unchanged.content.as_deref(), Some("draft body"));
     }
 
     #[test]

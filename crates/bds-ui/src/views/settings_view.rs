@@ -336,6 +336,7 @@ pub enum SettingsMsg {
     RebuildScripts,
     RebuildTemplates,
     RebuildLinks,
+    RebuildSearchIndex,
     RegenerateThumbnails,
     OpenDataFolder,
     /// Navigate to a specific section from sidebar; expand it, collapse all others.
@@ -945,6 +946,10 @@ fn section_data<'a>(locale: UiLocale) -> Element<'a, Message> {
             .width(Length::Fill),
         button(text(t(locale, "settings.rebuildLinks")).size(13))
             .on_press(Message::Settings(SettingsMsg::RebuildLinks))
+            .padding([6, 16])
+            .width(Length::Fill),
+        button(text(t(locale, "settings.rebuildSearchIndex")).size(13))
+            .on_press(Message::Settings(SettingsMsg::RebuildSearchIndex))
             .padding([6, 16])
             .width(Length::Fill),
         button(text(t(locale, "settings.regenerateThumbnails")).size(13))

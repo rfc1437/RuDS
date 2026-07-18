@@ -1,10 +1,18 @@
 //! Full-text search reindexing engine functions.
 
+use std::path::Path;
+
 use crate::db::DbConnection as Connection;
 
 use crate::db::fts;
-use crate::db::queries::{media as media_q, media_translation, post as post_q, post_translation};
+use crate::db::queries::{
+    media as media_q, media_translation, post as post_q, post_translation, project as project_q,
+    setting,
+};
 use crate::engine::EngineResult;
+use crate::util::now_unix_ms;
+
+const REBUILD_REQUIRED_SETTING: &str = "app.search-index-rebuild-required";
 
 /// Result of a full reindex operation.
 pub struct ReindexReport {
@@ -15,104 +23,163 @@ pub struct ReindexReport {
 /// Per-item progress callback: (current_item, total_items, item_description).
 pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
 
-/// Drop and rebuild the entire FTS index for all posts and media in a project.
-pub fn reindex_all(
-    conn: &Connection,
-    project_id: &str,
-    main_language: &str,
-) -> EngineResult<ReindexReport> {
-    reindex_all_with_progress(conn, project_id, main_language, None)
+/// Repair a missing or previously deployed FTS schema and report whether its
+/// derived content still needs to be rebuilt.
+pub fn prepare_search_index(conn: &Connection) -> EngineResult<bool> {
+    if fts::schema_is_current(conn)? {
+        return search_index_rebuild_required(conn);
+    }
+
+    let projects = project_q::list_projects(conn)?;
+    let has_content = projects.iter().try_fold(false, |has_content, project| {
+        Ok::<_, diesel::result::Error>(
+            has_content
+                || post_q::count_posts_by_project(conn, &project.id)? > 0
+                || media_q::count_media_by_project(conn, &project.id)? > 0,
+        )
+    })?;
+
+    conn.begin_savepoint()?;
+    let result = (|| {
+        fts::recreate_tables(conn)?;
+        setting::set_setting_value(
+            conn,
+            REBUILD_REQUIRED_SETTING,
+            if has_content { "true" } else { "false" },
+            now_unix_ms(),
+        )?;
+        Ok::<_, diesel::result::Error>(())
+    })();
+    match result {
+        Ok(()) => conn.release_savepoint()?,
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            return Err(error.into());
+        }
+    }
+
+    Ok(has_content)
 }
 
-/// Like `reindex_all` but with optional per-item progress.
-pub fn reindex_all_with_progress(
+pub fn search_index_rebuild_required(conn: &Connection) -> EngineResult<bool> {
+    match setting::get_setting_by_key(conn, REBUILD_REQUIRED_SETTING) {
+        Ok(value) => Ok(value.value == "true"),
+        Err(diesel::result::Error::NotFound) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Atomically recreate and rebuild the shared FTS index for every project.
+pub fn rebuild_search_index(
     conn: &Connection,
-    project_id: &str,
-    main_language: &str,
     on_item: Option<ItemProgressFn>,
 ) -> EngineResult<ReindexReport> {
-    // Wipe existing FTS content
-    fts::clear_indexes(conn)?;
-
-    // Reindex all posts
-    let posts = post_q::list_posts_by_project(conn, project_id)?;
-
-    // Reindex all media
-    let media_items = media_q::list_media_by_project(conn, project_id)?;
-
-    let total = posts.len() + media_items.len();
-
-    let mut posts_indexed = 0;
-    for (i, post) in posts.iter().enumerate() {
-        if let Some(ref cb) = on_item {
-            cb(i + 1, total, &post.title);
+    conn.begin_savepoint()?;
+    let result = (|| {
+        fts::recreate_tables(conn)?;
+        let report = index_all_projects(conn, on_item.as_ref())?;
+        setting::set_setting_value(conn, REBUILD_REQUIRED_SETTING, "false", now_unix_ms())?;
+        Ok(report)
+    })();
+    match result {
+        Ok(report) => {
+            conn.release_savepoint()?;
+            Ok(report)
         }
-        let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
+}
 
-        let trans_data: Vec<fts::PostTranslationFts> = translations
-            .iter()
-            .map(|t| fts::PostTranslationFts {
-                title: t.title.clone(),
-                excerpt: t.excerpt.clone(),
-                content: t.content.clone(),
-                language: t.language.clone(),
-            })
-            .collect();
+fn index_all_projects(
+    conn: &Connection,
+    on_item: Option<&ItemProgressFn>,
+) -> EngineResult<ReindexReport> {
+    let projects = project_q::list_projects(conn)?;
+    let total = projects.iter().try_fold(0usize, |total, project| {
+        Ok::<_, diesel::result::Error>(
+            total
+                + post_q::count_posts_by_project(conn, &project.id)? as usize
+                + media_q::count_media_by_project(conn, &project.id)? as usize,
+        )
+    })?;
+    let mut current = 0;
+    let mut report = ReindexReport {
+        posts_indexed: 0,
+        media_indexed: 0,
+    };
 
-        let language = post.language.as_deref().unwrap_or(main_language);
-        fts::index_post(
-            conn,
-            &post.id,
-            &post.title,
-            post.excerpt.as_deref(),
-            post.content.as_deref(),
-            &post.tags,
-            &post.categories,
-            &trans_data,
-            language,
-        )?;
+    for project in projects {
+        let main_language = project
+            .data_path
+            .as_deref()
+            .and_then(|path| crate::engine::meta::read_project_json(Path::new(path)).ok())
+            .and_then(|metadata| metadata.main_language)
+            .unwrap_or_else(|| "en".to_string());
 
-        posts_indexed += 1;
+        for post in post_q::list_posts_by_project(conn, &project.id)? {
+            current += 1;
+            if let Some(callback) = on_item {
+                callback(current, total, &post.title);
+            }
+            let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
+            let translation_data = translations
+                .iter()
+                .map(|translation| fts::PostTranslationFts {
+                    title: translation.title.clone(),
+                    excerpt: translation.excerpt.clone(),
+                    content: translation.content.clone(),
+                    language: translation.language.clone(),
+                })
+                .collect::<Vec<_>>();
+            fts::index_post(
+                conn,
+                &post.id,
+                &post.title,
+                post.excerpt.as_deref(),
+                post.content.as_deref(),
+                &post.tags,
+                &post.categories,
+                &translation_data,
+                post.language.as_deref().unwrap_or(&main_language),
+            )?;
+            report.posts_indexed += 1;
+        }
+
+        for media in media_q::list_media_by_project(conn, &project.id)? {
+            current += 1;
+            if let Some(callback) = on_item {
+                callback(current, total, &media.original_name);
+            }
+            let translations =
+                media_translation::list_media_translations_by_media(conn, &media.id)?;
+            let translation_data = translations
+                .iter()
+                .map(|translation| fts::MediaTranslationFts {
+                    title: translation.title.clone(),
+                    alt: translation.alt.clone(),
+                    caption: translation.caption.clone(),
+                    language: translation.language.clone(),
+                })
+                .collect::<Vec<_>>();
+            fts::index_media(
+                conn,
+                &media.id,
+                media.title.as_deref(),
+                media.alt.as_deref(),
+                media.caption.as_deref(),
+                &media.original_name,
+                &media.tags,
+                &translation_data,
+                media.language.as_deref().unwrap_or(&main_language),
+            )?;
+            report.media_indexed += 1;
+        }
     }
 
-    let offset = posts.len();
-    let mut media_indexed = 0;
-    for (i, m) in media_items.iter().enumerate() {
-        if let Some(ref cb) = on_item {
-            cb(offset + i + 1, total, &m.original_name);
-        }
-        let translations = media_translation::list_media_translations_by_media(conn, &m.id)?;
-
-        let trans_data: Vec<fts::MediaTranslationFts> = translations
-            .iter()
-            .map(|t| fts::MediaTranslationFts {
-                title: t.title.clone(),
-                alt: t.alt.clone(),
-                caption: t.caption.clone(),
-                language: t.language.clone(),
-            })
-            .collect();
-
-        let language = m.language.as_deref().unwrap_or(main_language);
-        fts::index_media(
-            conn,
-            &m.id,
-            m.title.as_deref(),
-            m.alt.as_deref(),
-            m.caption.as_deref(),
-            &m.original_name,
-            &m.tags,
-            &trans_data,
-            language,
-        )?;
-
-        media_indexed += 1;
-    }
-
-    Ok(ReindexReport {
-        posts_indexed,
-        media_indexed,
-    })
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -139,15 +206,15 @@ mod tests {
     }
 
     #[test]
-    fn reindex_empty_project() {
-        let (db, project_id) = setup();
-        let report = reindex_all(db.conn(), &project_id, "en").unwrap();
+    fn rebuild_empty_index() {
+        let (db, _) = setup();
+        let report = rebuild_search_index(db.conn(), None).unwrap();
         assert_eq!(report.posts_indexed, 0);
         assert_eq!(report.media_indexed, 0);
     }
 
     #[test]
-    fn reindex_with_posts() {
+    fn rebuild_with_posts() {
         let (db, project_id) = setup();
         let tmp = tempfile::tempdir().unwrap();
 
@@ -165,12 +232,58 @@ mod tests {
         )
         .unwrap();
 
-        let report = reindex_all(db.conn(), &project_id, "en").unwrap();
+        let report = rebuild_search_index(db.conn(), None).unwrap();
         assert_eq!(report.posts_indexed, 1);
         assert_eq!(report.media_indexed, 0);
 
         // Verify searchable
         let results = crate::db::fts::search_posts(db.conn(), "test", "en").unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn shared_rebuild_indexes_every_project() {
+        let (db, first_project_id) = setup();
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let second_project = engine::project::create_project(
+            db.conn(),
+            "Second Project",
+            Some(second_dir.path().to_str().unwrap()),
+        )
+        .unwrap();
+
+        for (project_id, data_dir, title) in [
+            (
+                &first_project_id,
+                first_dir.path(),
+                "First Project Searchable",
+            ),
+            (
+                &second_project.id,
+                second_dir.path(),
+                "Second Project Searchable",
+            ),
+        ] {
+            engine::post::create_post(
+                db.conn(),
+                data_dir,
+                project_id,
+                title,
+                Some("body"),
+                vec![],
+                vec![],
+                None,
+                Some("en"),
+                None,
+            )
+            .unwrap();
+        }
+
+        let report = rebuild_search_index(db.conn(), None).unwrap();
+        let results = crate::db::fts::search_posts(db.conn(), "searchable", "en").unwrap();
+
+        assert_eq!(report.posts_indexed, 2);
+        assert_eq!(results.len(), 2);
     }
 }

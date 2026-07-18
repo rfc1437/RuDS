@@ -13,6 +13,11 @@ surface SearchControlSurface {
     provides:
         SearchPostsRequested(query, filters)
         SearchMediaRequested(query, filters)
+        RebuildSearchIndexRequested()
+
+    @guarantee DeferredRepairChoice
+        -- When the search index requires repair, the operator is informed and
+        -- may rebuild immediately or defer the rebuild until later.
 }
 
 surface SearchIndexRuntimeSurface {
@@ -21,6 +26,12 @@ surface SearchIndexRuntimeSurface {
     provides:
         SearchIndexUpdated(post)
         SearchIndexUpdated(media)
+        SearchIndexSchemaMismatchDetected()
+
+    @guarantee SafeSearchIndexRepair
+        -- An incompatible derived index is made safe without changing authored
+        -- content. Search remains unavailable until an atomic rebuild covers
+        -- posts and media from every project.
 }
 
 value StemmerLanguage {
@@ -164,4 +175,14 @@ rule IndexMedia {
         original_name: original_name,
         tags: tags
     )
+}
+
+rule PrepareIncompatibleSearchIndex {
+    when: SearchIndexSchemaMismatchDetected()
+    ensures: SearchIndexRepairRequired()
+}
+
+rule RebuildSearchIndex {
+    when: RebuildSearchIndexRequested()
+    ensures: SearchIndexesRebuilt()
 }

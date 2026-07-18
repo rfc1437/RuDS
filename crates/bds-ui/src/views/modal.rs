@@ -62,6 +62,8 @@ pub enum ModalState {
         message: String,
         on_confirm: ConfirmAction,
     },
+    SearchIndexRepair,
+    SearchIndexRebuilding,
     /// Per modals.allium InsertPostLinkModal: Ctrl+K link insertion.
     PostInsertLink {
         post_id: String,
@@ -107,6 +109,7 @@ pub enum PostInsertLinkTab {
 /// What action to perform when modal is confirmed.
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
+    RebuildSearchIndex,
     DeleteProject(String),
     DeletePost(String),
     DeleteMedia(String),
@@ -368,6 +371,55 @@ pub fn view(
                 .style(modal_box_style)
                 .into()
         }
+
+        ModalState::SearchIndexRepair => {
+            let buttons = row![
+                button(text(t(locale, "searchIndexRepair.later")).size(13))
+                    .on_press(Message::DismissModal)
+                    .padding([6, 16])
+                    .style(cancel_button_style),
+                Space::with_width(Length::Fill),
+                button(text(t(locale, "searchIndexRepair.rebuildNow")).size(13))
+                    .on_press(Message::ConfirmModal(ConfirmAction::RebuildSearchIndex))
+                    .padding([6, 16])
+                    .style(confirm_button_style),
+            ];
+            let content = column![
+                text(t(locale, "searchIndexRepair.title"))
+                    .size(16)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::WHITE),
+                Space::with_height(12.0),
+                text(t(locale, "searchIndexRepair.message"))
+                    .size(13)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.80, 0.80, 0.85)),
+                Space::with_height(16.0),
+                buttons,
+            ];
+            container(content.padding(20))
+                .width(Length::Fixed(420.0))
+                .style(modal_box_style)
+                .into()
+        }
+
+        ModalState::SearchIndexRebuilding => container(
+            column![
+                text(t(locale, "searchIndexRepair.rebuildingTitle"))
+                    .size(16)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::WHITE),
+                Space::with_height(12.0),
+                text(t(locale, "searchIndexRepair.rebuildingMessage"))
+                    .size(13)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.80, 0.80, 0.85)),
+            ]
+            .padding(20),
+        )
+        .width(Length::Fixed(420.0))
+        .style(modal_box_style)
+        .into(),
 
         ModalState::PostInsertLink {
             post_id: _post_id,

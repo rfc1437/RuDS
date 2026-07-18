@@ -686,6 +686,9 @@ pub struct BdsApp {
     task_manager: Arc<TaskManager>,
     task_snapshots: Vec<TaskSnapshot>,
     output_entries: Vec<OutputEntry>,
+    search_index_rebuild_required: bool,
+    search_index_rebuild_running: bool,
+    search_index_rebuild_task_id: Option<TaskId>,
 
     // Platform
     _menu_bar: Option<muda::Menu>,
@@ -747,10 +750,13 @@ impl BdsApp {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let mut db = Database::open(&db_path).ok();
-        if let Some(ref mut db) = db {
+        let db = Database::open(&db_path).ok();
+        if let Some(ref db) = db {
             let _ = db.migrate();
         }
+        let search_index_rebuild_required = db
+            .as_ref()
+            .is_some_and(|db| engine::search::prepare_search_index(db.conn()).unwrap_or(true));
 
         // Load projects
         let projects = db
@@ -831,6 +837,9 @@ impl BdsApp {
                 task_manager: Arc::new(TaskManager::default()),
                 task_snapshots: Vec::new(),
                 output_entries: Vec::new(),
+                search_index_rebuild_required,
+                search_index_rebuild_running: false,
+                search_index_rebuild_task_id: None,
                 _menu_bar: Some(menu_bar),
                 menu_registry: registry,
                 ui_locale: locale,
@@ -841,7 +850,8 @@ impl BdsApp {
                 project_dropdown_open: false,
                 theme_badge: String::from("pico"),
                 toasts: Vec::new(),
-                active_modal: None,
+                active_modal: search_index_rebuild_required
+                    .then_some(modal::ModalState::SearchIndexRepair),
                 preview_session: None,
                 embedded_preview: None,
                 main_window_id: None,
@@ -889,6 +899,9 @@ impl BdsApp {
             task_manager: Arc::new(TaskManager::default()),
             task_snapshots: Vec::new(),
             output_entries: Vec::new(),
+            search_index_rebuild_required: false,
+            search_index_rebuild_running: false,
+            search_index_rebuild_task_id: None,
             _menu_bar: None,
             menu_registry: MenuRegistry::empty(),
             ui_locale: UiLocale::En,
@@ -1260,7 +1273,9 @@ impl BdsApp {
             // ── Tasks ──
             Message::TaskTick => {
                 self.refresh_task_snapshots();
-                self.auto_save_due_post_editors();
+                if !self.search_index_rebuild_running {
+                    self.auto_save_due_post_editors();
+                }
                 Task::none()
             }
 
@@ -1334,52 +1349,10 @@ impl BdsApp {
                 },
             ),
             Message::ReindexText => {
-                let locale = self.ui_locale;
-                self.spawn_engine_task(
-                    "engine.reindexStarted",
-                    move |db_path, project_id, data_dir, tm, tid| {
-                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(
-                            tid,
-                            Some(0.0),
-                            Some(t(locale, "engine.readingProjectConfig")),
-                        );
-                        let main_lang = engine::meta::read_project_json(&data_dir)
-                            .ok()
-                            .and_then(|m| m.main_language)
-                            .unwrap_or_else(|| "en".to_string());
-                        let tm2 = Arc::clone(&tm);
-                        let on_item: engine::search::ItemProgressFn =
-                            Box::new(move |current, total, name| {
-                                let pct = if total > 0 {
-                                    current as f32 / total as f32
-                                } else {
-                                    1.0
-                                };
-                                let msg = tw(
-                                    locale,
-                                    "engine.indexingItem",
-                                    &[
-                                        ("current", &current.to_string()),
-                                        ("total", &total.to_string()),
-                                        ("name", name),
-                                    ],
-                                );
-                                tm2.report_progress(tid, Some(pct), Some(msg));
-                            });
-                        let report = engine::search::reindex_all_with_progress(
-                            db.conn(),
-                            &project_id,
-                            &main_lang,
-                            Some(on_item),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(format!(
-                            "posts={}, media={}",
-                            report.posts_indexed, report.media_indexed
-                        ))
-                    },
-                )
+                if !self.search_index_rebuild_running {
+                    self.active_modal = Some(modal::ModalState::SearchIndexRepair);
+                }
+                Task::none()
             }
             Message::RegenerateCalendar => {
                 let locale = self.ui_locale;
@@ -1577,6 +1550,7 @@ impl BdsApp {
                 label,
                 result,
             } => {
+                let search_rebuild_finished = self.search_index_rebuild_task_id == Some(task_id);
                 match &result {
                     Ok(detail) => {
                         self.task_manager.complete(task_id);
@@ -1591,6 +1565,15 @@ impl BdsApp {
                         );
                         self.notify(ToastLevel::Error, &message);
                     }
+                }
+                if search_rebuild_finished {
+                    self.search_index_rebuild_running = false;
+                    self.search_index_rebuild_task_id = None;
+                    self.active_modal = None;
+                    if result.is_ok() {
+                        self.search_index_rebuild_required = false;
+                    }
+                    self.sync_menu_state();
                 }
                 let sidebar_task = self.refresh_counts();
                 self.refresh_task_snapshots();
@@ -1670,6 +1653,10 @@ impl BdsApp {
 
             // ── Sidebar filters ──
             Message::PostSearchChanged(query) => {
+                if self.search_index_rebuild_required && !query.is_empty() {
+                    self.active_modal = Some(modal::ModalState::SearchIndexRepair);
+                    return Task::none();
+                }
                 let filter = match self.sidebar_view {
                     SidebarView::Pages => &mut self.page_filter,
                     _ => &mut self.post_filter,
@@ -1767,6 +1754,10 @@ impl BdsApp {
                 self.refresh_sidebar_posts()
             }
             Message::MediaSearchChanged(query) => {
+                if self.search_index_rebuild_required && !query.is_empty() {
+                    self.active_modal = Some(modal::ModalState::SearchIndexRepair);
+                    return Task::none();
+                }
                 self.media_filter.search_query = query;
                 self.refresh_sidebar_media()
             }
@@ -1838,6 +1829,7 @@ impl BdsApp {
             Message::ConfirmModal(action) => {
                 self.active_modal = None;
                 match action {
+                    modal::ConfirmAction::RebuildSearchIndex => self.start_search_index_rebuild(),
                     modal::ConfirmAction::DeleteProject(id) => {
                         Task::done(Message::DeleteProject(id))
                     }
@@ -3235,14 +3227,80 @@ impl BdsApp {
         )
     }
 
+    /// Rebuild the shared search index while the modal blocks editor writes.
+    fn start_search_index_rebuild(&mut self) -> Task<Message> {
+        if self.db.is_none() || self.search_index_rebuild_running {
+            return Task::none();
+        }
+        if self.task_manager.running_count() > 0 || self.task_manager.pending_count() > 0 {
+            self.active_modal = Some(modal::ModalState::SearchIndexRepair);
+            self.notify(
+                ToastLevel::Warning,
+                &t(self.ui_locale, "searchIndexRepair.waitForTasks"),
+            );
+            return Task::none();
+        }
+
+        self.flush_active_post_editor();
+        let locale = self.ui_locale;
+        let label = t(locale, "engine.reindexStarted");
+        self.add_output(&label);
+        let task_id = self.task_manager.submit(&label);
+        self.search_index_rebuild_running = true;
+        self.search_index_rebuild_task_id = Some(task_id);
+        self.active_modal = Some(modal::ModalState::SearchIndexRebuilding);
+        self.refresh_task_snapshots();
+        self.sync_menu_state();
+
+        let db_path = self.db_path.clone();
+        let label_for_message = label.clone();
+        let task_manager = Arc::clone(&self.task_manager);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    let progress_manager = Arc::clone(&task_manager);
+                    let on_item: engine::search::ItemProgressFn =
+                        Box::new(move |current, total, name| {
+                            let progress = if total > 0 {
+                                current as f32 / total as f32
+                            } else {
+                                1.0
+                            };
+                            let message = tw(
+                                locale,
+                                "engine.indexingItem",
+                                &[
+                                    ("current", &current.to_string()),
+                                    ("total", &total.to_string()),
+                                    ("name", name),
+                                ],
+                            );
+                            progress_manager.report_progress(
+                                task_id,
+                                Some(progress),
+                                Some(message),
+                            );
+                        });
+                    let report = engine::search::rebuild_search_index(db.conn(), Some(on_item))
+                        .map_err(|error| error.to_string())?;
+                    Ok(format!(
+                        "posts={}, media={}",
+                        report.posts_indexed, report.media_indexed
+                    ))
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+            },
+            move |result| Message::EngineTaskDone {
+                task_id,
+                label: label_for_message.clone(),
+                result,
+            },
+        )
+    }
+
     /// Spawn a blocking engine operation on a background thread via TaskManager.
-    ///
-    /// Returns `Task::none()` if no active project/db/data_dir.
-    /// Otherwise registers the task, logs the start message, and returns an
-    /// async `Task` that opens a fresh DB connection on a worker thread.
-    ///
-    /// The closure receives `(db_path, project_id, data_dir, task_manager, task_id)`.
-    /// Use `task_manager.report_progress(task_id, percent, message)` for live updates.
     fn spawn_engine_task<F>(&mut self, label_key: &str, work: F) -> Task<Message>
     where
         F: FnOnce(PathBuf, String, PathBuf, Arc<TaskManager>, TaskId) -> Result<String, String>
@@ -3854,12 +3912,13 @@ impl BdsApp {
     /// Called after state-changing operations (project switch, tab open/close,
     /// offline toggle) so that menu items reflect what's actually possible.
     fn sync_menu_state(&self) {
-        let has_project = self.active_project.is_some();
+        let interactions_enabled = !self.search_index_rebuild_running;
+        let has_project = self.active_project.is_some() && interactions_enabled;
         let active_tab_type = self
             .active_tab
             .as_ref()
             .and_then(|id| self.tabs.iter().find(|t| t.id == *id).map(|t| &t.tab_type));
-        let has_tab = active_tab_type.is_some();
+        let has_tab = active_tab_type.is_some() && interactions_enabled;
         let has_post_tab = active_tab_type == Some(&TabType::Post);
 
         // File group: need active project for most, need open tab for Save
@@ -5831,6 +5890,7 @@ impl BdsApp {
                     },
                 );
             }
+            SettingsMsg::RebuildSearchIndex => return Task::done(Message::ReindexText),
             SettingsMsg::RegenerateThumbnails => {
                 let locale = self.ui_locale;
                 return self.spawn_engine_task(
@@ -7022,6 +7082,7 @@ mod tests {
     };
     use crate::state::sidebar_filter::PostFilter;
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
+    use crate::views::modal;
     use crate::views::post_editor::PostEditorState;
     use crate::views::script_editor::ScriptEditorState;
     use crate::views::settings_view::SettingsViewState;
@@ -7107,6 +7168,35 @@ mod tests {
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
         BdsApp::new_for_tests(db, project, tmp.path().to_path_buf())
+    }
+
+    #[test]
+    fn search_index_rebuild_requires_confirmation_and_blocks_editing() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        app.search_index_rebuild_required = true;
+
+        let _ = app.update(Message::PostSearchChanged("query".to_string()));
+        assert!(app.post_filter.search_query.is_empty());
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::SearchIndexRepair)
+        ));
+
+        let _ = app.update(Message::ReindexText);
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::SearchIndexRepair)
+        ));
+
+        let _ = app.update(Message::ConfirmModal(
+            modal::ConfirmAction::RebuildSearchIndex,
+        ));
+        assert!(app.search_index_rebuild_running);
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::SearchIndexRebuilding)
+        ));
     }
 
     #[test]
