@@ -238,6 +238,7 @@ pub fn delete_project(
     let is_custom_path = project.data_path.is_some();
 
     q::delete_project(conn, project_id)?;
+    crate::engine::embedding::EmbeddingService::forget_project(project_id);
 
     // Clean up internal filesystem only (not custom external paths per spec)
     if !is_custom_path

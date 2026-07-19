@@ -35,6 +35,8 @@ pub enum MenuAction {
     EditMenu,
     RebuildDatabase,
     ReindexText,
+    RebuildEmbeddingIndex,
+    FindDuplicates,
     MetadataDiff,
     RegenerateCalendar,
     ValidateTranslations,
@@ -69,6 +71,8 @@ impl MenuAction {
         MenuAction::EditMenu,
         MenuAction::RebuildDatabase,
         MenuAction::ReindexText,
+        MenuAction::RebuildEmbeddingIndex,
+        MenuAction::FindDuplicates,
         MenuAction::MetadataDiff,
         MenuAction::RegenerateCalendar,
         MenuAction::ValidateTranslations,
@@ -101,6 +105,8 @@ impl MenuAction {
             "edit_menu" => Self::EditMenu,
             "rebuild_database" => Self::RebuildDatabase,
             "reindex_text" => Self::ReindexText,
+            "rebuild_embedding_index" => Self::RebuildEmbeddingIndex,
+            "find_duplicates" => Self::FindDuplicates,
             "metadata_diff" => Self::MetadataDiff,
             "regenerate_calendar" => Self::RegenerateCalendar,
             "validate_translations" => Self::ValidateTranslations,
@@ -136,6 +142,8 @@ impl MenuAction {
             Self::EditMenu => "menu.item.editMenu",
             Self::RebuildDatabase => "menu.item.rebuildDatabase",
             Self::ReindexText => "menu.item.reindexText",
+            Self::RebuildEmbeddingIndex => "menu.item.rebuildEmbeddingIndex",
+            Self::FindDuplicates => "menu.item.findDuplicates",
             Self::MetadataDiff => "menu.item.metadataDiff",
             Self::RegenerateCalendar => "menu.item.regenerateCalendar",
             Self::ValidateTranslations => "menu.item.validateTranslations",
@@ -173,6 +181,8 @@ pub(crate) fn action_enabled(
                 | MenuAction::EditMenu
                 | MenuAction::RebuildDatabase
                 | MenuAction::ReindexText
+                | MenuAction::RebuildEmbeddingIndex
+                | MenuAction::FindDuplicates
                 | MenuAction::MetadataDiff
                 | MenuAction::RegenerateCalendar
                 | MenuAction::ValidateTranslations
@@ -205,6 +215,8 @@ pub(crate) fn action_enabled(
         | MenuAction::EditMenu
         | MenuAction::RebuildDatabase
         | MenuAction::ReindexText
+        | MenuAction::RebuildEmbeddingIndex
+        | MenuAction::FindDuplicates
         | MenuAction::MetadataDiff
         | MenuAction::RegenerateCalendar
         | MenuAction::ValidateTranslations
@@ -413,6 +425,13 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
     let _ = blog_menu.append(&item(&mut reg, MenuAction::RebuildDatabase, locale, None));
     let _ = blog_menu.append(&item(&mut reg, MenuAction::ReindexText, locale, None));
+    let _ = blog_menu.append(&item(
+        &mut reg,
+        MenuAction::RebuildEmbeddingIndex,
+        locale,
+        None,
+    ));
+    let _ = blog_menu.append(&item(&mut reg, MenuAction::FindDuplicates, locale, None));
     let _ = blog_menu.append(&item(&mut reg, MenuAction::MetadataDiff, locale, None));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
     let _ = blog_menu.append(&item(

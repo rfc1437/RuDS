@@ -115,7 +115,7 @@ diesel::table! {
         post_id -> Text,
         project_id -> Text,
         content_hash -> Text,
-        vector -> Text,
+        vector -> Binary,
     }
 }
 

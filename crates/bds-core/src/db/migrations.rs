@@ -36,7 +36,7 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 6);
+        assert_eq!(applied, 7);
     }
 
     #[test]

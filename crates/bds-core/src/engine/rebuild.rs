@@ -170,15 +170,18 @@ fn rebuild_from_filesystem_inner(
         )));
     }
 
+    progress(0.98, "Refreshing semantic index...");
+    crate::engine::embedding::EmbeddingService::production(conn, data_dir)
+        .index_unindexed(project_id)?;
+
     progress(1.0, "Rebuild complete");
     Ok(report)
 }
 
 fn clear_project_rows(conn: &Connection, project_id: &str) -> EngineResult<()> {
     use crate::db::schema::{
-        dismissed_duplicate_pairs, embedding_keys, generated_file_hashes, import_definitions,
-        media, media_translations, post_links, post_media, post_translations, posts, scripts, tags,
-        templates,
+        generated_file_hashes, import_definitions, media, media_translations, post_links,
+        post_media, post_translations, posts, scripts, tags, templates,
     };
 
     let post_ids = crate::db::queries::post::list_posts_by_project(conn, project_id)?
@@ -217,13 +220,6 @@ fn clear_project_rows(conn: &Connection, project_id: &str) -> EngineResult<()> {
         .execute(connection)?;
         diesel::delete(
             generated_file_hashes::table.filter(generated_file_hashes::project_id.eq(project_id)),
-        )
-        .execute(connection)?;
-        diesel::delete(embedding_keys::table.filter(embedding_keys::project_id.eq(project_id)))
-            .execute(connection)?;
-        diesel::delete(
-            dismissed_duplicate_pairs::table
-                .filter(dismissed_duplicate_pairs::project_id.eq(project_id)),
         )
         .execute(connection)?;
         diesel::delete(

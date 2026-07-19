@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod db_notification;
+pub mod embedding;
 pub mod generated_file_hash;
 pub mod import_definition;
 pub mod mcp_proposal;

@@ -148,6 +148,19 @@ impl BdsApp {
                     }
                     state.tags_input.clear();
                 }
+                PostEditorMsg::AddSuggestedTag(tag) => {
+                    if !state
+                        .tags
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(&tag))
+                    {
+                        state.tags.push(tag.clone());
+                        state.mark_dirty();
+                    }
+                    state
+                        .semantic_tag_suggestions
+                        .retain(|candidate| !candidate.eq_ignore_ascii_case(&tag));
+                }
                 PostEditorMsg::RemoveTag(tag) => {
                     state.tags.retain(|t| t != &tag);
                     state.mark_dirty();

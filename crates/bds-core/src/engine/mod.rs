@@ -8,6 +8,7 @@ mod chat_tools;
 pub mod cli_launcher;
 pub mod cli_sync;
 pub mod domain_events;
+pub mod embedding;
 pub mod error;
 pub mod gallery_import;
 pub mod generation;

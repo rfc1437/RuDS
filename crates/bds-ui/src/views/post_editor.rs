@@ -76,6 +76,7 @@ pub struct PostEditorState {
     pub quick_actions_open: bool,
     pub tags_input: String,
     pub categories_input: String,
+    pub semantic_tag_suggestions: Vec<String>,
     pub active_language: String,
     pub canonical_language: String,
     pub blog_languages: Vec<String>,
@@ -123,6 +124,7 @@ impl Clone for PostEditorState {
             quick_actions_open: self.quick_actions_open,
             tags_input: self.tags_input.clone(),
             categories_input: self.categories_input.clone(),
+            semantic_tag_suggestions: self.semantic_tag_suggestions.clone(),
             active_language: self.active_language.clone(),
             canonical_language: self.canonical_language.clone(),
             blog_languages: self.blog_languages.clone(),
@@ -188,6 +190,7 @@ impl PostEditorState {
             quick_actions_open: false,
             tags_input: String::new(),
             categories_input: String::new(),
+            semantic_tag_suggestions: Vec::new(),
             active_language: canonical_lang.clone(),
             canonical_language: canonical_lang,
             blog_languages: blog_languages.to_vec(),
@@ -342,6 +345,7 @@ pub enum PostEditorMsg {
     SwitchLanguage(String),
     TagsInputChanged(String),
     TagsInputSubmit,
+    AddSuggestedTag(String),
     RemoveTag(String),
     CategoriesInputChanged(String),
     CategoriesInputSubmit,
@@ -619,6 +623,28 @@ pub fn view<'a>(
             Message::PostEditor(PostEditorMsg::TagsInputSubmit),
             |tag| Message::PostEditor(PostEditorMsg::RemoveTag(tag)),
         );
+        let semantic_tags: Element<'a, Message> = if state.semantic_tag_suggestions.is_empty() {
+            Space::new(0, 0).into()
+        } else {
+            let mut chips = row![
+                text(t(locale, "editor.semanticTagSuggestions"))
+                    .size(11)
+                    .color(inputs::LABEL_COLOR)
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            for tag in &state.semantic_tag_suggestions {
+                chips = chips.push(
+                    button(text(format!("+ {tag}")).size(11))
+                        .on_press(Message::PostEditor(PostEditorMsg::AddSuggestedTag(
+                            tag.clone(),
+                        )))
+                        .padding([4, 8])
+                        .style(inputs::secondary_button),
+                );
+            }
+            chips.into()
+        };
 
         // Categories chip input
         let categories_section = chip_input_field(
@@ -776,6 +802,7 @@ pub fn view<'a>(
                 meta_row1,
                 meta_row2,
                 tags_section,
+                semantic_tags,
                 categories_section,
                 outlinks_section,
                 backlinks_section,

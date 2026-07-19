@@ -36,7 +36,7 @@ pub struct RebuildReport {
 )]
 pub fn create_post(
     conn: &Connection,
-    _data_dir: &Path,
+    data_dir: &Path,
     project_id: &str,
     title: &str,
     content: Option<&str>,
@@ -91,6 +91,7 @@ pub fn create_post(
     fts_index_post(conn, &post)?;
 
     emit_post(&post, NotificationAction::Created);
+    crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
 
     Ok(post)
 }
@@ -102,7 +103,7 @@ pub fn create_post(
 )]
 pub fn update_post(
     conn: &Connection,
-    _data_dir: &Path,
+    data_dir: &Path,
     post_id: &str,
     title: Option<&str>,
     slug: Option<&str>,
@@ -169,7 +170,7 @@ pub fn update_post(
     if post.status == PostStatus::Published || post.status == PostStatus::Archived {
         // Reload content from filesystem if content field is NULL (published state)
         if post.content.is_none() && !post.file_path.is_empty() {
-            let abs_path = _data_dir.join(&post.file_path);
+            let abs_path = data_dir.join(&post.file_path);
             if abs_path.exists()
                 && let Ok(file_content) = fs::read_to_string(&abs_path)
                 && let Ok((_fm, body)) = read_post_file(&file_content)
@@ -187,6 +188,7 @@ pub fn update_post(
     fts_index_post(conn, &post)?;
 
     emit_post(&post, NotificationAction::Updated);
+    crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
 
     Ok(post)
 }
@@ -210,6 +212,7 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
         Ok(post) => {
             conn.release_savepoint()?;
             emit_post(&post, NotificationAction::Updated);
+            crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
             Ok(post)
         }
         Err(error) => {
@@ -343,7 +346,9 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     }
     let now = now_unix_ms();
     qp::update_post_status(conn, post_id, &PostStatus::Archived, now)?;
+    post.status = PostStatus::Archived;
     emit_post(&post, NotificationAction::Updated);
+    crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
     Ok(())
 }
 
@@ -455,6 +460,7 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
         Ok(post) => {
             conn.release_savepoint()?;
             emit_post(&post, NotificationAction::Updated);
+            crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
             Ok(post)
         }
         Err(error) => {
@@ -502,6 +508,8 @@ pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineR
 
     // Delete post from DB
     qp::delete_post(conn, post_id)?;
+
+    crate::engine::embedding::remove_post_best_effort(conn, data_dir, &post.project_id, post_id);
 
     emit_post(&post, NotificationAction::Deleted);
 

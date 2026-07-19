@@ -132,7 +132,7 @@ Available:
 - Fixed `.lua` script file contract.
 - Generated and bundled API/type references plus executable macro, transform, and utility examples under `docs/scripting/`.
 - Manifest-driven runtime, documentation, and completion data with drift checks.
-- `bds.sync` and `bds.embeddings` remain extension APIs and are not exposed by core.
+- The embedding extension adds the bDS2-compatible `bds.embeddings` namespace; `bds.sync` remains outside the core API.
 
 ## Remaining Core Blocks
 

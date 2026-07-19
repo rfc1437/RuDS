@@ -1543,6 +1543,99 @@
         }
       ],
       "returns": "table | nil"
+    },
+    {
+      "description": "Compute similarity scores from one source post to target posts.",
+      "name": "compute_similarities",
+      "namespace": "embeddings",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "target_ids",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Dismiss a duplicate candidate pair.",
+      "name": "dismiss_pair",
+      "namespace": "embeddings",
+      "params": [
+        {
+          "name": "post_id_a",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "post_id_b",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Find duplicate post candidates for the current project.",
+      "name": "find_duplicates",
+      "namespace": "embeddings",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Find posts similar to the given post id.",
+      "name": "find_similar",
+      "namespace": "embeddings",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Get embedding index progress for the current project.",
+      "name": "get_progress",
+      "namespace": "embeddings",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Index posts missing embeddings for the current project.",
+      "name": "index_unindexed_posts",
+      "namespace": "embeddings",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Suggest tags for a post from semantic similarity.",
+      "name": "suggest_tags",
+      "namespace": "embeddings",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "exclude_tags",
+          "required": false,
+          "type": "table"
+        }
+      ],
+      "returns": "table | nil"
     }
   ],
   "root_methods": [

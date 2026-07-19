@@ -258,8 +258,11 @@ CREATE TABLE IF NOT EXISTS embedding_keys (
     post_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     content_hash TEXT NOT NULL,
-    vector TEXT NOT NULL
+    vector BLOB NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS embedding_keys_project_post_idx
+    ON embedding_keys(project_id, post_id);
 
 CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
     id TEXT NOT NULL PRIMARY KEY,

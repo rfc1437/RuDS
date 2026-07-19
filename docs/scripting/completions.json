@@ -1670,6 +1670,106 @@
     "returns": "table | nil"
   },
   {
+    "description": "Compute similarity scores from one source post to target posts.",
+    "detail": "bds.embeddings.compute_similarities(post_id: string, target_ids: table) -> table | nil",
+    "insert_text": "bds.embeddings.compute_similarities(\"example-id\", { title = \"Example\" })",
+    "label": "bds.embeddings.compute_similarities",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "target_ids",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Dismiss a duplicate candidate pair.",
+    "detail": "bds.embeddings.dismiss_pair(post_id_a: string, post_id_b: string) -> boolean",
+    "insert_text": "bds.embeddings.dismiss_pair(\"example\", \"example\")",
+    "label": "bds.embeddings.dismiss_pair",
+    "parameters": [
+      {
+        "name": "post_id_a",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "post_id_b",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Find duplicate post candidates for the current project.",
+    "detail": "bds.embeddings.find_duplicates() -> table | nil",
+    "insert_text": "bds.embeddings.find_duplicates()",
+    "label": "bds.embeddings.find_duplicates",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Find posts similar to the given post id.",
+    "detail": "bds.embeddings.find_similar(post_id: string, limit?: integer) -> table | nil",
+    "insert_text": "bds.embeddings.find_similar(\"example-id\", nil)",
+    "label": "bds.embeddings.find_similar",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "limit",
+        "required": false,
+        "type": "integer"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Get embedding index progress for the current project.",
+    "detail": "bds.embeddings.get_progress() -> table | nil",
+    "insert_text": "bds.embeddings.get_progress()",
+    "label": "bds.embeddings.get_progress",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Index posts missing embeddings for the current project.",
+    "detail": "bds.embeddings.index_unindexed_posts() -> table | nil",
+    "insert_text": "bds.embeddings.index_unindexed_posts()",
+    "label": "bds.embeddings.index_unindexed_posts",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Suggest tags for a post from semantic similarity.",
+    "detail": "bds.embeddings.suggest_tags(post_id: string, exclude_tags?: table) -> table | nil",
+    "insert_text": "bds.embeddings.suggest_tags(\"example-id\", { title = \"Example\" })",
+    "label": "bds.embeddings.suggest_tags",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "exclude_tags",
+        "required": false,
+        "type": "table"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
     "description": "Report progress for the current managed job.",
     "detail": "bds.report_progress(payload: table) -> boolean",
     "insert_text": "bds.report_progress({ current = 1, total = 10, message = \"Working\" })",

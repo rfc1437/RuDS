@@ -456,6 +456,7 @@ mod tests {
             [
                 "app",
                 "chat",
+                "embeddings",
                 "media",
                 "meta",
                 "posts",
@@ -473,7 +474,7 @@ mod tests {
                 function main()
                     return {
                         sync = bds.sync,
-                        embeddings = bds.embeddings,
+                        embeddings = type(bds.embeddings),
                         report_progress = type(bds.report_progress),
                         post_search = type(bds.posts.search),
                         app_toast = type(bds.app.toast),
@@ -492,6 +493,7 @@ mod tests {
                 "report_progress": "function",
                 "post_search": "function",
                 "app_toast": "function",
+                "embeddings": "table",
             })
         );
     }
@@ -514,6 +516,7 @@ mod tests {
                         bds.tasks.status_snapshot(),
                         bds.publish.upload_site({}),
                         bds.chat.detect_post_language("title", "body"),
+                        bds.embeddings.get_progress(),
                     }
                 end
             "#,
@@ -525,8 +528,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(execution.value.as_array().unwrap().len(), 11);
-        assert_eq!(host.0.lock().unwrap().len(), 11);
+        assert_eq!(execution.value.as_array().unwrap().len(), 12);
+        assert_eq!(host.0.lock().unwrap().len(), 12);
     }
 
     #[test]

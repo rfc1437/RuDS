@@ -18,6 +18,7 @@ use crate::views::{
     activity_bar,
     chat_view::{self, ChatEditorState},
     dashboard::DashboardState,
+    duplicates::{self, DuplicatesState},
     git::{self, GitDiffState, GitUiState},
     media_editor::{self, MediaEditorState},
     metadata_diff::{self, MetadataDiffState},
@@ -128,6 +129,7 @@ pub fn view<'a>(
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
+    duplicates_state: &'a DuplicatesState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
     git_state: &'a GitUiState,
@@ -158,6 +160,7 @@ pub fn view<'a>(
         settings_state,
         dashboard_state,
         site_validation_state,
+        duplicates_state,
         metadata_diff_state,
         translation_validation_state,
         git_diffs,
@@ -400,6 +403,7 @@ fn route_content_area<'a>(
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
+    duplicates_state: &'a DuplicatesState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
     git_diffs: &'a HashMap<String, GitDiffState>,
@@ -489,6 +493,7 @@ fn route_content_area<'a>(
             }
         }
         ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
+        ContentRoute::FindDuplicates => duplicates::view(duplicates_state, locale),
         ContentRoute::MetadataDiff => metadata_diff::view(metadata_diff_state, locale),
         ContentRoute::TranslationValidation => {
             translation_validation::view(translation_validation_state, locale)
@@ -524,6 +529,7 @@ enum ContentRoute<'a> {
     Tags,
     Settings,
     SiteValidation,
+    FindDuplicates,
     MetadataDiff,
     TranslationValidation,
     GitDiff(&'a str),
@@ -612,11 +618,11 @@ fn route_kind<'a>(
         TabType::SiteValidation => ContentRoute::SiteValidation,
         TabType::MetadataDiff => ContentRoute::MetadataDiff,
         TabType::GitDiff => ContentRoute::GitDiff(tab_id),
+        TabType::FindDuplicates => ContentRoute::FindDuplicates,
         TabType::Style
         | TabType::MenuEditor
         | TabType::Documentation
-        | TabType::ApiDocumentation
-        | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
+        | TabType::ApiDocumentation => ContentRoute::Placeholder(&tab.title),
         TabType::TranslationValidation => ContentRoute::TranslationValidation,
     }
 }
@@ -678,7 +684,6 @@ mod tests {
             TabType::MenuEditor,
             TabType::Documentation,
             TabType::ApiDocumentation,
-            TabType::FindDuplicates,
         ];
 
         for tab_type in unsupported {
@@ -701,6 +706,35 @@ mod tests {
                 _ => panic!("expected placeholder route for {tab_type:?}"),
             }
         }
+    }
+
+    #[test]
+    fn duplicate_tab_routes_to_real_review_surface() {
+        let tabs = vec![tab(
+            "find_duplicates",
+            TabType::FindDuplicates,
+            "Duplicates",
+        )];
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
+        let site_validation = SiteValidationState::default();
+        let route = route_kind(
+            &tabs,
+            Some("find_duplicates"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            &empty_imports,
+            None,
+            None,
+            None,
+            &site_validation,
+        );
+        assert!(matches!(route, ContentRoute::FindDuplicates));
     }
 
     #[test]

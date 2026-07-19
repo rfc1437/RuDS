@@ -33,6 +33,7 @@ use crate::views::{
         DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag,
         DashboardTimelineMonth,
     },
+    duplicates::DuplicatesState,
     git::{GitDiffLoad, GitDiffState, GitNetworkCompletion, GitSnapshot, GitUiState},
     import_editor::{
         ImportAnalysisEvent, ImportEditorMsg, ImportEditorState, ImportExecutionEvent,
@@ -241,6 +242,23 @@ pub enum Message {
         result: Result<engine::generation::GenerationReport, String>,
     },
     SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
+    DuplicatesRefresh,
+    DuplicatesLoaded(Result<engine::embedding::DuplicateSearchResult, String>),
+    DuplicatesToggle(String, String),
+    DuplicatesCheckAll,
+    DuplicatesUncheckAll,
+    DuplicatesDismiss(String, String),
+    DuplicatesDismissSelected,
+    DuplicatesDismissed(Result<(), String>),
+    DuplicatesShowMore,
+    DuplicatesOpenPost(String),
+    EmbeddingReindex,
+    EmbeddingBackfill,
+    LoadSemanticTagSuggestions(String),
+    SemanticTagSuggestionsLoaded {
+        post_id: String,
+        result: Result<Vec<String>, String>,
+    },
 
     // Git
     GitRefresh,
@@ -927,6 +945,7 @@ pub struct BdsApp {
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
     site_validation_state: SiteValidationState,
+    duplicates_state: DuplicatesState,
     metadata_diff_state: MetadataDiffState,
     translation_validation_state: crate::views::translation_validation::TranslationValidationState,
     git_state: GitUiState,
@@ -1091,6 +1110,7 @@ impl BdsApp {
                 settings_state: None,
                 dashboard_state: None,
                 site_validation_state: SiteValidationState::default(),
+                duplicates_state: DuplicatesState::default(),
                 metadata_diff_state: MetadataDiffState::default(),
                 translation_validation_state: Default::default(),
                 git_state: GitUiState::default(),
@@ -1169,6 +1189,7 @@ impl BdsApp {
             settings_state: None,
             dashboard_state: None,
             site_validation_state: SiteValidationState::default(),
+            duplicates_state: DuplicatesState::default(),
             metadata_diff_state: MetadataDiffState::default(),
             translation_validation_state: Default::default(),
             git_state: GitUiState::default(),
@@ -1495,14 +1516,22 @@ impl BdsApp {
             Message::OpenTab(tab) => {
                 self.flush_active_post_editor();
                 let idx = tabs::open_tab(&mut self.tabs, tab);
+                let mut semantic_post_id = None;
                 if let Some(t) = self.tabs.get(idx) {
                     self.active_tab = Some(t.id.clone());
                     let tab_clone = t.clone();
+                    if tab_clone.tab_type == TabType::Post {
+                        semantic_post_id = Some(tab_clone.id.clone());
+                    }
                     self.load_editor_for_tab(&tab_clone);
                 }
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
-                self.sync_embedded_preview_for_active_post()
+                let mut tasks = vec![self.sync_embedded_preview_for_active_post()];
+                if let Some(post_id) = semantic_post_id {
+                    tasks.push(Task::done(Message::LoadSemanticTagSuggestions(post_id)));
+                }
+                Task::batch(tasks)
             }
             Message::CloseTab(id) => {
                 if self.active_tab.as_deref() == Some(id.as_str()) {
@@ -1573,17 +1602,24 @@ impl BdsApp {
                 }
                 let sidebar_task = self.refresh_counts();
                 self.sync_menu_state();
-                sidebar_task
+                Task::batch([sidebar_task, Task::done(Message::EmbeddingBackfill)])
             }
             Message::SwitchProject(project_id) => {
                 self.project_dropdown_open = false;
                 if let Some(ref db) = self.db {
+                    if let (Some(outgoing), Some(data_dir)) = (&self.active_project, &self.data_dir)
+                    {
+                        let _ =
+                            engine::embedding::EmbeddingService::production(db.conn(), data_dir)
+                                .flush_project(&outgoing.id);
+                    }
                     match engine::project::set_active_project(db.conn(), &project_id) {
                         Ok(()) => {
                             self.reset_git_for_project_change();
                             self.active_project =
                                 self.projects.iter().find(|p| p.id == project_id).cloned();
                             self.preview_session = None;
+                            self.duplicates_state = DuplicatesState::default();
                             self.hide_embedded_preview();
                             self.data_dir = self
                                 .active_project
@@ -1626,7 +1662,11 @@ impl BdsApp {
                     }
                 }
                 self.sync_menu_state();
-                Task::batch([self.refresh_counts(), self.refresh_git_if_visible()])
+                Task::batch([
+                    self.refresh_counts(),
+                    self.refresh_git_if_visible(),
+                    Task::done(Message::EmbeddingBackfill),
+                ])
             }
             Message::ProjectSwitched(result) => {
                 match result {
@@ -2119,6 +2159,118 @@ impl BdsApp {
                 }
                 Task::none()
             }
+            Message::DuplicatesRefresh => self.start_duplicate_search(0),
+            Message::DuplicatesShowMore => {
+                let next = self.duplicates_state.page.saturating_add(1);
+                self.start_duplicate_search(next)
+            }
+            Message::DuplicatesLoaded(result) => {
+                self.duplicates_state.is_loading = false;
+                self.duplicates_state.has_run = true;
+                match result {
+                    Ok(result) => {
+                        self.duplicates_state.result = result;
+                        self.duplicates_state.error = None;
+                        self.duplicates_state.selected.retain(|pair| {
+                            self.duplicates_state.result.pairs.iter().any(|candidate| {
+                                candidate.post_id_a == pair.0 && candidate.post_id_b == pair.1
+                            })
+                        });
+                    }
+                    Err(error) => self.duplicates_state.error = Some(error),
+                }
+                Task::none()
+            }
+            Message::DuplicatesToggle(a, b) => {
+                if !self
+                    .duplicates_state
+                    .selected
+                    .remove(&(a.clone(), b.clone()))
+                {
+                    self.duplicates_state.selected.insert((a, b));
+                }
+                Task::none()
+            }
+            Message::DuplicatesCheckAll => {
+                self.duplicates_state.selected = self
+                    .duplicates_state
+                    .result
+                    .pairs
+                    .iter()
+                    .map(|pair| (pair.post_id_a.clone(), pair.post_id_b.clone()))
+                    .collect();
+                Task::none()
+            }
+            Message::DuplicatesUncheckAll => {
+                self.duplicates_state.selected.clear();
+                Task::none()
+            }
+            Message::DuplicatesDismiss(a, b) => self.dismiss_duplicate_pairs(vec![(a, b)]),
+            Message::DuplicatesDismissSelected => self
+                .dismiss_duplicate_pairs(self.duplicates_state.selected.iter().cloned().collect()),
+            Message::DuplicatesDismissed(result) => {
+                match result {
+                    Ok(()) => {
+                        self.duplicates_state.selected.clear();
+                        self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "duplicates.dismissed"),
+                        );
+                        return self.start_duplicate_search(self.duplicates_state.page);
+                    }
+                    Err(error) => self.notify(ToastLevel::Error, &error),
+                }
+                Task::none()
+            }
+            Message::DuplicatesOpenPost(post_id) => {
+                let Some(db) = &self.db else {
+                    return Task::none();
+                };
+                let Ok(post) = bds_core::db::queries::post::get_post_by_id(db.conn(), &post_id)
+                else {
+                    return Task::none();
+                };
+                Task::done(Message::OpenTab(Tab {
+                    id: post.id,
+                    tab_type: TabType::Post,
+                    title: post.title,
+                    is_transient: false,
+                    is_dirty: false,
+                }))
+            }
+            Message::EmbeddingReindex => self.start_embedding_reindex(),
+            Message::EmbeddingBackfill => self.start_embedding_backfill(),
+            Message::LoadSemanticTagSuggestions(post_id) => {
+                let Some(data_dir) = self.data_dir.clone() else {
+                    return Task::none();
+                };
+                let db_path = self.db_path.clone();
+                let returned_post_id = post_id.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                            engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
+                                .suggest_tags(&post_id)
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+                    },
+                    move |result| Message::SemanticTagSuggestionsLoaded {
+                        post_id: returned_post_id.clone(),
+                        result,
+                    },
+                )
+            }
+            Message::SemanticTagSuggestionsLoaded { post_id, result } => {
+                if let (Some(state), Ok(suggestions)) =
+                    (self.post_editors.get_mut(&post_id), result)
+                {
+                    state.semantic_tag_suggestions = suggestions;
+                }
+                Task::none()
+            }
             message @ (Message::MainWindowLoaded(_) | Message::EmbeddedPreviewReady(_)) => {
                 self.handle_preview_message(message)
             }
@@ -2129,6 +2281,7 @@ impl BdsApp {
                 self.refresh_task_snapshots();
                 self.process_chat_events();
                 self.persist_due_chat_surface_state();
+                let _ = engine::embedding::EmbeddingService::flush_due();
                 if !self.search_index_rebuild_running {
                     self.auto_save_due_post_editors();
                 }
@@ -2646,6 +2799,151 @@ impl BdsApp {
         }
     }
 
+    fn start_duplicate_search(&mut self, page: usize) -> Task<Message> {
+        let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+            return Task::none();
+        };
+        self.duplicates_state.enabled = engine::meta::read_project_json(data_dir)
+            .is_ok_and(|metadata| metadata.semantic_similarity_enabled);
+        self.duplicates_state.page = page;
+        self.duplicates_state.error = None;
+        if !self.duplicates_state.enabled {
+            self.duplicates_state.is_loading = false;
+            self.duplicates_state.has_run = false;
+            self.duplicates_state.result = Default::default();
+            return Task::none();
+        }
+        self.duplicates_state.is_loading = true;
+        let db_path = self.db_path.clone();
+        let data_dir = data_dir.clone();
+        let project_id = project.id.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
+                        .find_duplicates(&project_id, page)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+            },
+            Message::DuplicatesLoaded,
+        )
+    }
+
+    fn dismiss_duplicate_pairs(&mut self, pairs: Vec<(String, String)>) -> Task<Message> {
+        if pairs.is_empty() {
+            return Task::none();
+        }
+        let (Some(_), Some(data_dir)) = (&self.db, &self.data_dir) else {
+            return Task::none();
+        };
+        let db_path = self.db_path.clone();
+        let data_dir = data_dir.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
+                        .dismiss_duplicate_pairs(&pairs)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+            },
+            Message::DuplicatesDismissed,
+        )
+    }
+
+    fn start_embedding_reindex(&mut self) -> Task<Message> {
+        let Some(data_dir) = &self.data_dir else {
+            return Task::none();
+        };
+        if !engine::meta::read_project_json(data_dir)
+            .is_ok_and(|metadata| metadata.semantic_similarity_enabled)
+        {
+            self.notify(
+                ToastLevel::Warning,
+                &t(self.ui_locale, "duplicates.disabled"),
+            );
+            return Task::none();
+        }
+        let locale = self.ui_locale;
+        self.spawn_engine_task(
+            "menu.item.rebuildEmbeddingIndex",
+            move |db_path, project_id, data_dir, tm, tid| {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let service = engine::embedding::EmbeddingService::production(db.conn(), &data_dir);
+                let indexed = service
+                    .reindex_all_with_progress(&project_id, |current, total| {
+                        tm.report_progress(
+                            tid,
+                            Some(current as f32 / total.max(1) as f32),
+                            Some(tw(
+                                locale,
+                                "embeddings.indexingProgress",
+                                &[
+                                    ("current", &current.to_string()),
+                                    ("total", &total.to_string()),
+                                ],
+                            )),
+                        );
+                        !tm.is_cancelled(tid)
+                    })
+                    .map_err(|error| error.to_string())?;
+                service
+                    .flush_project(&project_id)
+                    .map_err(|error| error.to_string())?;
+                Ok(tw(
+                    locale,
+                    "embeddings.reindexed",
+                    &[("count", &indexed.len().to_string())],
+                ))
+            },
+        )
+    }
+
+    fn start_embedding_backfill(&mut self) -> Task<Message> {
+        let Some(data_dir) = &self.data_dir else {
+            return Task::none();
+        };
+        if !engine::meta::read_project_json(data_dir)
+            .is_ok_and(|metadata| metadata.semantic_similarity_enabled)
+        {
+            return Task::none();
+        }
+        let locale = self.ui_locale;
+        self.spawn_engine_task(
+            "embeddings.indexing",
+            move |db_path, project_id, data_dir, tm, tid| {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let indexed = engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
+                    .index_unindexed_with_progress(&project_id, |current, total| {
+                        tm.report_progress(
+                            tid,
+                            Some(current as f32 / total.max(1) as f32),
+                            Some(tw(
+                                locale,
+                                "embeddings.indexingProgress",
+                                &[
+                                    ("current", &current.to_string()),
+                                    ("total", &total.to_string()),
+                                ],
+                            )),
+                        );
+                        !tm.is_cancelled(tid)
+                    })
+                    .map_err(|error| error.to_string())?;
+                Ok(tw(
+                    locale,
+                    "embeddings.indexed",
+                    &[("count", &indexed.len().to_string())],
+                ))
+            },
+        )
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let active_name = self.active_project.as_ref().map(|p| p.name.as_str());
         let active_post_filter = match self.sidebar_view {
@@ -2706,6 +3004,7 @@ impl BdsApp {
             self.settings_state.as_ref(),
             self.dashboard_state.as_ref(),
             &self.site_validation_state,
+            &self.duplicates_state,
             &self.metadata_diff_state,
             &self.translation_validation_state,
             &self.git_state,
@@ -3397,6 +3696,11 @@ impl BdsApp {
             }
             MenuAction::RebuildDatabase => Task::done(Message::RebuildDatabase),
             MenuAction::ReindexText => Task::done(Message::ReindexText),
+            MenuAction::RebuildEmbeddingIndex => Task::done(Message::EmbeddingReindex),
+            MenuAction::FindDuplicates => {
+                self.open_singleton_tab(TabType::FindDuplicates, "tabBar.findDuplicates");
+                Task::done(Message::DuplicatesRefresh)
+            }
             MenuAction::MetadataDiff => Task::done(Message::RunMetadataDiff),
             MenuAction::RegenerateCalendar => Task::done(Message::RegenerateCalendar),
             MenuAction::ValidateTranslations => Task::done(Message::ValidateTranslations),
@@ -4777,7 +5081,7 @@ impl BdsApp {
             ..Default::default()
         };
 
-        let ids = bds_core::db::fts::search_posts_filtered(
+        let mut ids = bds_core::db::fts::search_posts_filtered(
             db.conn(),
             query,
             &self.content_language,
@@ -4785,6 +5089,19 @@ impl BdsApp {
         )
         .map(|results| results.post_ids)
         .unwrap_or_default();
+
+        if let Some(data_dir) = &self.data_dir
+            && let Ok(scores) = engine::embedding::EmbeddingService::production(db.conn(), data_dir)
+                .compute_similarities(current_post_id, &ids)
+        {
+            ids.sort_by(|a, b| {
+                scores
+                    .get(b)
+                    .copied()
+                    .unwrap_or_default()
+                    .total_cmp(&scores.get(a).copied().unwrap_or_default())
+            });
+        }
 
         ids.into_iter()
             .filter_map(|post_id| {
@@ -6199,6 +6516,7 @@ impl BdsApp {
                             blog_languages: Vec::new(),
                         },
                     );
+                    let semantic_was_enabled = meta.semantic_similarity_enabled;
                     meta.name = state.project_name.clone();
                     meta.description = {
                         let value = state.project_description.text();
@@ -6249,6 +6567,8 @@ impl BdsApp {
                     let file_result = engine::meta::write_project_json(data_dir, &meta);
                     match (db_result, file_result) {
                         (Ok(()), Ok(())) => {
+                            let semantic_should_backfill =
+                                state.semantic_similarity_enabled && !semantic_was_enabled;
                             if let Some(listing) =
                                 self.projects.iter_mut().find(|p| p.id == project.id)
                             {
@@ -6258,6 +6578,9 @@ impl BdsApp {
                             self.blog_languages = state.blog_languages.clone();
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                            if semantic_should_backfill {
+                                return Task::done(Message::EmbeddingBackfill);
+                            }
                         }
                         (Err(e), _) => self.notify_operation_failed("common.save", e),
                         (_, Err(e)) => self.notify_operation_failed("common.save", e),
@@ -7927,6 +8250,12 @@ impl BdsApp {
     }
 }
 
+impl Drop for BdsApp {
+    fn drop(&mut self) {
+        let _ = engine::embedding::EmbeddingService::flush_all();
+    }
+}
+
 fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
 }
@@ -9184,7 +9513,10 @@ mod tests {
         let mut app = make_app(db, project, &tmp);
         let _ = app.refresh_counts();
 
-        let dash = app.dashboard_state.expect("dashboard state should be set");
+        let dash = app
+            .dashboard_state
+            .clone()
+            .expect("dashboard state should be set");
         let now = chrono::Utc::now();
         assert_eq!(dash.stats.total_posts, 2);
         assert_eq!(dash.stats.published_count, 1);
@@ -9552,10 +9884,10 @@ mod tests {
             db_path.as_path(),
             &project.id,
             "en",
+            Some(tmp.path()),
             &filter,
             false,
-            50,
-            0,
+            (50, 0),
         );
 
         assert_eq!(posts.len(), 1);

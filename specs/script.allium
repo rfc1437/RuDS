@@ -142,7 +142,9 @@ surface ScriptRuntimeSurface {
         -- the core one-shot AI bridge; conversational chat remains extension.
         -- bds.report_progress(payload) reports managed-job progress. The Rust
         -- host may retain bds.app.progress and bds.app.toast as additive APIs.
-        -- bds.sync and bds.embeddings belong to the extension contract.
+        -- bds.embeddings: compute_similarities, dismiss_pair, find_duplicates,
+        -- find_similar, get_progress, index_unindexed_posts, suggest_tags.
+        -- bds.sync remains a future extension contract.
 
     @guarantee HostApiFailureValues
         -- Host failures do not expose implementation exceptions across the Lua

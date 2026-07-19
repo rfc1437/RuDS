@@ -1,4 +1,5 @@
 mod chat;
+mod embedding;
 mod event;
 mod generation;
 mod import;
@@ -12,6 +13,7 @@ mod tag;
 mod template;
 
 pub use chat::{ChatConversation, ChatMessage, ChatRole, NewChatConversation, NewChatMessage};
+pub use embedding::{DismissedDuplicatePair, EmbeddingKey};
 pub use event::DomainEvent;
 pub use generation::{
     DbNotification, DomainEntity, GeneratedFileHash, NotificationAction, NotificationEntity,

@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
+use crate::db::queries::embedding as qe;
 use crate::db::queries::media as qm;
 use crate::db::queries::media_translation as qmt;
 use crate::db::queries::post as qp;
@@ -159,6 +160,49 @@ pub fn compute_metadata_diff(
     }
 
     // 6. Detect orphans
+    if crate::engine::meta::read_project_json(data_dir)
+        .is_ok_and(|metadata| metadata.semantic_similarity_enabled)
+    {
+        let service = crate::engine::embedding::EmbeddingService::production(conn, data_dir);
+        let keys = qe::list_keys(conn, project_id)?
+            .into_iter()
+            .map(|key| (key.post_id.clone(), key))
+            .collect::<std::collections::HashMap<_, _>>();
+        for post in &posts {
+            let expected = service.content_hash_for_post(post)?;
+            let key = keys.get(&post.id);
+            let current_hash = key.map(|key| key.content_hash.as_str()).unwrap_or("");
+            let vector_status = key
+                .filter(|key| crate::engine::embedding::decode_vector(&key.vector).is_ok())
+                .map(|_| "ready")
+                .unwrap_or("missing");
+            if current_hash != expected || vector_status != "ready" {
+                let mut fields = Vec::new();
+                if current_hash != expected {
+                    fields.push(DiffField {
+                        field_name: "content_hash".into(),
+                        db_value: current_hash.into(),
+                        file_value: expected,
+                    });
+                }
+                if vector_status != "ready" {
+                    fields.push(DiffField {
+                        field_name: "embedding".into(),
+                        db_value: vector_status.into(),
+                        file_value: "ready".into(),
+                    });
+                }
+                report.diffs.push(EntityDiff {
+                    entity_type: "embedding".into(),
+                    entity_id: post.id.clone(),
+                    file_path: format!("projects/{project_id}/embeddings.usearch"),
+                    fields,
+                });
+            }
+        }
+    }
+
+    // 7. Detect orphans
     let orphans = detect_orphan_files(conn, data_dir, project_id)?;
     report.orphans = orphans;
 
@@ -204,6 +248,11 @@ pub fn repair_metadata_diff_item(
                         conn, data_dir, project_id, &path,
                     )?;
                 }
+                "embedding" => {
+                    let post = qp::get_post_by_id(conn, &item.entity_id)?;
+                    crate::engine::embedding::EmbeddingService::production(conn, data_dir)
+                        .sync_post(&post)?;
+                }
                 other => return unsupported_repair(other),
             }
         }
@@ -222,6 +271,8 @@ pub fn repair_metadata_diff_item(
             )?,
             "script" => rewrite_script_from_database(conn, data_dir, &item.entity_id)?,
             "template" => rewrite_template_from_database(conn, data_dir, &item.entity_id)?,
+            "embedding" => crate::engine::embedding::EmbeddingService::production(conn, data_dir)
+                .flush_project(project_id)?,
             other => return unsupported_repair(other),
         },
     }

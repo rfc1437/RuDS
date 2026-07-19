@@ -1382,6 +1382,95 @@ impl CoreHost {
             (_, response) => one_shot_json(response),
         }
     }
+
+    fn embeddings(&self, method: &str, args: &[Value]) -> HostResult<Value> {
+        let db = self.database()?;
+        let service = engine::embedding::EmbeddingService::production(db.conn(), &self.data_dir);
+        match method {
+            "get_progress" => {
+                let (indexed, total) = service.indexing_progress(&self.project_id)?;
+                Ok(json!({"indexed": indexed, "total": total}))
+            }
+            "find_similar" => {
+                let post_id = string_arg(args, 0)?;
+                self.scoped(
+                    |conn| crate::db::queries::post::get_post_by_id(conn, post_id),
+                    |post| post.project_id.as_str(),
+                )?;
+                let limit = args.get(1).and_then(Value::as_u64).unwrap_or(5) as usize;
+                Ok(Value::Array(
+                    service
+                        .find_similar(post_id, limit)?
+                        .into_iter()
+                        .map(|post| {
+                            json!({
+                                "post_id": post.post_id,
+                                "title": post.title,
+                                "score": post.similarity,
+                            })
+                        })
+                        .collect(),
+                ))
+            }
+            "compute_similarities" => {
+                let post_id = string_arg(args, 0)?;
+                self.scoped(
+                    |conn| crate::db::queries::post::get_post_by_id(conn, post_id),
+                    |post| post.project_id.as_str(),
+                )?;
+                let target_ids = string_array_arg(args, 1)?;
+                json_value(service.compute_similarities(post_id, &target_ids))
+            }
+            "suggest_tags" => {
+                let post_id = string_arg(args, 0)?;
+                self.scoped(
+                    |conn| crate::db::queries::post::get_post_by_id(conn, post_id),
+                    |post| post.project_id.as_str(),
+                )?;
+                json_value(service.suggest_tags(post_id))
+            }
+            "find_duplicates" => {
+                let mut page = 0;
+                let pairs = loop {
+                    let result = service.find_duplicates(&self.project_id, page)?;
+                    if !result.has_more {
+                        break result.pairs;
+                    }
+                    page += 1;
+                };
+                Ok(Value::Array(
+                    pairs
+                        .into_iter()
+                        .map(|pair| {
+                            json!({
+                                "post_id_a": pair.post_id_a,
+                                "title_a": pair.title_a,
+                                "post_id_b": pair.post_id_b,
+                                "title_b": pair.title_b,
+                                "score": pair.similarity,
+                                "similarity": pair.similarity,
+                                "exact_match": pair.exact_match,
+                            })
+                        })
+                        .collect(),
+                ))
+            }
+            "dismiss_pair" => {
+                let post_id_a = string_arg(args, 0)?;
+                let post_id_b = string_arg(args, 1)?;
+                for post_id in [post_id_a, post_id_b] {
+                    self.scoped(
+                        |conn| crate::db::queries::post::get_post_by_id(conn, post_id),
+                        |post| post.project_id.as_str(),
+                    )?;
+                }
+                service.dismiss_duplicate_pair(post_id_a, post_id_b)?;
+                Ok(Value::Bool(true))
+            }
+            "index_unindexed_posts" => json_value(service.index_unindexed(&self.project_id)),
+            _ => Err(format!("unknown embeddings capability: {method}").into()),
+        }
+    }
 }
 
 impl HostApi for CoreHost {
@@ -1398,6 +1487,7 @@ impl HostApi for CoreHost {
             "tasks" => self.tasks(method, &arguments),
             "publish" => self.publish(method, &arguments),
             "chat" => self.chat(method, &arguments),
+            "embeddings" => self.embeddings(method, &arguments),
             "bds" if method == "report_progress" => self.report_progress(&arguments),
             _ => Err(format!("unknown host capability: {namespace}.{method}").into()),
         };
@@ -1535,6 +1625,19 @@ fn string_arg(args: &[Value], index: usize) -> HostResult<&str> {
     args.get(index)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("argument {} must be a string", index + 1).into())
+}
+
+fn string_array_arg(args: &[Value], index: usize) -> HostResult<Vec<String>> {
+    args.get(index)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .ok_or_else(|| format!("argument {} must be a table", index + 1).into())
 }
 
 fn string_field<'a>(value: &'a Map<String, Value>, field: &str) -> HostResult<&'a str> {
@@ -1821,6 +1924,9 @@ mod tests {
                         upload = upload,
                         timestamp = post.created_at,
                         project_path = bds.app.get_default_project_path(),
+                        embedding_progress = bds.embeddings.get_progress(),
+                        embedding_backfill = bds.embeddings.index_unindexed_posts(),
+                        foreign_embedding = bds.embeddings.find_similar(input.foreign_post, 5),
                     }
                 end
             "#,
@@ -1842,5 +1948,11 @@ mod tests {
         assert!(result.value["upload"].is_null());
         assert!(result.value["timestamp"].as_str().unwrap().contains('T'));
         assert_eq!(manager.progress(task_id), Some(0.5));
+        assert_eq!(
+            result.value["embedding_progress"],
+            json!({"indexed": 0, "total": 1})
+        );
+        assert_eq!(result.value["embedding_backfill"], json!([]));
+        assert!(result.value["foreign_embedding"].is_null());
     }
 }

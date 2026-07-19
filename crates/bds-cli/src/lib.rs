@@ -317,12 +317,6 @@ fn active_project(db: &Database) -> Result<(Project, PathBuf)> {
 
 fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
     let (project, data_dir) = active_project(db)?;
-    let metadata = engine::meta::read_project_json(&data_dir)?;
-    if metadata.semantic_similarity_enabled {
-        bail!(
-            "semantic similarity is enabled, but rebuild cannot continue without the real on-device embedding engine"
-        );
-    }
     if incremental {
         let (applied, imported, failed) = cli_sync::run_cli_mutation(db.conn(), || {
             let report =
@@ -490,9 +484,13 @@ fn repair(db: &Database, part: RepairPart) -> Result<CommandOutput> {
         RepairPart::Embeddings => {
             let metadata = engine::meta::read_project_json(&data_dir)?;
             if metadata.semantic_similarity_enabled {
-                bail!(
-                    "semantic similarity is enabled, but no real on-device embedding engine is registered"
-                );
+                let service = engine::embedding::EmbeddingService::production(db.conn(), &data_dir);
+                let indexed = service.reindex_all(&project.id)?;
+                service.flush_project(&project.id)?;
+                return Ok(output(
+                    "Embedding index rebuilt",
+                    json!({"rebuilt": indexed.len(), "disabled": false}),
+                ));
             }
             Ok(output(
                 "Embedding repair skipped because semantic similarity is disabled",
@@ -1431,8 +1429,9 @@ mod tests {
         let mut metadata = engine::meta::read_project_json(&fixture.project_dir).unwrap();
         metadata.semantic_similarity_enabled = true;
         engine::meta::write_project_json(&fixture.project_dir, &metadata).unwrap();
-        assert!(fixture.run(&["repair", "embeddings"], "").is_err());
-        assert!(fixture.run(&["rebuild"], "").is_err());
+        let repaired = fixture.run(&["repair", "embeddings"], "").unwrap();
+        assert_eq!(repaired.data["rebuilt"], 0);
+        fixture.run(&["rebuild"], "").unwrap();
         metadata.semantic_similarity_enabled = false;
         engine::meta::write_project_json(&fixture.project_dir, &metadata).unwrap();
         fixture.run(&["render"], "").unwrap();

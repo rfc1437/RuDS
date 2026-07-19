@@ -1,4 +1,5 @@
 use super::*;
+use chrono::Datelike;
 
 impl BdsApp {
     /// Number of items to load per sidebar page.
@@ -14,6 +15,7 @@ impl BdsApp {
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
         let content_language = self.content_language.clone();
+        let data_dir = self.data_dir.clone();
         let filter = match self.sidebar_view {
             SidebarView::Pages => self.page_filter.clone(),
             _ => self.post_filter.clone(),
@@ -27,10 +29,10 @@ impl BdsApp {
                         &db_path,
                         &project_id,
                         &content_language,
+                        data_dir.as_deref(),
                         &filter,
                         is_pages,
-                        Self::SIDEBAR_PAGE_SIZE + 1,
-                        0,
+                        (Self::SIDEBAR_PAGE_SIZE + 1, 0),
                     )
                 })
                 .await
@@ -99,6 +101,7 @@ impl BdsApp {
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
         let content_language = self.content_language.clone();
+        let data_dir = self.data_dir.clone();
         let offset = self.sidebar_posts.len() as i64;
         let filter = match self.sidebar_view {
             SidebarView::Pages => self.page_filter.clone(),
@@ -113,10 +116,10 @@ impl BdsApp {
                         &db_path,
                         &project_id,
                         &content_language,
+                        data_dir.as_deref(),
                         &filter,
                         is_pages,
-                        Self::SIDEBAR_PAGE_SIZE + 1,
-                        offset,
+                        (Self::SIDEBAR_PAGE_SIZE + 1, offset),
                     )
                 })
                 .await
@@ -163,15 +166,16 @@ impl BdsApp {
         db_path: &Path,
         project_id: &str,
         content_language: &str,
+        data_dir: Option<&Path>,
         filter: &PostFilter,
         is_pages: bool,
-        limit: i64,
-        offset: i64,
+        pagination: (i64, i64),
     ) -> Vec<Post> {
         let Ok(db) = Database::open(db_path) else {
             return Vec::new();
         };
 
+        let (limit, offset) = pagination;
         let params = Self::build_post_filter_params(filter, is_pages);
         if filter.search_query.trim().is_empty() {
             return bds_core::db::queries::post::list_posts_filtered(
@@ -184,6 +188,11 @@ impl BdsApp {
             .unwrap_or_default();
         }
 
+        let semantic_enabled = data_dir.is_some_and(|dir| {
+            engine::meta::read_project_json(dir)
+                .is_ok_and(|metadata| metadata.semantic_similarity_enabled)
+        });
+        let requested = limit.saturating_add(offset).max(0) as usize;
         let fts_filters = bds_core::db::fts::PostSearchFilters {
             status: params.status.as_deref(),
             tags: (!params.tags.is_empty()).then_some(params.tags.as_slice()),
@@ -193,12 +202,16 @@ impl BdsApp {
             month: params.month,
             from: params.from,
             to: params.to,
-            limit: Some(limit as usize),
-            offset: Some(offset as usize),
+            limit: Some(if semantic_enabled {
+                requested
+            } else {
+                limit as usize
+            }),
+            offset: Some(if semantic_enabled { 0 } else { offset as usize }),
             ..Default::default()
         };
 
-        let ids = bds_core::db::fts::search_posts_filtered(
+        let fts_ids = bds_core::db::fts::search_posts_filtered(
             db.conn(),
             &params.search_query,
             content_language,
@@ -207,11 +220,60 @@ impl BdsApp {
         .map(|results| results.post_ids)
         .unwrap_or_default();
 
-        ids.into_iter()
+        let mut ids = Vec::new();
+        if semantic_enabled
+            && let Some(data_dir) = data_dir
+            && let Ok(similar) =
+                engine::embedding::EmbeddingService::production(db.conn(), data_dir)
+                    .semantic_search(project_id, &params.search_query, requested)
+        {
+            ids.extend(similar.into_iter().map(|item| item.post_id));
+        }
+        ids.extend(fts_ids);
+        let mut seen = HashSet::new();
+        let posts = ids
+            .into_iter()
+            .filter(|post_id| seen.insert(post_id.clone()))
             .filter_map(|post_id| {
                 bds_core::db::queries::post::get_post_by_id(db.conn(), &post_id).ok()
             })
             .filter(|post| post.project_id == project_id)
+            .filter(|post| {
+                params
+                    .status
+                    .as_ref()
+                    .is_none_or(|status| post.status.as_str() == status)
+            })
+            .filter(|post| {
+                params
+                    .language
+                    .as_ref()
+                    .is_none_or(|language| post.language.as_deref() == Some(language))
+            })
+            .filter(|post| {
+                params
+                    .tags
+                    .iter()
+                    .all(|wanted| post.tags.iter().any(|tag| tag.eq_ignore_ascii_case(wanted)))
+            })
+            .filter(|post| {
+                params.categories.iter().all(|wanted| {
+                    post.categories
+                        .iter()
+                        .any(|category| category.eq_ignore_ascii_case(wanted))
+                })
+            })
+            .filter(|post| params.from.is_none_or(|from| post.created_at >= from))
+            .filter(|post| params.to.is_none_or(|to| post.created_at <= to))
+            .filter(|post| {
+                if params.year.is_none() && params.month.is_none() {
+                    return true;
+                }
+                chrono::DateTime::from_timestamp_millis(post.created_at).is_some_and(|date| {
+                    params.year.is_none_or(|year| date.year() == year)
+                        && params.month.is_none_or(|month| date.month() == month)
+                })
+            })
             .filter(|post| {
                 let is_page_post = post
                     .categories
@@ -222,8 +284,12 @@ impl BdsApp {
                 } else {
                     !is_page_post
                 }
-            })
-            .collect()
+            });
+        if semantic_enabled {
+            posts.skip(offset as usize).take(limit as usize).collect()
+        } else {
+            posts.collect()
+        }
     }
 
     pub(super) fn query_sidebar_media_blocking(

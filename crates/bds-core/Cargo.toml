@@ -38,6 +38,9 @@ mlua = { workspace = true }
 url = { workspace = true }
 base64 = { workspace = true }
 dirs = { workspace = true }
+fastembed = { workspace = true }
+usearch = { workspace = true }
+ort = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

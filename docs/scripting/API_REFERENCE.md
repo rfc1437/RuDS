@@ -32,6 +32,7 @@ Macro scripts expose `render(input, context)` and transform scripts expose `main
 - [Root helpers](#root-helpers)
 - [`bds.app`](#bdsapp)
 - [`bds.chat`](#bdschat)
+- [`bds.embeddings`](#bdsembeddings)
 - [`bds.media`](#bdsmedia)
 - [`bds.meta`](#bdsmeta)
 - [`bds.posts`](#bdsposts)
@@ -787,6 +788,230 @@ bds.chat.translate_media_metadata(media_id: string, language: string) -> table |
 
 ```lua
 local result = bds.chat.translate_media_metadata("example-id", "en")
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+## `bds.embeddings`
+
+### `bds.embeddings.compute_similarities`
+
+Compute similarity scores from one source post to target posts.
+
+**Signature**
+
+```text
+bds.embeddings.compute_similarities(post_id: string, target_ids: table) -> table | nil
+```
+
+**Parameters**
+
+| Name | Type | Required | Example |
+| --- | --- | --- | --- |
+| `post_id` | `string` | Yes | `"example-id"` |
+| `target_ids` | `table` | Yes | `{ title = "Example" }` |
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.compute_similarities("example-id", { title = "Example" })
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.embeddings.dismiss_pair`
+
+Dismiss a duplicate candidate pair.
+
+**Signature**
+
+```text
+bds.embeddings.dismiss_pair(post_id_a: string, post_id_b: string) -> boolean
+```
+
+**Parameters**
+
+| Name | Type | Required | Example |
+| --- | --- | --- | --- |
+| `post_id_a` | `string` | Yes | `"example"` |
+| `post_id_b` | `string` | Yes | `"example"` |
+
+**Returns**
+
+`boolean`. `false` means the operation was rejected or failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.dismiss_pair("example", "example")
+```
+
+**Example response**
+
+```lua
+true
+```
+
+### `bds.embeddings.find_duplicates`
+
+Find duplicate post candidates for the current project.
+
+**Signature**
+
+```text
+bds.embeddings.find_duplicates() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.find_duplicates()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.embeddings.find_similar`
+
+Find posts similar to the given post id.
+
+**Signature**
+
+```text
+bds.embeddings.find_similar(post_id: string, limit?: integer) -> table | nil
+```
+
+**Parameters**
+
+| Name | Type | Required | Example |
+| --- | --- | --- | --- |
+| `post_id` | `string` | Yes | `"example-id"` |
+| `limit` | `integer` | No | `nil` |
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.find_similar("example-id", nil)
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.embeddings.get_progress`
+
+Get embedding index progress for the current project.
+
+**Signature**
+
+```text
+bds.embeddings.get_progress() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.get_progress()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.embeddings.index_unindexed_posts`
+
+Index posts missing embeddings for the current project.
+
+**Signature**
+
+```text
+bds.embeddings.index_unindexed_posts() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.index_unindexed_posts()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.embeddings.suggest_tags`
+
+Suggest tags for a post from semantic similarity.
+
+**Signature**
+
+```text
+bds.embeddings.suggest_tags(post_id: string, exclude_tags?: table) -> table | nil
+```
+
+**Parameters**
+
+| Name | Type | Required | Example |
+| --- | --- | --- | --- |
+| `post_id` | `string` | Yes | `"example-id"` |
+| `exclude_tags` | `table` | No | `{ title = "Example" }` |
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.embeddings.suggest_tags("example-id", { title = "Example" })
 ```
 
 **Example response**

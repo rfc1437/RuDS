@@ -42,17 +42,13 @@ Done:
 - Fixed native A2UI cards, charts, forms, lists, metrics, mind maps, tables, and tabs with safe nested fallbacks, persistent stable-ID interaction state, debounced form values, and strictly allowlisted application actions.
 - Online/airplane endpoint routing uses the shared secure endpoint and model infrastructure; unavailable modes direct the user to the existing localized AI settings.
 
-### Embeddings, semantic search, and duplicates — Open
+### Embeddings, semantic search, and duplicates — Done
 
-Existing source contains schema placeholders only.
-
-Open:
-
-- Embedding generation and persistence.
-- Vector index and semantic search.
-- Expose `bds.embeddings` after those engines exist.
-- Duplicate detection, dismissed-pair handling, metadata integrity, and UI.
-- Replace the Find Duplicates placeholder.
+- Lazy, locally cached `multilingual-e5-small` inference with 384-dimensional mean-pooled, normalized vectors and native Core ML acceleration on macOS or DirectML on Windows.
+- Project-isolated USearch HNSW indexes with SQLite BLOB vectors as the recovery source, debounced persistence, lifecycle updates, rebuild/backfill, and CLI repair.
+- Semantic sidebar search, link ranking, editor tag suggestions, and the bDS2-compatible `bds.embeddings` Lua API.
+- Localized duplicate review with exact-match detection, 500-pair pagination, canonical single/batch dismissal, and post navigation.
+- Embedding-aware filesystem rebuild and metadata diff/repair, settings gating, project-switch/shutdown flushes, and native menu commands.
 
 ### Translation QA and documentation UX — Partly done
 
