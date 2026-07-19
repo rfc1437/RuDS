@@ -738,3 +738,33 @@ remoteTerminal-quit = q to quit
 remoteTerminal-serverListening = RuDS SSH server listening on { $address }
 remoteTerminal-authorizedKeys = Authorized keys: { $path }
 remoteTerminal-headlessFallback = No graphical session is available; starting the terminal UI.
+tui-viewPosts = Posts
+tui-viewMedia = Media
+tui-viewTemplates = Templates
+tui-viewScripts = Scripts
+tui-viewTags = Tags
+tui-viewSettings = Settings
+tui-viewGit = Git
+tui-help = 1 Posts · 2 Media · 3 Templates · 4 Scripts · 5 Tags · 6 Settings · 7 Git
+
+    Enter opens · n creates · / filters · : commands · p projects · o folder
+    Ctrl+S saves · Ctrl+P publishes · Ctrl+E previews · Ctrl+G asks AI
+tui-status = { $transport } · { $locale } · q quit
+tui-local = local
+tui-remote = SSH
+tui-unsavedTitle = Unsaved changes
+tui-unsavedPrompt = Discard unsaved changes and exit? y/n
+tui-noProject = No project — press o to open a folder
+tui-noMatchingItems = No matching items
+tui-noTags = No tags yet
+tui-workingTreeClean = Working tree clean
+tui-applyCancel = Enter applies all · Esc cancels
+tui-settingUiLanguage = Interface Language
+tui-settingRuntime = Scripting Runtime
+tui-settingTransferMode = Transfer Mode
+tui-settingDatabase = Database
+tui-settingAutomaticRebuild = Automatic Rebuild
+tui-settingTheme = Theme
+tui-settingContentWidth = Content Width
+tui-categoryEditing = Category Editing
+tui-categoryEditingGuiOnly = Category add, edit, and removal remain in the desktop application

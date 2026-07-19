@@ -99,13 +99,14 @@ Done:
 - Versioned native remote-project sessions provide protocol negotiation, server locale, project selection, shared engine calls, replay-safe request IDs, ordered domain events, task snapshots, reconnect, concurrent clients, and graceful shutdown.
 - The desktop uses a restrictive generated Ed25519 identity and TOFU `known_hosts`, with localized File-menu connect/project selection/open/failure/disconnect states. SSH shell channels host server-side terminal sessions and direct forwarding is restricted to the server-owned loopback endpoint.
 
-### Terminal UI — Open
+### Terminal UI — Complete
 
-Open:
+Done:
 
-- Terminal renderer over shared application workflows.
-- Sidebar/editor navigation, editing, publishing, and live domain-event updates.
-- Remote operation through the headless server.
+- One Ratatui state/renderer runs locally through the CLI and in authenticated SSH PTYs; resize, disconnect, reconnect, clean exit, and terminal restoration are covered by a real loopback PTY test.
+- Numbered sidebar views, per-view filtering, project switching/path completion, command overlays, Markdown preview, syntax-highlighted soft-wrapped Markdown/Liquid/Lua editing, validation, save/publish/unpublish, confirmations, and live domain-event synchronization use the shared engines.
+- Typed settings, complete tag workflows, Git status/diff/history/commit/pull/push, metadata/site reports with apply/cancel, managed background progress, locale changes, media information, and airplane-gated AI actions are terminal-accessible.
+- State, renderer-buffer, input-decoder, shared local/remote persistence, task/report, event, locale, and real SSH PTY behavior have isolated tests.
 
 ### A2UI surfaces — Complete
 

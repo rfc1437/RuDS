@@ -4,6 +4,7 @@ pub mod client;
 pub mod host;
 pub mod protocol;
 pub mod transport;
+pub mod tui;
 
 pub use client::{DesktopClient, RemoteTarget};
 pub use transport::{ServerConfig, ServerRuntime};

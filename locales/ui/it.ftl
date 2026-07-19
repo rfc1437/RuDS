@@ -738,3 +738,33 @@ remoteTerminal-quit = q per uscire
 remoteTerminal-serverListening = Il server SSH RuDS è in ascolto su { $address }
 remoteTerminal-authorizedKeys = Chiavi autorizzate: { $path }
 remoteTerminal-headlessFallback = Non è disponibile una sessione grafica; avvio dell’interfaccia terminale.
+tui-viewPosts = Articoli
+tui-viewMedia = Media
+tui-viewTemplates = Modelli
+tui-viewScripts = Script
+tui-viewTags = Tag
+tui-viewSettings = Impostazioni
+tui-viewGit = Git
+tui-help = 1 Articoli · 2 Media · 3 Modelli · 4 Script · 5 Tag · 6 Impostazioni · 7 Git
+
+    Invio apre · n crea · / filtra · : comandi · p progetti · o cartella
+    Ctrl+S salva · Ctrl+P pubblica · Ctrl+E anteprima · Ctrl+G chiede all’IA
+tui-status = { $transport } · { $locale } · q esce
+tui-local = locale
+tui-remote = SSH
+tui-unsavedTitle = Modifiche non salvate
+tui-unsavedPrompt = Scartare le modifiche e uscire? s/n
+tui-noProject = Nessun progetto — o apre una cartella
+tui-noMatchingItems = Nessun elemento corrispondente
+tui-noTags = Nessun tag
+tui-workingTreeClean = Area di lavoro pulita
+tui-applyCancel = Invio applica tutto · Esc annulla
+tui-settingUiLanguage = Lingua dell’interfaccia
+tui-settingRuntime = Runtime degli script
+tui-settingTransferMode = Modalità di trasferimento
+tui-settingDatabase = Database
+tui-settingAutomaticRebuild = Ricostruzione automatica
+tui-settingTheme = Tema
+tui-settingContentWidth = Larghezza del contenuto
+tui-categoryEditing = Modifica delle categorie
+tui-categoryEditingGuiOnly = L’aggiunta, la modifica e la rimozione delle categorie restano nell’applicazione desktop

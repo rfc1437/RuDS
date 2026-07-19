@@ -15,44 +15,7 @@ use serde_json::{Value, json};
 use crate::protocol::{Command, PROTOCOL_VERSION, RemoteTask, Request, ServerMessage};
 
 pub fn run_local_terminal(host: ApplicationHost) -> Result<()> {
-    use std::io::{BufRead as _, Write as _};
-
-    let mut session = host.session()?;
-    let _ = session.handle(Request {
-        id: "local-terminal-hello".into(),
-        command: Command::Hello {
-            protocol_version: PROTOCOL_VERSION,
-        },
-    });
-    let projects = session.handle(Request {
-        id: "local-terminal-projects".into(),
-        command: Command::ListProjects,
-    });
-    let names = match projects {
-        ServerMessage::Response { result, .. } => result
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|project| project.get("name").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n  • "),
-        _ => String::new(),
-    };
-    let locale = bds_core::i18n::normalize_language(session.locale());
-    let title = bds_core::i18n::translate(locale, "remoteTerminal.localTitle");
-    let available = bds_core::i18n::translate(locale, "remoteTerminal.availableProjects");
-    let quit = bds_core::i18n::translate(locale, "remoteTerminal.quit");
-    println!(
-        "\x1b[2J\x1b[H{title}\n\n{available}:\n  • {}\n\n{quit}",
-        if names.is_empty() { "—" } else { &names }
-    );
-    std::io::stdout().flush()?;
-    for line in std::io::stdin().lock().lines() {
-        if line?.trim().eq_ignore_ascii_case("q") {
-            break;
-        }
-    }
-    Ok(())
+    crate::tui::run_local(host)
 }
 
 #[derive(Clone)]
@@ -206,8 +169,20 @@ impl ApplicationHost {
         })
     }
 
-    fn database(&self) -> Result<Database> {
+    pub(crate) fn database(&self) -> Result<Database> {
         Database::open(&self.inner.database_path).map_err(Into::into)
+    }
+
+    pub(crate) fn database_path(&self) -> &std::path::Path {
+        &self.inner.database_path
+    }
+
+    pub(crate) fn project_data_dir(&self, project: &bds_core::model::Project) -> PathBuf {
+        project
+            .data_path
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.inner.data_root.join("projects").join(&project.id))
     }
 
     fn cached(&self, id: &str) -> Option<ServerMessage> {

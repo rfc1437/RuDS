@@ -738,3 +738,33 @@ remoteTerminal-quit = q zum Beenden
 remoteTerminal-serverListening = RuDS-SSH-Server hört auf { $address }
 remoteTerminal-authorizedKeys = Autorisierte Schlüssel: { $path }
 remoteTerminal-headlessFallback = Keine grafische Sitzung verfügbar; die Terminaloberfläche wird gestartet.
+tui-viewPosts = Beiträge
+tui-viewMedia = Medien
+tui-viewTemplates = Vorlagen
+tui-viewScripts = Skripte
+tui-viewTags = Tags
+tui-viewSettings = Einstellungen
+tui-viewGit = Git
+tui-help = 1 Beiträge · 2 Medien · 3 Vorlagen · 4 Skripte · 5 Tags · 6 Einstellungen · 7 Git
+
+    Eingabe öffnet · n erstellt · / filtert · : Befehle · p Projekte · o Ordner
+    Strg+S speichert · Strg+P veröffentlicht · Strg+E Vorschau · Strg+G fragt KI
+tui-status = { $transport } · { $locale } · q beendet
+tui-local = lokal
+tui-remote = SSH
+tui-unsavedTitle = Ungespeicherte Änderungen
+tui-unsavedPrompt = Ungespeicherte Änderungen verwerfen und beenden? j/n
+tui-noProject = Kein Projekt — o öffnet einen Ordner
+tui-noMatchingItems = Keine passenden Einträge
+tui-noTags = Noch keine Tags
+tui-workingTreeClean = Arbeitsverzeichnis sauber
+tui-applyCancel = Eingabe wendet alles an · Esc bricht ab
+tui-settingUiLanguage = Oberflächensprache
+tui-settingRuntime = Skript-Laufzeit
+tui-settingTransferMode = Übertragungsmodus
+tui-settingDatabase = Datenbank
+tui-settingAutomaticRebuild = Automatischer Neuaufbau
+tui-settingTheme = Erscheinungsbild
+tui-settingContentWidth = Inhaltsbreite
+tui-categoryEditing = Kategorien bearbeiten
+tui-categoryEditingGuiOnly = Kategorien können weiterhin in der Desktop-Anwendung hinzugefügt, bearbeitet und entfernt werden

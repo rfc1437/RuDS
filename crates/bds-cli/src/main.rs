@@ -20,6 +20,27 @@ fn main() -> ExitCode {
         }
     };
 
+    if matches!(cli.command, bds_cli::Command::Tui) {
+        let data_root = bds_core::util::application_data_dir();
+        let config = match bds_server::ServerConfig::from_environment(
+            bds_core::util::application_database_path(),
+            data_root,
+        ) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("Error: {error:#}");
+                return ExitCode::from(1);
+            }
+        };
+        return match bds_server::run_headless(bds_server::boot::BootMode::Tui, config) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Error: {error:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
     let json = cli.json;
     let needs_stdin = match &cli.command {
         bds_cli::Command::Post(args) => args.stdin,

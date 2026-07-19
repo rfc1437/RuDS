@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 bds-core = { workspace = true }
+bds-server = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }

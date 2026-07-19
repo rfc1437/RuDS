@@ -57,6 +57,9 @@ fastembed = { version = "5.17.3", default-features = false, features = ["hf-hub-
 usearch = "2.26"
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "api-24", "coreml", "directml"] }
 russh = "0.62.2"
+ratatui = "0.30.2"
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm", "image-defaults"] }
+tui-markdown = "0.3.8"
 
 # UI framework
 iced = { version = "0.13", features = ["wgpu", "advanced", "canvas", "image", "svg", "tokio", "markdown"] }

@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader}
 
 use crate::auth::KeyMaterial;
 use crate::host::{ApplicationHost, ApplicationSession};
-use crate::protocol::{Command, PROTOCOL_VERSION, Request, SUBSYSTEM, ServerMessage};
+use crate::protocol::{Request, SUBSYSTEM, ServerMessage};
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -249,10 +249,10 @@ impl Handler for ConnectionHandler {
             session.channel_failure(channel)?;
             return Ok(());
         };
-        let application = self.host.session()?;
+        let host = self.host.clone();
         session.channel_success(channel.id())?;
         tokio::spawn(async move {
-            let _ = run_terminal_session(channel, application).await;
+            let _ = run_terminal_session(channel, host).await;
         });
         Ok(())
     }
@@ -322,66 +322,53 @@ async fn write_message(
     Ok(())
 }
 
-async fn run_terminal_session(
-    mut channel: Channel<Msg>,
-    mut application: ApplicationSession,
-) -> Result<()> {
-    let locale = application.locale().to_owned();
-    let hello = application.handle(Request {
-        id: "terminal-hello".into(),
-        command: Command::Hello {
-            protocol_version: PROTOCOL_VERSION,
-        },
-    });
-    if matches!(hello, ServerMessage::Error { .. }) {
-        return Err(anyhow!("terminal protocol negotiation failed"));
-    }
-    let projects = application.handle(Request {
-        id: "terminal-projects".into(),
-        command: Command::ListProjects,
-    });
-    let project_names = match projects {
-        ServerMessage::Response { result, .. } => result
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|project| project.get("name").and_then(|name| name.as_str()))
-            .collect::<Vec<_>>()
-            .join("\r\n  • "),
-        _ => String::new(),
-    };
-    let banner = terminal_banner(&locale, &project_names);
-    channel.data(banner.as_bytes()).await?;
-    let mut interval = tokio::time::interval(Duration::from_millis(250));
+async fn run_terminal_session(mut channel: Channel<Msg>, host: ApplicationHost) -> Result<()> {
+    let mut app = crate::tui::TuiApp::new(host, true)?;
+    let mut decoder = crate::tui::InputDecoder::default();
+    let (mut width, mut height) = (80_u16, 24_u16);
+    let mut dirty = true;
+    let mut restored = false;
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
     loop {
         tokio::select! {
             message = channel.wait() => match message {
-                Some(russh::ChannelMsg::Data { data }) if data.iter().any(|byte| matches!(byte, b'q' | 3)) => {
-                    channel.close().await?;
-                    break;
+                Some(russh::ChannelMsg::Data { data }) => {
+                    for input in decoder.push(&data) { app.handle_input(input)?; }
+                    dirty = true;
+                }
+                Some(russh::ChannelMsg::RequestPty { col_width, row_height, .. })
+                | Some(russh::ChannelMsg::WindowChange { col_width, row_height, .. }) => {
+                    width = u16::try_from(col_width).unwrap_or(u16::MAX).max(20);
+                    height = u16::try_from(row_height).unwrap_or(u16::MAX).max(6);
+                    dirty = true;
                 }
                 None | Some(russh::ChannelMsg::Close) => break,
                 _ => {}
             },
             _ = interval.tick() => {
-                let updates = application.pending();
-                if !updates.is_empty() {
-                    let status = format!("\r\n[{} update{}]\r\n", updates.len(), if updates.len() == 1 { "" } else { "s" });
-                    channel.data(status.as_bytes()).await?;
-                }
+                for input in decoder.flush() { app.handle_input(input)?; }
+                app.poll()?;
+                dirty = true;
             }
         }
+        if dirty {
+            channel
+                .data(&crate::tui::render_ansi(&mut app, width, height)[..])
+                .await?;
+            dirty = false;
+        }
+        if app.should_quit() {
+            channel.data(&b"\x1b[0m\x1b[?25h\r\n"[..]).await?;
+            restored = true;
+            channel.close().await?;
+            break;
+        }
+    }
+    if !restored {
+        let _ = channel.data(&b"\x1b[0m\x1b[?25h\r\n"[..]).await;
+        let _ = channel.close().await;
     }
     Ok(())
-}
-
-fn terminal_banner(locale: &str, projects: &str) -> String {
-    let locale = bds_core::i18n::normalize_language(locale);
-    let title = bds_core::i18n::translate(locale, "remoteTerminal.serverTitle");
-    let available = bds_core::i18n::translate(locale, "remoteTerminal.availableProjects");
-    let quit = bds_core::i18n::translate(locale, "remoteTerminal.quit");
-    let projects = if projects.is_empty() { "—" } else { projects };
-    format!("\x1b[2J\x1b[H{title}\r\n\r\n{available}:\r\n  • {projects}\r\n\r\n{quit}\r\n")
 }
 
 #[cfg(test)]
@@ -390,23 +377,28 @@ mod tests {
     use crate::auth::ClientKeyMaterial;
     use crate::client::{DesktopClient, RemoteTarget};
     use bds_core::db::Database;
+    use bds_core::engine;
+    use russh::ChannelMsg;
+    use russh::client;
+    use russh::keys::key::PrivateKeyWithHashAlg;
+    use russh::keys::{PublicKey, load_secret_key};
     use std::fs;
     use std::thread;
+
+    struct AcceptHostKey;
+
+    impl client::Handler for AcceptHostKey {
+        type Error = anyhow::Error;
+        async fn check_server_key(&mut self, _key: &PublicKey) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
 
     #[test]
     fn defaults_to_loopback_and_external_binding_requires_an_explicit_value() {
         let config = ServerConfig::local("db".into(), "data".into());
         assert_eq!(config.bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.port, 2222);
-    }
-
-    #[test]
-    fn terminal_banner_uses_the_server_locale_and_only_terminal_control_bytes() {
-        let banner = terminal_banner("de", "Blog");
-        assert!(banner.starts_with("\x1b[2J\x1b[H"));
-        assert!(banner.contains("RuDS-Serversitzung"));
-        assert!(banner.contains("Blog"));
-        assert!(!banner.contains('{'));
     }
 
     #[test]
@@ -510,6 +502,112 @@ mod tests {
         runtime.stop().unwrap();
         assert!(first.ping().is_err());
         first.disconnect().unwrap();
+    }
+
+    #[test]
+    fn real_ssh_pty_renders_resizes_exits_cleanly_and_reconnects() {
+        let root = tempfile::tempdir().unwrap();
+        let server_data = root.path().join("server");
+        let client_data = root.path().join("client");
+        fs::create_dir_all(&server_data).unwrap();
+        let database_path = server_data.join("bds.db");
+        let db = Database::open(&database_path).unwrap();
+        db.migrate().unwrap();
+        let project_dir = root.path().join("blog");
+        let project = engine::project::create_project(
+            db.conn(),
+            "PTY Blog",
+            Some(project_dir.to_str().unwrap()),
+        )
+        .unwrap();
+        engine::project::set_active_project(db.conn(), &project.id).unwrap();
+        let runtime = ServerRuntime::start(ServerConfig {
+            database_path,
+            data_root: server_data.clone(),
+            bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            mcp_port: 0,
+        })
+        .unwrap();
+        let identity = ClientKeyMaterial::ensure(&client_data).unwrap();
+        fs::write(
+            &runtime.key_material().authorized_keys_path,
+            fs::read_to_string(&identity.public_key_path).unwrap(),
+        )
+        .unwrap();
+
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for _ in 0..2 {
+            tokio.block_on(async {
+                let config = Arc::new(client::Config {
+                    inactivity_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                });
+                let mut ssh = client::connect(config, runtime.address(), AcceptHostKey)
+                    .await
+                    .unwrap();
+                let private_key = load_secret_key(&identity.private_key_path, None).unwrap();
+                let hash = ssh.best_supported_rsa_hash().await.unwrap().flatten();
+                assert!(
+                    ssh.authenticate_publickey(
+                        "author",
+                        PrivateKeyWithHashAlg::new(Arc::new(private_key), hash)
+                    )
+                    .await
+                    .unwrap()
+                    .success()
+                );
+                let mut channel = ssh.channel_open_session().await.unwrap();
+                channel
+                    .request_pty(true, "xterm-256color", 72, 18, 0, 0, &[])
+                    .await
+                    .unwrap();
+                channel.request_shell(true).await.unwrap();
+                let first = tokio::time::timeout(Duration::from_secs(3), async {
+                    loop {
+                        if let Some(ChannelMsg::Data { data }) = channel.wait().await
+                            && data.starts_with(b"\x1b[?25l\x1b[2J\x1b[H")
+                        {
+                            break data;
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(
+                    first
+                        .windows(b"PTY Blog".len())
+                        .any(|window| window == b"PTY Blog")
+                );
+                channel.window_change(100, 30, 0, 0).await.unwrap();
+                channel.data(&[17_u8][..]).await.unwrap();
+                let restored = tokio::time::timeout(Duration::from_secs(3), async {
+                    let mut output = Vec::new();
+                    while let Some(message) = channel.wait().await {
+                        match message {
+                            ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                            ChannelMsg::Close | ChannelMsg::Eof => break,
+                            _ => {}
+                        }
+                    }
+                    output
+                })
+                .await
+                .unwrap();
+                assert!(
+                    restored
+                        .windows(b"\x1b[?25h".len())
+                        .any(|window| window == b"\x1b[?25h")
+                );
+                ssh.disconnect(russh::Disconnect::ByApplication, "", "en")
+                    .await
+                    .unwrap();
+            });
+        }
+        runtime.stop().unwrap();
     }
 
     fn domain_event_count(messages: &[ServerMessage], project_id: &str) -> usize {
