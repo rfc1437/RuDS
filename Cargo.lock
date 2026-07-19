@@ -847,6 +847,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bds-mcp"
+version = "0.1.0"
+dependencies = [
+ "bds-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "bds-ui"
 version = "0.1.0"
 dependencies = [

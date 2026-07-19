@@ -45,6 +45,14 @@ pub struct SettingsCategoryRow {
     pub is_protected: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsMcpAgentRow {
+    pub agent: bds_core::engine::mcp::McpAgent,
+    pub label: String,
+    pub configured: bool,
+    pub config_path: String,
+}
+
 impl std::fmt::Display for SettingsCategoryRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.name)
@@ -143,6 +151,12 @@ pub struct SettingsViewState {
     pub system_prompt: text_editor::Content,
     // Technology
     pub semantic_similarity_enabled: bool,
+    // MCP
+    pub mcp_enabled: bool,
+    pub mcp_running: bool,
+    pub mcp_endpoint: String,
+    pub mcp_proposals: Vec<bds_core::model::McpProposal>,
+    pub mcp_agents: Vec<SettingsMcpAgentRow>,
 }
 
 impl std::fmt::Debug for SettingsViewState {
@@ -195,6 +209,11 @@ impl Clone for SettingsViewState {
             image_model: self.image_model.clone(),
             system_prompt: text_editor::Content::with_text(&self.system_prompt.text()),
             semantic_similarity_enabled: self.semantic_similarity_enabled,
+            mcp_enabled: self.mcp_enabled,
+            mcp_running: self.mcp_running,
+            mcp_endpoint: self.mcp_endpoint.clone(),
+            mcp_proposals: self.mcp_proposals.clone(),
+            mcp_agents: self.mcp_agents.clone(),
         }
     }
 }
@@ -247,6 +266,11 @@ impl Default for SettingsViewState {
             image_model: String::new(),
             system_prompt: text_editor::Content::new(),
             semantic_similarity_enabled: false,
+            mcp_enabled: false,
+            mcp_running: false,
+            mcp_endpoint: String::new(),
+            mcp_proposals: Vec::new(),
+            mcp_agents: Vec::new(),
         }
     }
 }
@@ -345,6 +369,11 @@ pub enum SettingsMsg {
     RegenerateThumbnails,
     OpenDataFolder,
     InstallCli,
+    McpEnabledChanged(bool),
+    McpProposalAccepted(String),
+    McpProposalRejected(String),
+    McpAgentToggled(bds_core::engine::mcp::McpAgent),
+    McpRefresh,
     /// Navigate to a specific section from sidebar; expand it, collapse all others.
     FocusSection(SettingsSection),
 }
@@ -436,7 +465,7 @@ fn render_section<'a>(
         SettingsSection::Technology => section_technology(state, locale),
         SettingsSection::Publishing => section_publishing(state, locale),
         SettingsSection::Data => section_data(locale),
-        SettingsSection::MCP => section_mcp(locale),
+        SettingsSection::MCP => section_mcp(state, locale),
     };
 
     inputs::card(column![header, content].spacing(8)).into()
@@ -1008,12 +1037,131 @@ fn section_data<'a>(locale: UiLocale) -> Element<'a, Message> {
         .into()
 }
 
-fn section_mcp<'a>(locale: UiLocale) -> Element<'a, Message> {
-    // MCP status and agent toggles — placeholder for M3
-    text(t(locale, "settings.mcpPlaceholder"))
-        .size(13)
-        .color(Color::from_rgb(0.5, 0.5, 0.5))
+fn section_mcp<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    let status = if state.mcp_running {
+        t(locale, "settings.mcpRunning")
+    } else {
+        t(locale, "settings.mcpStopped")
+    };
+    let status_color = if state.mcp_running {
+        Color::from_rgb(0.35, 0.78, 0.48)
+    } else {
+        inputs::LABEL_COLOR
+    };
+    let server = column![
+        iced::widget::checkbox(t(locale, "settings.mcpEnable"), state.mcp_enabled)
+            .on_toggle(|value| Message::Settings(SettingsMsg::McpEnabledChanged(value))),
+        row![
+            text(status).size(13).color(status_color),
+            text(state.mcp_endpoint.clone())
+                .size(12)
+                .color(inputs::LABEL_COLOR),
+            button(text(t(locale, "settings.mcpRefresh")).size(12))
+                .on_press(Message::Settings(SettingsMsg::McpRefresh))
+                .style(inputs::secondary_button)
+                .padding([5, 10]),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(8);
+
+    let proposal_rows = if state.mcp_proposals.is_empty() {
+        column![
+            text(t(locale, "settings.mcpNoProposals"))
+                .size(13)
+                .color(inputs::LABEL_COLOR)
+        ]
+    } else {
+        column(state.mcp_proposals.iter().map(|proposal| {
+            let kind = t(locale, proposal_kind_i18n_key(proposal.kind));
+            let summary = proposal
+                .entity_id
+                .as_deref()
+                .map_or(kind.clone(), |entity| format!("{kind} · {entity}"));
+            inputs::card(
+                row![
+                    column![
+                        text(summary).size(13),
+                        text(t(locale, proposal_status_i18n_key(proposal.status)))
+                            .size(11)
+                            .color(inputs::LABEL_COLOR),
+                        text(proposal.data.clone())
+                            .size(11)
+                            .color(inputs::LABEL_COLOR),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    button(text(t(locale, "settings.mcpApprove")).size(12))
+                        .on_press(Message::Settings(SettingsMsg::McpProposalAccepted(
+                            proposal.id.clone()
+                        )))
+                        .style(inputs::primary_button)
+                        .padding([5, 10]),
+                    button(text(t(locale, "settings.mcpReject")).size(12))
+                        .on_press(Message::Settings(SettingsMsg::McpProposalRejected(
+                            proposal.id.clone()
+                        )))
+                        .style(inputs::danger_button)
+                        .padding([5, 10]),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .into()
+        }))
+        .spacing(6)
+    };
+
+    let agents = column(state.mcp_agents.iter().map(|agent| {
+        let configured = agent.configured;
+        column![
+            iced::widget::checkbox(agent.label.clone(), configured).on_toggle({
+                let agent = agent.agent;
+                move |_| Message::Settings(SettingsMsg::McpAgentToggled(agent))
+            }),
+            text(agent.config_path.clone())
+                .size(11)
+                .color(inputs::LABEL_COLOR),
+        ]
+        .spacing(2)
         .into()
+    }))
+    .spacing(8);
+
+    column![
+        server,
+        text(t(locale, "settings.mcpProposals")).size(14),
+        proposal_rows,
+        text(t(locale, "settings.mcpAgents")).size(14),
+        agents,
+    ]
+    .spacing(12)
+    .padding([0, 16])
+    .into()
+}
+
+fn proposal_kind_i18n_key(kind: bds_core::model::ProposalKind) -> &'static str {
+    match kind {
+        bds_core::model::ProposalKind::DraftPost => "settings.mcpKindDraftPost",
+        bds_core::model::ProposalKind::ProposeScript => "settings.mcpKindScript",
+        bds_core::model::ProposalKind::ProposeTemplate => "settings.mcpKindTemplate",
+        bds_core::model::ProposalKind::ProposeMediaTranslation => {
+            "settings.mcpKindMediaTranslation"
+        }
+        bds_core::model::ProposalKind::ProposeMediaMetadata => "settings.mcpKindMediaMetadata",
+        bds_core::model::ProposalKind::ProposePostMetadata => "settings.mcpKindPostMetadata",
+    }
+}
+
+fn proposal_status_i18n_key(status: bds_core::model::ProposalStatus) -> &'static str {
+    match status {
+        bds_core::model::ProposalStatus::Pending => "settings.mcpStatusPending",
+        bds_core::model::ProposalStatus::Executing => "settings.mcpStatusExecuting",
+        bds_core::model::ProposalStatus::Accepted => "settings.mcpStatusAccepted",
+        bds_core::model::ProposalStatus::Rejected => "settings.mcpStatusRejected",
+        bds_core::model::ProposalStatus::Expired => "settings.mcpStatusExpired",
+    }
 }
 
 #[cfg(test)]

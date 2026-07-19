@@ -14,6 +14,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
 - Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
 - Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, shared settings/projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
+- Local MCP automation over stdio or a localhost-only stateless HTTP endpoint, with project resources, read/search/count tools, inert write proposals, explicit desktop approval, and opt-in Claude Code/Copilot configuration.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
@@ -29,6 +30,7 @@ RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from 
 - `crates/bds-editor` — reusable syntax-highlighting editor
 - `crates/bds-ui` — desktop application and platform integration
 - `crates/bds-cli` — headless automation CLI over the shared engines
+- `crates/bds-mcp` — packaged stdio MCP transport over the shared MCP engine
 - `specs` — authoritative Allium behavior specifications
 - `fixtures` — compatibility projects and generated-site fixtures
 - `locales` — UI and native-menu translations

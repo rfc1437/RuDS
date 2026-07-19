@@ -1,6 +1,7 @@
 pub mod db_notification;
 pub mod generated_file_hash;
 pub mod import_definition;
+pub mod mcp_proposal;
 pub mod media;
 pub mod media_translation;
 pub mod post;

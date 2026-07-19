@@ -1,6 +1,7 @@
 mod event;
 mod generation;
 mod import;
+mod mcp;
 mod media;
 pub mod metadata;
 mod post;
@@ -19,6 +20,7 @@ pub use import::{
     ImportExecutionResult, ImportItemKind, ImportItemStatus, ImportMacroUsage, ImportPhase,
     ImportProgress, ImportReport, ImportResolution, ImportedSite, TaxonomyCandidate, TaxonomyKind,
 };
+pub use mcp::{McpProposal, ProposalKind, ProposalStatus};
 pub use media::{Media, MediaTranslation};
 pub use metadata::{CategorySettings, ProjectMetadata, TagEntry};
 pub use post::{Post, PostLink, PostMedia, PostStatus, PostTranslation};

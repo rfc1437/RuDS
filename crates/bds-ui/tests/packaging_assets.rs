@@ -25,6 +25,8 @@ fn desktop_packages_have_native_icons_and_cargo_commands() {
         "identifier = \"de.rfc1437.ruds\"",
         "deep-link-protocols = [{ schemes = [\"ruds\"] }]",
         "signing-identity = \"-\"",
+        "cargo build --release -p bds-ui -p bds-cli -p bds-mcp",
+        "{ path = \"bds-mcp\" }",
     ] {
         assert!(manifest.contains(required), "missing {required}");
     }

@@ -37,10 +37,11 @@ winresource = "0.1"
 product-name = "Blogging Desktop Server"
 identifier = "de.rfc1437.ruds"
 description = "A desktop application for writing and publishing static blogs."
-before-packaging-command = "cargo build --release -p bds-ui -p bds-cli"
+before-packaging-command = "cargo build --release -p bds-ui -p bds-cli -p bds-mcp"
 binaries = [
     { path = "bds-ui", main = true },
     { path = "bds-cli" },
+    { path = "bds-mcp" },
 ]
 deep-link-protocols = [{ schemes = ["ruds"] }]
 icons = [

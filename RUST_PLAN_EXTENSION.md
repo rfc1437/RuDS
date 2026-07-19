@@ -81,7 +81,7 @@ Open:
 - OPML/menu editor UI.
 - Replace the Menu Editor placeholder.
 
-### CLI and domain events — Done; MCP — Open
+### CLI, domain events, and MCP — Done
 
 Done:
 
@@ -89,11 +89,9 @@ Done:
 - Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects/settings, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, and guarded launcher installation.
 - CLI process and dispatch tests use temporary databases/projects; CLI mutations persist deduplicated desktop notifications and imported filesystem metadata survives rebuild.
 - Settings → Data exposes the same localized packaged-launcher installer as `bds-cli install`.
-
-Open:
-
-- MCP tools/resources and proposal-based writes from `mcp.allium`.
-- Replace the MCP settings placeholder.
+- MCP exposes the complete `bds://` resource set and typed read/search/count tools through packaged stdio and stateless localhost-only HTTP transports with Origin/Host validation and CORS.
+- Every MCP write is an inert persisted proposal until one desktop approval applies it exactly once through the shared post/media/script/template engines; rejection, expiry, concurrent resolution, result state, and normal domain events are covered.
+- Settings → MCP provides localized server enablement/status/endpoint, full proposal review controls, and opt-in guarded Claude Code and GitHub Copilot configuration without secrets.
 
 ### Blogmark and transform pipeline — Done
 

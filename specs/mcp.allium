@@ -10,6 +10,9 @@ use "./template.allium" as template
 
 enum ProposalStatus {
     pending
+    executing
+    accepted
+    rejected
     expired
 }
 
@@ -31,12 +34,14 @@ surface McpServerSurface {
 }
 
 entity Proposal {
-    kind: draft_post | propose_script | propose_template | propose_media_metadata | propose_post_metadata
+    kind: draft_post | propose_script | propose_template | propose_media_translation | propose_media_metadata | propose_post_metadata
     status: ProposalStatus
     entity_id: String
     data: String
     created_at: Timestamp
     expires_at: Timestamp
+    resolved_at: Timestamp?
+    result: String?
     draft_post: post/Post?
     proposed_script: script/Script?
     proposed_template: template/Template?
@@ -47,7 +52,10 @@ entity Proposal {
     is_expired: expires_at <= now
 
     transitions status {
+        pending -> executing
         pending -> expired
+        executing -> accepted
+        executing -> rejected
     }
 }
 
@@ -61,6 +69,8 @@ surface ProposalSurface {
         proposal.data
         proposal.created_at
         proposal.expires_at
+        proposal.resolved_at when proposal.resolved_at != null
+        proposal.result when proposal.result != null
         proposal.draft_post when proposal.draft_post != null
         proposal.proposed_script when proposal.proposed_script != null
         proposal.proposed_template when proposal.proposed_template != null
@@ -101,11 +111,32 @@ invariant LocalhostOnlyHttp {
 }
 
 invariant StatelessHttpHandling {
-    -- Each HTTP request creates a fresh McpServer instance
-    -- No session state between requests
+    -- Each HTTP request opens a fresh shared database connection through a
+    -- path-only application context. No MCP session id or client state is kept.
+}
+
+invariant InertProposalPayloads {
+    -- Write tools validate their request and persist only a serialized proposal.
+    -- They do not create or update posts, media translations, scripts, templates,
+    -- sidecars, or other content before explicit desktop approval.
 }
 
 -- Read-only resources (bds:// scheme)
+
+surface ProjectResource {
+    facing viewer: McpClient
+    context project: Project
+    exposes:
+        project.id
+        project.name
+        project.slug
+        project.description
+        project.public_url
+        project.main_language
+        project.blog_languages
+    @guidance
+        -- bds://project. Local filesystem paths are not exposed.
+}
 
 surface PostsResource {
     facing viewer: McpClient
@@ -258,13 +289,19 @@ rule GetMediaTranslations {
 
 rule UpsertMediaTranslation {
     when: McpToolInvoked("upsert_media_translation", params)
-    -- Creates or updates translated media metadata for a language.
-    ensures: media/UpsertMediaTranslationRequested(
-        params.media_id,
-        params.language,
-        params.title,
-        params.alt,
-        params.caption
+    -- Persists an inert translated-metadata proposal for desktop review.
+    ensures: Proposal.created(
+        kind: propose_media_translation,
+        entity_id: params.media_id,
+        data: serialize(params),
+        created_at: now,
+        expires_at: now + config.proposal_ttl,
+        draft_post: null,
+        proposed_script: null,
+        proposed_template: null,
+        target_media: params.media,
+        target_post: null,
+        status: pending
     )
 }
 
@@ -272,21 +309,15 @@ rule UpsertMediaTranslation {
 
 rule DraftPost {
     when: McpToolInvoked("draft_post", params)
-    -- Creates a draft post in DB
-    -- Returns proposalId for accept/discard lifecycle
+    -- Validates and stores an inert post payload; returns proposalId.
     ensures:
-        let new_post = post/Post.created(
-            title: params.title,
-            content: params.content,
-            status: draft
-        )
         let proposal = Proposal.created(
             kind: draft_post,
-            entity_id: new_post.id,
-            data: "",
+            entity_id: params.proposal_entity_id,
+            data: serialize(params),
             created_at: now,
             expires_at: now + config.proposal_ttl,
-            draft_post: new_post,
+            draft_post: null,
             proposed_script: null,
             proposed_template: null,
             target_media: null,
@@ -300,20 +331,14 @@ rule ProposeScript {
     when: McpToolInvoked("propose_script", params)
     requires: ValidateScript(params.content) = valid
     ensures:
-        let new_script = script/Script.created(
-            title: params.title,
-            kind: params.kind,
-            content: params.content,
-            status: draft
-        )
         let proposal = Proposal.created(
             kind: propose_script,
-            entity_id: new_script.id,
-            data: "",
+            entity_id: params.proposal_entity_id,
+            data: serialize(params),
             created_at: now,
             expires_at: now + config.proposal_ttl,
             draft_post: null,
-            proposed_script: new_script,
+            proposed_script: null,
             proposed_template: null,
             target_media: null,
             target_post: null,
@@ -326,21 +351,15 @@ rule ProposeTemplate {
     when: McpToolInvoked("propose_template", params)
     requires: ValidateLiquid(params.content) = valid
     ensures:
-        let new_template = template/Template.created(
-            title: params.title,
-            kind: params.kind,
-            content: params.content,
-            status: draft
-        )
         let proposal = Proposal.created(
             kind: propose_template,
-            entity_id: new_template.id,
-            data: "",
+            entity_id: params.proposal_entity_id,
+            data: serialize(params),
             created_at: now,
             expires_at: now + config.proposal_ttl,
             draft_post: null,
             proposed_script: null,
-            proposed_template: new_template,
+            proposed_template: null,
             target_media: null,
             target_post: null,
             status: pending
@@ -393,42 +412,42 @@ rule AcceptProposal {
     requires: not proposal.is_expired
     ensures:
         if proposal.kind = draft_post:
-            post/PublishPostRequested(proposal.draft_post)
+            post/PublishPostRequested(deserialize_post(proposal.data))
         if proposal.kind = propose_script:
-            script/PublishScriptRequested(proposal.proposed_script)
+            script/PublishScriptRequested(deserialize_script(proposal.data))
         if proposal.kind = propose_template:
-            template/PublishTemplateRequested(proposal.proposed_template)
+            template/PublishTemplateRequested(deserialize_template(proposal.data))
+        if proposal.kind = propose_media_translation:
+            media/UpsertMediaTranslationRequested(deserialize_media_translation(proposal.data))
         if proposal.kind = propose_media_metadata:
             media/UpdateMediaRequested(proposal.target_media, deserialize_media_changes(proposal.data))
         if proposal.kind = propose_post_metadata:
             post/UpdatePostRequested(proposal.target_post, deserialize_post_changes(proposal.data))
-        not exists proposal
+        proposal.status = accepted
+        proposal.result = serialize(result)
+        proposal.resolved_at = now
 }
 
 rule DiscardProposal {
     when: DiscardProposalRequested(proposal)
-    ensures:
-        if proposal.kind = draft_post:
-            post/DeletePostRequested(proposal.draft_post)
-        if proposal.kind = propose_script:
-            script/DeleteScriptRequested(proposal.proposed_script)
-        if proposal.kind = propose_template:
-            template/DeleteTemplateRequested(proposal.proposed_template)
-        not exists proposal
+    -- There are no temporary content entities to clean up.
+    ensures: proposal.status = rejected
+    ensures: proposal.result = serialize(rejected)
+    ensures: proposal.resolved_at = now
 }
 
 rule ExpireProposal {
     when: proposal: Proposal.is_expired becomes true
-    -- On expiry: clean up draft DB rows
+    -- Expiry marks the inert proposal terminal; no content cleanup is needed.
     ensures: proposal.status = expired
-    ensures: DiscardProposalRequested(proposal)
+    ensures: proposal.result = serialize(expired)
+    ensures: proposal.resolved_at = now
 }
 
 -- Agent configuration
 
 value McpAgentKind {
-    -- Supported: claude_code, claude_desktop, github_copilot,
-    --   gemini_cli, opencode, mistral_vibe, openai_codex
+    -- Currently supported and shown: claude_code, github_copilot.
     kind: String
 }
 
@@ -462,7 +481,6 @@ rule UninstallAgentConfig {
 }
 
 invariant ProposalPayloadEncoding {
-    -- Proposal.data stores a serialized payload for metadata proposals.
-    -- draft_post / propose_script / propose_template proposals keep the
-    -- created entity reference directly on the proposal record.
+    -- Proposal.data stores the validated serialized payload for every write.
+    -- Terminal status/result rows remain available for result reporting.
 }

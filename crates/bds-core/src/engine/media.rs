@@ -595,6 +595,7 @@ pub fn upsert_media_translation(
 
     // Re-index FTS for parent media
     fts_index_media(conn, &media)?;
+    emit_media(&media, NotificationAction::Updated);
 
     Ok(translation)
 }

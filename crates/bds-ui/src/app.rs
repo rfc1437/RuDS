@@ -873,6 +873,7 @@ pub struct BdsApp {
 
     // Local preview
     preview_session: Option<PreviewSession>,
+    mcp_server: Option<engine::mcp::McpHttpServer>,
     embedded_preview: Option<EmbeddedPreviewState>,
     main_window_id: Option<window::Id>,
 
@@ -923,6 +924,17 @@ impl BdsApp {
         let search_index_rebuild_required = db
             .as_ref()
             .is_some_and(|db| engine::search::prepare_search_index(db.conn()).unwrap_or(true));
+        let mcp_enabled = db.as_ref().is_some_and(|db| {
+            engine::settings::get(db.conn(), "mcp.http.enabled")
+                .ok()
+                .flatten()
+                .is_some_and(|value| value == "true")
+        });
+        let mcp_server = mcp_enabled
+            .then(|| {
+                engine::mcp::McpHttpServer::start(db_path.clone(), engine::mcp::DEFAULT_HTTP_PORT)
+            })
+            .and_then(Result::ok);
 
         // Load projects
         let projects = db
@@ -1020,6 +1032,7 @@ impl BdsApp {
                 active_modal: search_index_rebuild_required
                     .then_some(modal::ModalState::SearchIndexRepair),
                 preview_session: None,
+                mcp_server,
                 embedded_preview: None,
                 main_window_id: None,
                 post_editors: HashMap::new(),
@@ -1093,6 +1106,7 @@ impl BdsApp {
             toasts: Vec::new(),
             active_modal: None,
             preview_session: None,
+            mcp_server: None,
             embedded_preview: None,
             main_window_id: None,
             post_editors: HashMap::new(),
@@ -5142,6 +5156,34 @@ impl BdsApp {
                 state.title_model = ai_settings.title_model.unwrap_or_default();
                 state.image_model = ai_settings.image_model.unwrap_or_default();
             }
+            state.mcp_enabled = engine::settings::get(db.conn(), "mcp.http.enabled")
+                .ok()
+                .flatten()
+                .is_some_and(|value| value == "true");
+            state.mcp_running = self.mcp_server.is_some();
+            state.mcp_endpoint = self
+                .mcp_server
+                .as_ref()
+                .map(engine::mcp::McpHttpServer::endpoint)
+                .unwrap_or_else(|| {
+                    format!("http://127.0.0.1:{}/mcp", engine::mcp::DEFAULT_HTTP_PORT)
+                });
+            if let Some(project) = &self.active_project {
+                state.mcp_proposals =
+                    engine::mcp::list_pending_proposals(db.conn(), &project.id).unwrap_or_default();
+            }
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            state.mcp_agents = engine::mcp::McpAgent::all()
+                .into_iter()
+                .map(|agent| crate::views::settings_view::SettingsMcpAgentRow {
+                    agent,
+                    label: agent.label().to_string(),
+                    configured: engine::mcp::is_agent_configured(agent, &home),
+                    config_path: engine::mcp::agent_config_path(agent, &home)
+                        .to_string_lossy()
+                        .into_owned(),
+                })
+                .collect();
         }
         state.offline_mode = self.offline_mode;
         state
@@ -5981,6 +6023,100 @@ impl BdsApp {
                         self.notify_operation_failed("settings.installCli", error.to_string())
                     }
                 }
+            }
+            SettingsMsg::McpEnabledChanged(enabled) => {
+                let Some(db) = &self.db else {
+                    return Task::none();
+                };
+                if enabled {
+                    if self.mcp_server.is_none() {
+                        match engine::mcp::McpHttpServer::start(
+                            self.db_path.clone(),
+                            engine::mcp::DEFAULT_HTTP_PORT,
+                        ) {
+                            Ok(server) => self.mcp_server = Some(server),
+                            Err(error) => {
+                                self.notify_operation_failed(
+                                    "settings.mcpEnable",
+                                    error.to_string(),
+                                );
+                                return Task::none();
+                            }
+                        }
+                    }
+                } else if let Some(server) = self.mcp_server.take()
+                    && let Err(error) = server.stop()
+                {
+                    self.notify_operation_failed("settings.mcpEnable", error.to_string());
+                    return Task::none();
+                }
+                match engine::settings::set(
+                    db.conn(),
+                    "mcp.http.enabled",
+                    if enabled { "true" } else { "false" },
+                ) {
+                    Ok(()) => {
+                        self.settings_state = Some(self.hydrate_settings_state());
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                    }
+                    Err(error) => {
+                        self.notify_operation_failed("settings.mcpEnable", error.to_string())
+                    }
+                }
+            }
+            SettingsMsg::McpProposalAccepted(proposal_id) => {
+                if let (Some(db), Some(data_dir)) = (&self.db, &self.data_dir) {
+                    match engine::mcp::accept_proposal(db.conn(), data_dir, &proposal_id) {
+                        Ok(_) => {
+                            self.settings_state = Some(self.hydrate_settings_state());
+                            self.notify(
+                                ToastLevel::Success,
+                                &t(self.ui_locale, "settings.mcpProposalApproved"),
+                            );
+                        }
+                        Err(error) => {
+                            self.notify_operation_failed("settings.mcpApprove", error.to_string())
+                        }
+                    }
+                }
+            }
+            SettingsMsg::McpProposalRejected(proposal_id) => {
+                if let (Some(db), Some(data_dir)) = (&self.db, &self.data_dir) {
+                    match engine::mcp::reject_proposal(db.conn(), data_dir, &proposal_id) {
+                        Ok(_) => {
+                            self.settings_state = Some(self.hydrate_settings_state());
+                            self.notify(
+                                ToastLevel::Success,
+                                &t(self.ui_locale, "settings.mcpProposalRejected"),
+                            );
+                        }
+                        Err(error) => {
+                            self.notify_operation_failed("settings.mcpReject", error.to_string())
+                        }
+                    }
+                }
+            }
+            SettingsMsg::McpAgentToggled(agent) => {
+                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+                let result = if engine::mcp::is_agent_configured(agent, &home) {
+                    engine::mcp::remove_agent_config(agent, &home)
+                } else {
+                    engine::mcp::packaged_mcp_executable().and_then(|executable| {
+                        engine::mcp::install_agent_config(agent, &home, &executable)
+                    })
+                };
+                match result {
+                    Ok(_) => {
+                        self.settings_state = Some(self.hydrate_settings_state());
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                    }
+                    Err(error) => {
+                        self.notify_operation_failed("settings.mcpAgents", error.to_string())
+                    }
+                }
+            }
+            SettingsMsg::McpRefresh => {
+                self.settings_state = Some(self.hydrate_settings_state());
             }
             SettingsMsg::FocusSection(section) => {
                 state.focus_section(section);
@@ -8973,5 +9109,64 @@ mod tests {
         );
         assert!(app.script_editors[&created.id].is_dirty);
         assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn mcp_settings_review_applies_or_rejects_inert_proposals() {
+        let (db, mut project, tmp) = setup();
+        project.data_path = Some(tmp.path().to_string_lossy().into_owned());
+        bds_core::db::queries::project::update_project(db.conn(), &project).unwrap();
+        let now = bds_core::util::now_unix_ms();
+        let accepted = bds_core::model::McpProposal {
+            id: "accept-me".into(),
+            project_id: project.id.clone(),
+            kind: bds_core::model::ProposalKind::DraftPost,
+            status: bds_core::model::ProposalStatus::Pending,
+            entity_id: None,
+            data: serde_json::json!({"title":"Approved","content":"Body"}).to_string(),
+            result: None,
+            created_at: now,
+            expires_at: now + 60_000,
+            resolved_at: None,
+        };
+        let mut rejected = accepted.clone();
+        rejected.id = "reject-me".into();
+        rejected.data = serde_json::json!({"title":"Rejected","content":"Body"}).to_string();
+        bds_core::db::queries::mcp_proposal::insert_proposal(db.conn(), &accepted).unwrap();
+        bds_core::db::queries::mcp_proposal::insert_proposal(db.conn(), &rejected).unwrap();
+
+        let mut app = make_app(db, project.clone(), &tmp);
+        app.settings_state = Some(app.hydrate_settings_state());
+        assert_eq!(app.settings_state.as_ref().unwrap().mcp_proposals.len(), 2);
+        let _ = app.handle_settings_msg(SettingsMsg::McpProposalAccepted("accept-me".into()));
+        let _ = app.handle_settings_msg(SettingsMsg::McpProposalRejected("reject-me".into()));
+
+        let posts = bds_core::db::queries::post::list_posts_by_project(
+            app.db.as_ref().unwrap().conn(),
+            &project.id,
+        )
+        .unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].title, "Approved");
+        assert_eq!(posts[0].status, PostStatus::Published);
+        assert_eq!(
+            bds_core::engine::mcp::get_proposal(app.db.as_ref().unwrap().conn(), "accept-me")
+                .unwrap()
+                .status,
+            bds_core::model::ProposalStatus::Accepted
+        );
+        assert_eq!(
+            bds_core::engine::mcp::get_proposal(app.db.as_ref().unwrap().conn(), "reject-me")
+                .unwrap()
+                .status,
+            bds_core::model::ProposalStatus::Rejected
+        );
+        assert!(
+            app.settings_state
+                .as_ref()
+                .unwrap()
+                .mcp_proposals
+                .is_empty()
+        );
     }
 }

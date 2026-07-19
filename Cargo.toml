@@ -5,6 +5,7 @@ members = [
     "crates/bds-editor",
     "crates/bds-ui",
     "crates/bds-cli",
+    "crates/bds-mcp",
 ]
 
 [workspace.package]
@@ -67,3 +68,4 @@ rfd = "0.15"
 # Internal crates
 bds-core = { path = "crates/bds-core" }
 bds-editor = { path = "crates/bds-editor" }
+bds-mcp = { path = "crates/bds-mcp" }

@@ -5,8 +5,8 @@ use diesel::sql_types::{Integer, Text};
 use diesel::sqlite::{Sqlite, SqliteValue};
 
 use crate::model::{
-    NotificationAction, NotificationEntity, PostStatus, ScriptKind, ScriptStatus, TemplateKind,
-    TemplateStatus,
+    NotificationAction, NotificationEntity, PostStatus, ProposalKind, ProposalStatus, ScriptKind,
+    ScriptStatus, TemplateKind, TemplateStatus,
 };
 
 #[derive(Debug, AsExpression, FromSqlRow)]
@@ -93,3 +93,5 @@ text_enum_sql!(ScriptKind);
 text_enum_sql!(ScriptStatus);
 text_enum_sql!(NotificationEntity);
 text_enum_sql!(NotificationAction);
+text_enum_sql!(ProposalKind);
+text_enum_sql!(ProposalStatus);

@@ -142,6 +142,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    mcp_proposals (id) {
+        id -> Text,
+        project_id -> Text,
+        kind -> Text,
+        status -> Text,
+        entity_id -> Nullable<Text>,
+        data -> Text,
+        result -> Nullable<Text>,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        resolved_at -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
     media (id) {
         id -> Text,
         project_id -> Text,
@@ -319,6 +334,7 @@ diesel::joinable!(chat_messages -> chat_conversations (conversation_id));
 diesel::joinable!(dismissed_duplicate_pairs -> projects (project_id));
 diesel::joinable!(generated_file_hashes -> projects (project_id));
 diesel::joinable!(import_definitions -> projects (project_id));
+diesel::joinable!(mcp_proposals -> projects (project_id));
 diesel::joinable!(media -> projects (project_id));
 diesel::joinable!(media_translations -> media (translation_for));
 diesel::joinable!(media_translations -> projects (project_id));
@@ -344,6 +360,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     embedding_keys,
     generated_file_hashes,
     import_definitions,
+    mcp_proposals,
     media,
     media_translations,
     post_links,
