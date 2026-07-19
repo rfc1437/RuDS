@@ -57,6 +57,7 @@ pub struct ChatConversation {
     pub title: String,
     pub model: Option<String>,
     pub copilot_session_id: Option<String>,
+    pub surface_state: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -68,6 +69,7 @@ pub struct NewChatConversation<'a> {
     pub title: &'a str,
     pub model: Option<&'a str>,
     pub copilot_session_id: Option<&'a str>,
+    pub surface_state: Option<&'a str>,
     pub created_at: i64,
     pub updated_at: i64,
 }

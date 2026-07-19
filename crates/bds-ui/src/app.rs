@@ -334,6 +334,26 @@ pub enum Message {
     ChatSend,
     ChatCancel,
     ChatLinkClicked(String),
+    ChatSurfaceFieldChanged {
+        surface_id: String,
+        field: String,
+        value: serde_json::Value,
+    },
+    ChatSurfaceTextareaAction {
+        surface_id: String,
+        field: String,
+        action: iced::widget::text_editor::Action,
+    },
+    ChatSurfaceTabSelected {
+        surface_id: String,
+        index: usize,
+    },
+    ChatSurfaceDismissed(String),
+    ChatSurfaceAction {
+        surface_id: String,
+        action: String,
+        payload: serde_json::Value,
+    },
     ChatFinished {
         conversation_id: String,
         result: Result<engine::chat::ChatTurnResult, String>,
@@ -1317,6 +1337,103 @@ impl BdsApp {
                 }
                 Task::none()
             }
+            Message::ChatSurfaceFieldChanged {
+                surface_id,
+                field,
+                value,
+            } => {
+                if let Some(state) = self.active_chat_state_mut() {
+                    state
+                        .surface_state
+                        .surface_data
+                        .entry(surface_id)
+                        .or_default()
+                        .insert(field, value);
+                    state.surface_state_dirty_since = Some(std::time::Instant::now());
+                    state.rebuild_surfaces();
+                }
+                Task::none()
+            }
+            Message::ChatSurfaceTextareaAction {
+                surface_id,
+                field,
+                action,
+            } => {
+                if let Some(state) = self.active_chat_state_mut()
+                    && let Some(content) = state
+                        .surface_textareas
+                        .get_mut(&crate::views::chat_view::textarea_key(&surface_id, &field))
+                {
+                    content.perform(action);
+                    let value = content.text();
+                    state
+                        .surface_state
+                        .surface_data
+                        .entry(surface_id)
+                        .or_default()
+                        .insert(field, value.into());
+                    state.surface_state_dirty_since = Some(std::time::Instant::now());
+                }
+                Task::none()
+            }
+            Message::ChatSurfaceTabSelected { surface_id, index } => {
+                let Some(conversation_id) = self.active_chat_id().map(str::to_string) else {
+                    return Task::none();
+                };
+                if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                    state.surface_state.surface_tabs.insert(surface_id, index);
+                    state.rebuild_surfaces();
+                }
+                self.persist_chat_surface_state(&conversation_id);
+                Task::none()
+            }
+            Message::ChatSurfaceDismissed(surface_id) => {
+                let Some(conversation_id) = self.active_chat_id().map(str::to_string) else {
+                    return Task::none();
+                };
+                if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                    state.surface_state.dismissed_surfaces.insert(surface_id);
+                    state.rebuild_surfaces();
+                }
+                self.persist_chat_surface_state(&conversation_id);
+                Task::none()
+            }
+            Message::ChatSurfaceAction {
+                surface_id,
+                action,
+                payload,
+            } => {
+                let result = self
+                    .active_chat_id()
+                    .and_then(|id| self.chat_editors.get(id))
+                    .map(|state| {
+                        let payload = engine::chat_surfaces::merge_form_data(
+                            payload,
+                            &surface_id,
+                            &state.surface_state,
+                        );
+                        engine::chat_surfaces::resolve_surface_action(&action, &payload)
+                    });
+                match result {
+                    Some(Ok(navigation)) => self.dispatch_chat_navigation(
+                        &navigation.destination,
+                        navigation.entity_id.as_deref(),
+                    ),
+                    Some(Err(reason)) => {
+                        let message = tw(
+                            self.ui_locale,
+                            "chat.surface.actionRefused",
+                            &[("reason", &reason)],
+                        );
+                        if let Some(state) = self.active_chat_state_mut() {
+                            state.error = Some(message.clone());
+                        }
+                        self.notify(ToastLevel::Error, &message);
+                    }
+                    None => {}
+                }
+                Task::none()
+            }
             Message::ChatFinished {
                 conversation_id,
                 result,
@@ -2011,6 +2128,7 @@ impl BdsApp {
                 self.task_manager.evict_expired();
                 self.refresh_task_snapshots();
                 self.process_chat_events();
+                self.persist_due_chat_surface_state();
                 if !self.search_index_rebuild_running {
                     self.auto_save_due_post_editors();
                 }
@@ -2654,6 +2772,48 @@ impl BdsApp {
             .unwrap_or_default();
     }
 
+    fn persist_due_chat_surface_state(&mut self) {
+        let due = self
+            .chat_editors
+            .iter()
+            .filter_map(|(id, state)| {
+                state.surface_state_dirty_since.and_then(|since| {
+                    (since.elapsed() >= std::time::Duration::from_millis(500)).then(|| id.clone())
+                })
+            })
+            .collect::<Vec<_>>();
+        for id in due {
+            self.persist_chat_surface_state(&id);
+        }
+    }
+
+    fn persist_chat_surface_state(&mut self, conversation_id: &str) {
+        let Some(surface_state) = self
+            .chat_editors
+            .get(conversation_id)
+            .map(|state| state.surface_state.clone())
+        else {
+            return;
+        };
+        let result = self
+            .db
+            .as_ref()
+            .ok_or_else(|| "database unavailable".to_string())
+            .and_then(|db| {
+                engine::chat::put_surface_state(db.conn(), conversation_id, &surface_state)
+                    .map_err(|error| error.to_string())
+            });
+        match result {
+            Ok(()) => {
+                if let Some(state) = self.chat_editors.get_mut(conversation_id) {
+                    state.conversation.surface_state = serde_json::to_string(&surface_state).ok();
+                    state.surface_state_dirty_since = None;
+                }
+            }
+            Err(error) => self.notify(ToastLevel::Error, &error),
+        }
+    }
+
     fn chat_model_options(&self) -> Vec<ChatModelChoice> {
         let mut models = self
             .db
@@ -2826,9 +2986,12 @@ impl BdsApp {
                 engine::chat::ChatEvent::ToolStarted {
                     conversation_id,
                     name,
+                    surface_id,
+                    arguments,
                 } => {
                     if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
-                        state.active_tool = Some(name);
+                        state.active_tool = Some(name.clone());
+                        state.add_streaming_surface(&name, &arguments, surface_id);
                     }
                 }
                 engine::chat::ChatEvent::ToolFinished {
@@ -7800,6 +7963,7 @@ mod tests {
     use crate::state::ToastLevel;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::state::tabs::{Tab, TabType};
+    use crate::views::chat_view::ChatEditorState;
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
@@ -7811,9 +7975,9 @@ mod tests {
     use bds_core::db::queries::project::insert_project;
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
-    use bds_core::engine::{ai, media, post, script, template, wordpress_import};
+    use bds_core::engine::{ai, chat, media, post, script, template, wordpress_import};
     use bds_core::i18n::UiLocale;
-    use bds_core::model::{Project, ScriptKind, TemplateKind};
+    use bds_core::model::{ChatRole, Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -9723,6 +9887,118 @@ mod tests {
             bds_core::engine::chat::list_conversations(app.db.as_ref().unwrap().conn())
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn chat_surfaces_stream_persist_reopen_and_refuse_unknown_actions() {
+        let (db, project, tmp) = setup();
+        let conversation =
+            chat::create_conversation_titled(db.conn(), Some("test-model"), "Surfaces").unwrap();
+        let tool_calls = serde_json::json!([
+            {
+                "id": "form-call",
+                "type": "function",
+                "function": {
+                    "name": "render_form",
+                    "arguments": serde_json::json!({
+                        "title": "Preferences",
+                        "fields": [{"key": "topic", "label": "Topic", "inputType": "text"}],
+                        "submitAction": "switchView"
+                    }).to_string()
+                }
+            },
+            {
+                "id": "tabs-call",
+                "type": "function",
+                "function": {
+                    "name": "render_tabs",
+                    "arguments": serde_json::json!({
+                        "tabs": [
+                            {"label": "One", "content": [{"type": "text", "text": "First"}]},
+                            {"label": "Two", "content": [{"type": "text", "text": "Second"}]}
+                        ]
+                    }).to_string()
+                }
+            }
+        ])
+        .to_string();
+        let message = chat::insert_message(
+            db.conn(),
+            &conversation.id,
+            ChatRole::Assistant,
+            Some("Structured answer"),
+            None,
+            Some(&tool_calls),
+            bds_core::engine::ai::TokenUsage::default(),
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        let tab = Tab {
+            id: conversation.id.clone(),
+            tab_type: TabType::Chat,
+            title: conversation.title.clone(),
+            is_transient: false,
+            is_dirty: false,
+        };
+        let _ = app.update(Message::OpenTab(tab));
+        let form_id = format!("{}-surface-0", message.id);
+        let tabs_id = format!("{}-surface-1", message.id);
+        {
+            let state = app.chat_editors.get_mut(&conversation.id).unwrap();
+            assert_eq!(state.message_surfaces[&message.id].len(), 2);
+            state.streaming = true;
+            state.add_streaming_surface(
+                "render_card",
+                &serde_json::json!({"title": "Later"}),
+                "later-message-surface-0".into(),
+            );
+            assert_eq!(state.message_surfaces[&message.id].len(), 2);
+            assert_eq!(state.streaming_surfaces.len(), 1);
+        }
+
+        let _ = app.update(Message::ChatSurfaceFieldChanged {
+            surface_id: form_id.clone(),
+            field: "topic".into(),
+            value: "Rust".into(),
+        });
+        app.chat_editors
+            .get_mut(&conversation.id)
+            .unwrap()
+            .surface_state_dirty_since =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(501));
+        let _ = app.update(Message::TaskTick);
+        let _ = app.update(Message::ChatSurfaceTabSelected {
+            surface_id: tabs_id.clone(),
+            index: 1,
+        });
+        let _ = app.update(Message::ChatSurfaceDismissed(form_id.clone()));
+
+        let reopened_conversation =
+            chat::get_conversation(app.db.as_ref().unwrap().conn(), &conversation.id).unwrap();
+        let reopened = ChatEditorState::new(
+            reopened_conversation,
+            chat::list_messages(app.db.as_ref().unwrap().conn(), &conversation.id).unwrap(),
+            vec![],
+        );
+        assert_eq!(
+            reopened.surface_state.surface_data[&form_id]["topic"],
+            "Rust"
+        );
+        assert_eq!(reopened.surface_state.surface_tabs[&tabs_id], 1);
+        assert!(reopened.surface_state.dismissed_surfaces.contains(&form_id));
+        assert_eq!(reopened.message_surfaces[&message.id].len(), 1);
+
+        let _ = app.update(Message::ChatSurfaceAction {
+            surface_id: form_id,
+            action: "runJavaScript".into(),
+            payload: serde_json::json!({"script": "alert(1)"}),
+        });
+        assert!(
+            app.chat_editors[&conversation.id]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("runJavaScript"))
         );
     }
 }

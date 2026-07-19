@@ -1,3 +1,9 @@
+use std::collections::HashMap;
+use std::time::Instant;
+
+use bds_core::engine::chat_surfaces::{
+    ChatSurfaceState, InlineSurface, build_message_surfaces, build_render_surface,
+};
 use bds_core::i18n::UiLocale;
 use bds_core::model::{ChatConversation, ChatMessage, ChatRole};
 use iced::widget::text::Shaping;
@@ -22,6 +28,11 @@ pub struct ChatEditorState {
     streaming_markdown: Vec<markdown::Item>,
     pub active_tool: Option<String>,
     pub error: Option<String>,
+    pub surface_state: ChatSurfaceState,
+    pub message_surfaces: HashMap<i32, Vec<InlineSurface>>,
+    pub streaming_surfaces: Vec<InlineSurface>,
+    pub surface_textareas: HashMap<String, text_editor::Content>,
+    pub surface_state_dirty_since: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +73,13 @@ impl ChatEditorState {
                 )
             })
             .collect();
+        let surface_state = conversation
+            .surface_state
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default();
+        let message_surfaces = build_surfaces(&messages, &surface_state);
+        let surface_textareas = build_textareas(&message_surfaces);
         Self {
             rename_input: conversation.title.clone(),
             conversation,
@@ -74,6 +92,11 @@ impl ChatEditorState {
             streaming_markdown: Vec::new(),
             active_tool: None,
             error: None,
+            surface_state,
+            message_surfaces,
+            streaming_surfaces: Vec::new(),
+            surface_textareas,
+            surface_state_dirty_since: None,
         }
     }
 
@@ -89,6 +112,7 @@ impl ChatEditorState {
             })
             .collect();
         self.messages = messages;
+        self.rebuild_surfaces();
     }
 
     pub fn set_streaming_content(&mut self, content: String) {
@@ -99,6 +123,24 @@ impl ChatEditorState {
     pub fn clear_streaming(&mut self) {
         self.streaming_content.clear();
         self.streaming_markdown.clear();
+        self.streaming_surfaces.clear();
+    }
+
+    pub fn add_streaming_surface(&mut self, name: &str, arguments: &serde_json::Value, id: String) {
+        if let Some(surface) = build_render_surface(name, arguments, id, &self.surface_state)
+            && !self.surface_state.dismissed_surfaces.contains(&surface.id)
+        {
+            add_textareas(&mut self.surface_textareas, &surface);
+            self.streaming_surfaces.push(surface);
+        }
+    }
+
+    pub fn rebuild_surfaces(&mut self) {
+        self.message_surfaces = build_surfaces(&self.messages, &self.surface_state);
+        self.surface_textareas = build_textareas(&self.message_surfaces);
+        for surface in &self.streaming_surfaces {
+            add_textareas(&mut self.surface_textareas, surface);
+        }
     }
 
     pub fn token_totals(&self) -> (u64, u64, u64, u64) {
@@ -112,6 +154,50 @@ impl ChatEditorState {
                 total
             })
     }
+}
+
+fn build_surfaces(
+    messages: &[ChatMessage],
+    state: &ChatSurfaceState,
+) -> HashMap<i32, Vec<InlineSurface>> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            let surfaces = build_message_surfaces(message, state);
+            (!surfaces.is_empty()).then_some((message.id, surfaces))
+        })
+        .collect()
+}
+
+fn build_textareas(
+    surfaces: &HashMap<i32, Vec<InlineSurface>>,
+) -> HashMap<String, text_editor::Content> {
+    let mut result = HashMap::new();
+    for surface in surfaces.values().flatten() {
+        add_textareas(&mut result, surface);
+    }
+    result
+}
+
+fn add_textareas(result: &mut HashMap<String, text_editor::Content>, surface: &InlineSurface) {
+    for field in &surface.fields {
+        if field.input_type == bds_core::engine::chat_surfaces::FormInputType::Textarea {
+            result
+                .entry(textarea_key(&surface.id, &field.key))
+                .or_insert_with(|| {
+                    text_editor::Content::with_text(field.value.as_str().unwrap_or_default())
+                });
+        }
+    }
+    for tab in &surface.tabs {
+        for child in &tab.content {
+            add_textareas(result, child);
+        }
+    }
+}
+
+pub fn textarea_key(surface_id: &str, field: &str) -> String {
+    format!("{surface_id}\0{field}")
 }
 
 pub fn view<'a>(
@@ -197,12 +283,33 @@ pub fn view<'a>(
                 state.rendered_messages.get(&message.id),
                 locale,
             ));
+            if let Some(surfaces) = state.message_surfaces.get(&message.id) {
+                for surface in surfaces {
+                    message_elements.push(crate::views::chat_surfaces::view(
+                        surface,
+                        &state.surface_state,
+                        &state.surface_textareas,
+                        locale,
+                    ));
+                }
+            }
+            if let Some(markers) = tool_markers_view(message, locale) {
+                message_elements.push(markers);
+            }
         }
     }
     if state.streaming && !state.streaming_content.is_empty() {
         message_elements.push(assistant_card(
             &state.streaming_markdown,
             t(locale, "chat.streaming"),
+        ));
+    }
+    for surface in &state.streaming_surfaces {
+        message_elements.push(crate::views::chat_surfaces::view(
+            surface,
+            &state.surface_state,
+            &state.surface_textareas,
+            locale,
         ));
     }
     if let Some(tool) = state.active_tool.as_deref() {
@@ -341,10 +448,18 @@ fn message_view<'a>(
             .shaping(Shaping::Advanced)
             .into()
     };
-    let mut children: Vec<Element<'a, Message>> = vec![
+    let children: Vec<Element<'a, Message>> = vec![
         text(label).size(11).color(inputs::SECTION_COLOR).into(),
         body,
     ];
+    inputs::card(iced::widget::Column::with_children(children).spacing(6)).into()
+}
+
+fn tool_markers_view<'a>(
+    message: &'a ChatMessage,
+    locale: UiLocale,
+) -> Option<Element<'a, Message>> {
+    let mut markers = Vec::new();
     if let Some(tool_calls) = message.tool_calls.as_deref()
         && let Ok(calls) = serde_json::from_str::<Vec<serde_json::Value>>(tool_calls)
     {
@@ -371,10 +486,11 @@ fn message_view<'a>(
                     args_preview
                 )
             };
-            children.push(text(marker).size(11).color(inputs::SECTION_COLOR).into());
+            markers.push(text(marker).size(11).color(inputs::SECTION_COLOR).into());
         }
     }
-    inputs::card(iced::widget::Column::with_children(children).spacing(6)).into()
+    (!markers.is_empty())
+        .then(|| inputs::card(iced::widget::Column::with_children(markers).spacing(4)).into())
 }
 
 fn assistant_card<'a>(items: &'a [markdown::Item], label: String) -> Element<'a, Message> {

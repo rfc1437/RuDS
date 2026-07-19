@@ -92,6 +92,22 @@ pub fn set_session_id(
     })
 }
 
+pub fn set_surface_state(
+    conn: &DbConnection,
+    id: &str,
+    state: &str,
+    updated_at: i64,
+) -> QueryResult<usize> {
+    conn.with(|connection| {
+        diesel::update(chat_conversations::table.find(id))
+            .set((
+                chat_conversations::surface_state.eq(state),
+                chat_conversations::updated_at.eq(updated_at),
+            ))
+            .execute(connection)
+    })
+}
+
 pub fn delete_conversation(conn: &DbConnection, id: &str) -> QueryResult<usize> {
     conn.with(|connection| {
         connection.transaction(|connection| {

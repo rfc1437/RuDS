@@ -64,6 +64,7 @@ diesel::table! {
         title -> Text,
         model -> Nullable<Text>,
         copilot_session_id -> Nullable<Text>,
+        surface_state -> Nullable<Text>,
         created_at -> BigInt,
         updated_at -> BigInt,
     }

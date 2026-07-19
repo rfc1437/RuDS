@@ -52,6 +52,8 @@ pub enum ChatEvent {
     ToolStarted {
         conversation_id: String,
         name: String,
+        surface_id: String,
+        arguments: Value,
     },
     ToolFinished {
         conversation_id: String,
@@ -279,6 +281,7 @@ pub fn create_conversation_titled(
             title,
             model,
             copilot_session_id: None,
+            surface_state: None,
             created_at: now,
             updated_at: now,
         },
@@ -371,6 +374,38 @@ pub fn delete_conversation(conn: &Connection, id: &str) -> EngineResult<()> {
 
 pub fn list_messages(conn: &Connection, id: &str) -> EngineResult<Vec<ChatMessage>> {
     Ok(queries::list_messages(conn, id)?)
+}
+
+pub fn get_surface_state(
+    conn: &Connection,
+    conversation_id: &str,
+) -> EngineResult<crate::engine::chat_surfaces::ChatSurfaceState> {
+    let conversation = match queries::get_conversation(conn, conversation_id) {
+        Ok(conversation) => conversation,
+        Err(diesel::result::Error::NotFound) => return Ok(Default::default()),
+        Err(error) => return Err(error.into()),
+    };
+    conversation.surface_state.as_deref().map_or_else(
+        || Ok(Default::default()),
+        |state| {
+            serde_json::from_str(state)
+                .map_err(|error| EngineError::Parse(format!("invalid chat surface state: {error}")))
+        },
+    )
+}
+
+pub fn put_surface_state(
+    conn: &Connection,
+    conversation_id: &str,
+    state: &crate::engine::chat_surfaces::ChatSurfaceState,
+) -> EngineResult<()> {
+    let state = serde_json::to_string(state)?;
+    if queries::set_surface_state(conn, conversation_id, &state, now_unix_ms())? == 0 {
+        return Err(EngineError::NotFound(format!(
+            "chat conversation {conversation_id}"
+        )));
+    }
+    Ok(())
 }
 
 pub fn insert_message(
@@ -633,7 +668,7 @@ fn run_turns(
         let serialized_calls = (!response.tool_calls.is_empty())
             .then(|| serialize_tool_calls(&response.tool_calls))
             .transpose()?;
-        insert_message(
+        let assistant_message = insert_message(
             conn,
             conversation_id,
             ChatRole::Assistant,
@@ -667,6 +702,8 @@ fn run_turns(
                 ChatEvent::ToolStarted {
                     conversation_id: conversation_id.to_string(),
                     name: call.name.clone(),
+                    surface_id: format!("{}-surface-{index}", assistant_message.id),
+                    arguments: call.arguments.clone(),
                 },
             );
             if cancelled.load(Ordering::SeqCst) {

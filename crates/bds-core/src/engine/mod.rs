@@ -3,6 +3,7 @@ pub mod auto_translation;
 pub mod blogmark;
 pub mod calendar;
 pub mod chat;
+pub mod chat_surfaces;
 mod chat_tools;
 pub mod cli_launcher;
 pub mod cli_sync;

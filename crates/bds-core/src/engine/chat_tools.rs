@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::db::DbConnection as Connection;
 use crate::db::queries::{media, post, post_link, post_media, script, template};
 use crate::db::schema::ai_models;
-use crate::engine::{EngineError, EngineResult};
+use crate::engine::{EngineError, EngineResult, chat_surfaces};
 use crate::util::frontmatter::read_post_file;
 
 pub fn model_supports_tools(conn: &Connection, model: &str) -> EngineResult<bool> {
@@ -48,7 +48,7 @@ pub fn system_prompt(conn: &Connection, project_id: &str) -> EngineResult<String
         .len();
     let configured = crate::engine::settings::get(conn, "ai.system_prompt")?.unwrap_or_default();
     let contract = format!(
-        "You are the conversational assistant for this blog project. Use tools when facts from the project are needed. Never invent project content or identifiers. There are {} posts, {media_count} media items, {tags} tags, and {categories} categories. Keep answers concise and use GitHub-flavored Markdown when useful.",
+        "You are the conversational assistant for this blog project. Use tools when facts from the project are needed. Never invent project content or identifiers. There are {} posts, {media_count} media items, {tags} tags, and {categories} categories. Keep answers concise and use GitHub-flavored Markdown when useful. Use render tools for structured data, comparisons, and forms; their payloads are native UI data, never HTML or JavaScript.",
         posts.len()
     );
     Ok(if configured.trim().is_empty() {
@@ -168,6 +168,81 @@ pub fn tool_specs() -> Vec<Value> {
                 "value": {"type": "string"}
             }),
         ),
+        spec(
+            "render_card",
+            "Render an information card with optional allow-listed actions.",
+            json!({
+                "title": {"type": "string"}, "subtitle": {"type": "string"}, "body": {"type": "string"},
+                "actions": {"type": "array", "items": {"type": "object", "properties": {
+                    "label": {"type": "string"}, "action": {"type": "string"}, "payload": {"type": "object"}
+                }, "required": ["label", "action"]}}
+            }),
+        ),
+        spec(
+            "render_chart",
+            "Render a native chart; heatmap and stacked-bar series use labelled segments.",
+            json!({
+                "chartType": {"type": "string", "enum": ["bar", "stacked-bar", "line", "area", "pie", "donut", "heatmap"]},
+                "chart_type": {"type": "string", "enum": ["bar", "stacked-bar", "line", "area", "pie", "donut", "heatmap"]},
+                "title": {"type": "string"},
+                "series": {"type": "array", "items": {"type": "object", "properties": {
+                    "label": {"type": "string"}, "value": {"type": "number"},
+                    "segments": {"type": "array", "items": {"type": "object", "properties": {
+                        "label": {"type": "string"}, "value": {"type": "number"}
+                    }, "required": ["label", "value"]}}
+                }, "required": ["label"]}}
+            }),
+        ),
+        spec(
+            "render_form",
+            "Render a native form that submits its current values with an allow-listed action.",
+            json!({
+                "title": {"type": "string"},
+                "fields": {"type": "array", "items": {"type": "object", "properties": {
+                    "key": {"type": "string"}, "label": {"type": "string"},
+                    "inputType": {"type": "string", "enum": ["text", "textarea", "select", "checkbox", "date", "number"]},
+                    "input_type": {"type": "string", "enum": ["text", "textarea", "select", "checkbox", "date", "number"]},
+                    "placeholder": {"type": "string"}, "defaultValue": {}, "default_value": {}, "required": {"type": "boolean"},
+                    "options": {"type": "array", "items": {"type": "object", "properties": {
+                        "label": {"type": "string"}, "value": {"type": "string"}
+                    }}}
+                }, "required": ["key", "label", "inputType"]}},
+                "submitLabel": {"type": "string"}, "submit_label": {"type": "string"},
+                "submitAction": {"type": "string"}, "submit_action": {"type": "string"}
+            }),
+        ),
+        spec(
+            "render_list",
+            "Render a native list.",
+            json!({"title": {"type": "string"}, "items": {"type": "array", "items": {"type": "string"}}}),
+        ),
+        spec(
+            "render_metric",
+            "Render a prominent metric.",
+            json!({"label": {"type": "string"}, "value": {"type": "string"}}),
+        ),
+        spec(
+            "render_mindmap",
+            "Render a native hierarchical mind map.",
+            json!({"title": {"type": "string"}, "nodes": {"type": "array", "items": {"type": "object", "properties": {
+                "id": {"type": "string"}, "label": {"type": "string"}, "children": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["label"]}}}),
+        ),
+        spec(
+            "render_table",
+            "Render a native data table.",
+            json!({
+                "title": {"type": "string"}, "columns": {"type": "array", "items": {"type": "string"}},
+                "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+            }),
+        ),
+        spec(
+            "render_tabs",
+            "Render switchable tabs containing nested native surfaces or text.",
+            json!({"title": {"type": "string"}, "tabs": {"type": "array", "items": {"type": "object", "properties": {
+                "label": {"type": "string"}, "content": {"type": "array", "items": {"type": "object"}}
+            }, "required": ["label", "content"]}}}),
+        ),
     ]
 }
 
@@ -234,6 +309,10 @@ pub fn execute(
             Ok(json!({"success": true, "script": item}))
         }
         "navigate" => navigate(arguments),
+        name if chat_surfaces::RENDER_TOOL_NAMES.contains(&name) => {
+            Ok(chat_surfaces::render_tool_result(name, arguments)
+                .expect("render tool allow-list and result builder must stay in sync"))
+        }
         _ => Ok(json!({"success": false, "error": "unknown_tool", "name": name})),
     }
 }
@@ -857,5 +936,43 @@ mod tests {
             &json!({"media_id": "media1", "size": "original"}),
         );
         assert!(matches!(invalid, Err(EngineError::Validation(_))));
+    }
+
+    #[test]
+    fn structured_render_tools_are_advertised_and_return_inert_native_data() {
+        let specs = tool_specs();
+        let names = specs
+            .iter()
+            .filter_map(|spec| spec.pointer("/function/name").and_then(Value::as_str))
+            .collect::<BTreeSet<_>>();
+        for name in chat_surfaces::RENDER_TOOL_NAMES {
+            assert!(names.contains(name), "missing tool schema for {name}");
+        }
+        let chart = specs
+            .iter()
+            .find(|spec| {
+                spec.pointer("/function/name").and_then(Value::as_str) == Some("render_chart")
+            })
+            .unwrap();
+        assert!(
+            chart
+                .pointer("/function/parameters/properties/chartType")
+                .is_some()
+        );
+        assert!(
+            chart
+                .pointer("/function/parameters/properties/chart_type")
+                .is_some()
+        );
+
+        let db = setup();
+        let dir = tempfile::tempdir().unwrap();
+        let raw = json!({"title": "<script>alert(1)</script>", "body": "<b>data</b>"});
+        let result = execute(db.conn(), dir.path(), "p1", "render_card", &raw).unwrap();
+        assert_eq!(result["type"], "card");
+        assert_eq!(result["title"], raw["title"]);
+        assert_eq!(result["body"], raw["body"]);
+        assert!(result.get("html").is_none());
+        assert!(result.get("javascript").is_none());
     }
 }

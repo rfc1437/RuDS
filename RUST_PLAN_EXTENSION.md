@@ -39,9 +39,8 @@ Done:
 - OpenAI-compatible SSE streaming with split-frame content/tool assembly, provider-error handling, independent cancellation, bounded tool rounds, and context truncation that preserves system messages and tool pairs.
 - Project-aware tools over statistics, FTS search, posts, media, templates, scripts, tags/categories, metadata mutation through shared engines, and allowlisted workspace navigation.
 - Localized Chat sidebar/editor with conversation and model controls, safe GFM text rendering with blocked external images, streaming/tool state, multiline send/stop controls, and status-bar token totals.
+- Fixed native A2UI cards, charts, forms, lists, metrics, mind maps, tables, and tabs with safe nested fallbacks, persistent stable-ID interaction state, debounced form values, and strictly allowlisted application actions.
 - Online/airplane endpoint routing uses the shared secure endpoint and model infrastructure; unavailable modes direct the user to the existing localized AI settings.
-
-Persistent A2UI surfaces remain separately tracked below.
 
 ### Embeddings, semantic search, and duplicates — Open
 
@@ -118,11 +117,13 @@ Open:
 - Sidebar/editor navigation, editing, publishing, and live domain-event updates.
 - Remote operation through the headless server.
 
-### A2UI surfaces — Open
+### A2UI surfaces — Complete
 
-Open:
+Done:
 
-- A2UI component renderer, surface state/data flow, and AI-assistant integration.
+- Eight structured render tools and fixed native rendering for ten surface types, including all required chart and form variants.
+- Per-conversation form, tab, and dismissal state tied to stable message/tool-index IDs and restored on reopen.
+- Safe text/JSON fallbacks, inert assistant markup, persistent expanded surfaces during later streaming, and visibly rejected non-allowlisted actions.
 
 ## Suggested Order
 
@@ -131,6 +132,6 @@ Open:
 3. Embeddings and duplicate detection.
 4. Documentation and menu UX.
 5. Headless server and TUI.
-6. A2UI after conversational AI exists.
+6. A2UI after conversational AI exists. (Complete)
 
 The order may change when an extension directly unlocks a concrete user workflow; it must not create a parallel data model or bypass core engines.

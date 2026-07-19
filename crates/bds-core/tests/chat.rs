@@ -398,6 +398,55 @@ fn tool_round_limit_stops_without_leaving_an_unpaired_tool_call() {
 }
 
 #[test]
+fn render_tool_events_include_stable_surface_identity_and_inert_arguments() {
+    let (_root, db, project_id, data_dir) = setup();
+    let conversation = chat::create_conversation(db.conn(), Some("tool-model")).unwrap();
+    let tool_frame = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"card\",\"function\":{\"name\":\"render_card\",\"arguments\":\"{\\\"title\\\":\\\"Live\\\",\\\"body\\\":\\\"<script>data only</script>\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n";
+    let (url, server) = serve(vec![
+        MockResponse::sse(vec![tool_frame]),
+        MockResponse::sse(vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Done\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ]),
+    ]);
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = events.clone();
+    chat::send_chat_message(
+        db.conn(),
+        &data_dir,
+        &project_id,
+        false,
+        &conversation.id,
+        "Show it",
+        options(url, move |event| captured.lock().unwrap().push(event)),
+    )
+    .unwrap();
+    server.join().unwrap();
+
+    let messages = chat::list_messages(db.conn(), &conversation.id).unwrap();
+    let assistant_call = messages
+        .iter()
+        .find(|message| message.tool_calls.is_some())
+        .unwrap();
+    let events = events.lock().unwrap();
+    let event = events
+        .iter()
+        .find_map(|event| match event {
+            chat::ChatEvent::ToolStarted {
+                name,
+                surface_id,
+                arguments,
+                ..
+            } if name == "render_card" => Some((surface_id, arguments)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(event.0, &format!("{}-surface-0", assistant_call.id));
+    assert_eq!(event.1["title"], "Live");
+    assert_eq!(event.1["body"], "<script>data only</script>");
+}
+
+#[test]
 fn cancellation_before_mutating_tool_execution_records_pairs_without_mutation() {
     let (_root, db, project_id, data_dir) = setup();
     bds_core::db::fts::ensure_fts_tables(db.conn()).unwrap();

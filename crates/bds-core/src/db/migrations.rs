@@ -36,7 +36,7 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 5);
+        assert_eq!(applied, 6);
     }
 
     #[test]
@@ -203,5 +203,41 @@ mod tests {
             })
             .unwrap();
         assert_eq!(usage, (Some(8), Some(5), None, None));
+    }
+
+    #[test]
+    fn existing_conversations_are_preserved_when_surface_state_is_added() {
+        let db = Database::open_in_memory().unwrap();
+        db.conn().with_migrations(|conn| {
+            for _ in 0..5 {
+                conn.run_next_migration(MIGRATIONS).unwrap();
+            }
+        });
+        db.conn()
+            .with(|conn| {
+                diesel::insert_into(chat_conversations::table)
+                    .values((
+                        chat_conversations::id.eq("existing-surface-chat"),
+                        chat_conversations::title.eq("Keep me"),
+                        chat_conversations::created_at.eq(1_i64),
+                        chat_conversations::updated_at.eq(1_i64),
+                    ))
+                    .execute(conn)
+            })
+            .unwrap();
+
+        run_migrations(db.conn()).unwrap();
+
+        let (title, state) = db
+            .conn()
+            .with(|conn| {
+                chat_conversations::table
+                    .filter(chat_conversations::id.eq("existing-surface-chat"))
+                    .select((chat_conversations::title, chat_conversations::surface_state))
+                    .first::<(String, Option<String>)>(conn)
+            })
+            .unwrap();
+        assert_eq!(title, "Keep me");
+        assert_eq!(state, None);
     }
 }
