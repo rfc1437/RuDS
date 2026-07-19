@@ -421,6 +421,8 @@ pub fn view<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, M
             .padding(16)
             .width(Length::Fill),
     )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
     .width(Length::Fill)
     .height(Length::Fill);
 

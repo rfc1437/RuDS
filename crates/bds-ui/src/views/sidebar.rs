@@ -1254,11 +1254,15 @@ pub fn view(
         .padding(12);
 
     // layout.allium: sidebar width is resizable, passed as parameter
-    container(scrollable(content))
-        .width(Length::Fixed(width))
-        .height(Length::Fill)
-        .style(sidebar_style)
-        .into()
+    container(
+        scrollable(content)
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style),
+    )
+    .width(Length::Fixed(width))
+    .height(Length::Fill)
+    .style(sidebar_style)
+    .into()
 }
 
 #[cfg(test)]

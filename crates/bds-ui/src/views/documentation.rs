@@ -200,6 +200,8 @@ pub fn view(state: &DocumentationState, locale: UiLocale) -> Element<'_, Message
                 });
             }
             scrollable(container(content).padding(2))
+                .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                .style(inputs::scrollable_style)
                 .id(scroll_id(state.kind))
                 .height(Length::Fill)
                 .into()

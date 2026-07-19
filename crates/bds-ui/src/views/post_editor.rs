@@ -969,6 +969,8 @@ pub fn view<'a>(
         .spacing(8)
         .width(Length::Fill),
     )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
     .height(Length::Shrink);
 
     // ── Full layout: top pane (shrink), editor (fill), footer (shrink) ──

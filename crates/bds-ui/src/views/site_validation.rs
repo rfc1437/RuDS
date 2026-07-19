@@ -131,15 +131,19 @@ pub fn view<'a>(state: &'a SiteValidationState, locale: UiLocale) -> Element<'a,
         }
     }
 
-    container(scrollable(content))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(24)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb(0.11, 0.11, 0.14))),
-            ..container::Style::default()
-        })
-        .into()
+    container(
+        scrollable(content)
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24)
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.11, 0.11, 0.14))),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 fn help_text<'a>(value: String) -> Element<'a, Message> {

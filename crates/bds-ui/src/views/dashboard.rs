@@ -174,6 +174,8 @@ pub fn view<'a>(state: &'a DashboardState, locale: UiLocale) -> Element<'a, Mess
     }
 
     scrollable(container(content.padding(24).width(Length::Fill)))
+        .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+        .style(inputs::scrollable_style)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

@@ -335,8 +335,9 @@ fn table<'a>(surface: &'a InlineSurface, locale: UiLocale) -> Element<'a, Messag
     }
     scrollable(iced::widget::Column::with_children(body).spacing(6))
         .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default(),
+            inputs::compact_scrollbar(),
         ))
+        .style(inputs::scrollable_style)
         .into()
 }
 

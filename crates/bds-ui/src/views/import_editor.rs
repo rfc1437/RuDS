@@ -259,6 +259,8 @@ pub fn view<'a>(state: &'a ImportEditorState, locale: UiLocale) -> Element<'a, M
             .padding(16)
             .width(Length::Fill),
     )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
     .height(Length::Fill)
     .into()
 }

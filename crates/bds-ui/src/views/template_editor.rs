@@ -224,6 +224,8 @@ pub fn view<'a>(state: &'a TemplateEditorState, locale: UiLocale) -> Element<'a,
             .width(Length::Fill),
     );
     let top_pane = scrollable(column![header, metadata].spacing(12).width(Length::Fill))
+        .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+        .style(inputs::scrollable_style)
         .height(Length::Shrink);
 
     // Full layout: top pane (shrink), content (fill), validation + footer (shrink)

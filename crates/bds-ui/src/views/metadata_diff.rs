@@ -136,11 +136,15 @@ pub fn view<'a>(state: &'a MetadataDiffState, locale: UiLocale) -> Element<'a, M
         content = content.push(message_card(t(locale, "metadataDiff.idle")));
     }
 
-    container(scrollable(content))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(24)
-        .into()
+    container(
+        scrollable(content)
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24)
+    .into()
 }
 
 fn message_card(value: String) -> Element<'static, Message> {

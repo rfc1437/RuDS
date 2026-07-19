@@ -458,11 +458,15 @@ pub fn diff_view(
     } else {
         sections.push(muted_text(t(locale, "git.noDiff")));
     }
-    container(scrollable(
-        iced::widget::Column::with_children(sections)
-            .spacing(12)
-            .padding(16),
-    ))
+    container(
+        scrollable(
+            iced::widget::Column::with_children(sections)
+                .spacing(12)
+                .padding(16),
+        )
+        .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+        .style(inputs::scrollable_style),
+    )
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -480,6 +484,8 @@ fn code_card(label: String, contents: String, wrapping: Wrapping) -> Element<'st
                     .font(Font::MONOSPACE)
                     .wrapping(wrapping)
             )
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style)
             .height(Length::Fill),
         ]
         .spacing(8)

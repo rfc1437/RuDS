@@ -540,7 +540,9 @@ pub fn view<'a>(
         .spacing(12)
         .padding(16)
         .width(Length::Fill),
-    );
+    )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style);
 
     container(body)
         .width(Length::Fill)

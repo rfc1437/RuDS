@@ -1196,7 +1196,10 @@ pub fn view(
             let content = column![
                 title,
                 Space::with_height(12.0),
-                scrollable(column(rows).spacing(8)).height(Length::Fixed(320.0)),
+                scrollable(column(rows).spacing(8))
+                    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                    .style(inputs::scrollable_style)
+                    .height(Length::Fixed(320.0)),
                 Space::with_height(16.0),
                 buttons,
             ]

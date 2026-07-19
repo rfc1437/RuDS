@@ -1,3 +1,4 @@
+use iced::widget::scrollable;
 use iced::widget::text::Shaping;
 use iced::widget::{
     Container, button, checkbox, column, container, pick_list, row, text, text_editor, text_input,
@@ -52,6 +53,68 @@ pub fn tooltip_style(_theme: &Theme) -> container::Style {
         },
         text_color: Some(Color::WHITE),
         ..container::Style::default()
+    }
+}
+
+/// Thin scrollbar geometry shared by every vertical application surface.
+pub fn compact_scrollbar() -> scrollable::Scrollbar {
+    scrollable::Scrollbar::new()
+        .width(6)
+        .margin(1)
+        .scroller_width(3)
+}
+
+/// Muted overlay-like scrollbar chrome that gains contrast only while interacting.
+pub fn scrollable_style(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let rail = |opacity| scrollable::Rail {
+        background: None,
+        border: Border::default(),
+        scroller: scrollable::Scroller {
+            color: Color::from_rgba(0.72, 0.74, 0.80, opacity),
+            border: Border {
+                radius: 999.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+    let (horizontal_opacity, vertical_opacity) = match status {
+        scrollable::Status::Active => (0.24, 0.24),
+        scrollable::Status::Hovered {
+            is_horizontal_scrollbar_hovered,
+            is_vertical_scrollbar_hovered,
+        } => (
+            if is_horizontal_scrollbar_hovered {
+                0.55
+            } else {
+                0.24
+            },
+            if is_vertical_scrollbar_hovered {
+                0.55
+            } else {
+                0.24
+            },
+        ),
+        scrollable::Status::Dragged {
+            is_horizontal_scrollbar_dragged,
+            is_vertical_scrollbar_dragged,
+        } => (
+            if is_horizontal_scrollbar_dragged {
+                0.75
+            } else {
+                0.24
+            },
+            if is_vertical_scrollbar_dragged {
+                0.75
+            } else {
+                0.24
+            },
+        ),
+    };
+    scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: rail(vertical_opacity),
+        horizontal_rail: rail(horizontal_opacity),
+        gap: None,
     }
 }
 
@@ -401,5 +464,28 @@ mod tests {
         ));
         assert_eq!(style.border.width, 1.0);
         assert_eq!(style.border.radius.top_left, 6.0);
+    }
+
+    #[test]
+    fn application_scrollbars_are_compact_muted_and_only_brighten_on_hover() {
+        assert_eq!(
+            compact_scrollbar(),
+            scrollable::Scrollbar::new()
+                .width(6)
+                .margin(1)
+                .scroller_width(3)
+        );
+        let theme = app_theme();
+        let active = scrollable_style(&theme, scrollable::Status::Active);
+        let hovered = scrollable_style(
+            &theme,
+            scrollable::Status::Hovered {
+                is_horizontal_scrollbar_hovered: false,
+                is_vertical_scrollbar_hovered: true,
+            },
+        );
+        assert!(active.vertical_rail.background.is_none());
+        assert!(active.vertical_rail.scroller.color.a < 0.5);
+        assert!(hovered.vertical_rail.scroller.color.a > active.vertical_rail.scroller.color.a);
     }
 }

@@ -777,6 +777,8 @@ pub fn view(state: &MenuEditorState, locale: UiLocale) -> Element<'_, Message> {
                 centered_status(locale, "menuEditor.empty")
             } else {
                 scrollable(tree_view(state, locale))
+                    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                    .style(inputs::scrollable_style)
                     .height(Length::Fill)
                     .into()
             }

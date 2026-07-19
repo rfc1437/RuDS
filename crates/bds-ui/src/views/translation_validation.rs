@@ -59,11 +59,15 @@ pub fn view<'a>(state: &'a TranslationValidationState, locale: UiLocale) -> Elem
         content = content.push(message_card(t(locale, "translationValidation.idle")));
     }
 
-    container(scrollable(content))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(24)
-        .into()
+    container(
+        scrollable(content)
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24)
+    .into()
 }
 
 fn issue_section<'a>(

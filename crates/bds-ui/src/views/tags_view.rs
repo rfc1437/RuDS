@@ -287,6 +287,8 @@ fn view_cloud<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Mes
         )]
         .padding(16),
     )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -457,6 +459,8 @@ fn view_manage<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Me
         .padding(16)
         .width(Length::Fill),
     )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()

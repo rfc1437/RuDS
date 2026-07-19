@@ -256,6 +256,8 @@ pub fn view(
                         .spacing(4)
                         .padding(8),
                 )
+                .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                .style(inputs::scrollable_style)
                 .into()
             }
         }
@@ -285,6 +287,8 @@ pub fn view(
                         .spacing(2)
                         .padding(8),
                 )
+                .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                .style(inputs::scrollable_style)
                 .into()
             }
         }
@@ -347,6 +351,8 @@ pub fn view(
                         .spacing(4)
                         .padding(8),
                 )
+                .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                .style(inputs::scrollable_style)
                 .into()
             }
         }
@@ -388,6 +394,8 @@ pub fn view(
                         .spacing(2)
                         .padding(8),
                 )
+                .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+                .style(inputs::scrollable_style)
                 .into()
             }
         }

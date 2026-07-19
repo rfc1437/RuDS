@@ -170,6 +170,8 @@ pub fn view(state: &DuplicatesState, locale: UiLocale) -> Element<'_, Message> {
             );
         }
         scrollable(container(pairs).padding(2))
+            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+            .style(inputs::scrollable_style)
             .height(Length::Fill)
             .into()
     };
