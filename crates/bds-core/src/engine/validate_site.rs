@@ -6,7 +6,7 @@ use walkdir::WalkDir;
 
 use crate::db::queries;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, PostStatus};
+use crate::model::Post;
 use crate::render::build_site_render_artifacts;
 use crate::util::file_hash;
 
@@ -35,7 +35,6 @@ pub fn validate_site(
         .map(|page| page.relative_path.clone())
         .collect::<HashSet<_>>();
     expected.insert("calendar.json".to_string());
-    expected.insert("rss.xml".to_string());
     for language in render_languages(&metadata) {
         let prefix = if language
             == metadata
@@ -47,6 +46,7 @@ pub fn validate_site(
         } else {
             format!("{language}/")
         };
+        expected.insert(format!("{prefix}rss.xml"));
         expected.insert(format!("{prefix}feed.xml"));
         expected.insert(format!("{prefix}atom.xml"));
         expected.insert(format!("{prefix}sitemap.xml"));
@@ -124,20 +124,12 @@ fn load_published_posts(
     let mut published = Vec::new();
     for post in posts
         .into_iter()
-        .filter(|post| post.status == PostStatus::Published)
+        .filter(crate::engine::generation::has_published_snapshot)
     {
-        let body = if let Some(content) = &post.content {
-            content.clone()
-        } else if let Some(content) = &post.published_content {
-            content.clone()
-        } else {
-            let raw =
-                std::fs::read_to_string(data_dir.join(post.file_path.trim_start_matches('/')))?;
-            crate::util::frontmatter::read_post_file(&raw)
-                .map(|(_, body)| body)
-                .map_err(EngineError::Parse)?
-        };
-        published.push((post, body));
+        if let Some(source) = crate::engine::generation::load_published_post_source(data_dir, post)?
+        {
+            published.push((source.post, source.body_markdown));
+        }
     }
     Ok(published)
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use serde_json::{Value, json};
 
 use crate::db::queries;
+use crate::engine::generation::{GenerationSection, classify_generated_path};
 use crate::engine::menu::{self, MenuItemKind};
 use crate::model::{
     CategorySettings, Media, Post, ProjectMetadata, ScriptKind, Tag, Template, TemplateKind,
@@ -56,6 +57,7 @@ pub struct PagefindDocument {
 pub struct SiteRenderArtifacts {
     pub pages: Vec<SitePage>,
     pub pagefind_documents: Vec<PagefindDocument>,
+    pub route_manifest: Vec<SitePage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,9 +112,56 @@ pub fn build_site_render_artifacts(
         metadata,
         published_posts,
         false,
+        None,
+        None,
     )
 }
 
+pub fn build_site_section_render_artifacts(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    published_posts: &[(Post, String)],
+    section: GenerationSection,
+) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
+    build_site_render_artifacts_with_mode(
+        conn,
+        data_dir,
+        project_id,
+        metadata,
+        published_posts,
+        false,
+        Some(section),
+        None,
+    )
+}
+
+pub fn build_targeted_site_section_render_artifacts(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    published_posts: &[(Post, String)],
+    section: GenerationSection,
+    requested_paths: &HashSet<String>,
+) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
+    build_site_render_artifacts_with_mode(
+        conn,
+        data_dir,
+        project_id,
+        metadata,
+        published_posts,
+        false,
+        Some(section),
+        Some(requested_paths),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the shared renderer accepts optional section and path filters"
+)]
 fn build_site_render_artifacts_with_mode(
     conn: &Connection,
     data_dir: &Path,
@@ -120,6 +169,8 @@ fn build_site_render_artifacts_with_mode(
     metadata: &ProjectMetadata,
     published_posts: &[(Post, String)],
     is_preview: bool,
+    section: Option<GenerationSection>,
+    requested_paths: Option<&HashSet<String>>,
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let main_language = main_language(metadata).to_string();
@@ -144,10 +195,24 @@ fn build_site_render_artifacts_with_mode(
             &tags,
             &category_settings,
         );
+        artifacts
+            .route_manifest
+            .extend(routes.iter().map(|route| SitePage {
+                language: language.clone(),
+                relative_path: route.relative_path.clone(),
+                url_path: route.url_path.clone(),
+                html: String::new(),
+            }));
         let post_data_json_by_id = build_post_data_json_by_id(&localized_posts);
         let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
             .par_iter()
+            .filter(|route| {
+                section.is_none_or(|section| {
+                    classify_generated_path(&route.relative_path) == Some(section)
+                }) && requested_paths
+                    .is_none_or(|requested| requested.contains(&route.relative_path))
+            })
             .map(|route| {
                 render_list_route(
                     route,
@@ -180,9 +245,46 @@ fn build_site_render_artifacts_with_mode(
             artifacts.pages.push(page);
         }
 
+        if section.is_none_or(|section| section == GenerationSection::Core) {
+            let relative_path = if language == main_language {
+                "404.html".to_string()
+            } else {
+                format!("{language}/404.html")
+            };
+            if requested_paths.is_none_or(|requested| requested.contains(&relative_path)) {
+                let url_path = format!("/{}", relative_path.trim_end_matches(".html"));
+                artifacts.pages.push(SitePage {
+                    language: language.clone(),
+                    relative_path,
+                    url_path: url_path.clone(),
+                    html: render_not_found_route(
+                        &bundle,
+                        metadata,
+                        &language,
+                        &url_path,
+                        &menu_items,
+                    )?,
+                });
+            }
+        }
+
         let canonical_map =
             canonical_post_path_by_slug(&localized_posts, &language, &main_language);
         for record in &localized_posts {
+            let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
+            let relative_path = format!("{}/index.html", canonical_path.trim_start_matches('/'));
+            artifacts.route_manifest.push(SitePage {
+                language: language.clone(),
+                relative_path: relative_path.clone(),
+                url_path: canonical_path.clone(),
+                html: String::new(),
+            });
+            if section.is_some_and(|section| section != GenerationSection::Single) {
+                continue;
+            }
+            if requested_paths.is_some_and(|requested| !requested.contains(&relative_path)) {
+                continue;
+            }
             let html = render_post_route(
                 conn,
                 metadata,
@@ -199,8 +301,6 @@ fn build_site_render_artifacts_with_mode(
                 &bundle,
                 is_preview,
             )?;
-            let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
-            let relative_path = format!("{}/index.html", canonical_path.trim_start_matches('/'));
             artifacts.pagefind_documents.push(PagefindDocument {
                 language: language.clone(),
                 relative_path: relative_path.clone(),
@@ -234,6 +334,8 @@ pub fn build_preview_response(
         metadata,
         published_posts,
         true,
+        None,
+        None,
     )?;
     let normalized = normalize_request_path(requested_path);
     if let Some(page) = artifacts
@@ -464,6 +566,7 @@ fn build_language_routes(
     let mut tag_posts: BTreeMap<String, Vec<RenderPostRecord>> = BTreeMap::new();
     let mut year_posts: BTreeMap<i32, Vec<RenderPostRecord>> = BTreeMap::new();
     let mut month_posts: BTreeMap<(i32, u32), Vec<RenderPostRecord>> = BTreeMap::new();
+    let mut day_posts: BTreeMap<(i32, u32, u32), Vec<RenderPostRecord>> = BTreeMap::new();
 
     for record in posts {
         for category in &record.post.categories {
@@ -488,6 +591,10 @@ fn build_language_routes(
                 .push(record.clone());
             month_posts
                 .entry((timestamp.year(), timestamp.month()))
+                .or_default()
+                .push(record.clone());
+            day_posts
+                .entry((timestamp.year(), timestamp.month(), timestamp.day()))
                 .or_default()
                 .push(record.clone());
         }
@@ -548,6 +655,20 @@ fn build_language_routes(
             ),
             format!("{} {year}-{month:02}", metadata.name),
             Some(json!({"kind": "month", "year": year, "month": month})),
+            None,
+        ));
+    }
+
+    for ((year, month, day), records) in day_posts {
+        routes.extend(paginated_route_specs(
+            &records,
+            per_page,
+            format!(
+                "{}/{year}/{month:02}/{day:02}",
+                language_root_prefix(language, metadata)
+            ),
+            format!("{} {year}-{month:02}-{day:02}", metadata.name),
+            Some(json!({"kind": "day", "year": year, "month": month, "day": day})),
             None,
         ));
     }

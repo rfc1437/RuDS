@@ -70,10 +70,6 @@ where
         })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the shared gallery workflow needs its persisted post and project context"
-)]
 pub fn import_gallery_images(
     db_path: &Path,
     data_dir: &Path,

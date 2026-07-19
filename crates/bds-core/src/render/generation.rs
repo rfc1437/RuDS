@@ -96,7 +96,9 @@ pub fn write_generated_bytes(
 pub fn build_core_generation_paths(main_language: &str, blog_languages: &[String]) -> Vec<String> {
     let mut paths = vec![
         "index.html".to_string(),
+        "404.html".to_string(),
         "sitemap.xml".to_string(),
+        "rss.xml".to_string(),
         "feed.xml".to_string(),
         "atom.xml".to_string(),
         "calendar.json".to_string(),
@@ -105,6 +107,9 @@ pub fn build_core_generation_paths(main_language: &str, blog_languages: &[String
     for language in blog_languages {
         if language != main_language {
             paths.push(format!("{language}/index.html"));
+            paths.push(format!("{language}/404.html"));
+            paths.push(format!("{language}/sitemap.xml"));
+            paths.push(format!("{language}/rss.xml"));
             paths.push(format!("{language}/feed.xml"));
             paths.push(format!("{language}/atom.xml"));
         }

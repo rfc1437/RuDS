@@ -169,6 +169,32 @@ impl TaskManager {
         self.state_changed.notify_all();
     }
 
+    /// Cancel every active task in a group and release their workers.
+    pub fn cancel_group(&self, group_id: &str) {
+        let mut tasks = self.tasks.lock().unwrap();
+        let now = Instant::now();
+        for entry in tasks.iter_mut().filter(|task| {
+            task.group_id.as_deref() == Some(group_id)
+                && matches!(task.status, TaskStatus::Running | TaskStatus::Pending)
+        }) {
+            entry.cancel_flag.store(true, Ordering::Release);
+            entry.status = TaskStatus::Cancelled;
+            entry.finished_at = Some(now);
+        }
+        Self::promote_next(&mut tasks, self.max_concurrent);
+        self.state_changed.notify_all();
+    }
+
+    /// Return the group containing a task, if any.
+    pub fn group_id(&self, task_id: TaskId) -> Option<String> {
+        self.tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|task| task.id == task_id)
+            .and_then(|task| task.group_id.clone())
+    }
+
     /// Check whether a task has been cancelled.
     pub fn is_cancelled(&self, task_id: TaskId) -> bool {
         let tasks = self.tasks.lock().unwrap();
@@ -292,14 +318,19 @@ impl TaskManager {
 
     /// Promote the next queued task to running if capacity allows.
     fn promote_next(tasks: &mut [TaskEntry], max_concurrent: usize) {
-        let running = tasks
+        while tasks
             .iter()
-            .filter(|t| t.status == TaskStatus::Running)
-            .count();
-        if running < max_concurrent
-            && let Some(t) = tasks.iter_mut().find(|t| t.status == TaskStatus::Pending)
+            .filter(|task| task.status == TaskStatus::Running)
+            .count()
+            < max_concurrent
         {
-            t.status = TaskStatus::Running;
+            let Some(task) = tasks
+                .iter_mut()
+                .find(|task| task.status == TaskStatus::Pending)
+            else {
+                break;
+            };
+            task.status = TaskStatus::Running;
         }
     }
 }
@@ -481,6 +512,22 @@ mod tests {
         mgr.complete(id);
         mgr.cancel(id); // should be no-op
         assert_eq!(mgr.status(id), Some(TaskStatus::Completed));
+    }
+
+    #[test]
+    fn cancelling_group_settles_every_active_task() {
+        let mgr = TaskManager::new(2);
+        let first = mgr.submit_grouped("first", "generation-1", "Render Site");
+        let second = mgr.submit_grouped("second", "generation-1", "Render Site");
+        let third = mgr.submit_grouped("third", "generation-1", "Render Site");
+        let unrelated = mgr.submit("unrelated");
+
+        mgr.cancel_group("generation-1");
+
+        assert_eq!(mgr.status(first), Some(TaskStatus::Cancelled));
+        assert_eq!(mgr.status(second), Some(TaskStatus::Cancelled));
+        assert_eq!(mgr.status(third), Some(TaskStatus::Cancelled));
+        assert_ne!(mgr.status(unrelated), Some(TaskStatus::Cancelled));
     }
 
     #[test]

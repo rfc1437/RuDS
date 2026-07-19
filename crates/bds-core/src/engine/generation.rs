@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::db::DbConnection as Connection;
@@ -14,7 +14,8 @@ use crate::engine::{EngineError, EngineResult};
 use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
-    build_site_render_artifacts, render_markdown_to_html, write_generated_bytes,
+    build_site_render_artifacts, build_site_section_render_artifacts,
+    build_targeted_site_section_render_artifacts, render_markdown_to_html, write_generated_bytes,
     write_generated_file,
 };
 
@@ -65,6 +66,24 @@ pub enum GenerationSection {
     Date,
 }
 
+impl GenerationSection {
+    pub const ALL: [Self; 5] = [
+        Self::Core,
+        Self::Single,
+        Self::Category,
+        Self::Tag,
+        Self::Date,
+    ];
+}
+
+impl GenerationReport {
+    pub fn append(&mut self, mut other: Self) {
+        self.written_paths.append(&mut other.written_paths);
+        self.skipped_paths.append(&mut other.skipped_paths);
+        self.deleted_paths.append(&mut other.deleted_paths);
+    }
+}
+
 pub fn generate_starter_site(
     conn: &Connection,
     output_dir: &Path,
@@ -94,6 +113,41 @@ pub fn generate_starter_site_with_progress(
     mut on_page: impl FnMut(usize, usize, &str),
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
+    for section in GenerationSection::ALL {
+        report.append(render_site_section_with_progress(
+            conn,
+            output_dir,
+            project_id,
+            metadata,
+            posts,
+            section,
+            &mut on_page,
+            || false,
+        )?);
+    }
+    report.append(build_site_search_index(
+        conn, output_dir, project_id, metadata,
+    )?);
+    Ok(report)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "section rendering uses the existing generation context and two callbacks"
+)]
+pub fn render_site_section_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    section: GenerationSection,
+    mut on_page: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    if is_cancelled() {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
     let data_dir = project_data_dir(output_dir);
     let category_settings = load_category_settings(&data_dir);
     let list_posts = filter_posts_for_lists(posts, &category_settings);
@@ -101,12 +155,21 @@ pub fn generate_starter_site_with_progress(
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
-    let artifacts =
-        build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
-            .map_err(|error| EngineError::Parse(error.to_string()))?;
-
+    let artifacts = build_site_section_render_artifacts(
+        conn,
+        &data_dir,
+        project_id,
+        metadata,
+        &input_posts,
+        section,
+    )
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let mut report = GenerationReport::default();
     let total_pages = artifacts.pages.len();
     for (index, page) in artifacts.pages.iter().enumerate() {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         write_out(
             conn,
             output_dir,
@@ -118,78 +181,20 @@ pub fn generate_starter_site_with_progress(
         on_page(index + 1, total_pages, &page.url_path);
     }
 
-    write_bundled_site_assets(conn, output_dir, project_id, &mut report)?;
-
-    write_out(
-        conn,
-        output_dir,
-        project_id,
-        "calendar.json",
-        &build_calendar_json(
-            &list_posts
-                .iter()
-                .map(|source| source.post.clone())
-                .collect::<Vec<_>>(),
-        )?,
-        &mut report,
-    )?;
-
-    for render_language in render_languages(metadata) {
-        let localized_posts =
-            localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
-        let prefix = if render_language
-            == metadata
-                .main_language
-                .clone()
-                .unwrap_or_else(|| "en".to_string())
-        {
-            String::new()
-        } else {
-            format!("{}/", render_language)
-        };
-        let rss = build_rss_xml(metadata, &localized_posts, &render_language);
-        if prefix.is_empty() {
-            write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
-        }
-        write_out(
+    if section == GenerationSection::Core {
+        write_core_outputs(
             conn,
             output_dir,
             project_id,
-            &format!("{prefix}feed.xml"),
-            &rss,
+            metadata,
+            &data_dir,
+            &list_posts,
+            &artifacts.route_manifest,
+            None,
             &mut report,
-        )?;
-        write_out(
-            conn,
-            output_dir,
-            project_id,
-            &format!("{prefix}atom.xml"),
-            &build_atom_xml(metadata, &localized_posts, &render_language),
-            &mut report,
-        )?;
-        write_out(
-            conn,
-            output_dir,
-            project_id,
-            &format!("{prefix}sitemap.xml"),
-            &build_sitemap_xml(
-                metadata,
-                &artifacts.pages,
-                &localized_posts,
-                &render_language,
-            ),
-            &mut report,
+            &mut is_cancelled,
         )?;
     }
-
-    write_pagefind_indexes(
-        conn,
-        output_dir,
-        project_id,
-        &artifacts.pagefind_documents,
-        &mut report,
-    )?;
-
     Ok(report)
 }
 
@@ -236,8 +241,6 @@ pub fn apply_validation_sections(
 
     let section_set = sections.iter().copied().collect::<HashSet<_>>();
     let data_dir = project_data_dir(output_dir);
-    let category_settings = load_category_settings(&data_dir);
-    let list_posts = filter_posts_for_lists(posts, &category_settings);
     let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
@@ -248,94 +251,188 @@ pub fn apply_validation_sections(
     let mut report = GenerationReport::default();
     let expected_paths = expected_paths_for_sections(metadata, &artifacts.pages, &section_set);
 
-    for page in &artifacts.pages {
-        if path_matches_sections(&page.relative_path, &section_set) {
-            write_out(
-                conn,
-                output_dir,
-                project_id,
-                &page.relative_path,
-                &page.html,
-                &mut report,
-            )?;
-        }
+    for section in sections {
+        report.append(render_site_section_with_progress(
+            conn,
+            output_dir,
+            project_id,
+            metadata,
+            posts,
+            *section,
+            |_current, _total, _url| {},
+            || false,
+        )?);
     }
 
-    if section_set.contains(&GenerationSection::Core) {
-        write_bundled_site_assets(conn, output_dir, project_id, &mut report)?;
+    remove_extra_section_paths(output_dir, &expected_paths, &section_set, &mut report)?;
+    report.append(build_site_search_index(
+        conn, output_dir, project_id, metadata,
+    )?);
+
+    Ok(report)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "targeted apply adds its validation report to the existing generation context"
+)]
+pub fn apply_validation_section_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    validation: &SiteValidationReport,
+    section: GenerationSection,
+    mut on_page: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    if is_cancelled() {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
+    let data_dir = project_data_dir(output_dir);
+    let category_settings = load_category_settings(&data_dir);
+    let list_posts = filter_posts_for_lists(posts, &category_settings);
+    let input_posts = posts
+        .iter()
+        .map(|source| (source.post.clone(), source.body_markdown.clone()))
+        .collect::<Vec<_>>();
+    let requested = validation
+        .missing_pages
+        .iter()
+        .chain(validation.stale_pages.iter())
+        .cloned()
+        .collect::<HashSet<_>>();
+    let fallback = validation
+        .missing_pages
+        .iter()
+        .chain(validation.extra_pages.iter())
+        .chain(validation.stale_pages.iter())
+        .any(|path| classify_generated_path(path).is_none());
+    let artifacts = if fallback {
+        build_site_section_render_artifacts(
+            conn,
+            &data_dir,
+            project_id,
+            metadata,
+            &input_posts,
+            section,
+        )
+    } else {
+        build_targeted_site_section_render_artifacts(
+            conn,
+            &data_dir,
+            project_id,
+            metadata,
+            &input_posts,
+            section,
+            &requested,
+        )
+    }
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let mut report = GenerationReport::default();
+    let total_pages = artifacts.pages.len();
+    for (index, page) in artifacts.pages.iter().enumerate() {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         write_out(
             conn,
             output_dir,
             project_id,
-            "calendar.json",
-            &build_calendar_json(
-                &list_posts
-                    .iter()
-                    .map(|source| source.post.clone())
-                    .collect::<Vec<_>>(),
-            )?,
+            &page.relative_path,
+            &page.html,
             &mut report,
         )?;
-
-        for render_language in render_languages(metadata) {
-            let localized_posts =
-                localized_sources(conn, &data_dir, &list_posts, &render_language, metadata)?;
-            let prefix = if render_language
-                == metadata
-                    .main_language
-                    .clone()
-                    .unwrap_or_else(|| "en".to_string())
-            {
-                String::new()
-            } else {
-                format!("{}/", render_language)
-            };
-            let rss = build_rss_xml(metadata, &localized_posts, &render_language);
-            if prefix.is_empty() {
-                write_out(conn, output_dir, project_id, "rss.xml", &rss, &mut report)?;
-            }
-            write_out(
-                conn,
-                output_dir,
-                project_id,
-                &format!("{prefix}feed.xml"),
-                &rss,
-                &mut report,
-            )?;
-            write_out(
-                conn,
-                output_dir,
-                project_id,
-                &format!("{prefix}atom.xml"),
-                &build_atom_xml(metadata, &localized_posts, &render_language),
-                &mut report,
-            )?;
-            write_out(
-                conn,
-                output_dir,
-                project_id,
-                &format!("{prefix}sitemap.xml"),
-                &build_sitemap_xml(
-                    metadata,
-                    &artifacts.pages,
-                    &localized_posts,
-                    &render_language,
-                ),
-                &mut report,
-            )?;
-        }
+        on_page(index + 1, total_pages, &page.url_path);
     }
 
-    remove_extra_section_paths(output_dir, &expected_paths, &section_set, &mut report)?;
-    write_pagefind_indexes(
-        conn,
-        output_dir,
-        project_id,
-        &artifacts.pagefind_documents,
-        &mut report,
-    )?;
+    if section == GenerationSection::Core {
+        write_core_outputs(
+            conn,
+            output_dir,
+            project_id,
+            metadata,
+            &data_dir,
+            &list_posts,
+            &artifacts.route_manifest,
+            (!fallback).then_some(&requested),
+            &mut report,
+            &mut is_cancelled,
+        )?;
+    }
 
+    for path in &validation.extra_pages {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
+        let owned_by_section = classify_generated_path(path)
+            .map_or(section == GenerationSection::Core, |owner| owner == section);
+        if owned_by_section && output_dir.join(path).is_file() {
+            std::fs::remove_file(output_dir.join(path)).map_err(EngineError::Io)?;
+            report.deleted_paths.push(path.clone());
+        }
+    }
     Ok(report)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "generation context is existing domain data"
+)]
+fn write_core_outputs(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    data_dir: &Path,
+    list_posts: &[PublishedPostSource],
+    route_manifest: &[crate::render::SitePage],
+    requested: Option<&HashSet<String>>,
+    report: &mut GenerationReport,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> EngineResult<()> {
+    if requested.is_none() {
+        write_bundled_site_assets(conn, output_dir, project_id, report)?;
+    }
+    let mut outputs = vec![(
+        "calendar.json".to_string(),
+        build_calendar_json(
+            &list_posts
+                .iter()
+                .map(|source| source.post.clone())
+                .collect::<Vec<_>>(),
+        )?,
+    )];
+    for render_language in render_languages(metadata) {
+        let localized_posts =
+            localized_sources(conn, data_dir, list_posts, &render_language, metadata)?;
+        let prefix = if render_language == metadata.main_language.as_deref().unwrap_or("en") {
+            String::new()
+        } else {
+            format!("{render_language}/")
+        };
+        let rss = build_rss_xml(metadata, &localized_posts, &render_language);
+        outputs.push((format!("{prefix}rss.xml"), rss.clone()));
+        outputs.push((format!("{prefix}feed.xml"), rss));
+        outputs.push((
+            format!("{prefix}atom.xml"),
+            build_atom_xml(metadata, &localized_posts, &render_language),
+        ));
+        outputs.push((
+            format!("{prefix}sitemap.xml"),
+            build_sitemap_xml(metadata, route_manifest, &localized_posts, &render_language),
+        ));
+    }
+    for (path, content) in outputs {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
+        if requested.is_none_or(|requested| requested.contains(&path)) {
+            write_out(conn, output_dir, project_id, &path, &content, report)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_out(
@@ -357,35 +454,100 @@ fn write_out(
     Ok(())
 }
 
-fn write_pagefind_indexes(
+pub fn build_site_search_index(
     conn: &Connection,
     output_dir: &Path,
     project_id: &str,
-    documents: &[crate::render::PagefindDocument],
-    report: &mut GenerationReport,
-) -> EngineResult<()> {
+    metadata: &ProjectMetadata,
+) -> EngineResult<GenerationReport> {
+    build_site_search_index_with_progress(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        |_current, _total, _path| {},
+        || false,
+    )
+}
+
+pub fn build_site_search_index_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    mut on_file: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    let mut documents = Vec::new();
+    if output_dir.exists() {
+        for entry in WalkDir::new(output_dir).into_iter().filter_map(Result::ok) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative_path = entry
+                .path()
+                .strip_prefix(output_dir)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !relative_path.ends_with(".html")
+                || relative_path.starts_with("pagefind/")
+                || relative_path.contains("/pagefind/")
+            {
+                continue;
+            }
+            let language = render_languages(metadata)
+                .into_iter()
+                .find(|language| relative_path.starts_with(&format!("{language}/")))
+                .unwrap_or_else(|| {
+                    metadata
+                        .main_language
+                        .clone()
+                        .unwrap_or_else(|| "en".into())
+                });
+            documents.push(crate::render::PagefindDocument {
+                language,
+                url_path: String::new(),
+                html: std::fs::read_to_string(entry.path()).map_err(EngineError::Io)?,
+                relative_path,
+            });
+        }
+    }
+    documents.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(EngineError::Io)?;
 
     let grouped = documents.iter().fold(
-        HashMap::<String, Vec<&crate::render::PagefindDocument>>::new(),
+        BTreeMap::<String, Vec<&crate::render::PagefindDocument>>::new(),
         |mut acc, doc| {
             acc.entry(doc.language.clone()).or_default().push(doc);
             acc
         },
     );
-
+    let mut outputs = Vec::new();
     for (language, docs) in grouped {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
         let config = PagefindServiceConfig::builder()
             .keep_index_url(true)
             .force_language(language.clone())
             .build();
         let mut index = PagefindIndex::new(Some(config))
             .map_err(|error| EngineError::Parse(error.to_string()))?;
+        let output_prefix = if language == metadata.main_language.as_deref().unwrap_or("en") {
+            "pagefind".to_string()
+        } else {
+            format!("{language}/pagefind")
+        };
         runtime.block_on(async {
             for doc in docs {
+                if is_cancelled() {
+                    return Err(EngineError::Validation("cancelled".to_string()));
+                }
                 index
                     .add_html_file(Some(doc.relative_path.clone()), None, doc.html.clone())
                     .await
@@ -396,23 +558,71 @@ fn write_pagefind_indexes(
                 .await
                 .map_err(|error| EngineError::Parse(error.to_string()))?;
             for file in files {
-                let relative = file
-                    .filename
-                    .to_string_lossy()
-                    .trim_start_matches('/')
-                    .to_string();
-                match write_generated_bytes(conn, output_dir, project_id, &relative, &file.contents)
-                    .map_err(|error| EngineError::Parse(error.to_string()))?
-                {
-                    GeneratedWriteOutcome::Written => report.written_paths.push(relative),
-                    GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative),
-                }
+                outputs.push((
+                    format!(
+                        "{output_prefix}/{}",
+                        file.filename.to_string_lossy().trim_start_matches('/')
+                    ),
+                    file.contents,
+                ));
             }
             Ok::<(), EngineError>(())
         })?;
     }
-
-    Ok(())
+    outputs.sort_by(|left, right| {
+        left.0
+            .ends_with("pagefind-entry.json")
+            .cmp(&right.0.ends_with("pagefind-entry.json"))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    let total = outputs.len();
+    let mut report = GenerationReport::default();
+    let expected = outputs
+        .iter()
+        .map(|(relative, _)| relative.clone())
+        .collect::<HashSet<_>>();
+    for (index, (relative, contents)) in outputs.into_iter().enumerate() {
+        if is_cancelled() {
+            return Err(EngineError::Validation("cancelled".to_string()));
+        }
+        match write_generated_bytes(conn, output_dir, project_id, &relative, &contents)
+            .map_err(|error| EngineError::Parse(error.to_string()))?
+        {
+            GeneratedWriteOutcome::Written => report.written_paths.push(relative.clone()),
+            GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative.clone()),
+        }
+        on_file(index + 1, total, &relative);
+    }
+    for language in render_languages(metadata) {
+        let prefix = if language == metadata.main_language.as_deref().unwrap_or("en") {
+            "pagefind".to_string()
+        } else {
+            format!("{language}/pagefind")
+        };
+        let index_dir = output_dir.join(&prefix);
+        if !index_dir.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(&index_dir).into_iter().filter_map(Result::ok) {
+            if is_cancelled() {
+                return Err(EngineError::Validation("cancelled".to_string()));
+            }
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(output_dir)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !expected.contains(&relative) {
+                std::fs::remove_file(entry.path()).map_err(EngineError::Io)?;
+                report.deleted_paths.push(relative);
+            }
+        }
+    }
+    Ok(report)
 }
 
 fn project_data_dir(output_dir: &Path) -> std::path::PathBuf {
@@ -448,6 +658,7 @@ fn expected_paths_for_sections(
             } else {
                 format!("{language}/")
             };
+            expected.insert(format!("{prefix}rss.xml"));
             expected.insert(format!("{prefix}feed.xml"));
             expected.insert(format!("{prefix}atom.xml"));
             expected.insert(format!("{prefix}sitemap.xml"));
@@ -508,7 +719,7 @@ fn path_matches_sections(path: &str, sections: &HashSet<GenerationSection>) -> b
         .unwrap_or(false)
 }
 
-fn classify_generated_path(path: &str) -> Option<GenerationSection> {
+pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
     if path.ends_with(".xml") || path.ends_with(".json") {
         return Some(GenerationSection::Core);
     }
@@ -522,11 +733,27 @@ fn classify_generated_path(path: &str) -> Option<GenerationSection> {
     }
 
     match parts.as_slice() {
-        ["index.html"] => Some(GenerationSection::Core),
+        ["index.html"] | ["404.html"] | ["page", _, "index.html"] => Some(GenerationSection::Core),
         ["category", ..] => Some(GenerationSection::Category),
         ["tag", ..] => Some(GenerationSection::Tag),
         [year, "index.html"] if is_year_segment(year) => Some(GenerationSection::Date),
+        [year, "page", _, "index.html"] if is_year_segment(year) => Some(GenerationSection::Date),
         [year, month, "index.html"] if is_year_segment(year) && is_month_segment(month) => {
+            Some(GenerationSection::Date)
+        }
+        [year, month, "page", _, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) =>
+        {
+            Some(GenerationSection::Date)
+        }
+        [year, month, day, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            Some(GenerationSection::Date)
+        }
+        [year, month, day, "page", _, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
             Some(GenerationSection::Date)
         }
         [year, month, day, _slug, "index.html"]
@@ -545,6 +772,8 @@ fn has_language_prefix(parts: &[&str]) -> bool {
                 && *first != "category"
                 && *first != "tag"
                 && (*second == "index.html"
+                    || *second == "404.html"
+                    || *second == "page"
                     || is_year_segment(second)
                     || *second == "category"
                     || *second == "tag")
@@ -570,13 +799,7 @@ fn matches_generated_extension(path: &str) -> bool {
 }
 
 fn all_sections() -> Vec<GenerationSection> {
-    vec![
-        GenerationSection::Core,
-        GenerationSection::Single,
-        GenerationSection::Category,
-        GenerationSection::Tag,
-        GenerationSection::Date,
-    ]
+    GenerationSection::ALL.to_vec()
 }
 
 fn section_sort_key(section: &GenerationSection) -> u8 {

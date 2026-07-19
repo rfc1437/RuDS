@@ -85,12 +85,11 @@ Available:
 - Native gallery, YouTube, Vimeo, photo archive, and tag cloud macros.
 - User-authored Lua macro invocation during rendering.
 - Localhost-only Axum preview server, draft routes, embedded Wry preview, and external-browser preview.
-- Complete site generation with pages, archives, feeds, sitemap, static assets, changed-file tracking, parallel page rendering, and Pagefind output.
+- Complete site generation with pages, archives, feeds, sitemap, static assets, changed-file tracking, parallel page rendering, and Pagefind output; full generation and validation apply run as grouped section tasks followed by search indexing.
 - OPML/menu document loading and normalized Home-first menu output.
 
 Open:
 
-- Represent generation as the specified group of section tasks followed by a final search-index task, rather than one coarse application task.
 - Keep closing concrete output differences found against bDS2; approved normalization differences belong in this document when discovered.
 
 ### One-shot AI — Mostly done

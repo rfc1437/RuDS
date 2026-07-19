@@ -139,109 +139,7 @@ impl BdsApp {
                     },
                 )
             }
-            Message::GenerateSite => {
-                let locale = self.ui_locale;
-                self.spawn_engine_task(
-                    "engine.generateSiteStarted",
-                    move |db_path, project_id, data_dir, tm, tid| {
-                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let metadata = engine::meta::read_project_json(&data_dir)
-                            .map_err(|e| e.to_string())?;
-                        if metadata
-                            .public_url
-                            .as_deref()
-                            .unwrap_or("")
-                            .trim()
-                            .is_empty()
-                        {
-                            return Err(
-                                "public URL is required before generating the site".to_string()
-                            );
-                        }
-                        let main_language = metadata
-                            .main_language
-                            .clone()
-                            .unwrap_or_else(|| "en".to_string());
-                        let all_posts = bds_core::db::queries::post::list_posts_by_project(
-                            db.conn(),
-                            &project_id,
-                        )
-                        .map_err(|e| e.to_string())?;
-                        let published_posts = all_posts
-                            .into_iter()
-                            .filter(engine::generation::has_published_snapshot)
-                            .collect::<Vec<_>>();
-                        let total = published_posts.len().max(1) as f32;
-                        let mut sources = Vec::new();
-                        for (index, post) in published_posts.into_iter().enumerate() {
-                            if tm.is_cancelled(tid) {
-                                return Err("cancelled".to_string());
-                            }
-                            tm.report_progress(
-                                tid,
-                                Some(((index as f32) / total) * 0.7),
-                                Some(tw(locale, "engine.renderingPost", &[("post", &post.slug)])),
-                            );
-                            if let Some(source) =
-                                engine::generation::load_published_post_source(&data_dir, post)
-                                    .map_err(|error| error.to_string())?
-                            {
-                                sources.push(source);
-                            }
-                        }
-                        let output_dir = data_dir.join("html");
-                        std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
-                        tm.report_progress(
-                            tid,
-                            Some(0.85),
-                            Some(t(locale, "engine.writingGeneratedFiles")),
-                        );
-                        let progress_start = 0.70_f32;
-                        let progress_span = 0.28_f32;
-                        let task_manager = Arc::clone(&tm);
-                        let report = engine::generation::generate_starter_site_with_progress(
-                            db.conn(),
-                            &output_dir,
-                            &project_id,
-                            &metadata,
-                            &sources,
-                            &main_language,
-                            move |current, total, path| {
-                                let fraction = if total == 0 {
-                                    1.0
-                                } else {
-                                    current as f32 / total as f32
-                                };
-                                task_manager.report_progress(
-                                    tid,
-                                    Some(progress_start + fraction * progress_span),
-                                    Some(tw(
-                                        locale,
-                                        "engine.generatedPage",
-                                        &[
-                                            ("url", path),
-                                            ("current", &current.to_string()),
-                                            ("total", &total.to_string()),
-                                        ],
-                                    )),
-                                );
-                            },
-                        )
-                        .map_err(|e| e.to_string())?;
-                        tm.report_progress(
-                            tid,
-                            Some(1.0),
-                            Some(t(locale, "engine.generationComplete")),
-                        );
-                        Ok(format!(
-                            "written={}, skipped={}, output={}",
-                            report.written_paths.len(),
-                            report.skipped_paths.len(),
-                            output_dir.display(),
-                        ))
-                    },
-                )
-            }
+            Message::GenerateSite => self.queue_site_generation(None),
             Message::RunMetadataDiff => {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 self.start_metadata_diff()
@@ -349,6 +247,125 @@ impl BdsApp {
                 self.refresh_task_snapshots();
                 sidebar_task
             }
+            Message::SiteGenerationSectionDone {
+                group_id,
+                task_id,
+                result,
+            } => {
+                if self.task_manager.status(task_id) == Some(TaskStatus::Cancelled) {
+                    self.refresh_task_snapshots();
+                    return Task::none();
+                }
+                match result {
+                    Ok(report) => {
+                        self.task_manager.complete(task_id);
+                        if let Some(workflow) = self.site_generation_workflows.get_mut(&group_id) {
+                            workflow.report.append(report);
+                        }
+                    }
+                    Err(error) => {
+                        self.task_manager.fail(task_id, error.clone());
+                        self.task_manager.cancel_group(&group_id);
+                        if let Some(workflow) = self.site_generation_workflows.remove(&group_id)
+                            && workflow.kind == SiteGenerationKind::Validation
+                        {
+                            self.site_validation_state.is_applying = false;
+                            self.site_validation_state.error_message = Some(error.clone());
+                        }
+                        let message = tw(
+                            self.ui_locale,
+                            "common.operationFailed",
+                            &[
+                                ("operation", &t(self.ui_locale, "engine.renderSiteGroup")),
+                                ("error", &error),
+                            ],
+                        );
+                        self.notify(ToastLevel::Error, &message);
+                        self.refresh_task_snapshots();
+                        return Task::none();
+                    }
+                }
+
+                let should_index =
+                    self.site_generation_workflows
+                        .get(&group_id)
+                        .is_some_and(|workflow| {
+                            workflow.index_task_id.is_none()
+                                && workflow.render_task_ids.iter().all(|task_id| {
+                                    self.task_manager.status(*task_id)
+                                        == Some(TaskStatus::Completed)
+                                })
+                        });
+                self.refresh_task_snapshots();
+                if should_index {
+                    self.queue_site_search_index(&group_id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SiteGenerationIndexDone {
+                group_id,
+                task_id,
+                result,
+            } => {
+                if self.task_manager.status(task_id) == Some(TaskStatus::Cancelled) {
+                    self.refresh_task_snapshots();
+                    return Task::none();
+                }
+                match result {
+                    Ok(report) => {
+                        self.task_manager.complete(task_id);
+                        let Some(mut workflow) = self.site_generation_workflows.remove(&group_id)
+                        else {
+                            self.refresh_task_snapshots();
+                            return Task::none();
+                        };
+                        workflow.report.append(report);
+                        let message = tw(
+                            self.ui_locale,
+                            "engine.generationSummary",
+                            &[
+                                ("written", &workflow.report.written_paths.len().to_string()),
+                                ("skipped", &workflow.report.skipped_paths.len().to_string()),
+                                ("deleted", &workflow.report.deleted_paths.len().to_string()),
+                                (
+                                    "output",
+                                    &workflow.data_dir.join("html").display().to_string(),
+                                ),
+                            ],
+                        );
+                        self.notify(ToastLevel::Success, &message);
+                        self.refresh_task_snapshots();
+                        if workflow.kind == SiteGenerationKind::Validation {
+                            self.site_validation_state.is_applying = false;
+                            self.site_validation_state.error_message = None;
+                            self.start_site_validation()
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Err(error) => {
+                        self.task_manager.fail(task_id, error.clone());
+                        if let Some(workflow) = self.site_generation_workflows.remove(&group_id)
+                            && workflow.kind == SiteGenerationKind::Validation
+                        {
+                            self.site_validation_state.is_applying = false;
+                            self.site_validation_state.error_message = Some(error.clone());
+                        }
+                        let message = tw(
+                            self.ui_locale,
+                            "common.operationFailed",
+                            &[
+                                ("operation", &t(self.ui_locale, "engine.buildSearchIndex")),
+                                ("error", &error),
+                            ],
+                        );
+                        self.notify(ToastLevel::Error, &message);
+                        self.refresh_task_snapshots();
+                        Task::none()
+                    }
+                }
+            }
             Message::SiteValidationLoaded(result) => {
                 self.site_validation_state.is_running = false;
                 self.site_validation_state.has_run = true;
@@ -390,21 +407,6 @@ impl BdsApp {
                     }
                 }
                 Task::none()
-            }
-            Message::SiteValidationApplied(result) => {
-                self.site_validation_state.is_applying = false;
-                match result {
-                    Ok(detail) => {
-                        self.site_validation_state.error_message = None;
-                        self.notify(ToastLevel::Success, &detail);
-                        self.start_site_validation()
-                    }
-                    Err(error) => {
-                        self.site_validation_state.error_message = Some(error.clone());
-                        self.notify(ToastLevel::Error, &error);
-                        Task::none()
-                    }
-                }
             }
             _ => unreachable!("non-engine message routed to engine handler"),
         }

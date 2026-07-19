@@ -201,8 +201,17 @@ pub enum Message {
         label: String,
         result: Result<String, String>,
     },
+    SiteGenerationSectionDone {
+        group_id: String,
+        task_id: TaskId,
+        result: Result<engine::generation::GenerationReport, String>,
+    },
+    SiteGenerationIndexDone {
+        group_id: String,
+        task_id: TaskId,
+        result: Result<engine::generation::GenerationReport, String>,
+    },
     SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
-    SiteValidationApplied(Result<String, String>),
 
     // Editor views
     PostEditor(PostEditorMsg),
@@ -240,6 +249,24 @@ pub enum Message {
 
     Noop,
     InitMenuBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteGenerationKind {
+    Full,
+    Validation,
+}
+
+#[derive(Debug, Clone)]
+struct SiteGenerationWorkflow {
+    kind: SiteGenerationKind,
+    db_path: PathBuf,
+    project_id: String,
+    data_dir: PathBuf,
+    group_name: String,
+    render_task_ids: Vec<TaskId>,
+    index_task_id: Option<TaskId>,
+    report: engine::generation::GenerationReport,
 }
 
 enum PersistedPostState {
@@ -754,6 +781,7 @@ pub struct BdsApp {
     search_index_rebuild_required: bool,
     search_index_rebuild_running: bool,
     search_index_rebuild_task_id: Option<TaskId>,
+    site_generation_workflows: HashMap<String, SiteGenerationWorkflow>,
 
     // Platform
     _menu_bar: Option<muda::Menu>,
@@ -908,6 +936,7 @@ impl BdsApp {
                 search_index_rebuild_required,
                 search_index_rebuild_running: false,
                 search_index_rebuild_task_id: None,
+                site_generation_workflows: HashMap::new(),
                 _menu_bar: Some(menu_bar),
                 menu_registry: registry,
                 ui_locale: locale,
@@ -974,6 +1003,7 @@ impl BdsApp {
             search_index_rebuild_required: false,
             search_index_rebuild_running: false,
             search_index_rebuild_task_id: None,
+            site_generation_workflows: HashMap::new(),
             _menu_bar: None,
             menu_registry: MenuRegistry::empty(),
             ui_locale: UiLocale::En,
@@ -1610,6 +1640,9 @@ impl BdsApp {
                 )
             }
             Message::CancelTask(task_id) => {
+                if self.cancel_site_generation_task(task_id) {
+                    return Task::none();
+                }
                 self.task_manager.cancel(task_id);
                 self.refresh_task_snapshots();
                 Task::none()
@@ -1831,8 +1864,9 @@ impl BdsApp {
             | Message::RunSiteValidation
             | Message::ApplySiteValidation
             | Message::EngineTaskDone { .. }
-            | Message::SiteValidationLoaded(_)
-            | Message::SiteValidationApplied(_)) => self.handle_engine_message(message),
+            | Message::SiteGenerationSectionDone { .. }
+            | Message::SiteGenerationIndexDone { .. }
+            | Message::SiteValidationLoaded(_)) => self.handle_engine_message(message),
 
             // ── Toasts ──
             Message::ShowToast(level, msg) => {
@@ -2660,68 +2694,9 @@ impl BdsApp {
             return Task::none();
         }
 
-        let Some(project_id) = self
-            .active_project
-            .as_ref()
-            .map(|project| project.id.clone())
-        else {
-            self.site_validation_state.error_message =
-                Some(t(self.ui_locale, "engine.generateSiteNoProject"));
-            return Task::none();
-        };
-        let Some(data_dir) = self.data_dir.clone() else {
-            self.site_validation_state.error_message =
-                Some(t(self.ui_locale, "engine.previewDataDirUnavailable"));
-            return Task::none();
-        };
-
         self.site_validation_state.is_applying = true;
         self.site_validation_state.error_message = None;
-        let db_path = self.db_path.clone();
-        let applied_label = t(self.ui_locale, "siteValidation.apply");
-
-        Task::perform(
-            async move {
-                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                let metadata = engine::meta::read_project_json(&data_dir)
-                    .map_err(|error| error.to_string())?;
-                let all_posts =
-                    bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
-                        .map_err(|error| error.to_string())?;
-                let mut sources = Vec::new();
-                for post in all_posts
-                    .into_iter()
-                    .filter(engine::generation::has_published_snapshot)
-                {
-                    if let Some(source) =
-                        engine::generation::load_published_post_source(&data_dir, post)
-                            .map_err(|error| error.to_string())?
-                    {
-                        sources.push(source);
-                    }
-                }
-                let output_dir = data_dir.join("html");
-                std::fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-                let apply_report = engine::generation::apply_validation_sections(
-                    db.conn(),
-                    &output_dir,
-                    &project_id,
-                    &metadata,
-                    &sources,
-                    &sections,
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(format!(
-                    "{}: written={}, skipped={}, deleted={}, output={}",
-                    applied_label,
-                    apply_report.written_paths.len(),
-                    apply_report.skipped_paths.len(),
-                    apply_report.deleted_paths.len(),
-                    output_dir.display(),
-                ))
-            },
-            Message::SiteValidationApplied,
-        )
+        self.queue_site_generation(Some(report))
     }
 
     fn refresh_counts(&mut self) -> Task<Message> {
@@ -6236,6 +6211,8 @@ mod tests {
     use bds_core::db::Database;
     use bds_core::db::fts::ensure_fts_tables;
     use bds_core::db::queries::project::insert_project;
+    use bds_core::engine::generation::GenerationReport;
+    use bds_core::engine::task::{TaskStatus, TaskStatus::*};
     use bds_core::engine::{ai, media, post, script, template};
     use bds_core::model::{Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
@@ -6315,6 +6292,12 @@ mod tests {
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
         BdsApp::new_for_tests(db, project, tmp.path().to_path_buf())
+    }
+
+    fn enable_generation(tmp: &TempDir) {
+        let mut metadata = bds_core::engine::meta::read_project_json(tmp.path()).unwrap();
+        metadata.public_url = Some("https://example.com".to_string());
+        bds_core::engine::meta::write_project_json(tmp.path(), &metadata).unwrap();
     }
 
     fn open_post_editor(app: &mut BdsApp, post: &bds_core::model::Post) {
@@ -6460,6 +6443,162 @@ mod tests {
             app.active_modal,
             Some(modal::ModalState::SearchIndexRebuilding)
         ));
+    }
+
+    #[test]
+    fn full_generation_queues_five_ordered_section_tasks_before_indexing() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+
+        let _task = app.queue_site_generation(None);
+        let snapshots = app.task_manager.snapshots();
+
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|task| task.label.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Render Site Core",
+                "Render Single Posts",
+                "Render Category Archives",
+                "Render Tag Archives",
+                "Render Date Archives",
+            ]
+        );
+        assert!(
+            snapshots
+                .iter()
+                .all(|task| task.group_name.as_deref() == Some("Render Site"))
+        );
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|task| task.status.clone())
+                .collect::<Vec<_>>(),
+            vec![Running, Running, Running, Pending, Pending]
+        );
+    }
+
+    #[test]
+    fn search_index_is_queued_only_after_every_render_task_succeeds() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+        let _task = app.queue_site_generation(None);
+        let group_id = app.task_manager.snapshots()[0].group_id.clone().unwrap();
+        let render_ids = app.site_generation_workflows[&group_id]
+            .render_task_ids
+            .clone();
+
+        for (index, task_id) in render_ids.into_iter().enumerate() {
+            let _task = app.handle_engine_message(Message::SiteGenerationSectionDone {
+                group_id: group_id.clone(),
+                task_id,
+                result: Ok(GenerationReport::default()),
+            });
+            let has_index = app
+                .task_manager
+                .snapshots()
+                .iter()
+                .any(|task| task.label == "Build Search Index");
+            assert_eq!(has_index, index == 4);
+        }
+    }
+
+    #[test]
+    fn failed_render_cancels_its_group_and_never_queues_index() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+        let _task = app.queue_site_generation(None);
+        let snapshots = app.task_manager.snapshots();
+        let group_id = snapshots[0].group_id.clone().unwrap();
+        let first_id = snapshots[0].id;
+
+        let _task = app.handle_engine_message(Message::SiteGenerationSectionDone {
+            group_id: group_id.clone(),
+            task_id: first_id,
+            result: Err("render failed".to_string()),
+        });
+
+        let snapshots = app.task_manager.snapshots();
+        assert_eq!(
+            app.task_manager.status(first_id),
+            Some(TaskStatus::Failed("render failed".to_string()))
+        );
+        assert!(
+            snapshots
+                .iter()
+                .filter(|task| task.group_id.as_deref() == Some(&group_id))
+                .all(|task| matches!(task.status, TaskStatus::Failed(_) | TaskStatus::Cancelled))
+        );
+        assert!(
+            !snapshots
+                .iter()
+                .any(|task| task.label == "Build Search Index")
+        );
+        assert!(!app.site_generation_workflows.contains_key(&group_id));
+    }
+
+    #[test]
+    fn cancelling_a_render_task_cancels_the_generation_group() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+        let _task = app.queue_site_generation(None);
+        let snapshots = app.task_manager.snapshots();
+        let group_id = snapshots[0].group_id.clone().unwrap();
+
+        let _task = app.update(Message::CancelTask(snapshots[0].id));
+
+        let snapshots = app.task_manager.snapshots();
+        assert!(
+            snapshots
+                .iter()
+                .filter(|task| task.group_id.as_deref() == Some(&group_id))
+                .all(|task| task.status == TaskStatus::Cancelled)
+        );
+        assert!(
+            !snapshots
+                .iter()
+                .any(|task| task.label == "Build Search Index")
+        );
+        assert!(!app.site_generation_workflows.contains_key(&group_id));
+    }
+
+    #[test]
+    fn validation_apply_queues_only_affected_sections_then_index() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+        let validation = bds_core::engine::validate_site::SiteValidationReport {
+            stale_pages: vec!["2024/03/09/hello/index.html".to_string()],
+            ..Default::default()
+        };
+
+        let _task = app.queue_site_generation(Some(validation));
+        let snapshots = app.task_manager.snapshots();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].label, "Render Single Posts");
+        assert_eq!(
+            snapshots[0].group_name.as_deref(),
+            Some("Apply Site Validation")
+        );
+        let group_id = snapshots[0].group_id.clone().unwrap();
+
+        let _task = app.handle_engine_message(Message::SiteGenerationSectionDone {
+            group_id,
+            task_id: snapshots[0].id,
+            result: Ok(GenerationReport::default()),
+        });
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .any(|task| task.label == "Build Search Index")
+        );
     }
 
     #[test]

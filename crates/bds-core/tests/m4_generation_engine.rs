@@ -4,8 +4,9 @@ use bds_core::db::Database;
 use bds_core::db::queries::project::insert_project;
 use bds_core::db::queries::template::insert_template;
 use bds_core::engine::generation::{
-    PublishedPostSource, apply_validation_sections, generate_starter_site,
-    load_published_post_source, sections_from_validation_report,
+    GenerationSection, PublishedPostSource, apply_validation_section_with_progress,
+    apply_validation_sections, build_site_search_index, generate_starter_site,
+    load_published_post_source, render_site_section_with_progress, sections_from_validation_report,
 };
 use bds_core::engine::meta::write_category_meta_json;
 use bds_core::engine::validate_site::validate_site;
@@ -99,6 +100,14 @@ fn setup() -> (Database, TempDir) {
     (db, dir)
 }
 
+fn write_published_snapshot(dir: &TempDir, post: &mut Post, body: &str) {
+    post.file_path = format!("posts/{}.md", post.slug);
+    let frontmatter = bds_core::util::frontmatter::PostFrontmatter::from_post(post).to_yaml();
+    let file = bds_core::util::frontmatter::format_frontmatter(&frontmatter, body);
+    std::fs::create_dir_all(dir.path().join("posts")).unwrap();
+    std::fs::write(dir.path().join(&post.file_path), file).unwrap();
+}
+
 #[test]
 fn reopened_draft_generation_uses_last_published_file() {
     let (_db, dir) = setup();
@@ -118,16 +127,46 @@ fn reopened_draft_generation_uses_last_published_file() {
 }
 
 #[test]
+fn validation_keeps_reopened_draft_published_snapshots() {
+    let (db, dir) = setup();
+    let mut post = make_post("reopened", 1_710_000_000_000);
+    post.status = PostStatus::Draft;
+    post.content = Some("Unpublished draft body".into());
+    write_published_snapshot(&dir, &mut post, "Published body");
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let source = load_published_post_source(dir.path(), post)
+        .unwrap()
+        .unwrap();
+
+    generate_starter_site(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &make_metadata(),
+        &[source],
+        "en",
+    )
+    .unwrap();
+    let validation = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert!(validation.missing_pages.is_empty());
+    assert!(validation.extra_pages.is_empty());
+    assert!(validation.stale_pages.is_empty());
+}
+
+#[test]
 fn generation_engine_writes_core_and_single_post_artifacts() {
     let (db, dir) = setup();
     let metadata = make_metadata();
+    let hello = make_post("hello", 1_710_000_000_000);
+    let next = make_post("next", 1_710_086_400_000);
     let posts = vec![
         PublishedPostSource {
-            post: make_post("hello", 1_710_000_000_000),
+            post: hello,
             body_markdown: "Hello **world**".into(),
         },
         PublishedPostSource {
-            post: make_post("next", 1_710_086_400_000),
+            post: next,
             body_markdown: "Next post".into(),
         },
     ];
@@ -141,6 +180,12 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(report.written_paths.contains(&"feed.xml".to_string()));
     assert!(report.written_paths.contains(&"atom.xml".to_string()));
     assert!(report.written_paths.contains(&"sitemap.xml".to_string()));
+    assert!(report.written_paths.contains(&"404.html".to_string()));
+    assert!(
+        report
+            .written_paths
+            .contains(&"2024/03/09/index.html".to_string())
+    );
     assert!(
         report
             .written_paths
@@ -181,6 +226,110 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
 }
 
 #[test]
+fn section_generation_reports_its_urls_and_defers_pagefind() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let posts = vec![PublishedPostSource {
+        post: make_post("hello", 1_710_000_000_000),
+        body_markdown: "Hello **world**".into(),
+    }];
+    let mut urls = Vec::new();
+
+    let report = render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        GenerationSection::Single,
+        |current, total, url| urls.push((current, total, url.to_string())),
+        || false,
+    )
+    .unwrap();
+
+    assert_eq!(urls, vec![(1, 1, "/2024/03/09/hello".to_string())]);
+    assert_eq!(report.written_paths, vec!["2024/03/09/hello/index.html"]);
+    assert!(!dir.path().join("pagefind").exists());
+
+    let index_report = build_site_search_index(db.conn(), dir.path(), "p1", &metadata).unwrap();
+    assert!(!index_report.written_paths.is_empty());
+    assert!(
+        dir.path().join("pagefind/pagefind-ui.js").exists(),
+        "pagefind outputs: {:?}",
+        index_report.written_paths
+    );
+
+    let old_fragment = index_report
+        .written_paths
+        .iter()
+        .find(|path| path.contains("/fragment/"))
+        .cloned()
+        .unwrap();
+    let changed_posts = vec![PublishedPostSource {
+        post: make_post("hello", 1_710_000_000_000),
+        body_markdown: "Changed body".into(),
+    }];
+    render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &changed_posts,
+        GenerationSection::Single,
+        |_current, _total, _url| {},
+        || false,
+    )
+    .unwrap();
+    let rebuilt = build_site_search_index(db.conn(), dir.path(), "p1", &metadata).unwrap();
+    assert!(rebuilt.deleted_paths.contains(&old_fragment));
+    assert!(!dir.path().join(old_fragment).exists());
+}
+
+#[test]
+fn validation_apply_rewrites_only_the_reported_urls() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let posts = vec![
+        PublishedPostSource {
+            post: make_post("hello", 1_710_000_000_000),
+            body_markdown: "Hello **world**".into(),
+        },
+        PublishedPostSource {
+            post: make_post("next", 1_710_086_400_000),
+            body_markdown: "Next post".into(),
+        },
+    ];
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    std::fs::write(dir.path().join("2024/03/09/hello/index.html"), "tampered").unwrap();
+    let validation = bds_core::engine::validate_site::SiteValidationReport {
+        stale_pages: vec!["2024/03/09/hello/index.html".into()],
+        ..Default::default()
+    };
+    let mut urls = Vec::new();
+
+    let report = apply_validation_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        &validation,
+        GenerationSection::Single,
+        |current, total, url| urls.push((current, total, url.to_string())),
+        || false,
+    )
+    .unwrap();
+
+    assert_eq!(urls, vec![(1, 1, "/2024/03/09/hello".to_string())]);
+    assert_eq!(report.written_paths, vec!["2024/03/09/hello/index.html"]);
+    assert!(
+        !report
+            .skipped_paths
+            .contains(&"2024/03/10/next/index.html".to_string())
+    );
+}
+
+#[test]
 fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
     let (db, dir) = setup();
     let mut metadata = make_metadata();
@@ -195,7 +344,14 @@ fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
         generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "de").unwrap();
 
     assert!(report.written_paths.contains(&"en/atom.xml".to_string()));
+    assert!(report.written_paths.contains(&"en/rss.xml".to_string()));
     assert!(report.written_paths.contains(&"en/sitemap.xml".to_string()));
+    assert!(report.written_paths.contains(&"en/404.html".to_string()));
+    assert!(
+        report
+            .written_paths
+            .contains(&"en/pagefind/pagefind-ui.js".to_string())
+    );
 
     let atom = std::fs::read_to_string(dir.path().join("en/atom.xml")).unwrap();
     assert!(
@@ -340,7 +496,8 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
 fn site_validation_detects_stale_and_missing_outputs() {
     let (db, dir) = setup();
     let metadata = make_metadata();
-    let post = make_post("hello", 1_710_000_000_000);
+    let mut post = make_post("hello", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Hello **world**");
     bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
     let posts = vec![PublishedPostSource {
         post,
@@ -362,7 +519,8 @@ fn site_validation_detects_stale_and_missing_outputs() {
 fn apply_validation_repairs_core_section_outputs() {
     let (db, dir) = setup();
     let metadata = make_metadata();
-    let post = make_post("hello", 1_710_000_000_000);
+    let mut post = make_post("hello", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Hello **world**");
     bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
     let posts = vec![PublishedPostSource {
         post,
@@ -390,7 +548,8 @@ fn apply_validation_repairs_core_section_outputs() {
 fn apply_validation_removes_extra_section_outputs() {
     let (db, dir) = setup();
     let metadata = make_metadata();
-    let post = make_post("hello", 1_710_000_000_000);
+    let mut post = make_post("hello", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Hello **world**");
     bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
     let posts = vec![PublishedPostSource {
         post,
@@ -426,7 +585,8 @@ fn apply_validation_removes_extra_section_outputs() {
 fn site_validation_uses_html_output_directory_when_present() {
     let (db, dir) = setup();
     let metadata = make_metadata();
-    let post = make_post("hello", 1_710_000_000_000);
+    let mut post = make_post("hello", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Hello **world**");
     bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
     let posts = vec![PublishedPostSource {
         post,
