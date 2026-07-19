@@ -14,6 +14,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
 - Optional on-device multilingual semantic search and tag suggestions backed by a persistent USearch index, with duplicate-post review and dismissal in the desktop workspace.
 - Read-only in-app browsers for the bundled global `DOCUMENTATION.md` and the generated Lua API reference, public types, and runnable examples, with safe GFM rendering and confirmed external links.
+- A localized OPML menu editor manages pages, submenus, and category archives with protected Home ordering, keyboard-accessible tree controls, drag-and-drop, and bDS2-compatible persistence.
 - Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
 - Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, shared settings/projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
 - Local MCP automation over stdio or a localhost-only stateless HTTP endpoint, with project resources, read/search/count tools, inert write proposals, explicit desktop approval, and opt-in Claude Code/Copilot configuration.

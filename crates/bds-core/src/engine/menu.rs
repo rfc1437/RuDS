@@ -31,7 +31,7 @@ impl MenuItemKind {
             Self::Home => "home",
             Self::Page => "page",
             Self::Submenu => "submenu",
-            Self::CategoryArchive => "category_archive",
+            Self::CategoryArchive => "category-archive",
         }
     }
 
@@ -39,7 +39,7 @@ impl MenuItemKind {
         match s {
             "home" => Self::Home,
             "submenu" => Self::Submenu,
-            "category_archive" => Self::CategoryArchive,
+            "category-archive" | "category_archive" => Self::CategoryArchive,
             _ => Self::Page,
         }
     }
@@ -83,11 +83,7 @@ pub fn default_menu_opml() -> String {
 
 /// Per menu.allium HomeAlwaysPresent: ensure Home is always first.
 fn normalize_menu(items: &[MenuItem]) -> Vec<MenuItem> {
-    let without_home: Vec<MenuItem> = items
-        .iter()
-        .filter(|i| i.kind != MenuItemKind::Home)
-        .cloned()
-        .collect();
+    let without_home: Vec<_> = items.iter().filter_map(normalize_non_home).collect();
     let mut result = vec![MenuItem {
         kind: MenuItemKind::Home,
         label: "Home".to_string(),
@@ -98,29 +94,70 @@ fn normalize_menu(items: &[MenuItem]) -> Vec<MenuItem> {
     result
 }
 
+fn normalize_non_home(item: &MenuItem) -> Option<MenuItem> {
+    if item.kind == MenuItemKind::Home {
+        return None;
+    }
+    Some(MenuItem {
+        kind: item.kind.clone(),
+        label: item.label.clone(),
+        slug: match item.kind {
+            MenuItemKind::Page | MenuItemKind::CategoryArchive => item.slug.clone(),
+            MenuItemKind::Home | MenuItemKind::Submenu => None,
+        },
+        children: if item.kind == MenuItemKind::Submenu {
+            item.children
+                .iter()
+                .filter_map(normalize_non_home)
+                .collect()
+        } else {
+            Vec::new()
+        },
+    })
+}
+
 /// Parse OPML 2.0 XML into menu items.
 fn parse_opml(content: &str) -> EngineResult<Vec<MenuItem>> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
     let mut items = Vec::new();
-    let mut parents = Vec::new();
-    let mut in_body = false;
+    let mut outlines: Vec<Option<MenuItem>> = Vec::new();
+    let mut elements: Vec<Vec<u8>> = Vec::new();
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(event)) if event.name().as_ref() == b"body" => in_body = true,
-            Ok(Event::End(event)) if event.name().as_ref() == b"body" => in_body = false,
-            Ok(Event::Start(event)) if in_body && event.name().as_ref() == b"outline" => {
-                parents.push(parse_outline(&event)?);
+            Ok(Event::Start(event)) => {
+                let name = event.name().as_ref().to_vec();
+                if name == b"outline" {
+                    let collect = collect_outline(&elements, &outlines);
+                    outlines.push(collect.then(|| parse_outline(&event)).transpose()?);
+                }
+                elements.push(name);
             }
-            Ok(Event::Empty(event)) if in_body && event.name().as_ref() == b"outline" => {
-                attach_outline(parse_outline(&event)?, &mut parents, &mut items);
+            Ok(Event::Empty(event)) if event.name().as_ref() == b"outline" => {
+                if collect_outline(&elements, &outlines) {
+                    attach_outline(parse_outline(&event)?, &mut outlines, &mut items);
+                }
             }
-            Ok(Event::End(event)) if event.name().as_ref() == b"outline" => {
-                let item = parents
+            Ok(Event::End(event)) => {
+                let name = event.name().as_ref().to_vec();
+                let open = elements
                     .pop()
-                    .ok_or_else(|| EngineError::Parse("unexpected </outline>".to_string()))?;
-                attach_outline(item, &mut parents, &mut items);
+                    .ok_or_else(|| EngineError::Parse("unexpected closing element".to_string()))?;
+                if open != name {
+                    return Err(EngineError::Parse("mismatched closing element".to_string()));
+                }
+                if name == b"outline" {
+                    let item = outlines
+                        .pop()
+                        .ok_or_else(|| EngineError::Parse("unexpected </outline>".to_string()))?;
+                    if let Some(mut item) = item {
+                        if item.kind != MenuItemKind::Submenu {
+                            item.children.clear();
+                        }
+                        attach_outline(item, &mut outlines, &mut items);
+                    }
+                }
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
@@ -128,16 +165,26 @@ fn parse_opml(content: &str) -> EngineResult<Vec<MenuItem>> {
         }
     }
 
-    if !parents.is_empty() {
+    if !outlines.is_empty() || !elements.is_empty() {
         return Err(EngineError::Parse("unclosed <outline>".to_string()));
     }
     Ok(normalize_menu(&items))
 }
 
+fn collect_outline(elements: &[Vec<u8>], outlines: &[Option<MenuItem>]) -> bool {
+    elements == [b"opml".as_slice(), b"body".as_slice()]
+        || (elements.last().is_some_and(|name| name == b"outline")
+            && outlines.last().is_some_and(Option::is_some))
+}
+
 fn parse_outline(event: &BytesStart<'_>) -> EngineResult<MenuItem> {
-    let mut label = "Untitled".to_string();
-    let mut kind = MenuItemKind::Page;
-    let mut slug = None;
+    let mut label = String::new();
+    let mut kind_value = None;
+    let mut legacy_kind = None;
+    let mut page_slug = None;
+    let mut category_name = None;
+    let mut legacy_slug = None;
+    let mut html_url = None;
 
     for attribute in event.attributes() {
         let attribute = attribute.map_err(|error| EngineError::Parse(error.to_string()))?;
@@ -147,11 +194,27 @@ fn parse_outline(event: &BytesStart<'_>) -> EngineResult<MenuItem> {
             .into_owned();
         match attribute.key.as_ref() {
             b"text" => label = value,
-            b"type" => kind = MenuItemKind::from_str(&value),
-            b"htmlUrl" => slug = Some(value),
+            b"type" => kind_value = Some(value),
+            b"kind" => legacy_kind = Some(value),
+            b"pageSlug" => page_slug = Some(value),
+            b"categoryName" => category_name = Some(value),
+            b"slug" => legacy_slug = Some(value),
+            b"htmlUrl" => html_url = Some(value),
             _ => {}
         }
     }
+
+    let kind = kind_value
+        .or(legacy_kind)
+        .as_deref()
+        .map(MenuItemKind::from_str)
+        .unwrap_or(MenuItemKind::Page);
+    let slug = match kind {
+        MenuItemKind::Home | MenuItemKind::Submenu => None,
+        MenuItemKind::Page => page_slug.or(legacy_slug).or(html_url),
+        MenuItemKind::CategoryArchive => category_name.or(legacy_slug).or(html_url),
+    }
+    .filter(|value| !value.is_empty());
 
     Ok(MenuItem {
         kind,
@@ -161,8 +224,8 @@ fn parse_outline(event: &BytesStart<'_>) -> EngineResult<MenuItem> {
     })
 }
 
-fn attach_outline(item: MenuItem, parents: &mut [MenuItem], items: &mut Vec<MenuItem>) {
-    if let Some(parent) = parents.last_mut() {
+fn attach_outline(item: MenuItem, parents: &mut [Option<MenuItem>], items: &mut Vec<MenuItem>) {
+    if let Some(Some(parent)) = parents.last_mut() {
         parent.children.push(item);
     } else {
         items.push(item);
@@ -212,12 +275,22 @@ fn serialize_opml(items: &[MenuItem]) -> EngineResult<String> {
 
 fn write_outline(writer: &mut Writer<Vec<u8>>, item: &MenuItem) -> quick_xml::Result<()> {
     let label = escape(&item.label);
-    let slug = item.slug.as_deref().map(escape);
     let mut outline = BytesStart::new("outline");
     outline.push_attribute(("text", label.as_ref()));
     outline.push_attribute(("type", item.kind.as_str()));
-    if let Some(slug) = &slug {
-        outline.push_attribute(("htmlUrl", slug.as_ref()));
+    match item.kind {
+        MenuItemKind::Home => outline.push_attribute(("pageSlug", "home")),
+        MenuItemKind::Page => {
+            if let Some(slug) = item.slug.as_deref().map(escape) {
+                outline.push_attribute(("pageSlug", slug.as_ref()));
+            }
+        }
+        MenuItemKind::CategoryArchive => {
+            if let Some(slug) = item.slug.as_deref().map(escape) {
+                outline.push_attribute(("categoryName", slug.as_ref()));
+            }
+        }
+        MenuItemKind::Submenu => {}
     }
     if item.children.is_empty() {
         writer.write_event(Event::Empty(outline))?;
@@ -328,6 +401,67 @@ mod tests {
         .unwrap();
         assert_eq!(parsed[1].label, "About");
         assert_eq!(parsed[1].slug.as_deref(), Some("/about"));
+    }
+
+    #[test]
+    fn canonical_bds2_attributes_round_trip_without_legacy_output() {
+        let parsed = parse_opml(
+            "<opml version='2.0'><body><outline text='Home' type='home' pageSlug='home'/><outline text='Sections' type='submenu'><outline text='About' type='page' pageSlug='about'/><outline text='Notes' type='category-archive' categoryName='notes'/></outline></body></opml>",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].children[0].slug.as_deref(), Some("about"));
+        assert_eq!(parsed[1].children[1].kind, MenuItemKind::CategoryArchive);
+        assert_eq!(parsed[1].children[1].slug.as_deref(), Some("notes"));
+
+        let serialized = serialize_opml(&parsed).unwrap();
+        assert!(serialized.contains("type=\"home\" pageSlug=\"home\""));
+        assert!(serialized.contains("type=\"page\" pageSlug=\"about\""));
+        assert!(serialized.contains("type=\"category-archive\" categoryName=\"notes\""));
+        assert!(!serialized.contains("htmlUrl"));
+        assert!(!serialized.contains("category_archive"));
+    }
+
+    #[test]
+    fn parser_ignores_foreign_outlines_and_drops_children_of_non_submenus() {
+        let parsed = parse_opml(
+            "<opml><head><outline text='Head'/></head><body><section><outline text='Foreign'/></section><outline text='Page' type='page' pageSlug='page'><outline text='Dropped' type='page' pageSlug='dropped'/></outline><outline text='Kept' type='submenu'><outline text='Child' type='page' pageSlug='child'/></outline></body></opml>",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[1].label, "Page");
+        assert!(parsed[1].children.is_empty());
+        assert_eq!(parsed[2].label, "Kept");
+        assert_eq!(parsed[2].children[0].label, "Child");
+    }
+
+    #[test]
+    fn normalization_removes_home_entries_at_every_depth() {
+        let normalized = normalize_menu(&[
+            MenuItem {
+                kind: MenuItemKind::Home,
+                label: "Duplicate".into(),
+                slug: None,
+                children: Vec::new(),
+            },
+            MenuItem {
+                kind: MenuItemKind::Submenu,
+                label: "Sections".into(),
+                slug: None,
+                children: vec![MenuItem {
+                    kind: MenuItemKind::Home,
+                    label: "Nested Home".into(),
+                    slug: None,
+                    children: Vec::new(),
+                }],
+            },
+        ]);
+
+        assert_eq!(normalized[0].kind, MenuItemKind::Home);
+        assert_eq!(normalized[0].label, "Home");
+        assert!(normalized[1].children.is_empty());
     }
 
     #[test]

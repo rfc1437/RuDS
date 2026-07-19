@@ -1008,7 +1008,7 @@ fn menu_item_href(item: &menu::MenuItem, language: &str, main_language: &str) ->
         MenuItemKind::CategoryArchive => item
             .slug
             .as_deref()
-            .map(|slug| format!("{}/category/{}/", prefix_or_root(&prefix), slugify(slug)))
+            .map(|slug| format!("{prefix}/category/{}/", slugify(slug)))
             .unwrap_or_else(|| "#".to_string()),
     }
 }
@@ -1624,4 +1624,49 @@ fn queries_category_settings(
     data_dir: &Path,
 ) -> Result<HashMap<String, CategorySettings>, Box<dyn Error + Send + Sync>> {
     Ok(crate::engine::meta::read_category_meta_json(data_dir).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+    use crate::engine::menu::{MenuItem, MenuItemKind};
+
+    #[test]
+    fn renderer_consumes_the_saved_opml_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        crate::engine::menu::write_menu(
+            dir.path(),
+            &[
+                MenuItem {
+                    kind: MenuItemKind::Page,
+                    label: "About".into(),
+                    slug: Some("about".into()),
+                    children: Vec::new(),
+                },
+                MenuItem {
+                    kind: MenuItemKind::Submenu,
+                    label: "Topics".into(),
+                    slug: None,
+                    children: vec![MenuItem {
+                        kind: MenuItemKind::CategoryArchive,
+                        label: "Long Form".into(),
+                        slug: Some("Long Form".into()),
+                        children: Vec::new(),
+                    }],
+                },
+            ],
+        )
+        .unwrap();
+
+        let rendered = build_menu_items(dir.path(), "en", "en").unwrap();
+        assert_eq!(rendered[0]["href"], "/");
+        assert_eq!(rendered[1]["href"], "/about/");
+        assert_eq!(rendered[2]["children"][0]["href"], "/category/long-form/");
+        let translated = build_menu_items(dir.path(), "de", "en").unwrap();
+        assert_eq!(
+            translated[2]["children"][0]["href"],
+            "/de/category/long-form/"
+        );
+    }
 }

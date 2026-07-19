@@ -22,6 +22,7 @@ use crate::views::{
     duplicates::{self, DuplicatesState},
     git::{self, GitDiffState, GitUiState},
     media_editor::{self, MediaEditorState},
+    menu_editor::{self, MenuEditorState},
     metadata_diff::{self, MetadataDiffState},
     modal, panel,
     post_editor::{self, PostEditorState},
@@ -134,6 +135,7 @@ pub fn view<'a>(
     guide_documentation: &'a DocumentationState,
     api_documentation: &'a DocumentationState,
     metadata_diff_state: &'a MetadataDiffState,
+    menu_editor_state: &'a MenuEditorState,
     translation_validation_state: &'a TranslationValidationState,
     git_state: &'a GitUiState,
     git_diffs: &'a HashMap<String, GitDiffState>,
@@ -167,6 +169,7 @@ pub fn view<'a>(
         guide_documentation,
         api_documentation,
         metadata_diff_state,
+        menu_editor_state,
         translation_validation_state,
         git_diffs,
     );
@@ -412,6 +415,7 @@ fn route_content_area<'a>(
     guide_documentation: &'a DocumentationState,
     api_documentation: &'a DocumentationState,
     metadata_diff_state: &'a MetadataDiffState,
+    menu_editor_state: &'a MenuEditorState,
     translation_validation_state: &'a TranslationValidationState,
     git_diffs: &'a HashMap<String, GitDiffState>,
 ) -> Element<'a, Message> {
@@ -504,6 +508,7 @@ fn route_content_area<'a>(
         ContentRoute::Documentation => documentation::view(guide_documentation, locale),
         ContentRoute::ApiDocumentation => documentation::view(api_documentation, locale),
         ContentRoute::MetadataDiff => metadata_diff::view(metadata_diff_state, locale),
+        ContentRoute::MenuEditor => menu_editor::view(menu_editor_state, locale),
         ContentRoute::TranslationValidation => {
             translation_validation::view(translation_validation_state, locale)
         }
@@ -542,6 +547,7 @@ enum ContentRoute<'a> {
     Documentation,
     ApiDocumentation,
     MetadataDiff,
+    MenuEditor,
     TranslationValidation,
     GitDiff(&'a str),
     Placeholder(&'a str),
@@ -632,7 +638,8 @@ fn route_kind<'a>(
         TabType::FindDuplicates => ContentRoute::FindDuplicates,
         TabType::Documentation => ContentRoute::Documentation,
         TabType::ApiDocumentation => ContentRoute::ApiDocumentation,
-        TabType::Style | TabType::MenuEditor => ContentRoute::Placeholder(&tab.title),
+        TabType::MenuEditor => ContentRoute::MenuEditor,
+        TabType::Style => ContentRoute::Placeholder(&tab.title),
         TabType::TranslationValidation => ContentRoute::TranslationValidation,
     }
 }
@@ -689,7 +696,7 @@ mod tests {
         let empty_scripts = HashMap::new();
         let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
-        let unsupported = [TabType::Style, TabType::MenuEditor];
+        let unsupported = [TabType::Style];
 
         for tab_type in unsupported {
             let tabs = vec![tab("tool", tab_type.clone(), "Tool")];
@@ -711,6 +718,31 @@ mod tests {
                 _ => panic!("expected placeholder route for {tab_type:?}"),
             }
         }
+    }
+
+    #[test]
+    fn menu_editor_tab_routes_to_real_editor() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
+        let site_validation = SiteValidationState::default();
+        let tabs = vec![tab("menu", TabType::MenuEditor, "Menu")];
+        let route = route_kind(
+            &tabs,
+            Some("menu"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            &empty_imports,
+            None,
+            None,
+            None,
+            &site_validation,
+        );
+        assert!(matches!(route, ContentRoute::MenuEditor));
     }
 
     #[test]

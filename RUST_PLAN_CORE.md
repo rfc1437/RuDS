@@ -88,7 +88,7 @@ Available:
 - User-authored Lua macro invocation during rendering.
 - Localhost-only Axum preview server, draft routes, embedded Wry preview, and external-browser preview.
 - Complete site generation with pages, archives, feeds, sitemap, static assets, changed-file tracking, parallel page rendering, and Pagefind output; full generation and validation apply run as grouped section tasks followed by search indexing.
-- OPML/menu document loading and normalized Home-first menu output.
+- Canonical bDS2-compatible OPML/menu document loading, recursive Home-first normalization, and renderer consumption of the saved tree.
 
 Open:
 

@@ -60,17 +60,14 @@ Done:
 - Safe native GFM rendering for headings, links, code blocks, lists, and tables, including in-document anchors and confirmed external links without HTML, CSS, or JavaScript execution.
 - Project switches preserve the singleton global documentation tabs and their loaded content.
 
-### Menu editor and deep links — Partly done
+### Menu editor and deep links — Done
 
 Done:
 
 - Menu file parsing/rendering and Home-first normalization.
+- Localized OPML tree editor with page/submenu/category drafts, metadata-backed new categories, sibling moves, indent/unindent, protected Home, validated drag/drop, delayed submenu expansion, save/reload, and accessible equivalent controls.
+- Canonical bDS2 OPML attributes and recursive normalization feed the same renderer used by preview and generation.
 - macOS URL plumbing and the sole bDS2-compatible Blogmark action at `ruds://new-post`; RuDS neither registers nor accepts bDS2's `bds2://` scheme.
-
-Open:
-
-- OPML/menu editor UI.
-- Replace the Menu Editor placeholder.
 
 ### CLI, domain events, and MCP — Done
 

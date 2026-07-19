@@ -40,6 +40,7 @@ use crate::views::{
         ImportAnalysisEvent, ImportEditorMsg, ImportEditorState, ImportExecutionEvent,
     },
     media_editor::{LinkedPostItem, MediaEditorMsg, MediaEditorState},
+    menu_editor::{MenuEditorMsg, MenuEditorState, MenuEditorStatus},
     metadata_diff::MetadataDiffState,
     modal,
     post_editor::{LinkedMediaItem, PostEditorMsg, PostEditorState, ResolvedPostLink},
@@ -318,6 +319,7 @@ pub enum Message {
     Tags(TagsMsg),
     Settings(SettingsMsg),
     ImportEditor(ImportEditorMsg),
+    MenuEditor(MenuEditorMsg),
 
     // Editor data loading
     PostLoaded(Result<Post, String>),
@@ -953,6 +955,7 @@ pub struct BdsApp {
     guide_documentation: DocumentationState,
     api_documentation: DocumentationState,
     metadata_diff_state: MetadataDiffState,
+    menu_editor_state: MenuEditorState,
     translation_validation_state: crate::views::translation_validation::TranslationValidationState,
     git_state: GitUiState,
     git_diffs: HashMap<String, GitDiffState>,
@@ -1120,6 +1123,7 @@ impl BdsApp {
                 guide_documentation: DocumentationState::new(DocumentationKind::Guide),
                 api_documentation: DocumentationState::new(DocumentationKind::Api),
                 metadata_diff_state: MetadataDiffState::default(),
+                menu_editor_state: MenuEditorState::default(),
                 translation_validation_state: Default::default(),
                 git_state: GitUiState::default(),
                 git_diffs: HashMap::new(),
@@ -1201,6 +1205,7 @@ impl BdsApp {
             guide_documentation: DocumentationState::new(DocumentationKind::Guide),
             api_documentation: DocumentationState::new(DocumentationKind::Api),
             metadata_diff_state: MetadataDiffState::default(),
+            menu_editor_state: MenuEditorState::default(),
             translation_validation_state: Default::default(),
             git_state: GitUiState::default(),
             git_diffs: HashMap::new(),
@@ -1612,11 +1617,22 @@ impl BdsApp {
                 }
                 let sidebar_task = self.refresh_counts();
                 let documentation_task = self.reload_changed_documentation();
+                let menu_editor_task = if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.tab_type == TabType::MenuEditor)
+                {
+                    Task::done(Message::MenuEditor(MenuEditorMsg::Reload))
+                } else {
+                    self.menu_editor_state = MenuEditorState::default();
+                    Task::none()
+                };
                 self.sync_menu_state();
                 Task::batch([
                     sidebar_task,
                     Task::done(Message::EmbeddingBackfill),
                     documentation_task,
+                    menu_editor_task,
                 ])
             }
             Message::SwitchProject(project_id) => {
@@ -2755,6 +2771,7 @@ impl BdsApp {
             Message::Tags(msg) => self.handle_tags_msg(msg),
             Message::Settings(msg) => self.handle_settings_msg(msg),
             Message::ImportEditor(msg) => self.handle_import_editor_msg(msg),
+            Message::MenuEditor(msg) => self.handle_menu_editor_msg(msg),
 
             // ── Editor data loading ──
             Message::PostLoaded(result) => {
@@ -3141,6 +3158,7 @@ impl BdsApp {
             &self.guide_documentation,
             &self.api_documentation,
             &self.metadata_diff_state,
+            &self.menu_editor_state,
             &self.translation_validation_state,
             &self.git_state,
             &self.git_diffs,
@@ -3180,7 +3198,44 @@ impl BdsApp {
             Subscription::none()
         };
 
-        Subscription::batch([menu_sub, task_tick, domain_event_tick, toast_tick, drag_sub])
+        let menu_interaction_sub = if self.menu_editor_state.draft.is_some() {
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::MenuEditor(MenuEditorMsg::CancelDraft)),
+                _ => None,
+            })
+        } else if self.menu_editor_state.dragging_id.is_some() {
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::MenuEditor(MenuEditorMsg::Drop)),
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::MenuEditor(MenuEditorMsg::DragCancel)),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+        let menu_expand_tick = if self.menu_editor_state.hover_expand.is_some() {
+            iced::time::every(std::time::Duration::from_millis(50))
+                .map(|_| Message::MenuEditor(MenuEditorMsg::ExpandTick))
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([
+            menu_sub,
+            task_tick,
+            domain_event_tick,
+            toast_tick,
+            drag_sub,
+            menu_interaction_sub,
+            menu_expand_tick,
+        ])
     }
 
     // ── Private helpers ──
@@ -3784,6 +3839,7 @@ impl BdsApp {
                     Task::done(Message::TemplateEditor(TemplateEditorMsg::Save))
                 }
                 Some(TabType::Scripts) => Task::done(Message::ScriptEditor(ScriptEditorMsg::Save)),
+                Some(TabType::MenuEditor) => Task::done(Message::MenuEditor(MenuEditorMsg::Save)),
                 _ => Task::none(),
             },
             MenuAction::OpenInBrowser => self.preview_active_post(),
@@ -3827,7 +3883,7 @@ impl BdsApp {
             MenuAction::PreviewPost => self.preview_active_post(),
             MenuAction::EditMenu => {
                 self.open_singleton_tab(TabType::MenuEditor, "tabBar.menuEditor");
-                Task::none()
+                Task::done(Message::MenuEditor(MenuEditorMsg::Reload))
             }
             MenuAction::RebuildDatabase => Task::done(Message::RebuildDatabase),
             MenuAction::ReindexText => Task::done(Message::ReindexText),
@@ -4273,6 +4329,184 @@ impl BdsApp {
                 Task::none()
             }
         }
+    }
+
+    fn reload_menu_editor(&mut self) {
+        let result = match (&self.db, &self.active_project, &self.data_dir) {
+            (Some(db), Some(project), Some(data_dir)) => {
+                crate::views::menu_editor::load(db, &project.id, data_dir)
+            }
+            _ => Err(t(self.ui_locale, "menuEditor.noProject")),
+        };
+        match result {
+            Ok(state) => self.menu_editor_state = state,
+            Err(error) => {
+                self.menu_editor_state.status = MenuEditorStatus::LoadFailed;
+                self.menu_editor_state.error = Some(error.clone());
+                self.notify(
+                    ToastLevel::Error,
+                    &tw(
+                        self.ui_locale,
+                        "menuEditor.loadFailedDetail",
+                        &[("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
+    fn handle_menu_editor_msg(&mut self, message: MenuEditorMsg) -> Task<Message> {
+        match message {
+            MenuEditorMsg::Reload => self.reload_menu_editor(),
+            MenuEditorMsg::Select(id) => self.menu_editor_state.selected_id = Some(id),
+            MenuEditorMsg::StartDraft(kind) => {
+                self.menu_editor_state.start_draft(kind);
+            }
+            MenuEditorMsg::DraftChanged(value) => self.menu_editor_state.draft_changed(value),
+            MenuEditorMsg::ChoosePage(id) => {
+                let _ = self.menu_editor_state.choose_page(&id);
+            }
+            MenuEditorMsg::ChooseCategory(name) => {
+                let _ = self.menu_editor_state.choose_category(&name);
+            }
+            MenuEditorMsg::SubmitDraft => {
+                let kind = self
+                    .menu_editor_state
+                    .draft
+                    .as_ref()
+                    .map(|draft| draft.kind);
+                match kind {
+                    Some(crate::views::menu_editor::DraftKind::Page) => {
+                        let label = t(self.ui_locale, "menuEditor.newSubmenu");
+                        let _ = self.menu_editor_state.submit_submenu(&label);
+                    }
+                    Some(crate::views::menu_editor::DraftKind::Category) => {
+                        let previous = self.menu_editor_state.clone();
+                        if let Ok((name, is_new)) = self.menu_editor_state.submit_category()
+                            && is_new
+                            && let Some(data_dir) = &self.data_dir
+                            && let Err(error) = engine::meta::add_category(data_dir, &name)
+                        {
+                            self.menu_editor_state = previous;
+                            self.notify(
+                                ToastLevel::Error,
+                                &tw(
+                                    self.ui_locale,
+                                    "menuEditor.categoryCreateFailed",
+                                    &[("error", &error.to_string())],
+                                ),
+                            );
+                        }
+                    }
+                    None => {}
+                }
+            }
+            MenuEditorMsg::CancelDraft => {
+                self.menu_editor_state.cancel_draft();
+            }
+            MenuEditorMsg::Move(direction) => {
+                self.menu_editor_state.move_selected(direction);
+            }
+            MenuEditorMsg::Indent => {
+                self.menu_editor_state.indent_selected();
+            }
+            MenuEditorMsg::Unindent => {
+                self.menu_editor_state.unindent_selected();
+            }
+            MenuEditorMsg::Delete => {
+                self.menu_editor_state.delete_selected();
+            }
+            MenuEditorMsg::Save => {
+                if self.menu_editor_state.draft.is_some() {
+                    self.notify(
+                        ToastLevel::Warning,
+                        &t(self.ui_locale, "menuEditor.finishDraft"),
+                    );
+                    return Task::none();
+                }
+                let Some(data_dir) = self.data_dir.clone() else {
+                    return Task::none();
+                };
+                self.menu_editor_state.status = MenuEditorStatus::Saving;
+                let result =
+                    engine::menu::write_menu(&data_dir, &self.menu_editor_state.persisted_items())
+                        .and_then(|()| engine::menu::read_menu(&data_dir));
+                match result {
+                    Ok(items) => {
+                        let project_id = self
+                            .menu_editor_state
+                            .project_id
+                            .clone()
+                            .unwrap_or_default();
+                        let pages = self.menu_editor_state.pages.clone();
+                        let categories = self.menu_editor_state.categories.clone();
+                        self.menu_editor_state =
+                            MenuEditorState::from_persisted(project_id, items, pages, categories);
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "menuEditor.saved"));
+                    }
+                    Err(error) => {
+                        self.menu_editor_state.status = MenuEditorStatus::Ready;
+                        self.menu_editor_state.error = Some(error.to_string());
+                        self.notify(
+                            ToastLevel::Error,
+                            &tw(
+                                self.ui_locale,
+                                "menuEditor.saveFailed",
+                                &[("error", &error.to_string())],
+                            ),
+                        );
+                    }
+                }
+            }
+            MenuEditorMsg::ToggleExpanded(id) => {
+                if !self.menu_editor_state.collapsed.insert(id.clone()) {
+                    self.menu_editor_state.collapsed.remove(&id);
+                }
+            }
+            MenuEditorMsg::DragStart(id) => {
+                if id != crate::views::menu_editor::HOME_ID {
+                    self.menu_editor_state.selected_id = Some(id.clone());
+                    self.menu_editor_state.dragging_id = Some(id);
+                }
+            }
+            MenuEditorMsg::DragOver(id, position) => {
+                self.menu_editor_state
+                    .drag_over(id, position, std::time::Instant::now());
+            }
+            MenuEditorMsg::DragLeave(id) => {
+                if self
+                    .menu_editor_state
+                    .drop_target
+                    .as_ref()
+                    .is_some_and(|(target, _)| target == &id)
+                {
+                    self.menu_editor_state.drop_target = None;
+                    self.menu_editor_state.hover_expand = None;
+                }
+            }
+            MenuEditorMsg::Drop => {
+                if let (Some(dragged), Some((target, position))) = (
+                    self.menu_editor_state.dragging_id.clone(),
+                    self.menu_editor_state.drop_target.clone(),
+                ) {
+                    self.menu_editor_state
+                        .drop_item(&dragged, &target, position);
+                }
+                self.menu_editor_state.dragging_id = None;
+                self.menu_editor_state.drop_target = None;
+                self.menu_editor_state.hover_expand = None;
+            }
+            MenuEditorMsg::DragCancel => {
+                self.menu_editor_state.dragging_id = None;
+                self.menu_editor_state.drop_target = None;
+                self.menu_editor_state.hover_expand = None;
+            }
+            MenuEditorMsg::ExpandTick => {
+                self.menu_editor_state
+                    .expand_hovered(std::time::Instant::now());
+            }
+        }
+        Task::none()
     }
 
     fn update_import_paths(
@@ -8434,6 +8668,7 @@ mod tests {
     use crate::views::chat_view::ChatEditorState;
     use crate::views::documentation::{DocumentLoad, DocumentationKind};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
+    use crate::views::menu_editor::{MenuEditorMsg, MenuEditorState, MenuEditorStatus};
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
     use crate::views::script_editor::{ScriptEditorMsg, ScriptEditorState};
@@ -8444,7 +8679,7 @@ mod tests {
     use bds_core::db::queries::project::insert_project;
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
-    use bds_core::engine::{ai, chat, media, post, script, template, wordpress_import};
+    use bds_core::engine::{ai, chat, media, menu, meta, post, script, template, wordpress_import};
     use bds_core::i18n::UiLocale;
     use bds_core::model::{ChatRole, Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
@@ -8585,6 +8820,77 @@ mod tests {
             crate::views::documentation::DocumentStatus::Ready
         );
         assert_eq!(app.guide_documentation.signature, 42);
+    }
+
+    #[test]
+    fn menu_editor_persists_pages_new_categories_and_reload_roundtrip() {
+        let (db, project, temp) = setup();
+        let page = post::create_post(
+            db.conn(),
+            temp.path(),
+            &project.id,
+            "About",
+            Some("About body"),
+            Vec::new(),
+            vec!["page".to_string()],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::Reload));
+        assert_eq!(app.menu_editor_state.status, MenuEditorStatus::Ready);
+        assert!(
+            app.menu_editor_state
+                .pages
+                .iter()
+                .any(|item| item.id == page.id)
+        );
+
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::StartDraft(
+            crate::views::menu_editor::DraftKind::Page,
+        )));
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::ChoosePage(page.id)));
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::StartDraft(
+            crate::views::menu_editor::DraftKind::Category,
+        )));
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::DraftChanged(
+            "Long Form".to_string(),
+        )));
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::SubmitDraft));
+        assert!(
+            meta::read_categories_json(temp.path())
+                .unwrap()
+                .contains(&"Long Form".to_string())
+        );
+        assert!(
+            meta::read_category_meta_json(temp.path())
+                .unwrap()
+                .contains_key("Long Form")
+        );
+
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::Save));
+        let saved = menu::read_menu(temp.path()).unwrap();
+        assert_eq!(saved[0].kind, menu::MenuItemKind::Home);
+        assert!(
+            saved
+                .iter()
+                .any(|item| item.kind == menu::MenuItemKind::Page
+                    && item.slug.as_deref() == Some("about"))
+        );
+        assert!(
+            saved
+                .iter()
+                .any(|item| item.kind == menu::MenuItemKind::CategoryArchive
+                    && item.slug.as_deref() == Some("Long Form"))
+        );
+        assert!(!app.menu_editor_state.dirty);
+
+        app.menu_editor_state = MenuEditorState::default();
+        let _ = app.update(Message::MenuEditor(MenuEditorMsg::Reload));
+        assert_eq!(app.menu_editor_state.items.len(), 3);
     }
 
     #[test]

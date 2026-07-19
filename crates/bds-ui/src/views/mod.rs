@@ -7,6 +7,7 @@ pub mod duplicates;
 pub mod git;
 pub mod import_editor;
 pub mod media_editor;
+pub mod menu_editor;
 pub mod metadata_diff;
 pub mod modal;
 pub mod panel;
