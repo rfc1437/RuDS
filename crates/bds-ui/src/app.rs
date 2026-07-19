@@ -200,6 +200,13 @@ pub enum Message {
     ShowModal(modal::ModalState),
     DismissModal,
     ConfirmModal(modal::ConfirmAction),
+    RemoteTargetChanged(String),
+    RemoteConnectRequested,
+    RemoteConnected(Result<(Arc<bds_server::DesktopClient>, Vec<Project>), String>),
+    RemoteProjectSelected(String),
+    RemoteOpenProjectRequested,
+    RemoteProjectOpened(Result<Project, String>),
+    RemoteDisconnectRequested,
     FindQueryChanged(String),
     ReplaceQueryChanged(String),
     FindNext,
@@ -933,6 +940,11 @@ pub struct BdsApp {
 
     // Modal
     active_modal: Option<modal::ModalState>,
+    remote_client: Option<Arc<bds_server::DesktopClient>>,
+    remote_projects: Vec<Project>,
+    remote_project: Option<Project>,
+    remote_display_name: Option<String>,
+    remote_previous_locale: Option<UiLocale>,
 
     // Local preview
     preview_session: Option<PreviewSession>,
@@ -1048,6 +1060,7 @@ impl BdsApp {
         registry.set_enabled(MenuAction::Find, false);
         registry.set_enabled(MenuAction::Replace, false);
         registry.set_enabled(MenuAction::OpenInBrowser, false);
+        registry.set_enabled(MenuAction::DisconnectServer, false);
         let chat_conversations = db
             .as_ref()
             .and_then(|db| engine::chat::list_conversations(db.conn()).ok())
@@ -1105,6 +1118,11 @@ impl BdsApp {
                 toasts: Vec::new(),
                 active_modal: search_index_rebuild_required
                     .then_some(modal::ModalState::SearchIndexRepair),
+                remote_client: None,
+                remote_projects: Vec::new(),
+                remote_project: None,
+                remote_display_name: None,
+                remote_previous_locale: None,
                 preview_session: None,
                 mcp_server,
                 embedded_preview: None,
@@ -1187,6 +1205,11 @@ impl BdsApp {
             theme_badge: String::from("pico"),
             toasts: Vec::new(),
             active_modal: None,
+            remote_client: None,
+            remote_projects: Vec::new(),
+            remote_project: None,
+            remote_display_name: None,
+            remote_previous_locale: None,
             preview_session: None,
             mcp_server: None,
             embedded_preview: None,
@@ -2694,6 +2717,212 @@ impl BdsApp {
                     }
                 }
             }
+            Message::RemoteTargetChanged(value) => {
+                if let Some(modal::ModalState::RemoteConnection { target, error, .. }) =
+                    self.active_modal.as_mut()
+                {
+                    *target = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::RemoteConnectRequested => {
+                let target = match self.active_modal.as_mut() {
+                    Some(modal::ModalState::RemoteConnection {
+                        target,
+                        connecting,
+                        error,
+                        ..
+                    }) => {
+                        *connecting = true;
+                        *error = None;
+                        target.clone()
+                    }
+                    _ => return Task::none(),
+                };
+                let parsed = match bds_server::RemoteTarget::parse(&target) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        if let Some(modal::ModalState::RemoteConnection {
+                            connecting,
+                            error: shown,
+                            ..
+                        }) = self.active_modal.as_mut()
+                        {
+                            *connecting = false;
+                            let _ = error;
+                            *shown = Some(t(self.ui_locale, "remoteConnection.invalidTarget"));
+                        }
+                        return Task::none();
+                    }
+                };
+                let data_root = bds_core::util::application_data_dir();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let client = Arc::new(
+                                bds_server::DesktopClient::connect(parsed, &data_root)
+                                    .map_err(|error| error.to_string())?,
+                            );
+                            let projects =
+                                client.list_projects().map_err(|error| error.to_string())?;
+                            Ok((client, projects))
+                        })
+                        .await
+                        .unwrap_or_else(|error| {
+                            Err(format!("remote connection task failed: {error}"))
+                        })
+                    },
+                    Message::RemoteConnected,
+                )
+            }
+            Message::RemoteConnected(result) => {
+                match result {
+                    Ok((client, projects)) => {
+                        let server_locale =
+                            bds_core::i18n::normalize_language(client.server_locale());
+                        self.remote_projects.clone_from(&projects);
+                        self.remote_client = Some(client);
+                        if let Some(modal::ModalState::RemoteConnection {
+                            connecting,
+                            connected,
+                            error,
+                            projects: shown_projects,
+                            selected_project_id,
+                            ..
+                        }) = self.active_modal.as_mut()
+                        {
+                            *connecting = false;
+                            *connected = true;
+                            *error = None;
+                            shown_projects.clone_from(&projects);
+                            *selected_project_id =
+                                projects.first().map(|project| project.id.clone());
+                        }
+                        self.menu_registry
+                            .set_enabled(MenuAction::DisconnectServer, true);
+                        if self.remote_previous_locale.is_none() {
+                            self.remote_previous_locale = Some(self.ui_locale);
+                        }
+                        self.apply_ui_locale(server_locale);
+                    }
+                    Err(connection_error) => {
+                        let remains_connected = self.remote_client.is_some();
+                        if let Some(modal::ModalState::RemoteConnection {
+                            connecting,
+                            connected,
+                            error,
+                            ..
+                        }) = self.active_modal.as_mut()
+                        {
+                            *connecting = false;
+                            *connected = remains_connected;
+                            *error = Some(tw(
+                                self.ui_locale,
+                                "remoteConnection.failed",
+                                &[("reason", &connection_error)],
+                            ));
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::RemoteProjectSelected(project_id) => {
+                if let Some(modal::ModalState::RemoteConnection {
+                    selected_project_id,
+                    error,
+                    ..
+                }) = self.active_modal.as_mut()
+                {
+                    *selected_project_id = Some(project_id);
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::RemoteOpenProjectRequested => {
+                let project_id = match self.active_modal.as_mut() {
+                    Some(modal::ModalState::RemoteConnection {
+                        selected_project_id: Some(project_id),
+                        connecting,
+                        error,
+                        ..
+                    }) => {
+                        *connecting = true;
+                        *error = None;
+                        project_id.clone()
+                    }
+                    _ => return Task::none(),
+                };
+                let Some(client) = self.remote_client.clone() else {
+                    return Task::done(Message::RemoteProjectOpened(Err(t(
+                        self.ui_locale,
+                        "remoteConnection.connectionLost",
+                    ))));
+                };
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            client
+                                .open_project(&project_id)
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(format!("remote project task failed: {error}")))
+                    },
+                    Message::RemoteProjectOpened,
+                )
+            }
+            Message::RemoteProjectOpened(result) => {
+                match result {
+                    Ok(project) => {
+                        let target = self
+                            .remote_client
+                            .as_ref()
+                            .map(|client| client.target().label())
+                            .unwrap_or_default();
+                        self.remote_display_name = Some(format!("{} — {target}", project.name));
+                        self.remote_project = Some(project);
+                        self.active_modal = None;
+                        self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "remoteConnection.opened"),
+                        );
+                    }
+                    Err(open_error) => {
+                        if let Some(modal::ModalState::RemoteConnection {
+                            connecting, error, ..
+                        }) = self.active_modal.as_mut()
+                        {
+                            *connecting = false;
+                            *error = Some(tw(
+                                self.ui_locale,
+                                "remoteConnection.openFailed",
+                                &[("reason", &open_error)],
+                            ));
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::RemoteDisconnectRequested => {
+                if let Some(client) = self.remote_client.take() {
+                    client.close();
+                }
+                self.remote_projects.clear();
+                self.remote_project = None;
+                self.remote_display_name = None;
+                self.active_modal = None;
+                self.menu_registry
+                    .set_enabled(MenuAction::DisconnectServer, false);
+                if let Some(locale) = self.remote_previous_locale.take() {
+                    self.apply_ui_locale(locale);
+                }
+                self.notify(
+                    ToastLevel::Info,
+                    &t(self.ui_locale, "remoteConnection.disconnected"),
+                );
+                Task::none()
+            }
             Message::FindQueryChanged(value) => {
                 if let Some(modal::ModalState::FindReplace { query, .. }) =
                     self.active_modal.as_mut()
@@ -3095,7 +3324,11 @@ impl BdsApp {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let active_name = self.active_project.as_ref().map(|p| p.name.as_str());
+        let active_name = self.remote_display_name.as_deref().or_else(|| {
+            self.active_project
+                .as_ref()
+                .map(|project| project.name.as_str())
+        });
         let active_post_filter = match self.sidebar_view {
             SidebarView::Pages => &self.page_filter,
             _ => &self.post_filter,
@@ -3615,6 +3848,47 @@ impl BdsApp {
     }
 
     fn process_domain_events(&mut self) -> Task<Message> {
+        let remote_messages = self
+            .remote_client
+            .as_ref()
+            .map(|client| client.drain_events())
+            .unwrap_or_default();
+        for message in remote_messages {
+            match message {
+                bds_server::protocol::ServerMessage::Event { sequence, event } => {
+                    self.add_output(&tw(
+                        self.ui_locale,
+                        "remoteConnection.eventReceived",
+                        &[
+                            ("sequence", &sequence.to_string()),
+                            ("event", &format!("{event:?}")),
+                        ],
+                    ));
+                }
+                bds_server::protocol::ServerMessage::Tasks { tasks, .. } => {
+                    self.add_output(&tw(
+                        self.ui_locale,
+                        "remoteConnection.taskUpdate",
+                        &[("count", &tasks.len().to_string())],
+                    ));
+                }
+                bds_server::protocol::ServerMessage::Error { code, message, .. } => {
+                    self.notify(ToastLevel::Error, &message);
+                    if remote_error_closes_connection(&code) {
+                        self.remote_client = None;
+                        self.remote_project = None;
+                        self.remote_projects.clear();
+                        self.remote_display_name = None;
+                        self.menu_registry
+                            .set_enabled(MenuAction::DisconnectServer, false);
+                        if let Some(locale) = self.remote_previous_locale.take() {
+                            self.apply_ui_locale(locale);
+                        }
+                    }
+                }
+                bds_server::protocol::ServerMessage::Response { .. } => {}
+            }
+        }
         if let Some(db) = &self.db {
             let _ = engine::cli_sync::poll_notifications(db.conn());
         }
@@ -3849,6 +4123,26 @@ impl BdsApp {
                 }
                 Task::none()
             }
+            MenuAction::ConnectServer => {
+                let target = self
+                    .remote_client
+                    .as_ref()
+                    .map(|client| client.target().label())
+                    .unwrap_or_default();
+                self.active_modal = Some(modal::ModalState::RemoteConnection {
+                    target,
+                    connecting: false,
+                    connected: self.remote_client.is_some(),
+                    error: None,
+                    projects: self.remote_projects.clone(),
+                    selected_project_id: self
+                        .remote_project
+                        .as_ref()
+                        .map(|project| project.id.clone()),
+                });
+                Task::none()
+            }
+            MenuAction::DisconnectServer => Task::done(Message::RemoteDisconnectRequested),
             // Edit
             MenuAction::Find => {
                 self.active_modal = Some(modal::ModalState::FindReplace {
@@ -5279,6 +5573,8 @@ impl BdsApp {
                 ),
             );
         }
+        self.menu_registry
+            .set_enabled(MenuAction::DisconnectServer, self.remote_client.is_some());
     }
 
     // ── Editor save/publish helpers ──
@@ -8652,16 +8948,21 @@ fn language_label(locale: UiLocale, code: &str) -> String {
     }
 }
 
+fn remote_error_closes_connection(code: &str) -> bool {
+    code == "connection_lost"
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
         PostStatus, SettingsMsg, month_abbreviation, persist_media_editor_state_impl,
         persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
-        save_editor_settings_state_impl, save_script_editor_state_impl,
-        save_template_editor_state_impl,
+        remote_error_closes_connection, save_editor_settings_state_impl,
+        save_script_editor_state_impl, save_template_editor_state_impl,
     };
     use crate::i18n::t;
+    use crate::platform::menu::MenuAction;
     use crate::state::ToastLevel;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::state::tabs::{Tab, TabType};
@@ -8733,6 +9034,49 @@ mod tests {
         .unwrap();
         std::fs::write(tempdir.path().join("meta/category-meta.json"), "{}\n").unwrap();
         (db, project, tempdir)
+    }
+
+    #[test]
+    fn remote_connection_menu_opens_localized_selection_and_failure_states() {
+        let (db, project, temp) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        let _ = app.dispatch_menu_action(MenuAction::ConnectServer);
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::RemoteConnection {
+                connected: false,
+                ref projects,
+                ..
+            }) if projects.is_empty()
+        ));
+
+        let _ = app.update(Message::RemoteTargetChanged("not-a-target".into()));
+        let _ = app.update(Message::RemoteConnectRequested);
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::RemoteConnection {
+                connecting: false,
+                error: Some(ref error),
+                ..
+            }) if error == &t(UiLocale::En, "remoteConnection.invalidTarget")
+        ));
+
+        let _ = app.update(Message::RemoteConnected(Err("refused".into())));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::RemoteConnection {
+                connected: false,
+                error: Some(ref error),
+                ..
+            }) if error.contains("refused") && error != "refused"
+        ));
+    }
+
+    #[test]
+    fn only_transport_loss_closes_an_open_remote_session() {
+        assert!(remote_error_closes_connection("connection_lost"));
+        assert!(!remote_error_closes_connection("sync_watcher_error"));
+        assert!(!remote_error_closes_connection("engine_error"));
     }
 
     #[test]

@@ -88,6 +88,13 @@ impl CoreHost {
         self
     }
 
+    /// Attach the application-wide task service for remote and alternate UI
+    /// sessions that are not themselves running inside one managed task.
+    pub fn with_task_manager(mut self, manager: Arc<TaskManager>) -> Self {
+        self.task_manager = Some(manager);
+        self
+    }
+
     pub fn with_offline_mode(mut self, offline_mode: bool) -> Self {
         self.offline_mode = offline_mode;
         self

@@ -18,6 +18,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
 - Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, shared settings/projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
 - Local MCP automation over stdio or a localhost-only stateless HTTP endpoint, with project resources, read/search/count tools, inert write proposals, explicit desktop approval, and opt-in Claude Code/Copilot configuration.
+- Headless `bds-server` hosting the shared application engines over a loopback-by-default, public-key-only SSH service, with restrictive private key material, live authorization updates, terminal-session transport, CLI-change synchronization, ordered domain/task events, and native desktop remote-project selection.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
@@ -35,6 +36,7 @@ RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from 
 - `crates/bds-ui` — desktop application and platform integration
 - `crates/bds-cli` — headless automation CLI over the shared engines
 - `crates/bds-mcp` — packaged stdio MCP transport over the shared MCP engine
+- `crates/bds-server` — headless engine host, SSH transport, remote protocol, and desktop client
 - `specs` — authoritative Allium behavior specifications
 - `fixtures` — compatibility projects and generated-site fixtures
 - `locales` — UI and native-menu translations
@@ -48,3 +50,7 @@ RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from 
 - `../bDS2` — reference implementation when an Allium contract is ambiguous
 
 Contributor workflow and project invariants are documented in [AGENTS.md](AGENTS.md).
+
+## Headless server
+
+Run `bds-server` for a dedicated headless process, or set `BDS_MODE=server` when launching `bds-ui`. The SSH listener defaults to `127.0.0.1:2222`; use `--bind`/`BDS_SSH_BIND` and `--port`/`BDS_SSH_PORT` to opt into another address. Startup prints the private `authorized_keys` path. The desktop creates its own private `id_ed25519.pub`; add that public key to the server file, then use **File → Connect to Server…** and select a remote project. Host keys are recorded on first connection and verified thereafter. `BDS_MODE=tui` starts the same headless host with a terminal session attached to the launching shell.

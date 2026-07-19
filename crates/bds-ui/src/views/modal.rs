@@ -104,6 +104,14 @@ pub enum ModalState {
         source_language: String,
         available_targets: Vec<LanguageTarget>,
     },
+    RemoteConnection {
+        target: String,
+        connecting: bool,
+        connected: bool,
+        error: Option<String>,
+        projects: Vec<bds_core::model::Project>,
+        selected_project_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -219,6 +227,119 @@ pub fn view(
     data_dir: Option<&Path>,
 ) -> Element<'static, Message> {
     let modal_content: Element<'static, Message> = match state {
+        ModalState::RemoteConnection {
+            target,
+            connecting,
+            connected,
+            error,
+            projects,
+            selected_project_id,
+        } => {
+            let target_input =
+                text_input(&t(locale, "remoteConnection.targetPlaceholder"), &target)
+                    .on_input(Message::RemoteTargetChanged)
+                    .on_submit(Message::RemoteConnectRequested)
+                    .style(inputs::field_style);
+            let mut content = column![
+                text(t(locale, "remoteConnection.title"))
+                    .size(16)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::WHITE),
+                text(t(locale, "remoteConnection.description"))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(Color::from_rgb(0.70, 0.70, 0.75)),
+                Space::with_height(8.0),
+                text(t(locale, "remoteConnection.target"))
+                    .size(12)
+                    .color(Color::from_rgb(0.80, 0.80, 0.85)),
+                target_input,
+            ]
+            .spacing(6)
+            .width(Length::Fill);
+
+            if let Some(error) = error {
+                content = content.push(
+                    inputs::card(text(error).size(12).color(Color::from_rgb(1.0, 0.55, 0.55)))
+                        .width(Length::Fill),
+                );
+            }
+
+            if !projects.is_empty() {
+                content = content.push(Space::with_height(6.0));
+                content = content.push(
+                    text(t(locale, "remoteConnection.projects"))
+                        .size(13)
+                        .color(Color::WHITE),
+                );
+                let mut project_rows = column![].spacing(6);
+                for project in projects {
+                    let selected = selected_project_id.as_deref() == Some(project.id.as_str());
+                    let marker = if selected { "●" } else { "○" };
+                    project_rows = project_rows.push(
+                        button(
+                            row![
+                                text(marker).size(12),
+                                text(project.name.clone()).size(13),
+                                Space::with_width(Length::Fill),
+                                text(project.description.unwrap_or_default())
+                                    .size(11)
+                                    .color(Color::from_rgb(0.65, 0.65, 0.70)),
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(Message::RemoteProjectSelected(project.id))
+                        .padding([7, 10])
+                        .width(Length::Fill)
+                        .style(if selected {
+                            inputs::primary_button
+                        } else {
+                            inputs::secondary_button
+                        }),
+                    );
+                }
+                content = content.push(project_rows);
+            }
+
+            let cancel = button(text(t(locale, "remoteConnection.cancel")).size(13))
+                .on_press(Message::DismissModal)
+                .padding([6, 16])
+                .style(cancel_button_style);
+            let action = if !connected {
+                let button = button(
+                    text(if connecting {
+                        t(locale, "remoteConnection.connecting")
+                    } else {
+                        t(locale, "remoteConnection.connect")
+                    })
+                    .size(13),
+                )
+                .padding([6, 16])
+                .style(confirm_button_style);
+                if connecting || target.trim().is_empty() {
+                    button
+                } else {
+                    button.on_press(Message::RemoteConnectRequested)
+                }
+            } else {
+                let button = button(text(t(locale, "remoteConnection.open")).size(13))
+                    .padding([6, 16])
+                    .style(confirm_button_style);
+                if selected_project_id.is_some() {
+                    button.on_press(Message::RemoteOpenProjectRequested)
+                } else {
+                    button
+                }
+            };
+            content = content.push(Space::with_height(8.0)).push(
+                row![cancel, Space::with_width(Length::Fill), action].align_y(Alignment::Center),
+            );
+            container(content.padding(20))
+                .width(Length::Fixed(500.0))
+                .style(modal_box_style)
+                .into()
+        }
         ModalState::ConfirmDelete {
             entity_name,
             references,

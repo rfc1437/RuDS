@@ -64,20 +64,23 @@ rule ServerBoot {
         -- HTTP endpoint stays bound to 127.0.0.1; never exposed directly
     ensures: CliSyncWatcherStarted()
     ensures: SshDaemonStarted()
-        -- ExRatatui.SSH.Daemon: public-key auth only (no passwords),
-        -- tcpip_tunnel_out enabled so GUI clients tunnel to the loopback
-        -- endpoint through the same SSH connection and the same keys
+        -- Public-key auth only (no passwords). Direct TCP/IP forwarding is
+        -- restricted to the server-owned loopback endpoint; the native GUI
+        -- protocol and terminal sessions use channels on the same connection.
     ensures: SshKeyMaterial.created()
         -- host key generated and authorized_keys touched on first boot only
 }
 
 rule GuiRemoteConnection {
     when: GuiConnectRequested()
-    -- Desktop "Connect to Server…": ssh connect with the same public keys
-    -- (client identity + known_hosts in the private ssh dir), then an OTP
-    -- TCP/IP tunnel to the server's loopback endpoint; the webview loads
-    -- the local tunnel end. Disconnect returns to the local shell URL.
-    ensures: WebviewTunneledToServer()
+    -- Desktop "Connect to Server…": SSH connects with the same public keys
+    -- (client identity + known_hosts in the private ssh dir), negotiates the
+    -- versioned `ruds` subsystem, lists server projects, and opens the selected
+    -- project through the shared CoreHost application-service operations. The
+    -- channel carries ordered domain events, task snapshots, and the server UI
+    -- locale. Request IDs make replayed writes exactly-once. Disconnect returns
+    -- to the local project without exposing or copying the SQLite database.
+    ensures: NativeRemoteProjectOpened()
 }
 
 rule TuiSession {

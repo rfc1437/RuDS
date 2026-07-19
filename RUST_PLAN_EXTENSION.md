@@ -89,14 +89,15 @@ Done:
 - Project-scoped `bds.*` capabilities, managed task progress, and operator cancellation during transform execution.
 - bDS2-compatible delivery behavior without adding unsupported deep-link actions.
 
-### Headless server — Open
+### Headless server — Complete
 
-Open:
+Done:
 
-- Desktop/server/TUI boot-mode selection.
-- Headless engine host and SSH transport.
-- Private host-key and authorized-key management.
-- Desktop connection flow for remote projects.
+- Desktop/server/TUI boot selection occurs before desktop initialization; the dedicated `bds-server` binary never depends on or starts the native UI.
+- The headless host reuses the application database, project registry, `CoreHost` service operations, task manager, MCP loopback endpoint, ordered domain-event bus, and CLI-notification watcher.
+- A loopback-by-default Russh daemon generates and reuses a restrictive RSA host key, validates private directory/file modes, reloads `authorized_keys` for every authentication, and supports explicit external binding only.
+- Versioned native remote-project sessions provide protocol negotiation, server locale, project selection, shared engine calls, replay-safe request IDs, ordered domain events, task snapshots, reconnect, concurrent clients, and graceful shutdown.
+- The desktop uses a restrictive generated Ed25519 identity and TOFU `known_hosts`, with localized File-menu connect/project selection/open/failure/disconnect states. SSH shell channels host server-side terminal sessions and direct forwarding is restricted to the server-owned loopback endpoint.
 
 ### Terminal UI — Open
 

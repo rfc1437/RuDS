@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 bds-core = { workspace = true }
 bds-editor = { workspace = true }
+bds-server = { workspace = true }
 iced = { workspace = true }
 muda = { workspace = true }
 rfd = { workspace = true }
@@ -38,11 +39,12 @@ winresource = "0.1"
 product-name = "Blogging Desktop Server"
 identifier = "de.rfc1437.ruds"
 description = "A desktop application for writing and publishing static blogs."
-before-packaging-command = "cargo build --release -p bds-ui -p bds-cli -p bds-mcp"
+before-packaging-command = "cargo build --release -p bds-ui -p bds-cli -p bds-mcp -p bds-server"
 binaries = [
     { path = "bds-ui", main = true },
     { path = "bds-cli" },
     { path = "bds-mcp" },
+    { path = "bds-server" },
 ]
 deep-link-protocols = [{ schemes = ["ruds"] }]
 icons = [

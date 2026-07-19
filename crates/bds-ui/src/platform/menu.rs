@@ -20,6 +20,8 @@ pub enum MenuAction {
     Save,
     OpenInBrowser,
     OpenDataFolder,
+    ConnectServer,
+    DisconnectServer,
     // Edit (custom items only)
     Find,
     Replace,
@@ -60,6 +62,8 @@ impl MenuAction {
         MenuAction::Save,
         MenuAction::OpenInBrowser,
         MenuAction::OpenDataFolder,
+        MenuAction::ConnectServer,
+        MenuAction::DisconnectServer,
         MenuAction::Find,
         MenuAction::Replace,
         MenuAction::EditPreferences,
@@ -95,6 +99,8 @@ impl MenuAction {
             "save" => Self::Save,
             "open_in_browser" => Self::OpenInBrowser,
             "open_data_folder" => Self::OpenDataFolder,
+            "connect_server" => Self::ConnectServer,
+            "disconnect_server" => Self::DisconnectServer,
             "find" => Self::Find,
             "replace" => Self::Replace,
             "edit_preferences" => Self::EditPreferences,
@@ -133,6 +139,8 @@ impl MenuAction {
             Self::Save => "menu.item.save",
             Self::OpenInBrowser => "menu.item.openInBrowser",
             Self::OpenDataFolder => "menu.item.openDataFolder",
+            Self::ConnectServer => "menu.item.connectServer",
+            Self::DisconnectServer => "menu.item.disconnectServer",
             Self::Find => "menu.item.find",
             Self::Replace => "menu.item.replace",
             Self::EditPreferences => "menu.item.editPreferences",
@@ -342,6 +350,9 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = file_menu.append(&item(&mut reg, MenuAction::OpenInBrowser, locale, None));
     let _ = file_menu.append(&item(&mut reg, MenuAction::OpenDataFolder, locale, None));
     let _ = file_menu.append(&PredefinedMenuItem::separator());
+    let _ = file_menu.append(&item(&mut reg, MenuAction::ConnectServer, locale, None));
+    let _ = file_menu.append(&item(&mut reg, MenuAction::DisconnectServer, locale, None));
+    let _ = file_menu.append(&PredefinedMenuItem::separator());
     let _ = file_menu.append(&PredefinedMenuItem::close_window(None));
 
     // -- Edit --
@@ -523,16 +534,18 @@ pub fn update_menu_labels(registry: &MenuRegistry, locale: UiLocale) {
     }
 }
 
-/// Iced subscription that polls muda `MenuEvent`s each frame.
+/// Iced subscription that polls muda `MenuEvent`s independently of window input.
 ///
 /// Produces `Message::MenuEvent(MenuId)` so the app can look up the
-/// `MenuAction` via its `MenuRegistry`.
+/// `MenuAction` via its `MenuRegistry`. Native menu selection does not itself
+/// produce an Iced window event, so an `iced::event` listener would leave the
+/// action queued until the user next moved or clicked inside the window.
 pub fn menu_subscription() -> Subscription<Message> {
-    iced::event::listen_with(|_event, _status, _id| {
+    iced::time::every(std::time::Duration::from_millis(50)).map(|_| {
         if let Ok(event) = MenuEvent::receiver().try_recv() {
-            Some(Message::MenuEvent(event.id))
+            Message::MenuEvent(event.id)
         } else {
-            None
+            Message::Noop
         }
     })
 }
