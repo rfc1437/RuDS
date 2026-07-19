@@ -5,6 +5,7 @@ use iced::{Background, Border, Color, Element, Length, Theme};
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 
@@ -145,6 +146,7 @@ pub fn view(
             tooltip::Position::Right,
         )
         .gap(4)
+        .style(inputs::tooltip_style)
         .into()
     };
 

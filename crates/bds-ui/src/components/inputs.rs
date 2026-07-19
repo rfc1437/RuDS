@@ -41,6 +41,20 @@ pub fn app_theme() -> Theme {
     )
 }
 
+/// Opaque tooltip surface that remains legible over editor and sidebar content.
+pub fn tooltip_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.20, 0.20, 0.24))),
+        border: Border {
+            color: Color::from_rgb(0.35, 0.35, 0.40),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: Some(Color::WHITE),
+        ..container::Style::default()
+    }
+}
+
 pub fn field_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
         text_input::Status::Focused => FOCUS_COLOR,
@@ -376,5 +390,16 @@ mod tests {
                 .border
                 .color
         );
+    }
+
+    #[test]
+    fn tooltip_surface_is_opaque_rounded_and_bordered() {
+        let style = tooltip_style(&app_theme());
+        assert!(matches!(
+            style.background,
+            Some(Background::Color(color)) if color.a == 1.0
+        ));
+        assert_eq!(style.border.width, 1.0);
+        assert_eq!(style.border.radius.top_left, 6.0);
     }
 }

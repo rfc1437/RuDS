@@ -7,6 +7,7 @@ use iced::{Background, Border, Color, Element, Font, Length, Theme};
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
+use crate::components::inputs;
 use crate::i18n::t;
 use crate::state::tabs::Tab;
 
@@ -76,19 +77,6 @@ fn close_style(_theme: &Theme, status: button::Status) -> button::Style {
         text_color: color,
         border: Border::default(),
         ..button::Style::default()
-    }
-}
-
-/// Tooltip style.
-fn tooltip_style(_theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.20, 0.20, 0.24))),
-        border: Border {
-            color: Color::from_rgb(0.35, 0.35, 0.40),
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..container::Style::default()
     }
 }
 
@@ -214,7 +202,7 @@ pub fn view(tabs: &[Tab], active_tab: Option<&str>, locale: UiLocale) -> Element
                 Position::Bottom,
             )
             .gap(4)
-            .style(tooltip_style)
+            .style(inputs::tooltip_style)
             .into();
 
             tip
