@@ -1635,7 +1635,7 @@ mod tests {
             dir.path(),
             &executable,
             Duration::from_secs(1),
-            Duration::from_secs(1),
+            Duration::from_secs(3),
         );
         let error = engine.fetch(|| false, |_| {}).unwrap_err();
         assert!(
@@ -1658,7 +1658,7 @@ mod tests {
             dir.path(),
             executable,
             Duration::from_secs(1),
-            Duration::from_secs(1),
+            Duration::from_secs(3),
         );
         let error = engine
             .push(

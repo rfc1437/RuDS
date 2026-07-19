@@ -18,6 +18,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
+- Persistent conversational AI with safe Markdown, streamed and cancellable responses, model/session/token tracking, bounded project-aware blog tools, and localized conversation management in the Chat workspace.
 - SSH-agent-based SCP or rsync publishing.
 - Integrated Git workflow with repository initialization, Git LFS image tracking, status and diffs, branch/file history, commits, remotes, cancellable fetch/pull/push, and post-pull filesystem reconciliation; network actions respect airplane mode.
 - Site, media, and translation validation plus `ruds://new-post` Blogmark capture and Lua transforms; bDS2 keeps its separate `bds2://` bookmarklet protocol.

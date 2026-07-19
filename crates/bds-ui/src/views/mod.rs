@@ -1,4 +1,5 @@
 pub mod activity_bar;
+pub mod chat_view;
 pub mod dashboard;
 pub mod git;
 pub mod import_editor;

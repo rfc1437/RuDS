@@ -199,9 +199,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     content TEXT,
     tool_call_id TEXT,
     tool_calls TEXT,
-    created_at INTEGER NOT NULL,
-    cache_read_tokens INTEGER,
-    cache_write_tokens INTEGER
+    created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ai_providers (

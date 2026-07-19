@@ -94,7 +94,7 @@ Open:
 
 - Keep closing concrete output differences found against bDS2; approved normalization differences belong in this document when discovered.
 
-### One-shot AI — Mostly done
+### One-shot AI — Done
 
 Available:
 
@@ -103,13 +103,7 @@ Available:
 - Model catalog discovery and model selection.
 - Post translation, media translation, image alt text, post analysis, taxonomy analysis, WordPress-import taxonomy mapping, and language detection.
 - Explicit offline gating and user-visible errors.
-- SQLite fields for input, output, cache-read, and cache-write token usage.
-
-Open:
-
-- Parse actual input, output, cache-read, and cache-write token usage from AI
-  responses and return it with each one-shot result. Chat persistence of those
-  counters belongs to the extension chat workflow.
+- Parsed input, output, cache-read, and cache-write token usage returned from every one-shot operation; persistent chat accounting is tracked in the extension plan.
 
 Interactive chat, tools, agents, and MCP belong to the extension plan.
 

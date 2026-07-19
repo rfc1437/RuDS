@@ -5,7 +5,7 @@ use iced::widget::{Space, button, column, container, image, row, scrollable, tex
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::{ImportDefinition, Media, Post, Script, Template};
+use bds_core::model::{ChatConversation, ImportDefinition, Media, Post, Script, Template};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -78,7 +78,7 @@ fn placeholder_key(view: SidebarView) -> &'static str {
         SidebarView::Scripts => "sidebar.noScriptsYet",
         SidebarView::Templates => "sidebar.noTemplatesYet",
         SidebarView::Tags => "sidebar.tagsHeader",
-        SidebarView::Chat => "sidebar.chatPlaceholder",
+        SidebarView::Chat => "chat.sidebar.empty",
         SidebarView::Import => "sidebar.importPlaceholder",
         SidebarView::Git => "git.noChanges",
         SidebarView::Settings => "sidebar.settingsHeader",
@@ -628,6 +628,7 @@ pub fn view(
     scripts: &[Script],
     templates: &[Template],
     imports: &[ImportDefinition],
+    conversations: &[ChatConversation],
     post_filter: &PostFilter,
     media_filter: &MediaFilter,
     media_thumbs: &std::collections::HashMap<String, Option<PathBuf>>,
@@ -655,6 +656,7 @@ pub fn view(
         SidebarView::Scripts => Some(Message::CreateScript),
         SidebarView::Templates => Some(Message::CreateTemplate),
         SidebarView::Import => Some(Message::CreateImport),
+        SidebarView::Chat => Some(Message::ChatCreate),
         _ => None,
     };
 
@@ -1132,6 +1134,54 @@ pub fn view(
                 iced::widget::Column::with_children(items).spacing(1).into()
             }
         }
+        SidebarView::Chat => {
+            if conversations.is_empty() {
+                text(t(locale, "chat.sidebar.empty"))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted)
+                    .into()
+            } else {
+                let items = conversations
+                    .iter()
+                    .map(|conversation| {
+                        let style = if active_tab == Some(conversation.id.as_str()) {
+                            item_active_style
+                        } else {
+                            item_style
+                        };
+                        let model = conversation
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| t(locale, "chat.model.none"));
+                        button(
+                            container(
+                                column![
+                                    text(conversation.title.clone())
+                                        .size(12)
+                                        .shaping(Shaping::Advanced),
+                                    text(model).size(10).shaping(Shaping::Advanced).color(muted),
+                                ]
+                                .spacing(1),
+                            )
+                            .width(Length::Fill),
+                        )
+                        .on_press(Message::OpenTab(Tab {
+                            id: conversation.id.clone(),
+                            tab_type: TabType::Chat,
+                            title: conversation.title.clone(),
+                            is_transient: false,
+                            is_dirty: false,
+                        }))
+                        .padding([5, 8])
+                        .width(Length::Fill)
+                        .style(style)
+                        .into()
+                    })
+                    .collect::<Vec<Element<'static, Message>>>();
+                iced::widget::Column::with_children(items).spacing(1).into()
+            }
+        }
         SidebarView::Settings => {
             // Per sidebar_views.allium SettingsNav: 9 fixed-order sections
             use crate::views::settings_view::SettingsSection;
@@ -1197,11 +1247,6 @@ pub fn view(
             iced::widget::Column::with_children(items).spacing(1).into()
         }
         SidebarView::Git => crate::views::git::sidebar_view(git_state, offline_mode, locale),
-        _ => text(t(locale, placeholder_key(sidebar_view)))
-            .size(12)
-            .shaping(Shaping::Advanced)
-            .color(muted)
-            .into(),
     };
 
     let content = column![header_row, Space::with_height(8.0), body,]

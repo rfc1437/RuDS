@@ -31,17 +31,17 @@ Done:
 - Localized native import sidebar/editor with WXR and uploads pickers, cached analysis reopening, conflict resolution, manual and airplane-gated AI taxonomy mapping, item review, live progress/ETA, and execution results.
 - Taxonomy/posts/media/pages execution through core persistence engines in recoverable 500-item batches, including filesystem rollback, source metadata/status/timestamps, unique-slug import, overwrite/ignore behavior, and media-parent links.
 
-### Conversational AI and agent tools — Open
+### Conversational AI and agent tools — Complete
 
-Open:
+Done:
 
-- Conversation persistence and chat UI.
-- Streaming OpenAI-compatible responses and tool-call parsing.
-- Tools over posts, media, templates, search, and other core engines.
-- Agent integrations such as Claude Code and Copilot where required by the specs.
-- Replace the current Chat placeholders with the working feature.
+- Persistent conversation/message repositories with rename, reopen, deletion, model and provider-session selection, and four-way token accounting.
+- OpenAI-compatible SSE streaming with split-frame content/tool assembly, provider-error handling, independent cancellation, bounded tool rounds, and context truncation that preserves system messages and tool pairs.
+- Project-aware tools over statistics, FTS search, posts, media, templates, scripts, tags/categories, metadata mutation through shared engines, and allowlisted workspace navigation.
+- Localized Chat sidebar/editor with conversation and model controls, safe GFM text rendering with blocked external images, streaming/tool state, multiline send/stop controls, and status-bar token totals.
+- Online/airplane endpoint routing uses the shared secure endpoint and model infrastructure; unavailable modes direct the user to the existing localized AI settings.
 
-Core endpoint settings, offline gating, key storage, model discovery, and seven one-shot operations are already implemented.
+Persistent A2UI surfaces remain separately tracked below.
 
 ### Embeddings, semantic search, and duplicates — Open
 

@@ -13,8 +13,9 @@ use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::i18n::{UiLocale, detect_os_locale, normalize_language};
 use bds_core::model::{
-    DomainEntity, DomainEvent, ImportDefinition, ImportReport, Media, NotificationAction, Post,
-    PostStatus, PostTranslation, Project, PublishingPreferences, Script, SshMode, Template,
+    ChatConversation, DomainEntity, DomainEvent, ImportDefinition, ImportReport, Media,
+    NotificationAction, Post, PostStatus, PostTranslation, Project, PublishingPreferences, Script,
+    SshMode, Template,
 };
 
 use crate::components::webview::{self, WebViewConfig, WebViewController};
@@ -27,6 +28,7 @@ use crate::state::sidebar_filter::{CalendarMonth, CalendarYear, MediaFilter, Pos
 use crate::state::tabs::{self, Tab, TabType};
 use crate::state::toast::{Toast, ToastLevel};
 use crate::views::{
+    chat_view::{ChatEditorState, ChatModelChoice},
     dashboard::{
         DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag,
         DashboardTimelineMonth,
@@ -321,6 +323,21 @@ pub enum Message {
     CreateScript,
     CreateTemplate,
     CreateImport,
+
+    // Conversational AI
+    ChatCreate,
+    ChatRenameInputChanged(String),
+    ChatRename,
+    ChatDelete(String),
+    ChatModelChanged(String),
+    ChatInputAction(iced::widget::text_editor::Action),
+    ChatSend,
+    ChatCancel,
+    ChatLinkClicked(String),
+    ChatFinished {
+        conversation_id: String,
+        result: Result<engine::chat::ChatTurnResult, String>,
+    },
 
     Noop,
     InitMenuBar,
@@ -812,6 +829,7 @@ pub struct BdsApp {
     sidebar_scripts: Vec<Script>,
     sidebar_templates: Vec<Template>,
     sidebar_imports: Vec<ImportDefinition>,
+    chat_conversations: Vec<ChatConversation>,
     sidebar_media_thumbs: HashMap<String, Option<std::path::PathBuf>>,
     sidebar_posts_has_more: bool,
     sidebar_media_has_more: bool,
@@ -838,6 +856,7 @@ pub struct BdsApp {
     // Tasks
     task_manager: Arc<TaskManager>,
     domain_events: engine::domain_events::EventSubscription,
+    chat_events: std::sync::mpsc::Receiver<engine::chat::ChatEvent>,
     script_menu_actions: Arc<Mutex<Vec<MenuAction>>>,
     task_snapshots: Vec<TaskSnapshot>,
     collapsed_task_groups: HashSet<String>,
@@ -883,6 +902,7 @@ pub struct BdsApp {
     template_editors: HashMap<String, TemplateEditorState>,
     script_editors: HashMap<String, ScriptEditorState>,
     import_editors: HashMap<String, ImportEditorState>,
+    chat_editors: HashMap<String, ChatEditorState>,
     tags_view_state: Option<TagsViewState>,
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
@@ -980,6 +1000,10 @@ impl BdsApp {
         registry.set_enabled(MenuAction::Find, false);
         registry.set_enabled(MenuAction::Replace, false);
         registry.set_enabled(MenuAction::OpenInBrowser, false);
+        let chat_conversations = db
+            .as_ref()
+            .and_then(|db| engine::chat::list_conversations(db.conn()).ok())
+            .unwrap_or_default();
 
         (
             Self {
@@ -995,6 +1019,7 @@ impl BdsApp {
                 sidebar_scripts: Vec::new(),
                 sidebar_templates: Vec::new(),
                 sidebar_imports: Vec::new(),
+                chat_conversations,
                 sidebar_media_thumbs: HashMap::new(),
                 sidebar_posts_has_more: false,
                 sidebar_media_has_more: false,
@@ -1011,6 +1036,7 @@ impl BdsApp {
                 panel_tab: PanelTab::Tasks,
                 task_manager: Arc::new(TaskManager::default()),
                 domain_events: engine::domain_events::subscribe(),
+                chat_events: engine::chat::subscribe_events(),
                 script_menu_actions: Arc::new(Mutex::new(Vec::new())),
                 task_snapshots: Vec::new(),
                 collapsed_task_groups: HashSet::new(),
@@ -1040,6 +1066,7 @@ impl BdsApp {
                 template_editors: HashMap::new(),
                 script_editors: HashMap::new(),
                 import_editors: HashMap::new(),
+                chat_editors: HashMap::new(),
                 tags_view_state: None,
                 settings_state: None,
                 dashboard_state: None,
@@ -1057,6 +1084,7 @@ impl BdsApp {
 
     #[cfg(test)]
     fn new_for_tests(db: Database, project: Project, data_dir: PathBuf) -> Self {
+        let chat_conversations = engine::chat::list_conversations(db.conn()).unwrap_or_default();
         Self {
             db: Some(db),
             db_path: data_dir.join("bds.db"),
@@ -1070,6 +1098,7 @@ impl BdsApp {
             sidebar_scripts: Vec::new(),
             sidebar_templates: Vec::new(),
             sidebar_imports: Vec::new(),
+            chat_conversations,
             sidebar_media_thumbs: HashMap::new(),
             sidebar_posts_has_more: false,
             sidebar_media_has_more: false,
@@ -1086,6 +1115,7 @@ impl BdsApp {
             panel_tab: PanelTab::Tasks,
             task_manager: Arc::new(TaskManager::default()),
             domain_events: engine::domain_events::subscribe(),
+            chat_events: engine::chat::subscribe_events(),
             script_menu_actions: Arc::new(Mutex::new(Vec::new())),
             task_snapshots: Vec::new(),
             collapsed_task_groups: HashSet::new(),
@@ -1114,6 +1144,7 @@ impl BdsApp {
             template_editors: HashMap::new(),
             script_editors: HashMap::new(),
             import_editors: HashMap::new(),
+            chat_editors: HashMap::new(),
             tags_view_state: None,
             settings_state: None,
             dashboard_state: None,
@@ -1151,6 +1182,9 @@ impl BdsApp {
                     self.refresh_sidebar_posts()
                 } else if new_view == SidebarView::Git && new_visible {
                     self.refresh_git()
+                } else if new_view == SidebarView::Chat && new_visible {
+                    self.refresh_chat_conversations();
+                    Task::none()
                 } else {
                     Task::none()
                 }
@@ -1172,6 +1206,144 @@ impl BdsApp {
             Message::CreateScript => self.create_sidebar_script(),
             Message::CreateTemplate => self.create_sidebar_template(),
             Message::CreateImport => self.create_sidebar_import(),
+            Message::ChatCreate => self.create_chat_conversation(),
+            Message::ChatRenameInputChanged(value) => {
+                if let Some(state) = self.active_chat_state_mut() {
+                    state.rename_input = value;
+                }
+                Task::none()
+            }
+            Message::ChatRename => {
+                let Some(id) = self.active_chat_id().map(str::to_string) else {
+                    return Task::none();
+                };
+                let Some(title) = self
+                    .chat_editors
+                    .get(&id)
+                    .map(|state| state.rename_input.clone())
+                else {
+                    return Task::none();
+                };
+                let result = self
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| "database unavailable".to_string())
+                    .and_then(|db| {
+                        engine::chat::rename_conversation(db.conn(), &id, &title)
+                            .map_err(|error| error.to_string())
+                    });
+                match result {
+                    Ok(conversation) => {
+                        if let Some(state) = self.chat_editors.get_mut(&id) {
+                            state.conversation = conversation.clone();
+                            state.rename_input = conversation.title.clone();
+                        }
+                        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+                            tab.title = conversation.title.clone();
+                        }
+                        self.refresh_chat_conversations();
+                    }
+                    Err(error) => self.notify(ToastLevel::Error, &error),
+                }
+                Task::none()
+            }
+            Message::ChatDelete(id) => {
+                let result = self
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| "database unavailable".to_string())
+                    .and_then(|db| {
+                        engine::chat::delete_conversation(db.conn(), &id)
+                            .map_err(|error| error.to_string())
+                    });
+                match result {
+                    Ok(()) => {
+                        self.chat_editors.remove(&id);
+                        if let Some(next) = tabs::close_tab(&mut self.tabs, &id) {
+                            self.active_tab = self.tabs.get(next).map(|tab| tab.id.clone());
+                        } else {
+                            self.active_tab = None;
+                        }
+                        self.refresh_chat_conversations();
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "chat.deleted"));
+                    }
+                    Err(error) => self.notify(ToastLevel::Error, &error),
+                }
+                Task::none()
+            }
+            Message::ChatModelChanged(model) => {
+                let Some(id) = self.active_chat_id().map(str::to_string) else {
+                    return Task::none();
+                };
+                let result = self
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| "database unavailable".to_string())
+                    .and_then(|db| {
+                        engine::chat::set_conversation_model(db.conn(), &id, &model)
+                            .map_err(|error| error.to_string())
+                    });
+                match result {
+                    Ok(()) => {
+                        if let Some(state) = self.chat_editors.get_mut(&id) {
+                            state.conversation.model = Some(model);
+                        }
+                        self.refresh_chat_conversations();
+                    }
+                    Err(error) => self.notify(ToastLevel::Error, &error),
+                }
+                Task::none()
+            }
+            Message::ChatInputAction(action) => {
+                if let Some(state) = self.active_chat_state_mut() {
+                    state.input.perform(action);
+                }
+                Task::none()
+            }
+            Message::ChatSend => self.send_active_chat_message(),
+            Message::ChatCancel => {
+                if let Some(id) = self.active_chat_id() {
+                    engine::chat::cancel_chat(id);
+                }
+                Task::none()
+            }
+            Message::ChatLinkClicked(url) => {
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    if let Err(error) = open::that_detached(&url) {
+                        self.notify(ToastLevel::Error, &error.to_string());
+                    }
+                } else {
+                    self.notify(ToastLevel::Error, &t(self.ui_locale, "chat.link.refused"));
+                }
+                Task::none()
+            }
+            Message::ChatFinished {
+                conversation_id,
+                result,
+            } => {
+                if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                    state.streaming = false;
+                    state.clear_streaming();
+                    state.active_tool = None;
+                    match result {
+                        Ok(_) => state.error = None,
+                        Err(error) => state.error = Some(error),
+                    }
+                    if let Some(db) = &self.db {
+                        state.set_messages(
+                            engine::chat::list_messages(db.conn(), &conversation_id)
+                                .unwrap_or_default(),
+                        );
+                        if let Ok(conversation) =
+                            engine::chat::get_conversation(db.conn(), &conversation_id)
+                        {
+                            state.conversation = conversation;
+                        }
+                    }
+                }
+                self.refresh_chat_conversations();
+                self.refresh_counts()
+            }
             Message::OpenSettingsSection(section) => {
                 self.sidebar_view = SidebarView::Settings;
                 self.sidebar_visible = true;
@@ -1838,6 +2010,7 @@ impl BdsApp {
             Message::TaskTick => {
                 self.task_manager.evict_expired();
                 self.refresh_task_snapshots();
+                self.process_chat_events();
                 if !self.search_index_rebuild_running {
                     self.auto_save_due_post_editors();
                 }
@@ -2385,6 +2558,7 @@ impl BdsApp {
             &self.sidebar_scripts,
             &self.sidebar_templates,
             &self.sidebar_imports,
+            &self.chat_conversations,
             active_post_filter,
             &self.media_filter,
             &self.sidebar_media_thumbs,
@@ -2409,6 +2583,7 @@ impl BdsApp {
             &self.template_editors,
             &self.script_editors,
             &self.import_editors,
+            &self.chat_editors,
             self.tags_view_state.as_ref(),
             self.settings_state.as_ref(),
             self.dashboard_state.as_ref(),
@@ -2457,6 +2632,324 @@ impl BdsApp {
     }
 
     // ── Private helpers ──
+
+    fn active_chat_id(&self) -> Option<&str> {
+        let id = self.active_tab.as_deref()?;
+        self.tabs
+            .iter()
+            .any(|tab| tab.id == id && tab.tab_type == TabType::Chat)
+            .then_some(id)
+    }
+
+    fn active_chat_state_mut(&mut self) -> Option<&mut ChatEditorState> {
+        let id = self.active_chat_id()?.to_string();
+        self.chat_editors.get_mut(&id)
+    }
+
+    fn refresh_chat_conversations(&mut self) {
+        self.chat_conversations = self
+            .db
+            .as_ref()
+            .and_then(|db| engine::chat::list_conversations(db.conn()).ok())
+            .unwrap_or_default();
+    }
+
+    fn chat_model_options(&self) -> Vec<ChatModelChoice> {
+        let mut models = self
+            .db
+            .as_ref()
+            .and_then(|db| engine::chat::list_models(db.conn()).ok())
+            .into_iter()
+            .flatten()
+            .map(|model| {
+                let context = model.context_window.div_ceil(1_000).to_string();
+                let output = model.max_output_tokens.div_ceil(1_000).to_string();
+                let capability = t(
+                    self.ui_locale,
+                    if model.supports_tools {
+                        "chat.model.tools"
+                    } else {
+                        "chat.model.textOnly"
+                    },
+                );
+                ChatModelChoice {
+                    id: model.id,
+                    label: tw(
+                        self.ui_locale,
+                        "chat.model.option",
+                        &[
+                            ("provider", &model.provider),
+                            ("name", &model.name),
+                            ("context", &context),
+                            ("output", &output),
+                            ("capability", &capability),
+                        ],
+                    ),
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Some(db) = &self.db
+            && let Ok(settings) = ai::load_ai_settings(db.conn(), self.offline_mode)
+        {
+            if let Some(model) = settings.default_model
+                && !models.iter().any(|choice| choice.id == model)
+            {
+                models.push(ChatModelChoice {
+                    id: model.clone(),
+                    label: model,
+                });
+            }
+            let endpoint_model = if self.offline_mode {
+                settings.airplane_endpoint.model
+            } else {
+                settings.online_endpoint.model
+            };
+            if !endpoint_model.trim().is_empty()
+                && !models.iter().any(|choice| choice.id == endpoint_model)
+            {
+                models.push(ChatModelChoice {
+                    id: endpoint_model.clone(),
+                    label: endpoint_model,
+                });
+            }
+        }
+        models.sort_by(|left, right| left.label.cmp(&right.label));
+        models.dedup_by(|left, right| left.id == right.id);
+        models
+    }
+
+    fn create_chat_conversation(&mut self) -> Task<Message> {
+        let model = self
+            .chat_model_options()
+            .into_iter()
+            .next()
+            .map(|choice| choice.id);
+        let title = model.as_deref().map_or_else(
+            || t(self.ui_locale, "chat.new"),
+            |model| tw(self.ui_locale, "chat.newWithModel", &[("model", model)]),
+        );
+        let result = self
+            .db
+            .as_ref()
+            .ok_or_else(|| "database unavailable".to_string())
+            .and_then(|db| {
+                engine::chat::create_conversation_titled(db.conn(), model.as_deref(), &title)
+                    .map_err(|error| error.to_string())
+            });
+        match result {
+            Ok(conversation) => {
+                self.refresh_chat_conversations();
+                Task::done(Message::OpenTab(Tab {
+                    id: conversation.id,
+                    tab_type: TabType::Chat,
+                    title: conversation.title,
+                    is_transient: false,
+                    is_dirty: false,
+                }))
+            }
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error);
+                Task::none()
+            }
+        }
+    }
+
+    fn send_active_chat_message(&mut self) -> Task<Message> {
+        let Some(conversation_id) = self.active_chat_id().map(str::to_string) else {
+            return Task::none();
+        };
+        let Some(project_id) = self
+            .active_project
+            .as_ref()
+            .map(|project| project.id.clone())
+        else {
+            return Task::none();
+        };
+        let Some(data_dir) = self.data_dir.clone() else {
+            return Task::none();
+        };
+        let Some(state) = self.chat_editors.get_mut(&conversation_id) else {
+            return Task::none();
+        };
+        if state.streaming {
+            return Task::none();
+        }
+        let content = state.input.text().trim().to_string();
+        if content.is_empty() {
+            return Task::none();
+        }
+        state.input = iced::widget::text_editor::Content::new();
+        state.streaming = true;
+        state.clear_streaming();
+        state.active_tool = None;
+        state.error = None;
+        let db_path = self.db_path.clone();
+        let offline_mode = self.offline_mode;
+        let result_id = conversation_id.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    engine::chat::send_chat_message(
+                        db.conn(),
+                        &data_dir,
+                        &project_id,
+                        offline_mode,
+                        &conversation_id,
+                        &content,
+                        engine::chat::ChatSendOptions::default(),
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::ChatFinished {
+                conversation_id: result_id.clone(),
+                result,
+            },
+        )
+    }
+
+    fn process_chat_events(&mut self) {
+        let events = self.chat_events.try_iter().collect::<Vec<_>>();
+        for event in events {
+            match event {
+                engine::chat::ChatEvent::Content {
+                    conversation_id,
+                    content,
+                } => {
+                    if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                        state.set_streaming_content(content);
+                    }
+                }
+                engine::chat::ChatEvent::ToolStarted {
+                    conversation_id,
+                    name,
+                } => {
+                    if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                        state.active_tool = Some(name);
+                    }
+                }
+                engine::chat::ChatEvent::ToolFinished {
+                    conversation_id, ..
+                } => {
+                    if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                        state.active_tool = None;
+                    }
+                }
+                engine::chat::ChatEvent::Failed {
+                    conversation_id,
+                    message,
+                } => {
+                    if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
+                        state.error = Some(message);
+                    }
+                }
+                engine::chat::ChatEvent::Navigate {
+                    destination,
+                    entity_id,
+                } => self.dispatch_chat_navigation(&destination, entity_id.as_deref()),
+                engine::chat::ChatEvent::Started { .. }
+                | engine::chat::ChatEvent::Finished { .. }
+                | engine::chat::ChatEvent::Cancelled { .. } => {}
+            }
+        }
+    }
+
+    fn dispatch_chat_navigation(&mut self, destination: &str, entity_id: Option<&str>) {
+        match destination {
+            "toggle_sidebar" => {
+                self.sidebar_visible = !self.sidebar_visible;
+                return;
+            }
+            "toggle_panel" => {
+                self.panel_visible = !self.panel_visible;
+                return;
+            }
+            "toggle_assistant_sidebar" => {
+                if self.sidebar_view == SidebarView::Chat {
+                    self.sidebar_visible = !self.sidebar_visible;
+                } else {
+                    self.sidebar_view = SidebarView::Chat;
+                    self.sidebar_visible = true;
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        self.sidebar_view = match destination {
+            "posts" => SidebarView::Posts,
+            "pages" => SidebarView::Pages,
+            "media" => SidebarView::Media,
+            "templates" => SidebarView::Templates,
+            "scripts" => SidebarView::Scripts,
+            "tags" => SidebarView::Tags,
+            "chat" => SidebarView::Chat,
+            "import" => SidebarView::Import,
+            "git" => SidebarView::Git,
+            "settings" => SidebarView::Settings,
+            _ => return,
+        };
+        self.sidebar_visible = true;
+        if destination == "settings" && entity_id.is_none() {
+            self.open_singleton_tab(TabType::Settings, "common.settings");
+            if self.settings_state.is_none() {
+                self.settings_state = Some(self.hydrate_settings_state());
+            }
+            return;
+        }
+        if destination == "tags" && entity_id.is_none() {
+            self.open_singleton_tab(TabType::Tags, "tabBar.tags");
+            return;
+        }
+        let Some(id) = entity_id else { return };
+        let tab = self.db.as_ref().and_then(|db| match destination {
+            "posts" => bds_core::db::queries::post::get_post_by_id(db.conn(), id)
+                .ok()
+                .map(|item| (TabType::Post, item.title)),
+            "media" => bds_core::db::queries::media::get_media_by_id(db.conn(), id)
+                .ok()
+                .map(|item| {
+                    (
+                        TabType::Media,
+                        item.title.unwrap_or_else(|| item.original_name.clone()),
+                    )
+                }),
+            "templates" => bds_core::db::queries::template::get_template_by_id(db.conn(), id)
+                .ok()
+                .map(|item| (TabType::Templates, item.title)),
+            "scripts" => bds_core::db::queries::script::get_script_by_id(db.conn(), id)
+                .ok()
+                .map(|item| (TabType::Scripts, item.title)),
+            "chat" => engine::chat::get_conversation(db.conn(), id)
+                .ok()
+                .map(|item| (TabType::Chat, item.title)),
+            _ => None,
+        });
+        let Some((tab_type, title)) = tab else {
+            self.notify(
+                ToastLevel::Error,
+                &t(self.ui_locale, "chat.navigation.invalid"),
+            );
+            return;
+        };
+        let index = tabs::open_tab(
+            &mut self.tabs,
+            Tab {
+                id: id.to_string(),
+                tab_type,
+                title,
+                is_transient: false,
+                is_dirty: false,
+            },
+        );
+        if let Some(tab) = self.tabs.get(index).cloned() {
+            self.active_tab = Some(tab.id.clone());
+            self.load_editor_for_tab(&tab);
+        }
+    }
 
     fn apply_ui_locale(&mut self, locale: UiLocale) {
         self.ui_locale = locale;
@@ -6398,6 +6891,28 @@ impl BdsApp {
                     }
                 }
             }
+            TabType::Chat => {
+                if !self.chat_editors.contains_key(&tab.id) {
+                    if self.settings_state.is_none() {
+                        self.settings_state = Some(self.hydrate_settings_state());
+                    }
+                    match (
+                        engine::chat::get_conversation(db.conn(), &tab.id),
+                        engine::chat::list_messages(db.conn(), &tab.id),
+                    ) {
+                        (Ok(conversation), Ok(messages)) => {
+                            let models = self.chat_model_options();
+                            self.chat_editors.insert(
+                                tab.id.clone(),
+                                ChatEditorState::new(conversation, messages, models),
+                            );
+                        }
+                        (Err(error), _) | (_, Err(error)) => {
+                            self.notify(ToastLevel::Error, &error.to_string());
+                        }
+                    }
+                }
+            }
             TabType::Tags => {
                 if self.tags_view_state.is_none() {
                     let project_id = self
@@ -9166,6 +9681,47 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .mcp_proposals
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn chat_ui_creates_reopens_renames_and_deletes_persistent_conversations() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.update(Message::ChatCreate);
+        assert_eq!(app.chat_conversations.len(), 1);
+        let conversation = app.chat_conversations[0].clone();
+        let tab = Tab {
+            id: conversation.id.clone(),
+            tab_type: TabType::Chat,
+            title: conversation.title,
+            is_transient: false,
+            is_dirty: false,
+        };
+        let _ = app.update(Message::OpenTab(tab));
+        assert!(app.chat_editors.contains_key(&conversation.id));
+
+        let _ = app.update(Message::ChatRenameInputChanged("Research".to_string()));
+        let _ = app.update(Message::ChatRename);
+        assert_eq!(app.chat_conversations[0].title, "Research");
+        assert_eq!(
+            bds_core::engine::chat::get_conversation(
+                app.db.as_ref().unwrap().conn(),
+                &conversation.id,
+            )
+            .unwrap()
+            .title,
+            "Research"
+        );
+
+        let _ = app.update(Message::ChatDelete(conversation.id.clone()));
+        assert!(app.chat_conversations.is_empty());
+        assert!(!app.chat_editors.contains_key(&conversation.id));
+        assert!(
+            bds_core::engine::chat::list_conversations(app.db.as_ref().unwrap().conn())
+                .unwrap()
                 .is_empty()
         );
     }

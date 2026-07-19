@@ -1,3 +1,4 @@
+mod chat;
 mod event;
 mod generation;
 mod import;
@@ -10,6 +11,7 @@ mod script;
 mod tag;
 mod template;
 
+pub use chat::{ChatConversation, ChatMessage, ChatRole, NewChatConversation, NewChatMessage};
 pub use event::DomainEvent;
 pub use generation::{
     DbNotification, DomainEntity, GeneratedFileHash, NotificationAction, NotificationEntity,

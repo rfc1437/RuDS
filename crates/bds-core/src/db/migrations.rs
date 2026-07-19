@@ -36,7 +36,7 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 4);
+        assert_eq!(applied, 5);
     }
 
     #[test]
@@ -155,5 +155,53 @@ mod tests {
         assert_eq!(provider_ref.as_deref(), Some("provider-package"));
         assert_eq!(model_ref.as_deref(), Some("model-package"));
         assert_eq!(usage_tokens, (Some(56), Some(78), Some(12), Some(34)));
+    }
+
+    #[test]
+    fn existing_chat_schema_is_upgraded_with_cache_token_columns() {
+        let db = Database::open_in_memory().unwrap();
+        db.conn().with_migrations(|conn| {
+            for _ in 0..4 {
+                conn.run_next_migration(MIGRATIONS).unwrap();
+            }
+        });
+        db.conn()
+            .with(|conn| {
+                diesel::insert_into(chat_conversations::table)
+                    .values((
+                        chat_conversations::id.eq("existing"),
+                        chat_conversations::title.eq("Existing chat"),
+                        chat_conversations::created_at.eq(1_i64),
+                        chat_conversations::updated_at.eq(1_i64),
+                    ))
+                    .execute(conn)?;
+                diesel::insert_into(chat_messages::table)
+                    .values((
+                        chat_messages::conversation_id.eq("existing"),
+                        chat_messages::role.eq("assistant"),
+                        chat_messages::created_at.eq(1_i64),
+                        chat_messages::token_usage_input.eq(Some(8)),
+                        chat_messages::token_usage_output.eq(Some(5)),
+                    ))
+                    .execute(conn)
+            })
+            .unwrap();
+
+        run_migrations(db.conn()).unwrap();
+
+        let usage = db
+            .conn()
+            .with(|conn| {
+                chat_messages::table
+                    .select((
+                        chat_messages::token_usage_input,
+                        chat_messages::token_usage_output,
+                        chat_messages::cache_read_tokens,
+                        chat_messages::cache_write_tokens,
+                    ))
+                    .first::<(Option<i32>, Option<i32>, Option<i32>, Option<i32>)>(conn)
+            })
+            .unwrap();
+        assert_eq!(usage, (Some(8), Some(5), None, None));
     }
 }

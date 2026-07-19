@@ -7,7 +7,7 @@ use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::engine::git::GitCommit;
 use bds_core::i18n::UiLocale;
-use bds_core::model::{ImportDefinition, Media, Post, Project, Script, Template};
+use bds_core::model::{ChatConversation, ImportDefinition, Media, Post, Project, Script, Template};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
@@ -16,6 +16,7 @@ use crate::state::tabs::{Tab, TabType};
 use crate::state::toast::Toast;
 use crate::views::{
     activity_bar,
+    chat_view::{self, ChatEditorState},
     dashboard::DashboardState,
     git::{self, GitDiffState, GitUiState},
     media_editor::{self, MediaEditorState},
@@ -88,6 +89,7 @@ pub fn view<'a>(
     sidebar_scripts: &'a [Script],
     sidebar_templates: &'a [Template],
     sidebar_imports: &'a [ImportDefinition],
+    chat_conversations: &'a [ChatConversation],
     // Sidebar filters
     post_filter: &'a PostFilter,
     media_filter: &'a MediaFilter,
@@ -121,6 +123,7 @@ pub fn view<'a>(
     template_editors: &'a HashMap<String, TemplateEditorState>,
     script_editors: &'a HashMap<String, ScriptEditorState>,
     import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
+    chat_editors: &'a HashMap<String, ChatEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
@@ -150,6 +153,7 @@ pub fn view<'a>(
         template_editors,
         script_editors,
         import_editors,
+        chat_editors,
         tags_view_state,
         settings_state,
         dashboard_state,
@@ -204,6 +208,7 @@ pub fn view<'a>(
             sidebar_scripts,
             sidebar_templates,
             sidebar_imports,
+            chat_conversations,
             post_filter,
             media_filter,
             sidebar_media_thumbs,
@@ -262,6 +267,9 @@ pub fn view<'a>(
         task_snapshots,
         theme_badge,
         active_post_status.as_deref(),
+        active_tab
+            .and_then(|id| chat_editors.get(id))
+            .map(ChatEditorState::token_totals),
     );
 
     let base_layout: Element<'a, Message> = column![main_row, separator_h(), status]
@@ -387,6 +395,7 @@ fn route_content_area<'a>(
     template_editors: &'a HashMap<String, TemplateEditorState>,
     script_editors: &'a HashMap<String, ScriptEditorState>,
     import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
+    chat_editors: &'a HashMap<String, ChatEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
@@ -458,6 +467,13 @@ fn route_content_area<'a>(
                 loading_view(locale)
             }
         }
+        ContentRoute::Chat(tab_id) => {
+            if let Some(state) = chat_editors.get(tab_id) {
+                chat_view::view(state, locale, is_ai_enabled(settings_state, offline_mode))
+            } else {
+                loading_view(locale)
+            }
+        }
         ContentRoute::Tags => {
             if let Some(state) = tags_view_state {
                 tags_view::view(state, locale)
@@ -504,6 +520,7 @@ enum ContentRoute<'a> {
     Templates(&'a str),
     Scripts(&'a str),
     Import(&'a str),
+    Chat(&'a str),
     Tags,
     Settings,
     SiteValidation,
@@ -577,6 +594,7 @@ fn route_kind<'a>(
                 ContentRoute::Loading
             }
         }
+        TabType::Chat => ContentRoute::Chat(tab_id),
         TabType::Tags => {
             if tags_view_state.is_some() {
                 ContentRoute::Tags
@@ -595,7 +613,6 @@ fn route_kind<'a>(
         TabType::MetadataDiff => ContentRoute::MetadataDiff,
         TabType::GitDiff => ContentRoute::GitDiff(tab_id),
         TabType::Style
-        | TabType::Chat
         | TabType::MenuEditor
         | TabType::Documentation
         | TabType::ApiDocumentation
@@ -658,7 +675,6 @@ mod tests {
         let site_validation_state = SiteValidationState::default();
         let unsupported = [
             TabType::Style,
-            TabType::Chat,
             TabType::MenuEditor,
             TabType::Documentation,
             TabType::ApiDocumentation,
@@ -710,6 +726,31 @@ mod tests {
             &site_validation_state,
         );
         assert!(matches!(route, ContentRoute::GitDiff("git-diff:file.txt")));
+    }
+
+    #[test]
+    fn chat_tab_routes_to_real_chat_view() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
+        let tabs = vec![tab("conversation", TabType::Chat, "Chat")];
+        let route = route_kind(
+            &tabs,
+            Some("conversation"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            &empty_imports,
+            None,
+            None,
+            None,
+            &site_validation_state,
+        );
+        assert!(matches!(route, ContentRoute::Chat("conversation")));
     }
 
     #[test]

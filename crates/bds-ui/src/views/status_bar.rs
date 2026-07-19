@@ -123,6 +123,7 @@ pub fn view(
     task_snapshots: &[TaskSnapshot],
     theme_badge: &str,
     active_post_status: Option<&str>,
+    chat_tokens: Option<(u64, u64, u64, u64)>,
 ) -> Element<'static, Message> {
     let label_color = Color::from_rgb(0.60, 0.60, 0.65);
 
@@ -194,6 +195,28 @@ pub fn view(
         "statusBar.media",
         &[("count", &media_count.to_string())],
     );
+    let chat_token_label = chat_tokens.map(|(input, output, cache_read, cache_write)| {
+        tw(
+            locale,
+            "statusBar.chatTokens",
+            &[
+                ("input", &input.to_string()),
+                ("output", &output.to_string()),
+                ("cacheRead", &cache_read.to_string()),
+                ("cacheWrite", &cache_write.to_string()),
+            ],
+        )
+    });
+    let chat_tokens_el: Element<'static, Message> = chat_token_label.map_or_else(
+        || Space::with_width(0).into(),
+        |label| {
+            text(label)
+                .size(11)
+                .shaping(Shaping::Advanced)
+                .color(label_color)
+                .into()
+        },
+    );
 
     // Airplane mode toggle — ✈ icon
     let airplane_btn = button(text("\u{2708}").size(13).shaping(Shaping::Advanced))
@@ -225,6 +248,7 @@ pub fn view(
             .size(11)
             .shaping(Shaping::Advanced)
             .color(label_color),
+        chat_tokens_el,
         text(theme_badge.to_string())
             .size(11)
             .shaping(Shaping::Advanced)

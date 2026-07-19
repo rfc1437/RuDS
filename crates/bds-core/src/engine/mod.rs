@@ -2,6 +2,8 @@ pub mod ai;
 pub mod auto_translation;
 pub mod blogmark;
 pub mod calendar;
+pub mod chat;
+mod chat_tools;
 pub mod cli_launcher;
 pub mod cli_sync;
 pub mod domain_events;
