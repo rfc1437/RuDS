@@ -64,21 +64,17 @@ Open:
 
 - No known large core block. New menu commands must continue to be wired through both localization layers and the native intercept.
 
-### Authoring and editor — Mostly done
+### Authoring and editor — Done
 
 Available:
 
 - Dashboard and editors for posts, translations, media, tags, templates, scripts, and settings.
 - Post create, edit, publish, unpublish, discard, and delete flows.
-- Media import, replacement, metadata editing, translations, thumbnails, filters, and post assignment.
+- Media import, replacement, metadata editing, translations, thumbnails, filters, post assignment, and the post-editor batch gallery-image workflow.
 - Template and Lua script creation, editing, validation, publication, and deletion.
 - Rope-based editing with syntax highlighting, selection, clipboard, undo/redo, word/line/page movement, line numbers, soft wrapping, mouse selection, and committed IME input.
 - Automatic translation flows with airplane-mode gating and media translation propagation.
 - Functional post-links panel with backlinks, outlinks, and navigation to linked posts.
-
-Open:
-
-- Add the specified post-editor "Add Gallery Images" batch workflow.
 
 ### Rendering, preview, and generation — Mostly done
 
@@ -145,8 +141,7 @@ Available:
 
 ## Remaining Core Blocks
 
-1. Finish the linked-image authoring workflow.
-2. Add generation section-task grouping.
-3. Return normalized token accounting from one-shot AI calls.
+1. Add generation section-task grouping.
+2. Return normalized token accounting from one-shot AI calls.
 
 Core is feature-complete when these blocks are closed and the implementation continues to satisfy the Allium and bDS2 compatibility contracts.

@@ -324,6 +324,7 @@ pub enum PostEditorMsg {
     ToggleQuickActions,
     AnalyzeWithAi,
     AnalyzeTaxonomy,
+    AddGalleryImages,
     DetectLanguage,
     Translate,
     TranslateTo(String),
@@ -393,7 +394,7 @@ pub fn view<'a>(
             .size(13)
             .shaping(Shaping::Advanced),
     )
-    .on_press_maybe(ai_enabled.then_some(Message::PostEditor(PostEditorMsg::ToggleQuickActions)))
+    .on_press(Message::PostEditor(PostEditorMsg::ToggleQuickActions))
     .padding([6, 16])
     .style(inputs::secondary_button)
     .into();
@@ -495,6 +496,12 @@ pub fn view<'a>(
                         t(locale, "editor.detectLanguage"),
                         PostEditorMsg::DetectLanguage,
                         ai_enabled
+                    ),
+                    quick_action_item(
+                        locale,
+                        t(locale, "editor.addGalleryImages"),
+                        PostEditorMsg::AddGalleryImages,
+                        true
                     ),
                 ]
                 .spacing(4)

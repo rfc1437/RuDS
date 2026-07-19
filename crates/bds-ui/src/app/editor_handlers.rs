@@ -7,6 +7,7 @@ impl BdsApp {
             SyncEmbeddedPreview,
             Analyze(String),
             AnalyzeTaxonomy(String),
+            AddGalleryImages(String),
             DetectLanguage(String),
             OpenTranslate(String),
             TranslateTo {
@@ -68,6 +69,10 @@ impl BdsApp {
                 PostEditorMsg::AnalyzeTaxonomy => {
                     state.quick_actions_open = false;
                     deferred = DeferredPostAction::AnalyzeTaxonomy(tab_id.clone());
+                }
+                PostEditorMsg::AddGalleryImages => {
+                    state.quick_actions_open = false;
+                    deferred = DeferredPostAction::AddGalleryImages(state.post_id.clone());
                 }
                 PostEditorMsg::SwitchEditorMode(mode) => {
                     state.set_editor_mode(&mode);
@@ -268,6 +273,7 @@ impl BdsApp {
             DeferredPostAction::SyncEmbeddedPreview => self.sync_embedded_preview_for_active_post(),
             DeferredPostAction::Analyze(tab_id) => self.run_post_ai_analysis(&tab_id),
             DeferredPostAction::AnalyzeTaxonomy(tab_id) => self.run_post_taxonomy_analysis(&tab_id),
+            DeferredPostAction::AddGalleryImages(post_id) => self.add_gallery_images(&post_id),
             DeferredPostAction::DetectLanguage(tab_id) => self.detect_post_language(&tab_id),
             DeferredPostAction::OpenTranslate(tab_id) => self.open_post_translation_modal(&tab_id),
             DeferredPostAction::TranslateTo {

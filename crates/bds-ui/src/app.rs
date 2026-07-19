@@ -2,10 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
 use bds_core::db::DbQueryError as SqlError;
 use iced::{Element, Subscription, Task, window};
-use rayon::prelude::*;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -98,6 +96,14 @@ pub enum Message {
     FolderPicked(Option<PathBuf>),
     ProjectFolderPicked(Option<PathBuf>),
     MediaFilesPicked(Option<Vec<PathBuf>>),
+    GalleryImagesPicked {
+        post_id: String,
+        result: Result<Option<Vec<PathBuf>>, String>,
+    },
+    GalleryImportFinished {
+        post_id: String,
+        report: engine::gallery_import::GalleryImportReport,
+    },
     MediaImportFinished {
         imported: Vec<Media>,
         errors: Vec<String>,
@@ -1361,41 +1367,35 @@ impl BdsApp {
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            let pool = match rayon::ThreadPoolBuilder::new()
-                                .num_threads(concurrency)
-                                .build()
-                            {
-                                Ok(pool) => pool,
-                                Err(error) => return (Vec::new(), vec![error.to_string()]),
+                            let results = match engine::gallery_import::process_paths_concurrently(
+                                paths,
+                                concurrency,
+                                |_index, path| {
+                                    let original_name = path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "image".to_string());
+                                    let db = Database::open(&db_path)
+                                        .map_err(|error| format!("{}: {error}", path.display()))?;
+                                    engine::media::import_media(
+                                        db.conn(),
+                                        &data_dir,
+                                        &project_id,
+                                        &path,
+                                        &original_name,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        Some(&language),
+                                        Vec::new(),
+                                    )
+                                    .map_err(|error| format!("{}: {error}", path.display()))
+                                },
+                            ) {
+                                Ok(results) => results,
+                                Err(error) => return (Vec::new(), vec![error]),
                             };
-                            let results = pool.install(|| {
-                                paths
-                                    .into_par_iter()
-                                    .map(|path| {
-                                        let original_name = path
-                                            .file_name()
-                                            .map(|name| name.to_string_lossy().to_string())
-                                            .unwrap_or_else(|| "image".to_string());
-                                        let db = Database::open(&db_path).map_err(|error| {
-                                            format!("{}: {error}", path.display())
-                                        })?;
-                                        engine::media::import_media(
-                                            db.conn(),
-                                            &data_dir,
-                                            &project_id,
-                                            &path,
-                                            &original_name,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            Some(&language),
-                                            Vec::new(),
-                                        )
-                                        .map_err(|error| format!("{}: {error}", path.display()))
-                                    })
-                                    .collect::<Vec<Result<Media, String>>>()
-                            });
                             let mut imported = Vec::new();
                             let mut errors = Vec::new();
                             for result in results {
@@ -1411,6 +1411,104 @@ impl BdsApp {
                     },
                     |(imported, errors)| Message::MediaImportFinished { imported, errors },
                 )
+            }
+            Message::GalleryImagesPicked { post_id, result } => match result {
+                Ok(Some(paths)) if !paths.is_empty() => {
+                    let (Some(project), Some(data_dir)) =
+                        (self.active_project.as_ref(), self.data_dir.as_ref())
+                    else {
+                        return Task::none();
+                    };
+                    let db_path = self.db_path.clone();
+                    let data_dir = data_dir.clone();
+                    let project_id = project.id.clone();
+                    let source_language = self.content_language.clone();
+                    let offline_mode = self.offline_mode;
+                    let result_post_id = post_id.clone();
+                    let failed_paths = paths.clone();
+                    let selected_count = paths.len();
+                    Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                engine::gallery_import::import_gallery_images(
+                                    &db_path,
+                                    &data_dir,
+                                    &project_id,
+                                    &post_id,
+                                    paths,
+                                    &source_language,
+                                    offline_mode,
+                                )
+                            })
+                            .await
+                            .unwrap_or_else(|error| {
+                                engine::gallery_import::GalleryImportReport {
+                                    selected_count,
+                                    outcomes: failed_paths
+                                        .into_iter()
+                                        .map(|path| engine::gallery_import::GalleryImportOutcome {
+                                            path,
+                                            result: Err(error.to_string()),
+                                        })
+                                        .collect(),
+                                }
+                            })
+                        },
+                        move |report| Message::GalleryImportFinished {
+                            post_id: result_post_id.clone(),
+                            report,
+                        },
+                    )
+                }
+                Ok(_) => Task::none(),
+                Err(error) => {
+                    self.add_output(&tw(
+                        self.ui_locale,
+                        "editor.galleryPickerFailed",
+                        &[("error", &error)],
+                    ));
+                    Task::none()
+                }
+            },
+            Message::GalleryImportFinished { post_id, report } => {
+                for outcome in report.outcomes {
+                    match outcome.result {
+                        Ok(image) => self.add_output(&tw(
+                            self.ui_locale,
+                            "editor.galleryImageAdded",
+                            &[("title", &image.title)],
+                        )),
+                        Err(error) => {
+                            let path = outcome
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_else(|| outcome.path.display().to_string());
+                            self.add_output(&tw(
+                                self.ui_locale,
+                                "editor.galleryImageFailed",
+                                &[("path", &path), ("error", &error)],
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(state) = self.post_editors.get_mut(&post_id) {
+                    state.insert_markdown_at_cursor("\n[[gallery]]\n");
+                    if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
+                        tab.is_dirty = true;
+                    }
+                    if let Err(error) = self.persist_post_editor_state(&post_id) {
+                        self.notify_operation_failed("common.save", error);
+                    }
+                    self.refresh_post_relationships(&post_id);
+                }
+                self.add_output(&tw(
+                    self.ui_locale,
+                    "editor.galleryImportComplete",
+                    &[("count", &report.selected_count.to_string())],
+                ));
+                self.refresh_sidebar_media()
             }
             Message::MediaImportFinished { imported, errors } => {
                 if !imported.is_empty() {
@@ -2976,6 +3074,24 @@ impl BdsApp {
             Err(e) => self.notify_operation_failed("common.save", e),
         }
         Task::none()
+    }
+
+    fn add_gallery_images(&mut self, post_id: &str) -> Task<Message> {
+        let Some(db) = self.db.as_ref() else {
+            self.add_output(&t(self.ui_locale, "common.databaseUnavailable"));
+            return Task::none();
+        };
+        if self.offline_mode
+            && !engine::gallery_import::active_ai_endpoint_configured(db.conn(), true)
+        {
+            self.add_output(&t(self.ui_locale, "editor.galleryAirplaneGated"));
+            return Task::none();
+        }
+        crate::platform::dialog::pick_gallery_images(
+            post_id.to_string(),
+            t(self.ui_locale, "editor.addGalleryImages"),
+            t(self.ui_locale, "dialog.imageFilter"),
+        )
     }
 
     fn publish_post_editor(&mut self, post_id: &str) -> Task<Message> {
@@ -5823,7 +5939,7 @@ impl BdsApp {
         let Some(state) = self.media_editors.get(media_id).cloned() else {
             return Task::none();
         };
-        let image_data_url = match build_ai_image_data_url(
+        let image_data_url = match engine::gallery_import::build_ai_image_data_url(
             data_dir,
             &state.media_id,
             &state.file_path,
@@ -6082,35 +6198,6 @@ fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
 }
 
-fn build_ai_image_data_url(
-    data_dir: &Path,
-    media_id: &str,
-    file_path: &str,
-    mime_type: &str,
-) -> Result<String, String> {
-    if !mime_type.starts_with("image/") {
-        return Err("AI image analysis requires an image".to_string());
-    }
-
-    let source_path = data_dir.join(file_path.trim_start_matches('/'));
-    let thumbnail_relative = bds_core::util::thumbnail_path(media_id, "ai", "jpg");
-    let thumbnail_path = data_dir.join(&thumbnail_relative);
-
-    if !thumbnail_path.exists() {
-        bds_core::util::thumbnail::generate_all_thumbnails(
-            &source_path,
-            &data_dir.join("thumbnails"),
-            media_id,
-        )
-        .map_err(|error| format!("failed to generate AI thumbnail: {error}"))?;
-    }
-
-    let bytes = std::fs::read(&thumbnail_path)
-        .map_err(|error| format!("failed to read AI thumbnail: {error}"))?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Ok(format!("data:image/jpeg;base64,{encoded}"))
-}
-
 fn split_csv_values(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -6142,7 +6229,7 @@ mod tests {
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
-    use crate::views::post_editor::PostEditorState;
+    use crate::views::post_editor::{PostEditorMsg, PostEditorState};
     use crate::views::script_editor::ScriptEditorState;
     use crate::views::settings_view::SettingsViewState;
     use crate::views::template_editor::TemplateEditorState;
@@ -6154,6 +6241,7 @@ mod tests {
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::PathBuf;
     use std::thread;
     use tempfile::TempDir;
 
@@ -6227,6 +6315,122 @@ mod tests {
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
         BdsApp::new_for_tests(db, project, tmp.path().to_path_buf())
+    }
+
+    fn open_post_editor(app: &mut BdsApp, post: &bds_core::model::Post) {
+        let tab = crate::state::tabs::Tab {
+            id: post.id.clone(),
+            tab_type: crate::state::tabs::TabType::Post,
+            title: post.title.clone(),
+            is_transient: false,
+            is_dirty: false,
+        };
+        app.tabs.push(tab.clone());
+        app.active_tab = Some(post.id.clone());
+        app.load_editor_for_tab(&tab);
+    }
+
+    #[test]
+    fn gallery_action_is_gated_in_airplane_mode_without_local_endpoint() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Gallery",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &created);
+        app.offline_mode = true;
+        app.post_editors
+            .get_mut(&created.id)
+            .unwrap()
+            .quick_actions_open = true;
+
+        let _ = app.handle_post_editor_msg(PostEditorMsg::AddGalleryImages);
+
+        assert!(!app.post_editors[&created.id].quick_actions_open);
+        assert_eq!(
+            app.output_entries.last().unwrap().text,
+            "Automatic AI actions stay gated by airplane mode."
+        );
+    }
+
+    #[test]
+    fn gallery_completion_reports_every_path_inserts_macro_and_refreshes_editor() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Gallery",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &created);
+
+        let _ = app.update(Message::GalleryImportFinished {
+            post_id: created.id.clone(),
+            report: bds_core::engine::gallery_import::GalleryImportReport {
+                selected_count: 2,
+                outcomes: vec![
+                    bds_core::engine::gallery_import::GalleryImportOutcome {
+                        path: PathBuf::from("first.jpg"),
+                        result: Ok(bds_core::engine::gallery_import::ImportedGalleryImage {
+                            media_id: "m1".to_string(),
+                            title: "First".to_string(),
+                        }),
+                    },
+                    bds_core::engine::gallery_import::GalleryImportOutcome {
+                        path: PathBuf::from("broken.jpg"),
+                        result: Err("bad image".to_string()),
+                    },
+                ],
+            },
+        });
+
+        assert!(
+            app.post_editors[&created.id]
+                .content
+                .contains("\n[[gallery]]\n")
+        );
+        assert!(!app.post_editors[&created.id].is_dirty);
+        let saved = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert!(saved.content.unwrap().contains("\n[[gallery]]\n"));
+        assert_eq!(app.output_entries.len(), 3);
+        assert_eq!(app.output_entries[0].text, "Added First");
+        assert!(app.output_entries[1].text.contains("broken.jpg"));
+        assert_eq!(app.output_entries[2].text, "Added 2 images to post");
+    }
+
+    #[test]
+    fn cancelling_gallery_picker_is_a_no_op() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.update(Message::GalleryImagesPicked {
+            post_id: "post1".to_string(),
+            result: Ok(None),
+        });
+
+        assert!(app.output_entries.is_empty());
     }
 
     #[test]

@@ -844,7 +844,6 @@ name = "bds-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64",
  "bds-core",
  "bds-editor",
  "chrono",
@@ -856,7 +855,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "open",
- "rayon",
  "rfd",
  "serde_json",
  "syn 2.0.117",

@@ -83,6 +83,7 @@ Open:
 
 - Implement `bds-cli`; its current binary is only a stub.
 - Commands from `cli.allium` and `cli_sync.allium` using the same project, database, engines, and settings as the desktop app.
+- Reuse the core gallery batch-import engine already used by the desktop post editor for the CLI `gallery` command.
 - MCP tools/resources and proposal-based writes from `mcp.allium`.
 - Domain event bus from `events.allium` for desktop, CLI, TUI, and future remote clients.
 - Replace the MCP settings placeholder.

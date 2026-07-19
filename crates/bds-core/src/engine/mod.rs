@@ -3,6 +3,7 @@ pub mod auto_translation;
 pub mod blogmark;
 pub mod calendar;
 pub mod error;
+pub mod gallery_import;
 pub mod generation;
 pub mod media;
 pub mod menu;
