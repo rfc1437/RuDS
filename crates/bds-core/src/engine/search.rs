@@ -93,6 +93,26 @@ pub fn rebuild_search_index(
     }
 }
 
+/// Reindex one project without disturbing rows belonging to other projects.
+pub fn reindex_project(
+    conn: &Connection,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<ReindexReport> {
+    let project = project_q::get_project_by_id(conn, project_id)?;
+    let total = post_q::count_posts_by_project(conn, project_id)? as usize
+        + media_q::count_media_by_project(conn, project_id)? as usize;
+    let mut current = 0;
+    index_project(
+        conn,
+        project_id,
+        project.data_path.as_deref(),
+        total,
+        &mut current,
+        on_item.as_ref(),
+    )
+}
+
 fn index_all_projects(
     conn: &Connection,
     on_item: Option<&ItemProgressFn>,
@@ -112,71 +132,94 @@ fn index_all_projects(
     };
 
     for project in projects {
-        let main_language = project
-            .data_path
-            .as_deref()
-            .and_then(|path| crate::engine::meta::read_project_json(Path::new(path)).ok())
-            .and_then(|metadata| metadata.main_language)
-            .unwrap_or_else(|| "en".to_string());
+        let indexed = index_project(
+            conn,
+            &project.id,
+            project.data_path.as_deref(),
+            total,
+            &mut current,
+            on_item,
+        )?;
+        report.posts_indexed += indexed.posts_indexed;
+        report.media_indexed += indexed.media_indexed;
+    }
 
-        for post in post_q::list_posts_by_project(conn, &project.id)? {
-            current += 1;
-            if let Some(callback) = on_item {
-                callback(current, total, &post.title);
-            }
-            let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
-            let translation_data = translations
-                .iter()
-                .map(|translation| fts::PostTranslationFts {
-                    title: translation.title.clone(),
-                    excerpt: translation.excerpt.clone(),
-                    content: translation.content.clone(),
-                    language: translation.language.clone(),
-                })
-                .collect::<Vec<_>>();
-            fts::index_post(
-                conn,
-                &post.id,
-                &post.title,
-                post.excerpt.as_deref(),
-                post.content.as_deref(),
-                &post.tags,
-                &post.categories,
-                &translation_data,
-                post.language.as_deref().unwrap_or(&main_language),
-            )?;
-            report.posts_indexed += 1;
-        }
+    Ok(report)
+}
 
-        for media in media_q::list_media_by_project(conn, &project.id)? {
-            current += 1;
-            if let Some(callback) = on_item {
-                callback(current, total, &media.original_name);
-            }
-            let translations =
-                media_translation::list_media_translations_by_media(conn, &media.id)?;
-            let translation_data = translations
-                .iter()
-                .map(|translation| fts::MediaTranslationFts {
-                    title: translation.title.clone(),
-                    alt: translation.alt.clone(),
-                    caption: translation.caption.clone(),
-                    language: translation.language.clone(),
-                })
-                .collect::<Vec<_>>();
-            fts::index_media(
-                conn,
-                &media.id,
-                media.title.as_deref(),
-                media.alt.as_deref(),
-                media.caption.as_deref(),
-                &media.original_name,
-                &media.tags,
-                &translation_data,
-                media.language.as_deref().unwrap_or(&main_language),
-            )?;
-            report.media_indexed += 1;
+fn index_project(
+    conn: &Connection,
+    project_id: &str,
+    data_path: Option<&str>,
+    total: usize,
+    current: &mut usize,
+    on_item: Option<&ItemProgressFn>,
+) -> EngineResult<ReindexReport> {
+    let main_language = data_path
+        .and_then(|path| crate::engine::meta::read_project_json(Path::new(path)).ok())
+        .and_then(|metadata| metadata.main_language)
+        .unwrap_or_else(|| "en".to_string());
+    let mut report = ReindexReport {
+        posts_indexed: 0,
+        media_indexed: 0,
+    };
+
+    for post in post_q::list_posts_by_project(conn, project_id)? {
+        *current += 1;
+        if let Some(callback) = on_item {
+            callback(*current, total, &post.title);
         }
+        let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
+        let translation_data = translations
+            .iter()
+            .map(|translation| fts::PostTranslationFts {
+                title: translation.title.clone(),
+                excerpt: translation.excerpt.clone(),
+                content: translation.content.clone(),
+                language: translation.language.clone(),
+            })
+            .collect::<Vec<_>>();
+        fts::index_post(
+            conn,
+            &post.id,
+            &post.title,
+            post.excerpt.as_deref(),
+            post.content.as_deref(),
+            &post.tags,
+            &post.categories,
+            &translation_data,
+            post.language.as_deref().unwrap_or(&main_language),
+        )?;
+        report.posts_indexed += 1;
+    }
+
+    for media in media_q::list_media_by_project(conn, project_id)? {
+        *current += 1;
+        if let Some(callback) = on_item {
+            callback(*current, total, &media.original_name);
+        }
+        let translations = media_translation::list_media_translations_by_media(conn, &media.id)?;
+        let translation_data = translations
+            .iter()
+            .map(|translation| fts::MediaTranslationFts {
+                title: translation.title.clone(),
+                alt: translation.alt.clone(),
+                caption: translation.caption.clone(),
+                language: translation.language.clone(),
+            })
+            .collect::<Vec<_>>();
+        fts::index_media(
+            conn,
+            &media.id,
+            media.title.as_deref(),
+            media.alt.as_deref(),
+            media.caption.as_deref(),
+            &media.original_name,
+            &media.tags,
+            &translation_data,
+            media.language.as_deref().unwrap_or(&main_language),
+        )?;
+        report.media_indexed += 1;
     }
 
     Ok(report)
@@ -284,6 +327,42 @@ mod tests {
         let results = crate::db::fts::search_posts(db.conn(), "searchable", "en").unwrap();
 
         assert_eq!(report.posts_indexed, 2);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn project_reindex_leaves_other_project_rows_intact() {
+        let (db, first_project_id) = setup();
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let second = engine::project::create_project(
+            db.conn(),
+            "Second Project",
+            Some(second_dir.path().to_str().unwrap()),
+        )
+        .unwrap();
+        for (project_id, data_dir, title) in [
+            (&first_project_id, first_dir.path(), "First Searchable"),
+            (&second.id, second_dir.path(), "Second Searchable"),
+        ] {
+            engine::post::create_post(
+                db.conn(),
+                data_dir,
+                project_id,
+                title,
+                Some("body"),
+                vec![],
+                vec![],
+                None,
+                Some("en"),
+                None,
+            )
+            .unwrap();
+        }
+
+        reindex_project(db.conn(), &first_project_id, None).unwrap();
+        let results = crate::db::fts::search_posts(db.conn(), "searchable", "en").unwrap();
+
         assert_eq!(results.len(), 2);
     }
 }

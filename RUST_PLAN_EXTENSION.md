@@ -4,7 +4,7 @@
 
 Extensions add migration, collaboration, automation, alternate clients, and advanced discovery on top of the core blogging workflow. They must reuse core engines and formats, remain reachable through real UI or automation surfaces, and preserve airplane-mode and localization rules.
 
-Status describes the current source code as of 2026-07-18. Core one-shot AI, publishing, rendering, and integrity work is tracked in [RUST_PLAN_CORE.md](RUST_PLAN_CORE.md).
+Status describes the current source code as of 2026-07-19. Core one-shot AI, publishing, rendering, and integrity work is tracked in [RUST_PLAN_CORE.md](RUST_PLAN_CORE.md).
 
 ## Current Extension Status
 
@@ -17,6 +17,7 @@ Done:
 Open:
 
 - `GitEngine`, repository status, history, diff view, commit, fetch, pull, push, and LFS command integration.
+- Expose `bds.sync` after the shared Git/synchronization workflow exists.
 - Replace the Git sidebar and Git log placeholders with working flows.
 
 ### WordPress import — Open
@@ -46,6 +47,7 @@ Open:
 
 - Embedding generation and persistence.
 - Vector index and semantic search.
+- Expose `bds.embeddings` after those engines exist.
 - Duplicate detection, dismissed-pair handling, metadata integrity, and UI.
 - Replace the Find Duplicates placeholder.
 
@@ -61,7 +63,7 @@ Open:
 - Browsable Lua API documentation and examples.
 - Replace Documentation and API Documentation placeholders.
 
-The generated Lua documentation itself is a core requirement.
+The generated Lua documentation and examples are complete core functionality; this section tracks only their in-app browsing experience.
 
 ### Menu editor and deep links — Partly done
 
@@ -85,11 +87,12 @@ Open:
 - Domain event bus from `events.allium` for desktop, CLI, TUI, and future remote clients.
 - Replace the MCP settings placeholder.
 
-### Blogmark and transform pipeline — Mostly done
+### Blogmark and transform pipeline — Done
 
 Done:
 
 - Blogmark bookmarklet copy, `ruds://new-post` parsing, content capture, post import, transform selection, and Lua transform execution.
+- Project-scoped `bds.*` capabilities, managed task progress, and operator cancellation during transform execution.
 - bDS2-compatible delivery behavior without adding unsupported deep-link actions.
 
 ### Headless server — Open

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use bds_core::db::DbQueryError as SqlError;
@@ -119,7 +119,10 @@ pub enum Message {
     // macOS lifecycle
     FileOpenRequested(PathBuf),
     UrlOpenRequested(String),
-    BlogmarkImported(Result<engine::blogmark::BlogmarkImportResult, String>),
+    BlogmarkImported {
+        task_id: TaskId,
+        result: Result<engine::blogmark::BlogmarkImportResult, String>,
+    },
     MainWindowLoaded(Option<window::Id>),
     EmbeddedPreviewReady(Result<(), String>),
 
@@ -738,6 +741,7 @@ pub struct BdsApp {
 
     // Tasks
     task_manager: Arc<TaskManager>,
+    script_menu_actions: Arc<Mutex<Vec<MenuAction>>>,
     task_snapshots: Vec<TaskSnapshot>,
     collapsed_task_groups: HashSet<String>,
     output_entries: Vec<OutputEntry>,
@@ -891,6 +895,7 @@ impl BdsApp {
                 panel_visible: false,
                 panel_tab: PanelTab::Tasks,
                 task_manager: Arc::new(TaskManager::default()),
+                script_menu_actions: Arc::new(Mutex::new(Vec::new())),
                 task_snapshots: Vec::new(),
                 collapsed_task_groups: HashSet::new(),
                 output_entries: Vec::new(),
@@ -956,6 +961,7 @@ impl BdsApp {
             panel_visible: false,
             panel_tab: PanelTab::Tasks,
             task_manager: Arc::new(TaskManager::default()),
+            script_menu_actions: Arc::new(Mutex::new(Vec::new())),
             task_snapshots: Vec::new(),
             collapsed_task_groups: HashSet::new(),
             output_entries: Vec::new(),
@@ -1498,7 +1504,12 @@ impl BdsApp {
                 if !self.search_index_rebuild_running {
                     self.auto_save_due_post_editors();
                 }
-                Task::none()
+                let actions = std::mem::take(&mut *self.script_menu_actions.lock().unwrap());
+                Task::batch(
+                    actions
+                        .into_iter()
+                        .map(|action| self.dispatch_menu_action(action)),
+                )
             }
             Message::CancelTask(task_id) => {
                 self.task_manager.cancel(task_id);
@@ -1593,26 +1604,51 @@ impl BdsApp {
                 }
                 let db_path = self.db_path.clone();
                 let project_id = target.id;
+                let task_manager = Arc::clone(&self.task_manager);
+                let label = t(self.ui_locale, "blogmark.importing");
+                let task_id = task_manager.submit(&label);
+                let offline_mode = self.offline_mode;
+                let app_handler = crate::platform::script_host::handler(
+                    Arc::clone(&self.script_menu_actions),
+                    t(self.ui_locale, "dialog.selectFolder"),
+                );
+                self.refresh_task_snapshots();
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
+                            if !task_manager.wait_until_runnable(task_id) {
+                                return Err("cancelled".to_string());
+                            }
                             let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                            engine::blogmark::receive_deep_link(
+                            let host =
+                                bds_core::scripting::CoreHost::new(db_path, &project_id, &data_dir)
+                                    .with_task(Arc::clone(&task_manager), task_id)
+                                    .with_offline_mode(offline_mode)
+                                    .with_app_handler(app_handler);
+                            let control = task_manager
+                                .cancellation_flag(task_id)
+                                .map(bds_core::scripting::ExecutionControl::from_cancelled)
+                                .unwrap_or_default();
+                            engine::blogmark::receive_deep_link_with_host(
                                 db.conn(),
                                 &data_dir,
                                 &project_id,
                                 &url,
+                                &control,
+                                Arc::new(host),
                             )
                             .map_err(|error| error.to_string())
                         })
                         .await
                         .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
                     },
-                    Message::BlogmarkImported,
+                    move |result| Message::BlogmarkImported { task_id, result },
                 )
             }
-            Message::BlogmarkImported(result) => match result {
+            Message::BlogmarkImported { task_id, result } => match result {
                 Ok(result) => {
+                    self.task_manager.complete(task_id);
+                    self.refresh_task_snapshots();
                     for message in result.toasts {
                         self.notify(ToastLevel::Info, &message);
                     }
@@ -1635,6 +1671,10 @@ impl BdsApp {
                     self.refresh_counts()
                 }
                 Err(error) => {
+                    if self.task_manager.status(task_id) != Some(TaskStatus::Cancelled) {
+                        self.task_manager.fail(task_id, error.clone());
+                    }
+                    self.refresh_task_snapshots();
                     self.notify(
                         ToastLevel::Error,
                         &tw(self.ui_locale, "blogmark.failed", &[("error", &error)]),

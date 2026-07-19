@@ -135,6 +135,17 @@ pub struct PublishingPreferences {
     pub ssh_mode: SshMode,
 }
 
+impl Default for PublishingPreferences {
+    fn default() -> Self {
+        Self {
+            ssh_host: None,
+            ssh_user: None,
+            ssh_remote_path: None,
+            ssh_mode: default_ssh_mode(),
+        }
+    }
+}
+
 fn default_ssh_mode() -> SshMode {
     SshMode::Scp
 }

@@ -11,6 +11,7 @@ pub use generation::{
     write_generated_bytes, write_generated_file,
 };
 pub use markdown::render_markdown_to_html;
+pub(crate) use page_renderer::render_liquid_template_with_host;
 pub use page_renderer::{RenderError, render_liquid_template};
 pub use routes::{
     RenderedPage, build_canonical_post_path, render_starter_list_page,

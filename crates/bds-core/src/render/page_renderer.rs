@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
 
 use liquid::ParserBuilder;
 use liquid::partials::{EagerCompiler, InMemorySource};
 use liquid_core::model::ScalarCow;
+use liquid_core::parser::FilterArguments;
 use liquid_core::{
     Display_filter, Expression, Filter, FilterParameters, FilterReflection, FromFilterParameters,
     ParseFilter, Runtime, Value, ValueView,
@@ -14,6 +17,7 @@ use thiserror::Error;
 use crate::i18n::translate_render;
 use crate::render::macros::{MacroRenderContext, expand_builtin_macros};
 use crate::render::render_markdown_to_html;
+use crate::scripting::{HostApi, UnavailableHost};
 use crate::util::slugify;
 
 #[derive(Debug, Error)]
@@ -33,6 +37,20 @@ pub fn render_liquid_template<T: Serialize>(
     partials: &HashMap<String, String>,
     context: &T,
 ) -> Result<String, RenderError> {
+    render_liquid_template_with_host(
+        template_source,
+        partials,
+        context,
+        Arc::new(UnavailableHost),
+    )
+}
+
+pub(crate) fn render_liquid_template_with_host<T: Serialize>(
+    template_source: &str,
+    partials: &HashMap<String, String>,
+    context: &T,
+    host: Arc<dyn HostApi>,
+) -> Result<String, RenderError> {
     let mut compiled_partials: EagerCompiler<InMemorySource> = EagerCompiler::empty();
     for (name, content) in partials {
         compiled_partials.add(format!("{name}.liquid"), content.clone());
@@ -40,7 +58,7 @@ pub fn render_liquid_template<T: Serialize>(
 
     let parser = ParserBuilder::with_stdlib()
         .filter(I18n)
-        .filter(Markdown)
+        .filter(Markdown { host })
         .filter(Slugify)
         .partials(compiled_partials)
         .build()?;
@@ -121,20 +139,43 @@ struct MarkdownArgs {
     language_prefix: Option<Expression>,
 }
 
-#[derive(Clone, ParseFilter, FilterReflection)]
+#[derive(Clone, FilterReflection)]
 #[filter(
     name = "markdown",
     description = "Render markdown to HTML and rewrite preview URLs.",
     parameters(MarkdownArgs),
     parsed(MarkdownFilter)
 )]
-struct Markdown;
+struct Markdown {
+    host: Arc<dyn HostApi>,
+}
 
-#[derive(Debug, FromFilterParameters, Display_filter)]
+impl ParseFilter for Markdown {
+    fn parse(&self, args: FilterArguments<'_>) -> liquid_core::Result<Box<dyn Filter>> {
+        Ok(Box::new(MarkdownFilter {
+            args: MarkdownArgs::from_args(args)?,
+            host: Arc::clone(&self.host),
+        }))
+    }
+
+    fn reflection(&self) -> &dyn FilterReflection {
+        self
+    }
+}
+
+#[derive(Display_filter)]
 #[name = "markdown"]
 struct MarkdownFilter {
-    #[parameters]
     args: MarkdownArgs,
+    host: Arc<dyn HostApi>,
+}
+
+impl fmt::Debug for MarkdownFilter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MarkdownFilter")
+            .finish_non_exhaustive()
+    }
 }
 
 impl Filter for MarkdownFilter {
@@ -158,6 +199,7 @@ impl Filter for MarkdownFilter {
             post_id: runtime
                 .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
                 .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string())),
+            host: Arc::clone(&self.host),
         };
 
         let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
@@ -473,8 +515,31 @@ fn trim_html_suffix(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RewriteContextView, render_liquid_template, rewrite_rendered_html_urls};
+    use super::{
+        RewriteContextView, render_liquid_template, render_liquid_template_with_host,
+        rewrite_rendered_html_urls,
+    };
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use crate::scripting::HostApi;
+    use serde_json::{Value, json};
+
+    struct PostsHost;
+
+    impl HostApi for PostsHost {
+        fn call(
+            &self,
+            namespace: &str,
+            method: &str,
+            _arguments: Vec<Value>,
+        ) -> Result<Value, String> {
+            match (namespace, method) {
+                ("posts", "get_all") => Ok(json!([{"id":"one"}, {"id":"two"}])),
+                _ => Err("unsupported test capability".into()),
+            }
+        }
+    }
 
     struct TestRewriteContext {
         canonical_post_path_by_slug: HashMap<String, String>,
@@ -519,5 +584,26 @@ mod tests {
         .unwrap();
 
         assert_eq!(rendered, "ueber-die-bruecke");
+    }
+
+    #[test]
+    fn script_macros_use_the_supplied_project_host() {
+        let rendered = render_liquid_template_with_host(
+            "{{ post.content | markdown }}",
+            &HashMap::new(),
+            &json!({
+                "post": {"id": "post-1", "content": "[[count]]"},
+                "macro_scripts": {
+                    "count": {
+                        "source": "function render() return tostring(#bds.posts.get_all()) end",
+                        "entrypoint": "render"
+                    }
+                }
+            }),
+            Arc::new(PostsHost),
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "<p>2</p>\n");
     }
 }

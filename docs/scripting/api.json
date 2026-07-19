@@ -1,0 +1,1702 @@
+{
+  "methods": [
+    {
+      "description": "Copy text to the system clipboard.",
+      "name": "copy_to_clipboard",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Return filesystem paths for the current application and project data.",
+      "name": "get_data_paths",
+      "namespace": "app",
+      "params": [],
+      "returns": "table"
+    },
+    {
+      "description": "Return the Blogmark bookmarklet JavaScript source.",
+      "name": "get_blogmark_bookmarklet",
+      "namespace": "app",
+      "params": [],
+      "returns": "string"
+    },
+    {
+      "description": "Return the current UI locale (the server-side UI language setting, falling back to the OS locale when unset).",
+      "name": "get_system_language",
+      "namespace": "app",
+      "params": [],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Return the current project's filesystem path.",
+      "name": "get_default_project_path",
+      "namespace": "app",
+      "params": [],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Return desktop title bar inset metrics when available.",
+      "name": "get_title_bar_metrics",
+      "namespace": "app",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Append a line to the script output stream. Multiple arguments are joined with spaces. Output appears in the desktop app's Output panel (and on stdout in the CLI); Lua's global `print` is routed the same way.",
+      "name": "log",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "text",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Notify the host application that the renderer is ready.",
+      "name": "notify_renderer_ready",
+      "namespace": "app",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Open a folder in the system file manager.",
+      "name": "open_folder",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "folder_path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "description": "Read project metadata from a project folder path.",
+      "name": "read_project_metadata",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "folder_path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ProjectMetadata | nil"
+    },
+    {
+      "description": "Show the native folder picker and return the chosen path.",
+      "name": "select_folder",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "title",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Set the current preview-post target used by desktop integrations.",
+      "name": "set_preview_post_target",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "post_id",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Reveal a file or folder in the system file manager.",
+      "name": "show_item_in_folder",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "item_path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "nil"
+    },
+    {
+      "description": "Trigger a native menu action by action id.",
+      "name": "trigger_menu_action",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "action",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "nil"
+    },
+    {
+      "description": "Report numeric progress for the current script execution, optionally including a total and a user-facing message.",
+      "compatibility": "ruds",
+      "name": "progress",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "current",
+          "required": true,
+          "type": "number"
+        },
+        {
+          "name": "total",
+          "required": false,
+          "type": "number"
+        },
+        {
+          "name": "message",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Show bounded user feedback from a script. Transform scripts are subject to the runtime toast budget.",
+      "compatibility": "ruds",
+      "name": "toast",
+      "namespace": "app",
+      "params": [
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Create a project.",
+      "name": "create",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ProjectData | nil"
+    },
+    {
+      "description": "Delete a project by id.",
+      "name": "delete",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Delete a project by id and remove its project directory.",
+      "name": "delete_with_data",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one project by id.",
+      "name": "get",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ProjectData | nil"
+    },
+    {
+      "description": "Fetch all projects.",
+      "name": "get_all",
+      "namespace": "projects",
+      "params": [],
+      "returns": "ProjectData[]"
+    },
+    {
+      "description": "Fetch the active project.",
+      "name": "get_active",
+      "namespace": "projects",
+      "params": [],
+      "returns": "ProjectData | nil"
+    },
+    {
+      "description": "Set the active project by id.",
+      "name": "set_active",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ProjectData | nil"
+    },
+    {
+      "description": "Update a project by id.",
+      "name": "update",
+      "namespace": "projects",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ProjectData | nil"
+    },
+    {
+      "description": "Read metadata for the current project.",
+      "name": "get_project_metadata",
+      "namespace": "meta",
+      "params": [],
+      "returns": "ProjectMetadata"
+    },
+    {
+      "description": "Update metadata for the current project. Keys omitted from updates keep their current values.",
+      "name": "update_project_metadata",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "updates",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ProjectMetadata | nil"
+    },
+    {
+      "description": "Replace project metadata fields for the current project.",
+      "name": "set_project_metadata",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "updates",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ProjectMetadata | nil"
+    },
+    {
+      "description": "Add a category to the current project.",
+      "name": "add_category",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ProjectMetadata | nil"
+    },
+    {
+      "description": "Remove a category from the current project.",
+      "name": "remove_category",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ProjectMetadata | nil"
+    },
+    {
+      "description": "Add a tag record to the current project if it does not already exist.",
+      "name": "add_tag",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string[]"
+    },
+    {
+      "description": "Remove a tag record from the current project by name.",
+      "name": "remove_tag",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string[]"
+    },
+    {
+      "description": "Get project categories.",
+      "name": "get_categories",
+      "namespace": "meta",
+      "params": [],
+      "returns": "string[]"
+    },
+    {
+      "description": "Get tag names for the current project.",
+      "name": "get_tags",
+      "namespace": "meta",
+      "params": [],
+      "returns": "string[]"
+    },
+    {
+      "description": "Get publishing preferences for the current project.",
+      "name": "get_publishing_preferences",
+      "namespace": "meta",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Set publishing preferences for the current project.",
+      "name": "set_publishing_preferences",
+      "namespace": "meta",
+      "params": [
+        {
+          "name": "prefs",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Reset publishing preferences to defaults.",
+      "name": "clear_publishing_preferences",
+      "namespace": "meta",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Synchronize startup metadata state and return tags, categories, and project metadata.",
+      "name": "sync_on_startup",
+      "namespace": "meta",
+      "params": [],
+      "returns": "table"
+    },
+    {
+      "description": "Create a post in the current project.",
+      "name": "create",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Discard unpublished post changes and restore the last published version from disk.",
+      "name": "discard",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Filter posts using status, tags, categories, language, year, month, or date range fields.",
+      "name": "filter",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "filters",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "PostData[] | nil"
+    },
+    {
+      "description": "Generate a unique slug from a title, optionally excluding one post id.",
+      "name": "generate_unique_slug",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "exclude_post_id",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "string"
+    },
+    {
+      "description": "Fetch posts filtered by a specific status.",
+      "name": "get_by_status",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "status",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData[]"
+    },
+    {
+      "description": "Get post counts grouped by year and month.",
+      "name": "get_by_year_month",
+      "namespace": "posts",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return aggregate post dashboard counts for the current project.",
+      "name": "get_dashboard_stats",
+      "namespace": "posts",
+      "params": [],
+      "returns": "table"
+    },
+    {
+      "description": "Return posts that link to the given post.",
+      "name": "get_linked_by",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return posts linked from the given post.",
+      "name": "get_links_to",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return the local preview URL for a post, optionally with draft and language query parameters.",
+      "name": "get_preview_url",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "options",
+          "required": false,
+          "type": "table"
+        }
+      ],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Update a post by id.",
+      "name": "update",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Delete a post by id.",
+      "name": "delete",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one post by id.",
+      "name": "get",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Fetch all posts in the current project.",
+      "name": "get_all",
+      "namespace": "posts",
+      "params": [],
+      "returns": "PostData[]"
+    },
+    {
+      "description": "Fetch one post by slug.",
+      "name": "get_by_slug",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "slug",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Get category names used by posts in the current project.",
+      "name": "get_categories",
+      "namespace": "posts",
+      "params": [],
+      "returns": "string[]"
+    },
+    {
+      "description": "Get post categories with usage counts.",
+      "name": "get_categories_with_counts",
+      "namespace": "posts",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Get tag names used by posts in the current project.",
+      "name": "get_tags",
+      "namespace": "posts",
+      "params": [],
+      "returns": "string[]"
+    },
+    {
+      "description": "Get post tags with usage counts.",
+      "name": "get_tags_with_counts",
+      "namespace": "posts",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Get a single translation for a post by language.",
+      "name": "get_translation",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Get all translations for a post.",
+      "name": "get_translations",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table[]"
+    },
+    {
+      "description": "Check whether a post has a published version.",
+      "name": "has_published_version",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Return whether a slug is available in the current project, optionally excluding one post id.",
+      "name": "is_slug_available",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "slug",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "exclude_post_id",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Publish a post by id.",
+      "name": "publish",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData | nil"
+    },
+    {
+      "description": "Publish one translation of a post by language.",
+      "name": "publish_translation",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Rebuild post records from published files.",
+      "name": "rebuild_from_files",
+      "namespace": "posts",
+      "params": [],
+      "returns": "PostData[] | nil"
+    },
+    {
+      "description": "Rebuild the post link graph for the current project.",
+      "name": "rebuild_links",
+      "namespace": "posts",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Reindex post and media search text for the current project.",
+      "name": "reindex_text",
+      "namespace": "posts",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Search posts by free-text query.",
+      "name": "search",
+      "namespace": "posts",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "PostData[] | nil"
+    },
+    {
+      "description": "Delete a media translation by language.",
+      "name": "delete_translation",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Filter media using year, month, tags, language, or date range fields.",
+      "name": "filter",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "filters",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "MediaData[]"
+    },
+    {
+      "description": "Import media into the current project.",
+      "name": "import",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "MediaData | nil"
+    },
+    {
+      "description": "Get media counts grouped by year and month.",
+      "name": "get_by_year_month",
+      "namespace": "media",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return the absolute file path for a media item.",
+      "name": "get_file_path",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Update media metadata by id.",
+      "name": "update",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "MediaData | nil"
+    },
+    {
+      "description": "Delete a media item by id.",
+      "name": "delete",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one media item by id.",
+      "name": "get",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "MediaData | nil"
+    },
+    {
+      "description": "Fetch all media in the current project.",
+      "name": "get_all",
+      "namespace": "media",
+      "params": [],
+      "returns": "MediaData[]"
+    },
+    {
+      "description": "Return tag names used by media in the current project.",
+      "name": "get_tags",
+      "namespace": "media",
+      "params": [],
+      "returns": "string[]"
+    },
+    {
+      "description": "Return media tags with usage counts.",
+      "name": "get_tags_with_counts",
+      "namespace": "media",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return a media thumbnail as a data URL for the requested size.",
+      "name": "get_thumbnail",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Return one media translation by language.",
+      "name": "get_translation",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Return all translations for a media item.",
+      "name": "get_translations",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table[]"
+    },
+    {
+      "description": "Return the project-relative public URL path for a media item.",
+      "name": "get_url",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string | nil"
+    },
+    {
+      "description": "Rebuild media records from sidecar files on disk.",
+      "name": "rebuild_from_files",
+      "namespace": "media",
+      "params": [],
+      "returns": "MediaData[] | nil"
+    },
+    {
+      "description": "Generate thumbnails for media items that are missing them.",
+      "name": "regenerate_missing_thumbnails",
+      "namespace": "media",
+      "params": [],
+      "returns": "table"
+    },
+    {
+      "description": "Regenerate all thumbnails for one media item.",
+      "name": "regenerate_thumbnails",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Reindex post and media search text for the current project.",
+      "name": "reindex_text",
+      "namespace": "media",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Replace the binary file behind an existing media item.",
+      "name": "replace_file",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "source_path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "MediaData | nil"
+    },
+    {
+      "description": "Search media by free-text query.",
+      "name": "search",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "MediaData[] | nil"
+    },
+    {
+      "description": "Create or update a media translation.",
+      "name": "upsert_translation",
+      "namespace": "media",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Create a script in the current project.",
+      "name": "create",
+      "namespace": "scripts",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ScriptData | nil"
+    },
+    {
+      "description": "Update a script by id.",
+      "name": "update",
+      "namespace": "scripts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "ScriptData | nil"
+    },
+    {
+      "description": "Delete a script by id.",
+      "name": "delete",
+      "namespace": "scripts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one script by id.",
+      "name": "get",
+      "namespace": "scripts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ScriptData | nil"
+    },
+    {
+      "description": "Fetch all scripts in the current project.",
+      "name": "get_all",
+      "namespace": "scripts",
+      "params": [],
+      "returns": "ScriptData[]"
+    },
+    {
+      "description": "Publish a script by id.",
+      "name": "publish",
+      "namespace": "scripts",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ScriptData | nil"
+    },
+    {
+      "description": "Rebuild script records from published files.",
+      "name": "rebuild_from_files",
+      "namespace": "scripts",
+      "params": [],
+      "returns": "ScriptData[] | nil"
+    },
+    {
+      "description": "Create a template in the current project.",
+      "name": "create",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "TemplateData | nil"
+    },
+    {
+      "description": "Update a template by id.",
+      "name": "update",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "TemplateData | nil"
+    },
+    {
+      "description": "Delete a template by id.",
+      "name": "delete",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one template by id.",
+      "name": "get",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TemplateData | nil"
+    },
+    {
+      "description": "Fetch all templates in the current project.",
+      "name": "get_all",
+      "namespace": "templates",
+      "params": [],
+      "returns": "TemplateData[]"
+    },
+    {
+      "description": "Publish a template by id.",
+      "name": "publish",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TemplateData | nil"
+    },
+    {
+      "description": "Fetch enabled templates filtered by kind.",
+      "name": "get_enabled_by_kind",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "kind",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TemplateData[]"
+    },
+    {
+      "description": "Rebuild template records from published files.",
+      "name": "rebuild_from_files",
+      "namespace": "templates",
+      "params": [],
+      "returns": "TemplateData[] | nil"
+    },
+    {
+      "description": "Validate Liquid template syntax.",
+      "name": "validate",
+      "namespace": "templates",
+      "params": [
+        {
+          "name": "content",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "ValidationResult | nil"
+    },
+    {
+      "description": "Create a tag in the current project.",
+      "name": "create",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "TagData | nil"
+    },
+    {
+      "description": "Update a tag by id.",
+      "name": "update",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "TagData | nil"
+    },
+    {
+      "description": "Delete a tag by id.",
+      "name": "delete",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch one tag by id.",
+      "name": "get",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TagData | nil"
+    },
+    {
+      "description": "Fetch all tags in the current project.",
+      "name": "get_all",
+      "namespace": "tags",
+      "params": [],
+      "returns": "TagData[]"
+    },
+    {
+      "description": "Fetch one tag by name.",
+      "name": "get_by_name",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TagData | nil"
+    },
+    {
+      "description": "Get post ids using a specific tag.",
+      "name": "get_posts_with_tag",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "tag_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "string[]"
+    },
+    {
+      "description": "Fetch tags with usage counts.",
+      "name": "get_with_counts",
+      "namespace": "tags",
+      "params": [],
+      "returns": "table[]"
+    },
+    {
+      "description": "Merge source tags into a target tag.",
+      "name": "merge",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "source_tag_ids",
+          "required": true,
+          "type": "table"
+        },
+        {
+          "name": "target_tag_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Rename a tag by id.",
+      "name": "rename",
+      "namespace": "tags",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "new_name",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TagData | nil"
+    },
+    {
+      "description": "Sync tag records from post tags.",
+      "name": "sync_from_posts",
+      "namespace": "tags",
+      "params": [],
+      "returns": "TagData[] | nil"
+    },
+    {
+      "description": "Fetch one task by id.",
+      "name": "get",
+      "namespace": "tasks",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "TaskData | nil"
+    },
+    {
+      "description": "Fetch the current task status snapshot.",
+      "name": "status_snapshot",
+      "namespace": "tasks",
+      "params": [],
+      "returns": "TaskStatus"
+    },
+    {
+      "description": "Cancel a task by id.",
+      "name": "cancel",
+      "namespace": "tasks",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "boolean"
+    },
+    {
+      "description": "Fetch all tasks currently tracked by the task manager.",
+      "name": "get_all",
+      "namespace": "tasks",
+      "params": [],
+      "returns": "TaskData[]"
+    },
+    {
+      "description": "Fetch running tasks currently tracked by the task manager.",
+      "name": "get_running",
+      "namespace": "tasks",
+      "params": [],
+      "returns": "TaskData[]"
+    },
+    {
+      "description": "Clear completed tasks from the in-memory task list.",
+      "name": "clear_completed",
+      "namespace": "tasks",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Upload the rendered site using the provided publishing credentials.",
+      "name": "upload_site",
+      "namespace": "publish",
+      "params": [
+        {
+          "name": "credentials",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "TaskData | nil"
+    },
+    {
+      "description": "Detect the language of post title and content.",
+      "name": "detect_post_language",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "content",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table"
+    },
+    {
+      "description": "Analyze a post using the configured AI runtime.",
+      "name": "analyze_post",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Translate a post and persist the translation.",
+      "name": "translate_post",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "post_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Analyze a media image using the configured AI runtime.",
+      "name": "analyze_media_image",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Detect the language of media metadata.",
+      "name": "detect_media_language",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "alt",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "caption",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "returns": "table"
+    },
+    {
+      "description": "Translate media metadata and persist the translation.",
+      "name": "translate_media_metadata",
+      "namespace": "chat",
+      "params": [
+        {
+          "name": "media_id",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "language",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    }
+  ],
+  "root_methods": [
+    {
+      "compatibility": "ruds",
+      "description": "Report progress for the current managed job.",
+      "name": "report_progress",
+      "params": [
+        {
+          "name": "payload",
+          "required": true,
+          "type": "table"
+        }
+      ],
+      "returns": "boolean"
+    }
+  ],
+  "types": [
+    {
+      "description": "Project record stored in the application database.",
+      "fields": {
+        "created_at": "ISO-8601 string",
+        "data_path": "string | nil",
+        "description": "string | nil",
+        "id": "string",
+        "is_active": "boolean",
+        "name": "string",
+        "slug": "string",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "ProjectData"
+    },
+    {
+      "description": "Current project metadata and publishing settings snapshot.",
+      "fields": {
+        "blog_languages": "string[]",
+        "categories": "string[]",
+        "default_author": "string | nil",
+        "description": "string | nil",
+        "main_language": "string | nil",
+        "name": "string",
+        "public_url": "string | nil",
+        "publishing_preferences": "table"
+      },
+      "name": "ProjectMetadata"
+    },
+    {
+      "description": "Post record with link graph data added for scripting.",
+      "fields": {
+        "backlinks": "table[]",
+        "categories": "string[]",
+        "created_at": "ISO-8601 string",
+        "id": "string",
+        "language": "string | nil",
+        "links_to": "table[]",
+        "project_id": "string",
+        "slug": "string",
+        "status": "string",
+        "tags": "string[]",
+        "title": "string",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "PostData"
+    },
+    {
+      "description": "Media record stored for a project.",
+      "fields": {
+        "alt": "string | nil",
+        "caption": "string | nil",
+        "created_at": "ISO-8601 string",
+        "file_path": "string",
+        "id": "string",
+        "mime_type": "string",
+        "original_name": "string",
+        "project_id": "string",
+        "tags": "string[]",
+        "title": "string | nil",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "MediaData"
+    },
+    {
+      "description": "Lua script record.",
+      "fields": {
+        "created_at": "ISO-8601 string",
+        "enabled": "boolean",
+        "entrypoint": "string",
+        "id": "string",
+        "kind": "string",
+        "project_id": "string",
+        "slug": "string",
+        "status": "string",
+        "title": "string",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "ScriptData"
+    },
+    {
+      "description": "Template record for site rendering.",
+      "fields": {
+        "created_at": "ISO-8601 string",
+        "enabled": "boolean",
+        "id": "string",
+        "kind": "string",
+        "project_id": "string",
+        "slug": "string",
+        "status": "string",
+        "title": "string",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "TemplateData"
+    },
+    {
+      "description": "Tag record stored for a project.",
+      "fields": {
+        "color": "string | nil",
+        "created_at": "ISO-8601 string",
+        "id": "string",
+        "name": "string",
+        "post_template_slug": "string | nil",
+        "project_id": "string",
+        "updated_at": "ISO-8601 string"
+      },
+      "name": "TagData"
+    },
+    {
+      "description": "Public task snapshot returned by the task manager.",
+      "fields": {
+        "id": "string",
+        "message": "string | nil",
+        "name": "string",
+        "progress": "number | nil",
+        "status": "string"
+      },
+      "name": "TaskData"
+    },
+    {
+      "description": "Aggregate task status snapshot.",
+      "fields": {
+        "active_count": "integer",
+        "pending_count": "integer",
+        "running_count": "integer",
+        "tasks": "TaskData[]"
+      },
+      "name": "TaskStatus"
+    },
+    {
+      "description": "Template validation result.",
+      "fields": {
+        "errors": "string[]",
+        "valid": "boolean"
+      },
+      "name": "ValidationResult"
+    }
+  ],
+  "version": "0.4.0"
+}

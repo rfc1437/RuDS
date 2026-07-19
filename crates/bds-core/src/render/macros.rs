@@ -1,11 +1,23 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde_json::{Map, Value as JsonValue};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct MacroRenderContext {
     pub roots: Map<String, JsonValue>,
     pub post_id: Option<String>,
+    pub host: Arc<dyn crate::scripting::HostApi>,
+}
+
+impl Default for MacroRenderContext {
+    fn default() -> Self {
+        Self {
+            roots: Map::new(),
+            post_id: None,
+            host: Arc::new(crate::scripting::UnavailableHost),
+        }
+    }
 }
 
 pub(crate) fn expand_builtin_macros(markdown: &str, context: &MacroRenderContext) -> String {
@@ -77,12 +89,13 @@ fn render_script_macro(
         "translations": context.roots.get("translations").cloned().unwrap_or(JsonValue::Array(Vec::new())),
     });
     let params = serde_json::to_value(args).ok()?;
-    match crate::scripting::execute_many(
+    match crate::scripting::execute_many_with_host(
         source,
         entrypoint,
         &[params, env],
         crate::scripting::ExecutionKind::Macro,
         &crate::scripting::ExecutionControl::default(),
+        Arc::clone(&context.host),
     ) {
         Ok(result) => Some(match result.value {
             JsonValue::Null => String::new(),
@@ -519,6 +532,7 @@ mod tests {
             &MacroRenderContext {
                 roots,
                 post_id: Some("post-1".to_string()),
+                ..MacroRenderContext::default()
             },
         );
 
@@ -555,6 +569,7 @@ mod tests {
             &MacroRenderContext {
                 roots,
                 post_id: Some("post-1".into()),
+                ..MacroRenderContext::default()
             },
         );
         assert_eq!(rendered, "<aside>Hallo:de</aside>");

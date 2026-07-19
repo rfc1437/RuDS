@@ -455,6 +455,7 @@ translationValidation-missingTranslation = Falta una traducción configurada
 blogmark-invalid = Blogmark no válido: { $error }
 blogmark-unknownProject = El proyecto de destino de este blogmark no existe aquí.
 blogmark-noProject = Abre un proyecto antes de importar un blogmark.
+blogmark-importing = Importando blogmark
 blogmark-imported = Blogmark importado
 blogmark-failed = Error al importar el blogmark: { $error }
 engine-generatedPage = Generado { $url } ({ $current }/{ $total })

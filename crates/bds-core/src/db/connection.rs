@@ -3,6 +3,7 @@ use std::path::Path;
 
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
+use diesel::sql_types::Text;
 
 use crate::db::migrations;
 
@@ -16,6 +17,12 @@ pub enum DatabaseError {
 
 /// Shared synchronous Diesel connection used by the engine query API.
 pub struct DbConnection(RefCell<SqliteConnection>);
+
+#[derive(QueryableByName)]
+struct DatabasePathRow {
+    #[diesel(sql_type = Text)]
+    file: String,
+}
 
 impl DbConnection {
     pub fn with<T>(
@@ -44,6 +51,20 @@ impl DbConnection {
         self.0
             .borrow_mut()
             .batch_execute("ROLLBACK TO bds_operation; RELEASE bds_operation")
+    }
+
+    pub(crate) fn database_path(&self) -> diesel::QueryResult<std::path::PathBuf> {
+        self.with(|conn| {
+            diesel::sql_query("SELECT file FROM pragma_database_list WHERE name = 'main'")
+                .get_result::<DatabasePathRow>(conn)
+                .and_then(|row| {
+                    if row.file.is_empty() {
+                        Err(diesel::result::Error::NotFound)
+                    } else {
+                        Ok(row.file.into())
+                    }
+                })
+        })
     }
 }
 
@@ -100,5 +121,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn reports_the_disk_database_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("project.sqlite3");
+        let db = Database::open(&path).unwrap();
+
+        assert_eq!(
+            db.conn().database_path().unwrap().canonicalize().unwrap(),
+            path.canonicalize().unwrap()
+        );
     }
 }

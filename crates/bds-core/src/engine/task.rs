@@ -179,6 +179,16 @@ impl TaskManager {
             .unwrap_or(false)
     }
 
+    /// Shared cancellation flag for a worker owned by this task.
+    pub fn cancellation_flag(&self, task_id: TaskId) -> Option<Arc<AtomicBool>> {
+        self.tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| Arc::clone(&task.cancel_flag))
+    }
+
     /// Return the current status of a task.
     pub fn status(&self, task_id: TaskId) -> Option<TaskStatus> {
         let tasks = self.tasks.lock().unwrap();
@@ -214,6 +224,14 @@ impl TaskManager {
             task.finished_at
                 .is_none_or(|finished_at| finished_at > cutoff)
         });
+    }
+
+    /// Remove every finished task while preserving running and queued work.
+    pub fn clear_completed(&self) {
+        self.tasks
+            .lock()
+            .unwrap()
+            .retain(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Running));
     }
 
     /// Update progress for a running task. Throttled to at most once per 250ms.
@@ -401,6 +419,17 @@ mod tests {
         }
 
         assert_eq!(mgr.snapshots().len(), 10);
+    }
+
+    #[test]
+    fn clear_completed_preserves_active_tasks() {
+        let mgr = TaskManager::new(2);
+        let done = mgr.submit("done");
+        let running = mgr.submit("running");
+        mgr.complete(done);
+        mgr.clear_completed();
+        assert_eq!(mgr.status(done), None);
+        assert_eq!(mgr.status(running), Some(TaskStatus::Running));
     }
 
     #[test]

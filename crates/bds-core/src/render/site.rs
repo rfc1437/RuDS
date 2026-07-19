@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::db::DbConnection as Connection;
 use chrono::{Datelike, TimeZone, Utc};
@@ -16,8 +17,9 @@ use crate::model::{
 };
 use crate::render::{
     RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
-    render_liquid_template, resolve_post_template,
+    render_liquid_template_with_host, resolve_post_template,
 };
+use crate::scripting::{CoreHost, HostApi, UnavailableHost};
 use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
 use crate::util::slugify;
 
@@ -62,7 +64,7 @@ pub struct PreviewRenderResult {
     pub html: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TemplateBundle {
     post_templates: Vec<Template>,
     template_source_by_slug: HashMap<String, String>,
@@ -71,6 +73,7 @@ struct TemplateBundle {
     not_found_template: String,
     partials: HashMap<String, String>,
     macro_scripts: HashMap<String, Value>,
+    host: Arc<dyn HostApi>,
 }
 
 #[derive(Debug, Clone)]
@@ -268,6 +271,10 @@ fn load_template_bundle(
     let mut default_list_template = STARTER_POST_LIST_TEMPLATE.to_string();
     let mut not_found_template = STARTER_NOT_FOUND_TEMPLATE.to_string();
     let mut macro_scripts = HashMap::new();
+    let host: Arc<dyn HostApi> = CoreHost::from_connection(conn, project_id, data_dir)
+        .map(|host| host.with_offline_mode(true))
+        .map(|host| Arc::new(host) as Arc<dyn HostApi>)
+        .unwrap_or_else(|_| Arc::new(UnavailableHost));
 
     for script in queries::script::list_scripts_by_project(conn, project_id).unwrap_or_default() {
         if script.kind != ScriptKind::Macro
@@ -368,6 +375,7 @@ fn load_template_bundle(
         not_found_template,
         partials,
         macro_scripts,
+        host,
     })
 }
 
@@ -661,10 +669,11 @@ fn render_list_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template(
+    Ok(render_liquid_template_with_host(
         list_template,
         &bundle.partials,
         &context,
+        Arc::clone(&bundle.host),
     )?)
 }
 
@@ -776,10 +785,11 @@ fn render_post_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template(
+    Ok(render_liquid_template_with_host(
         &template_source,
         &bundle.partials,
         &context,
+        Arc::clone(&bundle.host),
     )?)
 }
 
@@ -824,10 +834,11 @@ fn render_not_found_route(
         "canonical_media_path_by_source_path": HashMap::<String, String>::new(),
         "post_data_json_by_id": HashMap::<String, Value>::new(),
     });
-    Ok(render_liquid_template(
+    Ok(render_liquid_template_with_host(
         &bundle.not_found_template,
         &bundle.partials,
         &context,
+        Arc::clone(&bundle.host),
     )?)
 }
 

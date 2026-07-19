@@ -82,6 +82,40 @@ impl MenuAction {
         MenuAction::ReportIssue,
     ];
 
+    pub fn from_script_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "new_post" => Self::NewPost,
+            "import_media" => Self::ImportMedia,
+            "save" => Self::Save,
+            "open_in_browser" => Self::OpenInBrowser,
+            "open_data_folder" => Self::OpenDataFolder,
+            "find" => Self::Find,
+            "replace" => Self::Replace,
+            "edit_preferences" => Self::EditPreferences,
+            "view_posts" => Self::ViewPosts,
+            "view_media" => Self::ViewMedia,
+            "toggle_sidebar" => Self::ToggleSidebar,
+            "toggle_panel" => Self::TogglePanel,
+            "publish_selected" => Self::PublishSelected,
+            "preview_post" => Self::PreviewPost,
+            "edit_menu" => Self::EditMenu,
+            "rebuild_database" => Self::RebuildDatabase,
+            "reindex_text" => Self::ReindexText,
+            "metadata_diff" => Self::MetadataDiff,
+            "regenerate_calendar" => Self::RegenerateCalendar,
+            "validate_translations" => Self::ValidateTranslations,
+            "fill_missing_translations" => Self::FillMissingTranslations,
+            "generate_sitemap" | "force_render_site" => Self::GenerateSitemap,
+            "validate_site" => Self::ValidateSite,
+            "upload_site" => Self::UploadSite,
+            "about" => Self::About,
+            "open_documentation" => Self::OpenDocumentation,
+            "view_on_github" => Self::ViewOnGitHub,
+            "report_issue" => Self::ReportIssue,
+            _ => return None,
+        })
+    }
+
     /// Return the i18n key for this action's menu label.
     pub fn i18n_key(self) -> &'static str {
         match self {

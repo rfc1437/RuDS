@@ -708,9 +708,14 @@ impl BdsApp {
             }
         }
         if let Some((source, entrypoint, kind)) = run_request {
+            let offline_mode = self.offline_mode;
+            let app_handler = crate::platform::script_host::handler(
+                Arc::clone(&self.script_menu_actions),
+                t(self.ui_locale, "dialog.selectFolder"),
+            );
             return self.spawn_engine_task(
                 "engine.runScript",
-                move |_db_path, _project_id, _data_dir, task_manager, task_id| {
+                move |db_path, project_id, data_dir, task_manager, task_id| {
                     let execution_kind = match kind {
                         bds_core::model::ScriptKind::Macro => {
                             bds_core::scripting::ExecutionKind::Macro
@@ -722,19 +727,22 @@ impl BdsApp {
                             bds_core::scripting::ExecutionKind::Transform
                         }
                     };
-                    let result = bds_core::scripting::execute(
+                    let host = bds_core::scripting::CoreHost::new(db_path, project_id, data_dir)
+                        .with_task(Arc::clone(&task_manager), task_id)
+                        .with_offline_mode(offline_mode)
+                        .with_app_handler(Arc::clone(&app_handler));
+                    let control = task_manager
+                        .cancellation_flag(task_id)
+                        .map(bds_core::scripting::ExecutionControl::from_cancelled)
+                        .unwrap_or_default();
+                    let result = bds_core::scripting::execute_with_host(
                         &source,
                         &entrypoint,
                         &serde_json::json!({}),
                         execution_kind,
-                        &bds_core::scripting::ExecutionControl::default(),
+                        &control,
+                        Arc::new(host),
                     )?;
-                    for progress in &result.progress {
-                        let percent = progress.total.and_then(|total| {
-                            (total > 0.0).then_some((progress.current / total) as f32)
-                        });
-                        task_manager.report_progress(task_id, percent, progress.message.clone());
-                    }
                     let mut lines = result.output;
                     lines.extend(
                         result

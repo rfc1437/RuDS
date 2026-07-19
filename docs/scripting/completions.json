@@ -1,0 +1,1686 @@
+[
+  {
+    "description": "Copy text to the system clipboard.",
+    "detail": "bds.app.copy_to_clipboard(text: string) -> boolean",
+    "insert_text": "bds.app.copy_to_clipboard(\"Example content\")",
+    "label": "bds.app.copy_to_clipboard",
+    "parameters": [
+      {
+        "name": "text",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Return filesystem paths for the current application and project data.",
+    "detail": "bds.app.get_data_paths() -> table",
+    "insert_text": "bds.app.get_data_paths()",
+    "label": "bds.app.get_data_paths",
+    "parameters": [],
+    "returns": "table"
+  },
+  {
+    "description": "Return the Blogmark bookmarklet JavaScript source.",
+    "detail": "bds.app.get_blogmark_bookmarklet() -> string",
+    "insert_text": "bds.app.get_blogmark_bookmarklet()",
+    "label": "bds.app.get_blogmark_bookmarklet",
+    "parameters": [],
+    "returns": "string"
+  },
+  {
+    "description": "Return the current UI locale (the server-side UI language setting, falling back to the OS locale when unset).",
+    "detail": "bds.app.get_system_language() -> string | nil",
+    "insert_text": "bds.app.get_system_language()",
+    "label": "bds.app.get_system_language",
+    "parameters": [],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Return the current project's filesystem path.",
+    "detail": "bds.app.get_default_project_path() -> string | nil",
+    "insert_text": "bds.app.get_default_project_path()",
+    "label": "bds.app.get_default_project_path",
+    "parameters": [],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Return desktop title bar inset metrics when available.",
+    "detail": "bds.app.get_title_bar_metrics() -> table | nil",
+    "insert_text": "bds.app.get_title_bar_metrics()",
+    "label": "bds.app.get_title_bar_metrics",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Append a line to the script output stream. Multiple arguments are joined with spaces. Output appears in the desktop app's Output panel (and on stdout in the CLI); Lua's global `print` is routed the same way.",
+    "detail": "bds.app.log(text: string) -> boolean",
+    "insert_text": "bds.app.log(\"Example content\")",
+    "label": "bds.app.log",
+    "parameters": [
+      {
+        "name": "text",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Notify the host application that the renderer is ready.",
+    "detail": "bds.app.notify_renderer_ready() -> boolean",
+    "insert_text": "bds.app.notify_renderer_ready()",
+    "label": "bds.app.notify_renderer_ready",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Open a folder in the system file manager.",
+    "detail": "bds.app.open_folder(folder_path: string) -> string",
+    "insert_text": "bds.app.open_folder(\"/path/to/item\")",
+    "label": "bds.app.open_folder",
+    "parameters": [
+      {
+        "name": "folder_path",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string"
+  },
+  {
+    "description": "Read project metadata from a project folder path.",
+    "detail": "bds.app.read_project_metadata(folder_path: string) -> ProjectMetadata | nil",
+    "insert_text": "bds.app.read_project_metadata(\"/path/to/item\")",
+    "label": "bds.app.read_project_metadata",
+    "parameters": [
+      {
+        "name": "folder_path",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ProjectMetadata | nil"
+  },
+  {
+    "description": "Show the native folder picker and return the chosen path.",
+    "detail": "bds.app.select_folder(title?: string) -> string | nil",
+    "insert_text": "bds.app.select_folder(\"Example post\")",
+    "label": "bds.app.select_folder",
+    "parameters": [
+      {
+        "name": "title",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Set the current preview-post target used by desktop integrations.",
+    "detail": "bds.app.set_preview_post_target(post_id?: string) -> boolean",
+    "insert_text": "bds.app.set_preview_post_target(\"example-id\")",
+    "label": "bds.app.set_preview_post_target",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Reveal a file or folder in the system file manager.",
+    "detail": "bds.app.show_item_in_folder(item_path: string) -> nil",
+    "insert_text": "bds.app.show_item_in_folder(\"/path/to/item\")",
+    "label": "bds.app.show_item_in_folder",
+    "parameters": [
+      {
+        "name": "item_path",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "nil"
+  },
+  {
+    "description": "Trigger a native menu action by action id.",
+    "detail": "bds.app.trigger_menu_action(action: string) -> nil",
+    "insert_text": "bds.app.trigger_menu_action(\"new-post\")",
+    "label": "bds.app.trigger_menu_action",
+    "parameters": [
+      {
+        "name": "action",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "nil"
+  },
+  {
+    "description": "Report numeric progress for the current script execution, optionally including a total and a user-facing message.",
+    "detail": "bds.app.progress(current: number, total?: number, message?: string) -> boolean",
+    "insert_text": "bds.app.progress(1, 100, \"Working\")",
+    "label": "bds.app.progress",
+    "parameters": [
+      {
+        "name": "current",
+        "required": true,
+        "type": "number"
+      },
+      {
+        "name": "total",
+        "required": false,
+        "type": "number"
+      },
+      {
+        "name": "message",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Show bounded user feedback from a script. Transform scripts are subject to the runtime toast budget.",
+    "detail": "bds.app.toast(message: string) -> boolean",
+    "insert_text": "bds.app.toast(\"Working\")",
+    "label": "bds.app.toast",
+    "parameters": [
+      {
+        "name": "message",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Create a project.",
+    "detail": "bds.projects.create(data: table) -> ProjectData | nil",
+    "insert_text": "bds.projects.create({ title = \"Example\" })",
+    "label": "bds.projects.create",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ProjectData | nil"
+  },
+  {
+    "description": "Delete a project by id.",
+    "detail": "bds.projects.delete(id: string) -> boolean",
+    "insert_text": "bds.projects.delete(\"example-id\")",
+    "label": "bds.projects.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Delete a project by id and remove its project directory.",
+    "detail": "bds.projects.delete_with_data(id: string) -> boolean",
+    "insert_text": "bds.projects.delete_with_data(\"example-id\")",
+    "label": "bds.projects.delete_with_data",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one project by id.",
+    "detail": "bds.projects.get(id: string) -> ProjectData | nil",
+    "insert_text": "bds.projects.get(\"example-id\")",
+    "label": "bds.projects.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ProjectData | nil"
+  },
+  {
+    "description": "Fetch all projects.",
+    "detail": "bds.projects.get_all() -> ProjectData[]",
+    "insert_text": "bds.projects.get_all()",
+    "label": "bds.projects.get_all",
+    "parameters": [],
+    "returns": "ProjectData[]"
+  },
+  {
+    "description": "Fetch the active project.",
+    "detail": "bds.projects.get_active() -> ProjectData | nil",
+    "insert_text": "bds.projects.get_active()",
+    "label": "bds.projects.get_active",
+    "parameters": [],
+    "returns": "ProjectData | nil"
+  },
+  {
+    "description": "Set the active project by id.",
+    "detail": "bds.projects.set_active(id: string) -> ProjectData | nil",
+    "insert_text": "bds.projects.set_active(\"example-id\")",
+    "label": "bds.projects.set_active",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ProjectData | nil"
+  },
+  {
+    "description": "Update a project by id.",
+    "detail": "bds.projects.update(id: string, data: table) -> ProjectData | nil",
+    "insert_text": "bds.projects.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.projects.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ProjectData | nil"
+  },
+  {
+    "description": "Read metadata for the current project.",
+    "detail": "bds.meta.get_project_metadata() -> ProjectMetadata",
+    "insert_text": "bds.meta.get_project_metadata()",
+    "label": "bds.meta.get_project_metadata",
+    "parameters": [],
+    "returns": "ProjectMetadata"
+  },
+  {
+    "description": "Update metadata for the current project. Keys omitted from updates keep their current values.",
+    "detail": "bds.meta.update_project_metadata(updates: table) -> ProjectMetadata | nil",
+    "insert_text": "bds.meta.update_project_metadata({ description = \"Updated description\" })",
+    "label": "bds.meta.update_project_metadata",
+    "parameters": [
+      {
+        "name": "updates",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ProjectMetadata | nil"
+  },
+  {
+    "description": "Replace project metadata fields for the current project.",
+    "detail": "bds.meta.set_project_metadata(updates: table) -> ProjectMetadata | nil",
+    "insert_text": "bds.meta.set_project_metadata({ description = \"Updated description\" })",
+    "label": "bds.meta.set_project_metadata",
+    "parameters": [
+      {
+        "name": "updates",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ProjectMetadata | nil"
+  },
+  {
+    "description": "Add a category to the current project.",
+    "detail": "bds.meta.add_category(name: string) -> ProjectMetadata | nil",
+    "insert_text": "bds.meta.add_category(\"Example\")",
+    "label": "bds.meta.add_category",
+    "parameters": [
+      {
+        "name": "name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ProjectMetadata | nil"
+  },
+  {
+    "description": "Remove a category from the current project.",
+    "detail": "bds.meta.remove_category(name: string) -> ProjectMetadata | nil",
+    "insert_text": "bds.meta.remove_category(\"Example\")",
+    "label": "bds.meta.remove_category",
+    "parameters": [
+      {
+        "name": "name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ProjectMetadata | nil"
+  },
+  {
+    "description": "Add a tag record to the current project if it does not already exist.",
+    "detail": "bds.meta.add_tag(name: string) -> string[]",
+    "insert_text": "bds.meta.add_tag(\"Example\")",
+    "label": "bds.meta.add_tag",
+    "parameters": [
+      {
+        "name": "name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string[]"
+  },
+  {
+    "description": "Remove a tag record from the current project by name.",
+    "detail": "bds.meta.remove_tag(name: string) -> string[]",
+    "insert_text": "bds.meta.remove_tag(\"Example\")",
+    "label": "bds.meta.remove_tag",
+    "parameters": [
+      {
+        "name": "name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string[]"
+  },
+  {
+    "description": "Get project categories.",
+    "detail": "bds.meta.get_categories() -> string[]",
+    "insert_text": "bds.meta.get_categories()",
+    "label": "bds.meta.get_categories",
+    "parameters": [],
+    "returns": "string[]"
+  },
+  {
+    "description": "Get tag names for the current project.",
+    "detail": "bds.meta.get_tags() -> string[]",
+    "insert_text": "bds.meta.get_tags()",
+    "label": "bds.meta.get_tags",
+    "parameters": [],
+    "returns": "string[]"
+  },
+  {
+    "description": "Get publishing preferences for the current project.",
+    "detail": "bds.meta.get_publishing_preferences() -> table | nil",
+    "insert_text": "bds.meta.get_publishing_preferences()",
+    "label": "bds.meta.get_publishing_preferences",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Set publishing preferences for the current project.",
+    "detail": "bds.meta.set_publishing_preferences(prefs: table) -> table | nil",
+    "insert_text": "bds.meta.set_publishing_preferences({ publish_drafts = false })",
+    "label": "bds.meta.set_publishing_preferences",
+    "parameters": [
+      {
+        "name": "prefs",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Reset publishing preferences to defaults.",
+    "detail": "bds.meta.clear_publishing_preferences() -> table | nil",
+    "insert_text": "bds.meta.clear_publishing_preferences()",
+    "label": "bds.meta.clear_publishing_preferences",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Synchronize startup metadata state and return tags, categories, and project metadata.",
+    "detail": "bds.meta.sync_on_startup() -> table",
+    "insert_text": "bds.meta.sync_on_startup()",
+    "label": "bds.meta.sync_on_startup",
+    "parameters": [],
+    "returns": "table"
+  },
+  {
+    "description": "Create a post in the current project.",
+    "detail": "bds.posts.create(data: table) -> PostData | nil",
+    "insert_text": "bds.posts.create({ title = \"Example\" })",
+    "label": "bds.posts.create",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Discard unpublished post changes and restore the last published version from disk.",
+    "detail": "bds.posts.discard(id: string) -> PostData | nil",
+    "insert_text": "bds.posts.discard(\"example-id\")",
+    "label": "bds.posts.discard",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Filter posts using status, tags, categories, language, year, month, or date range fields.",
+    "detail": "bds.posts.filter(filters: table) -> PostData[] | nil",
+    "insert_text": "bds.posts.filter({ status = \"draft\" })",
+    "label": "bds.posts.filter",
+    "parameters": [
+      {
+        "name": "filters",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "PostData[] | nil"
+  },
+  {
+    "description": "Generate a unique slug from a title, optionally excluding one post id.",
+    "detail": "bds.posts.generate_unique_slug(title: string, exclude_post_id?: string) -> string",
+    "insert_text": "bds.posts.generate_unique_slug(\"Example post\", \"example-id\")",
+    "label": "bds.posts.generate_unique_slug",
+    "parameters": [
+      {
+        "name": "title",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "exclude_post_id",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "string"
+  },
+  {
+    "description": "Fetch posts filtered by a specific status.",
+    "detail": "bds.posts.get_by_status(status: string) -> PostData[]",
+    "insert_text": "bds.posts.get_by_status(\"draft\")",
+    "label": "bds.posts.get_by_status",
+    "parameters": [
+      {
+        "name": "status",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData[]"
+  },
+  {
+    "description": "Get post counts grouped by year and month.",
+    "detail": "bds.posts.get_by_year_month() -> table[]",
+    "insert_text": "bds.posts.get_by_year_month()",
+    "label": "bds.posts.get_by_year_month",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return aggregate post dashboard counts for the current project.",
+    "detail": "bds.posts.get_dashboard_stats() -> table",
+    "insert_text": "bds.posts.get_dashboard_stats()",
+    "label": "bds.posts.get_dashboard_stats",
+    "parameters": [],
+    "returns": "table"
+  },
+  {
+    "description": "Return posts that link to the given post.",
+    "detail": "bds.posts.get_linked_by(post_id: string) -> table[]",
+    "insert_text": "bds.posts.get_linked_by(\"example-id\")",
+    "label": "bds.posts.get_linked_by",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return posts linked from the given post.",
+    "detail": "bds.posts.get_links_to(post_id: string) -> table[]",
+    "insert_text": "bds.posts.get_links_to(\"example-id\")",
+    "label": "bds.posts.get_links_to",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return the local preview URL for a post, optionally with draft and language query parameters.",
+    "detail": "bds.posts.get_preview_url(post_id: string, options?: table) -> string | nil",
+    "insert_text": "bds.posts.get_preview_url(\"example-id\", { language = \"en\" })",
+    "label": "bds.posts.get_preview_url",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "options",
+        "required": false,
+        "type": "table"
+      }
+    ],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Update a post by id.",
+    "detail": "bds.posts.update(id: string, data: table) -> PostData | nil",
+    "insert_text": "bds.posts.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.posts.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Delete a post by id.",
+    "detail": "bds.posts.delete(id: string) -> boolean",
+    "insert_text": "bds.posts.delete(\"example-id\")",
+    "label": "bds.posts.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one post by id.",
+    "detail": "bds.posts.get(id: string) -> PostData | nil",
+    "insert_text": "bds.posts.get(\"example-id\")",
+    "label": "bds.posts.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Fetch all posts in the current project.",
+    "detail": "bds.posts.get_all() -> PostData[]",
+    "insert_text": "bds.posts.get_all()",
+    "label": "bds.posts.get_all",
+    "parameters": [],
+    "returns": "PostData[]"
+  },
+  {
+    "description": "Fetch one post by slug.",
+    "detail": "bds.posts.get_by_slug(slug: string) -> PostData | nil",
+    "insert_text": "bds.posts.get_by_slug(\"example-post\")",
+    "label": "bds.posts.get_by_slug",
+    "parameters": [
+      {
+        "name": "slug",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Get category names used by posts in the current project.",
+    "detail": "bds.posts.get_categories() -> string[]",
+    "insert_text": "bds.posts.get_categories()",
+    "label": "bds.posts.get_categories",
+    "parameters": [],
+    "returns": "string[]"
+  },
+  {
+    "description": "Get post categories with usage counts.",
+    "detail": "bds.posts.get_categories_with_counts() -> table[]",
+    "insert_text": "bds.posts.get_categories_with_counts()",
+    "label": "bds.posts.get_categories_with_counts",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Get tag names used by posts in the current project.",
+    "detail": "bds.posts.get_tags() -> string[]",
+    "insert_text": "bds.posts.get_tags()",
+    "label": "bds.posts.get_tags",
+    "parameters": [],
+    "returns": "string[]"
+  },
+  {
+    "description": "Get post tags with usage counts.",
+    "detail": "bds.posts.get_tags_with_counts() -> table[]",
+    "insert_text": "bds.posts.get_tags_with_counts()",
+    "label": "bds.posts.get_tags_with_counts",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Get a single translation for a post by language.",
+    "detail": "bds.posts.get_translation(post_id: string, language: string) -> table | nil",
+    "insert_text": "bds.posts.get_translation(\"example-id\", \"en\")",
+    "label": "bds.posts.get_translation",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Get all translations for a post.",
+    "detail": "bds.posts.get_translations(post_id: string) -> table[]",
+    "insert_text": "bds.posts.get_translations(\"example-id\")",
+    "label": "bds.posts.get_translations",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table[]"
+  },
+  {
+    "description": "Check whether a post has a published version.",
+    "detail": "bds.posts.has_published_version(post_id: string) -> boolean",
+    "insert_text": "bds.posts.has_published_version(\"example-id\")",
+    "label": "bds.posts.has_published_version",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Return whether a slug is available in the current project, optionally excluding one post id.",
+    "detail": "bds.posts.is_slug_available(slug: string, exclude_post_id?: string) -> boolean",
+    "insert_text": "bds.posts.is_slug_available(\"example-post\", \"example-id\")",
+    "label": "bds.posts.is_slug_available",
+    "parameters": [
+      {
+        "name": "slug",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "exclude_post_id",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Publish a post by id.",
+    "detail": "bds.posts.publish(id: string) -> PostData | nil",
+    "insert_text": "bds.posts.publish(\"example-id\")",
+    "label": "bds.posts.publish",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData | nil"
+  },
+  {
+    "description": "Publish one translation of a post by language.",
+    "detail": "bds.posts.publish_translation(post_id: string, language: string) -> table | nil",
+    "insert_text": "bds.posts.publish_translation(\"example-id\", \"en\")",
+    "label": "bds.posts.publish_translation",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Rebuild post records from published files.",
+    "detail": "bds.posts.rebuild_from_files() -> PostData[] | nil",
+    "insert_text": "bds.posts.rebuild_from_files()",
+    "label": "bds.posts.rebuild_from_files",
+    "parameters": [],
+    "returns": "PostData[] | nil"
+  },
+  {
+    "description": "Rebuild the post link graph for the current project.",
+    "detail": "bds.posts.rebuild_links() -> boolean",
+    "insert_text": "bds.posts.rebuild_links()",
+    "label": "bds.posts.rebuild_links",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Reindex post and media search text for the current project.",
+    "detail": "bds.posts.reindex_text() -> boolean",
+    "insert_text": "bds.posts.reindex_text()",
+    "label": "bds.posts.reindex_text",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Search posts by free-text query.",
+    "detail": "bds.posts.search(query: string) -> PostData[] | nil",
+    "insert_text": "bds.posts.search(\"rust\")",
+    "label": "bds.posts.search",
+    "parameters": [
+      {
+        "name": "query",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "PostData[] | nil"
+  },
+  {
+    "description": "Delete a media translation by language.",
+    "detail": "bds.media.delete_translation(media_id: string, language: string) -> boolean",
+    "insert_text": "bds.media.delete_translation(\"example-id\", \"en\")",
+    "label": "bds.media.delete_translation",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Filter media using year, month, tags, language, or date range fields.",
+    "detail": "bds.media.filter(filters: table) -> MediaData[]",
+    "insert_text": "bds.media.filter({ status = \"draft\" })",
+    "label": "bds.media.filter",
+    "parameters": [
+      {
+        "name": "filters",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "MediaData[]"
+  },
+  {
+    "description": "Import media into the current project.",
+    "detail": "bds.media.import(data: table) -> MediaData | nil",
+    "insert_text": "bds.media.import({ title = \"Example\" })",
+    "label": "bds.media.import",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "MediaData | nil"
+  },
+  {
+    "description": "Get media counts grouped by year and month.",
+    "detail": "bds.media.get_by_year_month() -> table[]",
+    "insert_text": "bds.media.get_by_year_month()",
+    "label": "bds.media.get_by_year_month",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return the absolute file path for a media item.",
+    "detail": "bds.media.get_file_path(media_id: string) -> string | nil",
+    "insert_text": "bds.media.get_file_path(\"example-id\")",
+    "label": "bds.media.get_file_path",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Update media metadata by id.",
+    "detail": "bds.media.update(id: string, data: table) -> MediaData | nil",
+    "insert_text": "bds.media.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.media.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "MediaData | nil"
+  },
+  {
+    "description": "Delete a media item by id.",
+    "detail": "bds.media.delete(id: string) -> boolean",
+    "insert_text": "bds.media.delete(\"example-id\")",
+    "label": "bds.media.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one media item by id.",
+    "detail": "bds.media.get(id: string) -> MediaData | nil",
+    "insert_text": "bds.media.get(\"example-id\")",
+    "label": "bds.media.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "MediaData | nil"
+  },
+  {
+    "description": "Fetch all media in the current project.",
+    "detail": "bds.media.get_all() -> MediaData[]",
+    "insert_text": "bds.media.get_all()",
+    "label": "bds.media.get_all",
+    "parameters": [],
+    "returns": "MediaData[]"
+  },
+  {
+    "description": "Return tag names used by media in the current project.",
+    "detail": "bds.media.get_tags() -> string[]",
+    "insert_text": "bds.media.get_tags()",
+    "label": "bds.media.get_tags",
+    "parameters": [],
+    "returns": "string[]"
+  },
+  {
+    "description": "Return media tags with usage counts.",
+    "detail": "bds.media.get_tags_with_counts() -> table[]",
+    "insert_text": "bds.media.get_tags_with_counts()",
+    "label": "bds.media.get_tags_with_counts",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return a media thumbnail as a data URL for the requested size.",
+    "detail": "bds.media.get_thumbnail(media_id: string, size?: string) -> string | nil",
+    "insert_text": "bds.media.get_thumbnail(\"example-id\", \"small\")",
+    "label": "bds.media.get_thumbnail",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "size",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Return one media translation by language.",
+    "detail": "bds.media.get_translation(media_id: string, language: string) -> table | nil",
+    "insert_text": "bds.media.get_translation(\"example-id\", \"en\")",
+    "label": "bds.media.get_translation",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Return all translations for a media item.",
+    "detail": "bds.media.get_translations(media_id: string) -> table[]",
+    "insert_text": "bds.media.get_translations(\"example-id\")",
+    "label": "bds.media.get_translations",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table[]"
+  },
+  {
+    "description": "Return the project-relative public URL path for a media item.",
+    "detail": "bds.media.get_url(media_id: string) -> string | nil",
+    "insert_text": "bds.media.get_url(\"example-id\")",
+    "label": "bds.media.get_url",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string | nil"
+  },
+  {
+    "description": "Rebuild media records from sidecar files on disk.",
+    "detail": "bds.media.rebuild_from_files() -> MediaData[] | nil",
+    "insert_text": "bds.media.rebuild_from_files()",
+    "label": "bds.media.rebuild_from_files",
+    "parameters": [],
+    "returns": "MediaData[] | nil"
+  },
+  {
+    "description": "Generate thumbnails for media items that are missing them.",
+    "detail": "bds.media.regenerate_missing_thumbnails() -> table",
+    "insert_text": "bds.media.regenerate_missing_thumbnails()",
+    "label": "bds.media.regenerate_missing_thumbnails",
+    "parameters": [],
+    "returns": "table"
+  },
+  {
+    "description": "Regenerate all thumbnails for one media item.",
+    "detail": "bds.media.regenerate_thumbnails(media_id: string) -> table | nil",
+    "insert_text": "bds.media.regenerate_thumbnails(\"example-id\")",
+    "label": "bds.media.regenerate_thumbnails",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Reindex post and media search text for the current project.",
+    "detail": "bds.media.reindex_text() -> boolean",
+    "insert_text": "bds.media.reindex_text()",
+    "label": "bds.media.reindex_text",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Replace the binary file behind an existing media item.",
+    "detail": "bds.media.replace_file(media_id: string, source_path: string) -> MediaData | nil",
+    "insert_text": "bds.media.replace_file(\"example-id\", \"/path/to/item\")",
+    "label": "bds.media.replace_file",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "source_path",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "MediaData | nil"
+  },
+  {
+    "description": "Search media by free-text query.",
+    "detail": "bds.media.search(query: string) -> MediaData[] | nil",
+    "insert_text": "bds.media.search(\"rust\")",
+    "label": "bds.media.search",
+    "parameters": [
+      {
+        "name": "query",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "MediaData[] | nil"
+  },
+  {
+    "description": "Create or update a media translation.",
+    "detail": "bds.media.upsert_translation(media_id: string, language: string, data: table) -> table | nil",
+    "insert_text": "bds.media.upsert_translation(\"example-id\", \"en\", { title = \"Example\" })",
+    "label": "bds.media.upsert_translation",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Create a script in the current project.",
+    "detail": "bds.scripts.create(data: table) -> ScriptData | nil",
+    "insert_text": "bds.scripts.create({ title = \"Example\" })",
+    "label": "bds.scripts.create",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ScriptData | nil"
+  },
+  {
+    "description": "Update a script by id.",
+    "detail": "bds.scripts.update(id: string, data: table) -> ScriptData | nil",
+    "insert_text": "bds.scripts.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.scripts.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "ScriptData | nil"
+  },
+  {
+    "description": "Delete a script by id.",
+    "detail": "bds.scripts.delete(id: string) -> boolean",
+    "insert_text": "bds.scripts.delete(\"example-id\")",
+    "label": "bds.scripts.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one script by id.",
+    "detail": "bds.scripts.get(id: string) -> ScriptData | nil",
+    "insert_text": "bds.scripts.get(\"example-id\")",
+    "label": "bds.scripts.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ScriptData | nil"
+  },
+  {
+    "description": "Fetch all scripts in the current project.",
+    "detail": "bds.scripts.get_all() -> ScriptData[]",
+    "insert_text": "bds.scripts.get_all()",
+    "label": "bds.scripts.get_all",
+    "parameters": [],
+    "returns": "ScriptData[]"
+  },
+  {
+    "description": "Publish a script by id.",
+    "detail": "bds.scripts.publish(id: string) -> ScriptData | nil",
+    "insert_text": "bds.scripts.publish(\"example-id\")",
+    "label": "bds.scripts.publish",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ScriptData | nil"
+  },
+  {
+    "description": "Rebuild script records from published files.",
+    "detail": "bds.scripts.rebuild_from_files() -> ScriptData[] | nil",
+    "insert_text": "bds.scripts.rebuild_from_files()",
+    "label": "bds.scripts.rebuild_from_files",
+    "parameters": [],
+    "returns": "ScriptData[] | nil"
+  },
+  {
+    "description": "Create a template in the current project.",
+    "detail": "bds.templates.create(data: table) -> TemplateData | nil",
+    "insert_text": "bds.templates.create({ title = \"Example\" })",
+    "label": "bds.templates.create",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "TemplateData | nil"
+  },
+  {
+    "description": "Update a template by id.",
+    "detail": "bds.templates.update(id: string, data: table) -> TemplateData | nil",
+    "insert_text": "bds.templates.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.templates.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "TemplateData | nil"
+  },
+  {
+    "description": "Delete a template by id.",
+    "detail": "bds.templates.delete(id: string) -> boolean",
+    "insert_text": "bds.templates.delete(\"example-id\")",
+    "label": "bds.templates.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one template by id.",
+    "detail": "bds.templates.get(id: string) -> TemplateData | nil",
+    "insert_text": "bds.templates.get(\"example-id\")",
+    "label": "bds.templates.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TemplateData | nil"
+  },
+  {
+    "description": "Fetch all templates in the current project.",
+    "detail": "bds.templates.get_all() -> TemplateData[]",
+    "insert_text": "bds.templates.get_all()",
+    "label": "bds.templates.get_all",
+    "parameters": [],
+    "returns": "TemplateData[]"
+  },
+  {
+    "description": "Publish a template by id.",
+    "detail": "bds.templates.publish(id: string) -> TemplateData | nil",
+    "insert_text": "bds.templates.publish(\"example-id\")",
+    "label": "bds.templates.publish",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TemplateData | nil"
+  },
+  {
+    "description": "Fetch enabled templates filtered by kind.",
+    "detail": "bds.templates.get_enabled_by_kind(kind: string) -> TemplateData[]",
+    "insert_text": "bds.templates.get_enabled_by_kind(\"utility\")",
+    "label": "bds.templates.get_enabled_by_kind",
+    "parameters": [
+      {
+        "name": "kind",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TemplateData[]"
+  },
+  {
+    "description": "Rebuild template records from published files.",
+    "detail": "bds.templates.rebuild_from_files() -> TemplateData[] | nil",
+    "insert_text": "bds.templates.rebuild_from_files()",
+    "label": "bds.templates.rebuild_from_files",
+    "parameters": [],
+    "returns": "TemplateData[] | nil"
+  },
+  {
+    "description": "Validate Liquid template syntax.",
+    "detail": "bds.templates.validate(content: string) -> ValidationResult | nil",
+    "insert_text": "bds.templates.validate(\"Example content\")",
+    "label": "bds.templates.validate",
+    "parameters": [
+      {
+        "name": "content",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "ValidationResult | nil"
+  },
+  {
+    "description": "Create a tag in the current project.",
+    "detail": "bds.tags.create(data: table) -> TagData | nil",
+    "insert_text": "bds.tags.create({ title = \"Example\" })",
+    "label": "bds.tags.create",
+    "parameters": [
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "TagData | nil"
+  },
+  {
+    "description": "Update a tag by id.",
+    "detail": "bds.tags.update(id: string, data: table) -> TagData | nil",
+    "insert_text": "bds.tags.update(\"example-id\", { title = \"Example\" })",
+    "label": "bds.tags.update",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "TagData | nil"
+  },
+  {
+    "description": "Delete a tag by id.",
+    "detail": "bds.tags.delete(id: string) -> boolean",
+    "insert_text": "bds.tags.delete(\"example-id\")",
+    "label": "bds.tags.delete",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch one tag by id.",
+    "detail": "bds.tags.get(id: string) -> TagData | nil",
+    "insert_text": "bds.tags.get(\"example-id\")",
+    "label": "bds.tags.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TagData | nil"
+  },
+  {
+    "description": "Fetch all tags in the current project.",
+    "detail": "bds.tags.get_all() -> TagData[]",
+    "insert_text": "bds.tags.get_all()",
+    "label": "bds.tags.get_all",
+    "parameters": [],
+    "returns": "TagData[]"
+  },
+  {
+    "description": "Fetch one tag by name.",
+    "detail": "bds.tags.get_by_name(name: string) -> TagData | nil",
+    "insert_text": "bds.tags.get_by_name(\"Example\")",
+    "label": "bds.tags.get_by_name",
+    "parameters": [
+      {
+        "name": "name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TagData | nil"
+  },
+  {
+    "description": "Get post ids using a specific tag.",
+    "detail": "bds.tags.get_posts_with_tag(tag_id: string) -> string[]",
+    "insert_text": "bds.tags.get_posts_with_tag(\"example-id\")",
+    "label": "bds.tags.get_posts_with_tag",
+    "parameters": [
+      {
+        "name": "tag_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "string[]"
+  },
+  {
+    "description": "Fetch tags with usage counts.",
+    "detail": "bds.tags.get_with_counts() -> table[]",
+    "insert_text": "bds.tags.get_with_counts()",
+    "label": "bds.tags.get_with_counts",
+    "parameters": [],
+    "returns": "table[]"
+  },
+  {
+    "description": "Merge source tags into a target tag.",
+    "detail": "bds.tags.merge(source_tag_ids: table, target_tag_id: string) -> boolean",
+    "insert_text": "bds.tags.merge({ \"tag-1\", \"tag-2\" }, \"example-id\")",
+    "label": "bds.tags.merge",
+    "parameters": [
+      {
+        "name": "source_tag_ids",
+        "required": true,
+        "type": "table"
+      },
+      {
+        "name": "target_tag_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Rename a tag by id.",
+    "detail": "bds.tags.rename(id: string, new_name: string) -> TagData | nil",
+    "insert_text": "bds.tags.rename(\"example-id\", \"Example\")",
+    "label": "bds.tags.rename",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "new_name",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TagData | nil"
+  },
+  {
+    "description": "Sync tag records from post tags.",
+    "detail": "bds.tags.sync_from_posts() -> TagData[] | nil",
+    "insert_text": "bds.tags.sync_from_posts()",
+    "label": "bds.tags.sync_from_posts",
+    "parameters": [],
+    "returns": "TagData[] | nil"
+  },
+  {
+    "description": "Fetch one task by id.",
+    "detail": "bds.tasks.get(id: string) -> TaskData | nil",
+    "insert_text": "bds.tasks.get(\"example-id\")",
+    "label": "bds.tasks.get",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "TaskData | nil"
+  },
+  {
+    "description": "Fetch the current task status snapshot.",
+    "detail": "bds.tasks.status_snapshot() -> TaskStatus",
+    "insert_text": "bds.tasks.status_snapshot()",
+    "label": "bds.tasks.status_snapshot",
+    "parameters": [],
+    "returns": "TaskStatus"
+  },
+  {
+    "description": "Cancel a task by id.",
+    "detail": "bds.tasks.cancel(id: string) -> boolean",
+    "insert_text": "bds.tasks.cancel(\"example-id\")",
+    "label": "bds.tasks.cancel",
+    "parameters": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "boolean"
+  },
+  {
+    "description": "Fetch all tasks currently tracked by the task manager.",
+    "detail": "bds.tasks.get_all() -> TaskData[]",
+    "insert_text": "bds.tasks.get_all()",
+    "label": "bds.tasks.get_all",
+    "parameters": [],
+    "returns": "TaskData[]"
+  },
+  {
+    "description": "Fetch running tasks currently tracked by the task manager.",
+    "detail": "bds.tasks.get_running() -> TaskData[]",
+    "insert_text": "bds.tasks.get_running()",
+    "label": "bds.tasks.get_running",
+    "parameters": [],
+    "returns": "TaskData[]"
+  },
+  {
+    "description": "Clear completed tasks from the in-memory task list.",
+    "detail": "bds.tasks.clear_completed() -> boolean",
+    "insert_text": "bds.tasks.clear_completed()",
+    "label": "bds.tasks.clear_completed",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Upload the rendered site using the provided publishing credentials.",
+    "detail": "bds.publish.upload_site(credentials: table) -> TaskData | nil",
+    "insert_text": "bds.publish.upload_site({ host = \"example.com\", username = \"author\" })",
+    "label": "bds.publish.upload_site",
+    "parameters": [
+      {
+        "name": "credentials",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "TaskData | nil"
+  },
+  {
+    "description": "Detect the language of post title and content.",
+    "detail": "bds.chat.detect_post_language(title: string, content: string) -> table",
+    "insert_text": "bds.chat.detect_post_language(\"Example post\", \"Example content\")",
+    "label": "bds.chat.detect_post_language",
+    "parameters": [
+      {
+        "name": "title",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "content",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table"
+  },
+  {
+    "description": "Analyze a post using the configured AI runtime.",
+    "detail": "bds.chat.analyze_post(post_id: string) -> table | nil",
+    "insert_text": "bds.chat.analyze_post(\"example-id\")",
+    "label": "bds.chat.analyze_post",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Translate a post and persist the translation.",
+    "detail": "bds.chat.translate_post(post_id: string, language: string) -> table | nil",
+    "insert_text": "bds.chat.translate_post(\"example-id\", \"en\")",
+    "label": "bds.chat.translate_post",
+    "parameters": [
+      {
+        "name": "post_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Analyze a media image using the configured AI runtime.",
+    "detail": "bds.chat.analyze_media_image(media_id: string) -> table | nil",
+    "insert_text": "bds.chat.analyze_media_image(\"example-id\")",
+    "label": "bds.chat.analyze_media_image",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Detect the language of media metadata.",
+    "detail": "bds.chat.detect_media_language(title: string, alt?: string, caption?: string) -> table",
+    "insert_text": "bds.chat.detect_media_language(\"Example post\", \"A descriptive alternative\", \"Example caption\")",
+    "label": "bds.chat.detect_media_language",
+    "parameters": [
+      {
+        "name": "title",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "alt",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "name": "caption",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "returns": "table"
+  },
+  {
+    "description": "Translate media metadata and persist the translation.",
+    "detail": "bds.chat.translate_media_metadata(media_id: string, language: string) -> table | nil",
+    "insert_text": "bds.chat.translate_media_metadata(\"example-id\", \"en\")",
+    "label": "bds.chat.translate_media_metadata",
+    "parameters": [
+      {
+        "name": "media_id",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "language",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Report progress for the current managed job.",
+    "detail": "bds.report_progress(payload: table) -> boolean",
+    "insert_text": "bds.report_progress({ current = 1, total = 10, message = \"Working\" })",
+    "label": "bds.report_progress",
+    "parameters": [
+      {
+        "name": "payload",
+        "required": true,
+        "type": "table"
+      }
+    ],
+    "returns": "boolean"
+  }
+]

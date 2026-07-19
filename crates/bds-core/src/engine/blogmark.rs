@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,7 +10,7 @@ use crate::db::DbConnection as Connection;
 use crate::db::queries::script as script_queries;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, Script, ScriptKind};
-use crate::scripting::{self, ExecutionControl, ExecutionKind};
+use crate::scripting::{self, CoreHost, ExecutionControl, ExecutionKind, HostApi, UnavailableHost};
 
 const MAX_TITLE_LENGTH: usize = 200;
 const MAX_URL_LENGTH: usize = 2_048;
@@ -81,6 +82,27 @@ pub fn receive_deep_link(
     project_id: &str,
     raw: &str,
 ) -> EngineResult<BlogmarkImportResult> {
+    let host = CoreHost::from_connection(conn, project_id, data_dir)
+        .map(|host| Arc::new(host) as Arc<dyn HostApi>)
+        .unwrap_or_else(|_| Arc::new(UnavailableHost));
+    receive_deep_link_with_host(
+        conn,
+        data_dir,
+        project_id,
+        raw,
+        &ExecutionControl::default(),
+        host,
+    )
+}
+
+pub fn receive_deep_link_with_host(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    raw: &str,
+    control: &ExecutionControl,
+    host: Arc<dyn HostApi>,
+) -> EngineResult<BlogmarkImportResult> {
     let mut candidate = parse_deep_link(raw)?;
     if let Some(target) = &candidate.project_id
         && target != project_id
@@ -98,7 +120,10 @@ pub fn receive_deep_link(
         ));
     }
     let (mut candidate, toasts, transform_errors) =
-        run_transforms(conn, data_dir, project_id, candidate)?;
+        run_transforms(conn, data_dir, project_id, candidate, control, host)?;
+    if control.is_cancelled() {
+        return Err(EngineError::Validation("script cancelled".into()));
+    }
     if candidate.categories.is_empty() {
         let metadata = crate::engine::meta::read_project_json(data_dir)?;
         if let Some(category) = metadata
@@ -133,6 +158,8 @@ fn run_transforms(
     data_dir: &Path,
     project_id: &str,
     candidate: BlogmarkCandidate,
+    control: &ExecutionControl,
+    host: Arc<dyn HostApi>,
 ) -> EngineResult<(BlogmarkCandidate, Vec<String>, Vec<String>)> {
     let mut transforms = script_queries::list_scripts_by_project(conn, project_id)?
         .into_iter()
@@ -149,6 +176,9 @@ fn run_transforms(
     let mut toasts = Vec::new();
     let mut errors = Vec::new();
     for script in transforms {
+        if control.is_cancelled() {
+            return Err(EngineError::Validation("script cancelled".into()));
+        }
         if script.entrypoint.trim().is_empty() {
             continue;
         }
@@ -157,12 +187,13 @@ fn run_transforms(
             "source": "blogmark",
             "url": current.get("url").cloned().unwrap_or(Value::Null),
         });
-        match scripting::execute_many(
+        match scripting::execute_many_with_host(
             &source,
             &script.entrypoint,
             &[current.clone(), context],
             ExecutionKind::Transform,
-            &ExecutionControl::default(),
+            control,
+            Arc::clone(&host),
         ) {
             Ok(execution) => {
                 let (next, returned_toasts) = split_transform_result(execution.value, &current);
@@ -171,6 +202,9 @@ fn run_transforms(
                     &mut toasts,
                     execution.toasts.into_iter().chain(returned_toasts),
                 );
+            }
+            Err(_error) if control.is_cancelled() => {
+                return Err(EngineError::Validation("script cancelled".into()));
             }
             Err(error) => errors.push(format!("{}: {error}", script.slug)),
         }
@@ -287,6 +321,22 @@ mod tests {
     use crate::model::ScriptKind;
     use tempfile::TempDir;
 
+    struct PostsHost;
+
+    impl HostApi for PostsHost {
+        fn call(
+            &self,
+            namespace: &str,
+            method: &str,
+            _arguments: Vec<Value>,
+        ) -> Result<Value, String> {
+            match (namespace, method) {
+                ("posts", "get_all") => Ok(json!([{"id":"one"}, {"id":"two"}])),
+                _ => Err("unsupported test capability".into()),
+            }
+        }
+    }
+
     #[test]
     fn parses_and_hardens_blogmark_links() {
         let candidate = parse_deep_link(
@@ -357,5 +407,81 @@ mod tests {
         );
         assert_eq!(result.toasts, vec!["done"]);
         assert!(result.transform_errors.is_empty());
+    }
+
+    #[test]
+    fn transforms_use_the_supplied_project_host() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        crate::db::fts::ensure_fts_tables(db.conn()).unwrap();
+        let directory = TempDir::new().unwrap();
+        let project = crate::engine::project::create_project(
+            db.conn(),
+            "Blog",
+            Some(directory.path().to_str().unwrap()),
+        )
+        .unwrap();
+        crate::engine::script::create_script(
+            db.conn(),
+            &project.id,
+            "Count posts",
+            ScriptKind::Transform,
+            "function main(data) data.title = tostring(#bds.posts.get_all()) .. ' posts'; return data end",
+            None,
+        )
+        .unwrap();
+
+        let result = receive_deep_link_with_host(
+            db.conn(),
+            directory.path(),
+            &project.id,
+            "ruds://new-post?title=Example",
+            &ExecutionControl::default(),
+            Arc::new(PostsHost),
+        )
+        .unwrap();
+
+        assert_eq!(result.post.title, "2 posts");
+    }
+
+    #[test]
+    fn cancellation_stops_transform_import_before_post_creation() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        crate::db::fts::ensure_fts_tables(db.conn()).unwrap();
+        let directory = TempDir::new().unwrap();
+        let project = crate::engine::project::create_project(
+            db.conn(),
+            "Blog",
+            Some(directory.path().to_str().unwrap()),
+        )
+        .unwrap();
+        crate::engine::script::create_script(
+            db.conn(),
+            &project.id,
+            "Cancelled",
+            ScriptKind::Transform,
+            "function main(data) return data end",
+            None,
+        )
+        .unwrap();
+        let control = ExecutionControl::default();
+        control.cancel();
+
+        assert!(
+            receive_deep_link_with_host(
+                db.conn(),
+                directory.path(),
+                &project.id,
+                "ruds://new-post?title=Example",
+                &control,
+                Arc::new(PostsHost),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            crate::db::queries::post::count_posts_by_project(db.conn(), &project.id).unwrap(),
+            0
+        );
     }
 }

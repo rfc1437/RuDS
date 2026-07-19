@@ -6,7 +6,7 @@ RuDS is the native Rust replacement for bDS2. Core covers the complete everyday 
 
 The behavioural contract is `specs/*.allium`. When a spec is ambiguous, `../bDS2` is the reference implementation. [RUST_PLAN_EXTENSION.md](RUST_PLAN_EXTENSION.md) contains optional and advanced surfaces.
 
-Status in this document describes the current source code as of 2026-07-18. It deliberately does not track build runs, test runs, release gates, or implementation history.
+Status in this document describes the current source code as of 2026-07-19. It deliberately does not track build runs, test runs, release gates, or implementation history.
 
 ## Non-Negotiable Constraints
 
@@ -58,6 +58,7 @@ Available:
 - Native file/folder dialogs and recent-project handling.
 - macOS open-file and URL lifecycle plumbing.
 - Localized UI separate from project content language.
+- Desktop-backed Lua application capabilities for clipboard, folders, preview targeting, title-bar metrics, renderer readiness, and supported menu actions.
 
 Open:
 
@@ -126,27 +127,26 @@ Available:
 - One managed publish job processes the HTML, thumbnail, and media targets in
   sequence, matching bDS2. Parallel target uploads are not a parity requirement.
 
-### Lua scripting — Partly done
+### Lua scripting — Done
 
 Available:
 
 - Sandboxed vendored Lua 5.4 runtime with cancellation and execution limits.
 - Application log, progress, and toast functions.
-- User macro and transform execution, including Blogmark transforms.
+- Project-scoped bDS2-compatible core `bds.*` APIs with matching Lua signatures and failure values.
+- User macro and transform execution, including project capabilities during rendered macros and Blogmark transforms.
+- Managed Blogmark transform cancellation and live, non-duplicated progress reporting.
+- Project-scoped post and media reindexing from Lua without disturbing other projects.
 - Lua script persistence, rebuild, metadata diff, validation, and editor support.
 - Fixed `.lua` script file contract.
-
-Open:
-
-- Expose the bDS2-compatible core `bds.*` API for post, media, tag, project, and other script-visible data.
-- Generate and bundle the Lua API reference, canonical type reference, and macro/transform/utility examples under `docs/scripting/`.
-- Add a documentation-sync check tied to the exposed API.
+- Generated and bundled API/type references plus executable macro, transform, and utility examples under `docs/scripting/`.
+- Manifest-driven runtime, documentation, and completion data with drift checks.
+- `bds.sync` and `bds.embeddings` remain extension APIs and are not exposed by core.
 
 ## Remaining Core Blocks
 
-1. Complete the Lua host API and scripting documentation.
-2. Finish the linked-image authoring workflow.
-3. Add generation section-task grouping.
-4. Return normalized token accounting from one-shot AI calls.
+1. Finish the linked-image authoring workflow.
+2. Add generation section-task grouping.
+3. Return normalized token accounting from one-shot AI calls.
 
 Core is feature-complete when these blocks are closed and the implementation continues to satisfy the Allium and bDS2 compatibility contracts.
