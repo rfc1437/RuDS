@@ -23,6 +23,8 @@ pulldown-cmark = { workspace = true }
 liquid = { workspace = true }
 liquid-core = { workspace = true }
 quick-xml = { workspace = true }
+htmd = { workspace = true }
+regex = { workspace = true }
 rayon = { workspace = true }
 pagefind = { workspace = true }
 reqwest = { workspace = true }

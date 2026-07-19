@@ -13,8 +13,8 @@ use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
 use bds_core::i18n::{UiLocale, detect_os_locale};
 use bds_core::model::{
-    Media, Post, PostStatus, PostTranslation, Project, PublishingPreferences, Script, SshMode,
-    Template,
+    ImportDefinition, ImportReport, Media, Post, PostStatus, PostTranslation, Project,
+    PublishingPreferences, Script, SshMode, Template,
 };
 
 use crate::components::webview::{self, WebViewConfig, WebViewController};
@@ -32,6 +32,9 @@ use crate::views::{
         DashboardTimelineMonth,
     },
     git::{GitDiffLoad, GitDiffState, GitNetworkCompletion, GitSnapshot, GitUiState},
+    import_editor::{
+        ImportAnalysisEvent, ImportEditorMsg, ImportEditorState, ImportExecutionEvent,
+    },
     media_editor::{LinkedPostItem, MediaEditorMsg, MediaEditorState},
     metadata_diff::MetadataDiffState,
     modal,
@@ -117,6 +120,26 @@ pub enum Message {
     MediaReplacementFinished {
         media_id: String,
         result: Result<Option<Media>, String>,
+    },
+    ImportUploadsPicked {
+        definition_id: String,
+        path: Option<PathBuf>,
+    },
+    ImportWxrPicked {
+        definition_id: String,
+        path: Option<PathBuf>,
+    },
+    ImportAnalysisEvent {
+        definition_id: String,
+        event: ImportAnalysisEvent,
+    },
+    ImportExecutionEvent {
+        definition_id: String,
+        event: ImportExecutionEvent,
+    },
+    ImportAutoMapFinished {
+        definition_id: String,
+        result: Result<(ImportDefinition, ImportReport, usize), String>,
     },
 
     // Tasks
@@ -269,6 +292,7 @@ pub enum Message {
     ScriptEditor(ScriptEditorMsg),
     Tags(TagsMsg),
     Settings(SettingsMsg),
+    ImportEditor(ImportEditorMsg),
 
     // Editor data loading
     PostLoaded(Result<Post, String>),
@@ -295,6 +319,7 @@ pub enum Message {
     CreateMedia,
     CreateScript,
     CreateTemplate,
+    CreateImport,
 
     Noop,
     InitMenuBar,
@@ -798,6 +823,7 @@ pub struct BdsApp {
     sidebar_media: Vec<Media>,
     sidebar_scripts: Vec<Script>,
     sidebar_templates: Vec<Template>,
+    sidebar_imports: Vec<ImportDefinition>,
     sidebar_media_thumbs: HashMap<String, Option<std::path::PathBuf>>,
     sidebar_posts_has_more: bool,
     sidebar_media_has_more: bool,
@@ -866,6 +892,7 @@ pub struct BdsApp {
     media_editors: HashMap<String, MediaEditorState>,
     template_editors: HashMap<String, TemplateEditorState>,
     script_editors: HashMap<String, ScriptEditorState>,
+    import_editors: HashMap<String, ImportEditorState>,
     tags_view_state: Option<TagsViewState>,
     settings_state: Option<SettingsViewState>,
     dashboard_state: Option<DashboardState>,
@@ -967,6 +994,7 @@ impl BdsApp {
                 sidebar_media: Vec::new(),
                 sidebar_scripts: Vec::new(),
                 sidebar_templates: Vec::new(),
+                sidebar_imports: Vec::new(),
                 sidebar_media_thumbs: HashMap::new(),
                 sidebar_posts_has_more: false,
                 sidebar_media_has_more: false,
@@ -1009,6 +1037,7 @@ impl BdsApp {
                 media_editors: HashMap::new(),
                 template_editors: HashMap::new(),
                 script_editors: HashMap::new(),
+                import_editors: HashMap::new(),
                 tags_view_state: None,
                 settings_state: None,
                 dashboard_state: None,
@@ -1038,6 +1067,7 @@ impl BdsApp {
             sidebar_media: Vec::new(),
             sidebar_scripts: Vec::new(),
             sidebar_templates: Vec::new(),
+            sidebar_imports: Vec::new(),
             sidebar_media_thumbs: HashMap::new(),
             sidebar_posts_has_more: false,
             sidebar_media_has_more: false,
@@ -1079,6 +1109,7 @@ impl BdsApp {
             media_editors: HashMap::new(),
             template_editors: HashMap::new(),
             script_editors: HashMap::new(),
+            import_editors: HashMap::new(),
             tags_view_state: None,
             settings_state: None,
             dashboard_state: None,
@@ -1136,6 +1167,7 @@ impl BdsApp {
             ),
             Message::CreateScript => self.create_sidebar_script(),
             Message::CreateTemplate => self.create_sidebar_template(),
+            Message::CreateImport => self.create_sidebar_import(),
             Message::OpenSettingsSection(section) => {
                 self.sidebar_view = SidebarView::Settings;
                 self.sidebar_visible = true;
@@ -1301,7 +1333,7 @@ impl BdsApp {
                     }
                 }
                 self.sync_menu_state();
-                self.refresh_git_if_visible()
+                Task::batch([self.refresh_counts(), self.refresh_git_if_visible()])
             }
             Message::ProjectSwitched(result) => {
                 match result {
@@ -1692,6 +1724,108 @@ impl BdsApp {
                 }
                 self.refresh_sidebar_media()
             }
+            Message::ImportUploadsPicked {
+                definition_id,
+                path,
+            } => {
+                if let Some(path) = path {
+                    self.update_import_paths(&definition_id, None, Some(path.as_path()));
+                }
+                Task::none()
+            }
+            Message::ImportWxrPicked {
+                definition_id,
+                path,
+            } => {
+                if let Some(path) = path {
+                    self.update_import_paths(&definition_id, Some(path.as_path()), None);
+                    return self.start_import_analysis(&definition_id);
+                }
+                Task::none()
+            }
+            Message::ImportAnalysisEvent {
+                definition_id,
+                event,
+            } => {
+                if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                    match event {
+                        ImportAnalysisEvent::Progress(progress) => state.progress = Some(progress),
+                        ImportAnalysisEvent::Finished(result) => {
+                            state.is_analyzing = false;
+                            match *result {
+                                Ok((definition, report)) => {
+                                    state.definition = definition.clone();
+                                    state.report = Some(report);
+                                    state.error = None;
+                                    if let Some(sidebar) = self
+                                        .sidebar_imports
+                                        .iter_mut()
+                                        .find(|item| item.id == definition_id)
+                                    {
+                                        *sidebar = definition;
+                                    }
+                                }
+                                Err(error) => state.error = Some(error),
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::ImportExecutionEvent {
+                definition_id,
+                event,
+            } => {
+                if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                    match event {
+                        ImportExecutionEvent::Progress(progress) => state.progress = Some(progress),
+                        ImportExecutionEvent::Finished(result) => {
+                            state.is_executing = false;
+                            match result {
+                                Ok(result) => {
+                                    state.result = Some(result);
+                                    state.error = None;
+                                    self.notify(
+                                        ToastLevel::Success,
+                                        &t(self.ui_locale, "import.toast.complete"),
+                                    );
+                                    return self.refresh_counts();
+                                }
+                                Err(error) => state.error = Some(error),
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::ImportAutoMapFinished {
+                definition_id,
+                result,
+            } => {
+                if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                    state.is_analyzing = false;
+                    match result {
+                        Ok((definition, report, count)) => {
+                            state.definition = definition;
+                            state.report = Some(report);
+                            state.error = None;
+                            self.notify(
+                                ToastLevel::Success,
+                                &tw(
+                                    self.ui_locale,
+                                    "import.toast.mapped",
+                                    &[("count", &count.to_string())],
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            state.error = Some(error.clone());
+                            self.notify(ToastLevel::Error, &error);
+                        }
+                    }
+                }
+                Task::none()
+            }
             message @ (Message::MainWindowLoaded(_) | Message::EmbeddedPreviewReady(_)) => {
                 self.handle_preview_message(message)
             }
@@ -2028,6 +2162,7 @@ impl BdsApp {
                         self.delete_template_editor(&id, true)
                     }
                     modal::ConfirmAction::DeleteTag(id) => self.delete_tag(&id),
+                    modal::ConfirmAction::DeleteImport(id) => self.delete_import_definition(&id),
                     modal::ConfirmAction::MergeTags { sources, target } => {
                         self.merge_tags(&sources, &target)
                     }
@@ -2109,6 +2244,7 @@ impl BdsApp {
             Message::ScriptEditor(msg) => self.handle_script_editor_msg(msg),
             Message::Tags(msg) => self.handle_tags_msg(msg),
             Message::Settings(msg) => self.handle_settings_msg(msg),
+            Message::ImportEditor(msg) => self.handle_import_editor_msg(msg),
 
             // ── Editor data loading ──
             Message::PostLoaded(result) => {
@@ -2238,6 +2374,7 @@ impl BdsApp {
             &self.sidebar_media,
             &self.sidebar_scripts,
             &self.sidebar_templates,
+            &self.sidebar_imports,
             active_post_filter,
             &self.media_filter,
             &self.sidebar_media_thumbs,
@@ -2261,6 +2398,7 @@ impl BdsApp {
             &self.media_editors,
             &self.template_editors,
             &self.script_editors,
+            &self.import_editors,
             self.tags_view_state.as_ref(),
             self.settings_state.as_ref(),
             self.dashboard_state.as_ref(),
@@ -2643,6 +2781,444 @@ impl BdsApp {
         }
     }
 
+    fn create_sidebar_import(&mut self) -> Task<Message> {
+        let (Some(db), Some(project)) = (&self.db, &self.active_project) else {
+            return Task::none();
+        };
+        match engine::wordpress_import::create_definition(
+            db.conn(),
+            &project.id,
+            &t(self.ui_locale, "import.untitled"),
+        ) {
+            Ok(definition) => {
+                self.sidebar_imports.push(definition.clone());
+                let tab = Tab {
+                    id: definition.id.clone(),
+                    tab_type: TabType::Import,
+                    title: definition.name.clone(),
+                    is_transient: true,
+                    is_dirty: false,
+                };
+                let index = tabs::open_tab(&mut self.tabs, tab);
+                if let Some(tab) = self.tabs.get(index).cloned() {
+                    self.active_tab = Some(tab.id.clone());
+                    self.load_editor_for_tab(&tab);
+                }
+                self.sync_menu_state();
+            }
+            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        }
+        Task::none()
+    }
+
+    fn handle_import_editor_msg(&mut self, message: ImportEditorMsg) -> Task<Message> {
+        let Some(definition_id) = self.active_tab.clone().filter(|id| {
+            self.tabs
+                .iter()
+                .any(|tab| tab.id == *id && tab.tab_type == TabType::Import)
+        }) else {
+            return Task::none();
+        };
+        match message {
+            ImportEditorMsg::NameChanged(name) => {
+                let Some(db) = &self.db else {
+                    return Task::none();
+                };
+                match engine::wordpress_import::update_definition(
+                    db.conn(),
+                    &definition_id,
+                    Some(&name),
+                    None,
+                    None,
+                    None,
+                ) {
+                    Ok(definition) => {
+                        if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                            state.definition = definition.clone();
+                        }
+                        if let Some(item) = self
+                            .sidebar_imports
+                            .iter_mut()
+                            .find(|item| item.id == definition_id)
+                        {
+                            *item = definition;
+                        }
+                        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == definition_id)
+                        {
+                            tab.title = name;
+                        }
+                    }
+                    Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+                }
+                Task::none()
+            }
+            ImportEditorMsg::PickUploads => crate::platform::dialog::pick_import_uploads_folder(
+                definition_id,
+                t(self.ui_locale, "import.uploadsFolder"),
+            ),
+            ImportEditorMsg::PickWxr => crate::platform::dialog::pick_import_wxr_file(
+                definition_id,
+                t(self.ui_locale, "import.wxrFile"),
+                t(self.ui_locale, "import.wxrFilter"),
+            ),
+            ImportEditorMsg::Analyze => self.start_import_analysis(&definition_id),
+            ImportEditorMsg::Execute => self.start_import_execution(&definition_id),
+            ImportEditorMsg::AutoMapTaxonomy => self.start_import_auto_mapping(&definition_id),
+            ImportEditorMsg::DeleteRequested => {
+                let name = self
+                    .import_editors
+                    .get(&definition_id)
+                    .map(|state| state.definition.name.clone())
+                    .unwrap_or_default();
+                self.active_modal = Some(modal::ModalState::Confirm {
+                    title: t(self.ui_locale, "import.deleteTitle"),
+                    message: tw(self.ui_locale, "import.deleteMessage", &[("name", &name)]),
+                    on_confirm: modal::ConfirmAction::DeleteImport(definition_id),
+                });
+                Task::none()
+            }
+            ImportEditorMsg::SetResolution {
+                kind,
+                identity,
+                resolution,
+            } => {
+                let mut report = self
+                    .import_editors
+                    .get(&definition_id)
+                    .and_then(|state| state.report.clone());
+                if let Some(report) = report.as_mut() {
+                    match engine::wordpress_import::set_conflict_resolution(
+                        report, kind, &identity, resolution,
+                    )
+                    .and_then(|_| self.persist_import_report(&definition_id, report))
+                    {
+                        Ok(definition) => {
+                            if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                                state.definition = definition;
+                                state.report = Some(report.clone());
+                            }
+                        }
+                        Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+                    }
+                }
+                Task::none()
+            }
+            ImportEditorMsg::SetTaxonomyMapping {
+                kind,
+                source,
+                target,
+            } => {
+                let mut report = self
+                    .import_editors
+                    .get(&definition_id)
+                    .and_then(|state| state.report.clone());
+                if let Some(report) = report.as_mut() {
+                    match engine::wordpress_import::set_taxonomy_mapping(
+                        report,
+                        kind,
+                        &source,
+                        target.as_deref(),
+                    )
+                    .and_then(|_| self.persist_import_report(&definition_id, report))
+                    {
+                        Ok(definition) => {
+                            if let Some(state) = self.import_editors.get_mut(&definition_id) {
+                                state.definition = definition;
+                                state.report = Some(report.clone());
+                            }
+                        }
+                        Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+                    }
+                }
+                Task::none()
+            }
+            ImportEditorMsg::ToggleSection(section) => {
+                if let Some(state) = self.import_editors.get_mut(&definition_id)
+                    && !state.expanded.remove(&section)
+                {
+                    state.expanded.insert(section);
+                }
+                Task::none()
+            }
+        }
+    }
+
+    fn update_import_paths(
+        &mut self,
+        definition_id: &str,
+        wxr_path: Option<&Path>,
+        uploads_path: Option<&Path>,
+    ) {
+        let Some(db) = &self.db else { return };
+        match engine::wordpress_import::update_definition(
+            db.conn(),
+            definition_id,
+            None,
+            wxr_path.map(Some),
+            uploads_path.map(Some),
+            wxr_path.map(|_| None),
+        ) {
+            Ok(definition) => {
+                if let Some(state) = self.import_editors.get_mut(definition_id) {
+                    state.definition = definition.clone();
+                    if wxr_path.is_some() {
+                        state.report = None;
+                        state.result = None;
+                    }
+                }
+                if let Some(item) = self
+                    .sidebar_imports
+                    .iter_mut()
+                    .find(|item| item.id == definition_id)
+                {
+                    *item = definition;
+                }
+            }
+            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        }
+    }
+
+    fn delete_import_definition(&mut self, definition_id: &str) -> Task<Message> {
+        self.active_modal = None;
+        let Some(db) = &self.db else {
+            return Task::none();
+        };
+        match engine::wordpress_import::delete_definition(db.conn(), definition_id) {
+            Ok(()) => {
+                self.import_editors.remove(definition_id);
+                self.sidebar_imports
+                    .retain(|definition| definition.id != definition_id);
+                self.close_entity_tab(definition_id);
+                self.notify(
+                    ToastLevel::Success,
+                    &t(self.ui_locale, "import.toast.deleted"),
+                );
+            }
+            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        }
+        Task::none()
+    }
+
+    fn persist_import_report(
+        &self,
+        definition_id: &str,
+        report: &ImportReport,
+    ) -> engine::EngineResult<ImportDefinition> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| engine::EngineError::Validation("database unavailable".to_string()))?;
+        engine::wordpress_import::update_definition(
+            db.conn(),
+            definition_id,
+            None,
+            None,
+            None,
+            Some(Some(report)),
+        )
+    }
+
+    fn start_import_analysis(&mut self, definition_id: &str) -> Task<Message> {
+        let Some(definition) = self
+            .import_editors
+            .get(definition_id)
+            .map(|state| state.definition.clone())
+        else {
+            return Task::none();
+        };
+        let Some(wxr_path) = definition.wxr_file_path.clone() else {
+            if let Some(state) = self.import_editors.get_mut(definition_id) {
+                state.error = Some(t(self.ui_locale, "import.error.wxrRequired"));
+            }
+            return Task::none();
+        };
+        let Some(project) = self
+            .projects
+            .iter()
+            .find(|project| project.id == definition.project_id)
+        else {
+            return Task::none();
+        };
+        let Some(data_dir) = project.data_path.as_deref().map(PathBuf::from) else {
+            return Task::none();
+        };
+        let state = self.import_editors.get_mut(definition_id).unwrap();
+        state.is_analyzing = true;
+        state.progress = None;
+        state.error = None;
+        state.result = None;
+        let uploads = definition.uploads_folder_path.clone();
+        let db_path = self.db_path.clone();
+        let data_dir = data_dir.clone();
+        let project_id = project.id.clone();
+        let definition_id_owned = definition_id.to_string();
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        let worker_definition_id = definition_id_owned.clone();
+        tokio::task::spawn_blocking(move || {
+            let progress_sender = sender.clone();
+            let result = (|| {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let report = engine::wordpress_import::analyze_wxr(
+                    db.conn(),
+                    &data_dir,
+                    &project_id,
+                    Path::new(&wxr_path),
+                    uploads.as_deref().map(Path::new),
+                    Some(&mut |progress| {
+                        let _ =
+                            progress_sender.unbounded_send(ImportAnalysisEvent::Progress(progress));
+                    }),
+                )
+                .map_err(|error| error.to_string())?;
+                let definition = engine::wordpress_import::update_definition(
+                    db.conn(),
+                    &worker_definition_id,
+                    None,
+                    None,
+                    None,
+                    Some(Some(&report)),
+                )
+                .map_err(|error| error.to_string())?;
+                Ok((definition, report))
+            })();
+            let _ = sender.unbounded_send(ImportAnalysisEvent::Finished(Box::new(result)));
+        });
+        Task::run(receiver, move |event| Message::ImportAnalysisEvent {
+            definition_id: definition_id_owned.clone(),
+            event,
+        })
+    }
+
+    fn start_import_execution(&mut self, definition_id: &str) -> Task<Message> {
+        let Some(definition) = self
+            .import_editors
+            .get(definition_id)
+            .map(|state| state.definition.clone())
+        else {
+            return Task::none();
+        };
+        let Some(report) = self
+            .import_editors
+            .get(definition_id)
+            .and_then(|state| state.report.clone())
+        else {
+            return Task::none();
+        };
+        let Some(project) = self
+            .projects
+            .iter()
+            .find(|project| project.id == definition.project_id)
+        else {
+            return Task::none();
+        };
+        let Some(data_dir) = project.data_path.as_deref().map(PathBuf::from) else {
+            return Task::none();
+        };
+        let state = self.import_editors.get_mut(definition_id).unwrap();
+        state.is_executing = true;
+        state.progress = None;
+        state.error = None;
+        state.result = None;
+        let db_path = self.db_path.clone();
+        let data_dir = data_dir.clone();
+        let project_id = project.id.clone();
+        let default_author = engine::meta::read_project_json(&data_dir)
+            .ok()
+            .and_then(|metadata| metadata.default_author);
+        let definition_id_owned = definition_id.to_string();
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        tokio::task::spawn_blocking(move || {
+            let progress_sender = sender.clone();
+            let result = (|| {
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                engine::wordpress_import::execute_import(
+                    db.conn(),
+                    &data_dir,
+                    &project_id,
+                    &report,
+                    default_author.as_deref(),
+                    Some(&mut |progress| {
+                        let _ = progress_sender
+                            .unbounded_send(ImportExecutionEvent::Progress(progress));
+                    }),
+                )
+                .map_err(|error| error.to_string())
+            })();
+            let _ = sender.unbounded_send(ImportExecutionEvent::Finished(result));
+        });
+        Task::run(receiver, move |event| Message::ImportExecutionEvent {
+            definition_id: definition_id_owned.clone(),
+            event,
+        })
+    }
+
+    fn start_import_auto_mapping(&mut self, definition_id: &str) -> Task<Message> {
+        let Some(definition) = self
+            .import_editors
+            .get(definition_id)
+            .map(|state| state.definition.clone())
+        else {
+            return Task::none();
+        };
+        let Some(mut report) = self
+            .import_editors
+            .get(definition_id)
+            .and_then(|state| state.report.clone())
+        else {
+            return Task::none();
+        };
+        let Some(project) = self
+            .projects
+            .iter()
+            .find(|project| project.id == definition.project_id)
+        else {
+            return Task::none();
+        };
+        let Some(data_dir) = project.data_path.as_deref().map(PathBuf::from) else {
+            return Task::none();
+        };
+        let state = self.import_editors.get_mut(definition_id).unwrap();
+        state.is_analyzing = true;
+        state.error = None;
+        let db_path = self.db_path.clone();
+        let data_dir = data_dir.clone();
+        let project_id = project.id.clone();
+        let offline_mode = self.offline_mode;
+        let definition_id_owned = definition_id.to_string();
+        let result_definition_id = definition_id_owned.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    let count = engine::wordpress_import::auto_map_taxonomy(
+                        db.conn(),
+                        &data_dir,
+                        &project_id,
+                        offline_mode,
+                        &mut report,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let definition = engine::wordpress_import::update_definition(
+                        db.conn(),
+                        &definition_id_owned,
+                        None,
+                        None,
+                        None,
+                        Some(Some(&report)),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok((definition, report, count))
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::ImportAutoMapFinished {
+                definition_id: result_definition_id.clone(),
+                result,
+            },
+        )
+    }
+
     fn flush_active_post_editor(&mut self) {
         let Some(active_id) = self.active_tab.clone() else {
             return;
@@ -2811,6 +3387,9 @@ impl BdsApp {
                     .unwrap_or_default();
             self.sidebar_templates =
                 bds_core::db::queries::template::list_templates_by_project(db.conn(), &project.id)
+                    .unwrap_or_default();
+            self.sidebar_imports =
+                engine::wordpress_import::list_definitions(db.conn(), &project.id)
                     .unwrap_or_default();
 
             // Read pico theme from project metadata for status bar badge
@@ -5416,6 +5995,38 @@ impl BdsApp {
                     }
                 }
             }
+            TabType::Import => {
+                if !self.import_editors.contains_key(&tab.id) {
+                    match engine::wordpress_import::get_definition(db.conn(), &tab.id) {
+                        Ok(definition) => {
+                            let project_data_dir = self
+                                .projects
+                                .iter()
+                                .find(|project| project.id == definition.project_id)
+                                .and_then(|project| project.data_path.as_deref())
+                                .map(PathBuf::from)
+                                .or_else(|| self.data_dir.clone());
+                            let categories = project_data_dir
+                                .as_deref()
+                                .and_then(|path| engine::meta::read_categories_json(path).ok())
+                                .unwrap_or_default();
+                            let tags = bds_core::db::queries::tag::list_tags_by_project(
+                                db.conn(),
+                                &definition.project_id,
+                            )
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|tag| tag.name)
+                            .collect();
+                            self.import_editors.insert(
+                                definition.id.clone(),
+                                ImportEditorState::new(definition, categories, tags),
+                            );
+                        }
+                        Err(error) => self.notify_operation_failed("activity.import", error),
+                    }
+                }
+            }
             TabType::Tags => {
                 if self.tags_view_state.is_none() {
                     let project_id = self
@@ -6302,6 +6913,7 @@ mod tests {
     use crate::i18n::t;
     use crate::state::ToastLevel;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
+    use crate::state::tabs::{Tab, TabType};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
@@ -6313,7 +6925,7 @@ mod tests {
     use bds_core::db::queries::project::insert_project;
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
-    use bds_core::engine::{ai, media, post, script, template};
+    use bds_core::engine::{ai, media, post, script, template, wordpress_import};
     use bds_core::i18n::UiLocale;
     use bds_core::model::{Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
@@ -6389,6 +7001,42 @@ mod tests {
             }
         });
         format!("http://{}", addr)
+    }
+
+    #[test]
+    fn import_definition_loads_saved_analysis_into_real_editor_state() {
+        let (db, project, tempdir) = setup();
+        let definition =
+            wordpress_import::create_definition(db.conn(), &project.id, "Legacy").unwrap();
+        let mut report = wordpress_import::empty_report();
+        report.site.title = "Legacy Blog".to_string();
+        report.source_file = tempdir.path().join("legacy.xml").display().to_string();
+        wordpress_import::update_definition(
+            db.conn(),
+            &definition.id,
+            None,
+            None,
+            None,
+            Some(Some(&report)),
+        )
+        .unwrap();
+
+        let mut app = BdsApp::new_for_tests(db, project, tempdir.path().to_path_buf());
+        let _ = app.refresh_counts();
+        assert_eq!(app.sidebar_imports.len(), 1);
+        let tab = Tab {
+            id: definition.id.clone(),
+            tab_type: TabType::Import,
+            title: "Legacy".to_string(),
+            is_transient: true,
+            is_dirty: false,
+        };
+        app.load_editor_for_tab(&tab);
+
+        let editor = app.import_editors.get(&definition.id).unwrap();
+        assert_eq!(editor.definition.name, "Legacy");
+        assert_eq!(editor.report.as_ref().unwrap().site.title, "Legacy Blog");
+        assert!(editor.category_options.iter().any(|name| name == "article"));
     }
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {

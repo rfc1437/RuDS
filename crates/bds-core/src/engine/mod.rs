@@ -27,5 +27,6 @@ pub mod template_rebuild;
 pub mod validate_media;
 pub mod validate_site;
 pub mod validate_translations;
+pub mod wordpress_import;
 
 pub use error::{EngineError, EngineResult};

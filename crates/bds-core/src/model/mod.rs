@@ -1,4 +1,5 @@
 mod generation;
+mod import;
 mod media;
 pub mod metadata;
 mod post;
@@ -10,6 +11,11 @@ mod template;
 pub use generation::{
     DbNotification, GeneratedFileHash, NotificationAction, NotificationEntity,
     PublishingPreferences, SshMode,
+};
+pub use import::{
+    ImportCandidate, ImportCounts, ImportDateBucket, ImportDefinition, ImportExecutionCounts,
+    ImportExecutionResult, ImportItemKind, ImportItemStatus, ImportMacroUsage, ImportPhase,
+    ImportProgress, ImportReport, ImportResolution, ImportedSite, TaxonomyCandidate, TaxonomyKind,
 };
 pub use media::{Media, MediaTranslation};
 pub use metadata::{CategorySettings, ProjectMetadata, TagEntry};

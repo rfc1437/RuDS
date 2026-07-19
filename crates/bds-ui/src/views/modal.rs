@@ -123,6 +123,7 @@ pub enum ConfirmAction {
     DeleteTemplate(String),
     ForceDeleteTemplate(String),
     DeleteTag(String),
+    DeleteImport(String),
     MergeTags {
         sources: Vec<String>,
         target: String,

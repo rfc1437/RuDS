@@ -1738,6 +1738,7 @@ fn post_ai_content(data_dir: &Path, post: &Post) -> HostResult<Value> {
 fn one_shot_json(value: engine::ai::OneShotResponse) -> HostResult<Value> {
     let value = match value {
         engine::ai::OneShotResponse::Taxonomy(value) => serde_json::to_value(value),
+        engine::ai::OneShotResponse::ImportTaxonomyMapping(value) => serde_json::to_value(value),
         engine::ai::OneShotResponse::PostAnalysis(value) => serde_json::to_value(value),
         engine::ai::OneShotResponse::LanguageDetection(value) => serde_json::to_value(value),
         engine::ai::OneShotResponse::Translation(value) => serde_json::to_value(value),

@@ -64,6 +64,43 @@ pub fn import_media(
     language: Option<&str>,
     tags: Vec<String>,
 ) -> EngineResult<Media> {
+    import_media_at(
+        conn,
+        data_dir,
+        project_id,
+        source_path,
+        original_name,
+        title,
+        alt,
+        caption,
+        author,
+        language,
+        tags,
+        now_unix_ms(),
+    )
+}
+
+/// Import media while preserving a trusted source timestamp. Importers use
+/// this path so the canonical date-based location and sidecar metadata match
+/// the source system; interactive imports continue to use the current time.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are the user-supplied media metadata fields plus source timestamp"
+)]
+pub(crate) fn import_media_at(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    source_path: &Path,
+    original_name: &str,
+    title: Option<&str>,
+    alt: Option<&str>,
+    caption: Option<&str>,
+    author: Option<&str>,
+    language: Option<&str>,
+    tags: Vec<String>,
+    created_at: i64,
+) -> EngineResult<Media> {
     // Validate file type per spec
     let ext = Path::new(original_name)
         .extension()
@@ -77,12 +114,10 @@ pub fn import_media(
     }
 
     let id = Uuid::new_v4().to_string();
-    let now = now_unix_ms();
-
     let filename = format!("{id}.{ext}");
 
     // Compute target directory and copy file
-    let dir_path = media_dir_path(now);
+    let dir_path = media_dir_path(created_at);
     let rel_file_path = format!("{dir_path}{filename}");
     let abs_file_path = data_dir.join(&rel_file_path);
 
@@ -128,8 +163,8 @@ pub fn import_media(
         sidecar_path: sidecar_rel.clone(),
         checksum: Some(checksum),
         tags,
-        created_at: now,
-        updated_at: now,
+        created_at,
+        updated_at: created_at,
     };
 
     // Write sidecar

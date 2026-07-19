@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::db::DbConnection as Connection;
@@ -83,6 +84,7 @@ pub struct AiModelInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OneShotOperation {
     AnalyzeTaxonomy,
+    MapImportTaxonomy,
     AnalyzePost,
     DetectLanguage,
     TranslatePost { target_language: String },
@@ -100,6 +102,12 @@ pub struct OneShotRequest {
 pub struct TaxonomySuggestion {
     pub tags: Vec<String>,
     pub categories: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportTaxonomyMapping {
+    pub category_mappings: BTreeMap<String, String>,
+    pub tag_mappings: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +154,7 @@ pub struct TokenUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OneShotResponse {
     Taxonomy(TaxonomySuggestion),
+    ImportTaxonomyMapping(ImportTaxonomyMapping),
     PostAnalysis(PostAnalysisResult),
     LanguageDetection(LanguageDetectionResult),
     Translation(TranslationResult),
@@ -451,6 +460,7 @@ fn select_model(
     let selected = match operation {
         OneShotOperation::AnalyzeImage => settings.image_model.as_ref(),
         OneShotOperation::AnalyzeTaxonomy
+        | OneShotOperation::MapImportTaxonomy
         | OneShotOperation::AnalyzePost
         | OneShotOperation::DetectLanguage
         | OneShotOperation::TranslatePost { .. }
@@ -474,6 +484,9 @@ fn build_system_prompt(base_prompt: &str, operation: &OneShotOperation) -> Strin
     let operation_prompt = match operation {
         OneShotOperation::AnalyzeTaxonomy => {
             "Return only JSON with tags and categories for the post."
+        }
+        OneShotOperation::MapImportTaxonomy => {
+            "Map each imported category and tag to an existing equivalent when one exists. Return JSON objects keyed by each imported term; omit terms without a sound match."
         }
         OneShotOperation::AnalyzePost => {
             "Return only JSON with title, excerpt, and slug suggestions for the post."
@@ -508,6 +521,11 @@ fn build_one_shot_user_content(request: &OneShotRequest) -> EngineResult<Value> 
     match &request.operation {
         OneShotOperation::AnalyzeTaxonomy => Ok(format!(
             "Suggest tags and categories for this post: {}",
+            serde_json::to_string(&request.content)?
+        )
+        .into()),
+        OneShotOperation::MapImportTaxonomy => Ok(format!(
+            "Map these imported taxonomy terms to existing project terms without inventing terms: {}",
             serde_json::to_string(&request.content)?
         )
         .into()),
@@ -578,6 +596,24 @@ fn response_schema(operation: &OneShotOperation) -> (&'static str, Value) {
                     "categories": { "type": "array", "items": { "type": "string" } }
                 },
                 "required": ["tags", "categories"]
+            }),
+        ),
+        OneShotOperation::MapImportTaxonomy => (
+            "import_taxonomy_mapping",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "category_mappings": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "tag_mappings": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                    }
+                },
+                "required": ["category_mappings", "tag_mappings"]
             }),
         ),
         OneShotOperation::AnalyzePost => (
@@ -653,6 +689,9 @@ fn parse_one_shot_response(
     Ok(match request.operation {
         OneShotOperation::AnalyzeTaxonomy => {
             OneShotResponse::Taxonomy(serde_json::from_str(content)?)
+        }
+        OneShotOperation::MapImportTaxonomy => {
+            OneShotResponse::ImportTaxonomyMapping(serde_json::from_str(content)?)
         }
         OneShotOperation::AnalyzePost => {
             OneShotResponse::PostAnalysis(serde_json::from_str(content)?)
@@ -935,6 +974,33 @@ mod tests {
             OneShotResponse::Taxonomy(TaxonomySuggestion {
                 tags: vec!["rust".to_string(), "preview".to_string()],
                 categories: vec!["engineering".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn run_one_shot_supports_import_taxonomy_mapping_via_airplane_endpoint() {
+        let response = run_airplane_one_shot(
+            OneShotRequest {
+                operation: OneShotOperation::MapImportTaxonomy,
+                content: json!({
+                    "imported_categories": ["Old Engineering"],
+                    "imported_tags": ["Old Rust"],
+                    "existing_categories": ["Engineering"],
+                    "existing_tags": ["Rust"]
+                }),
+            },
+            r#"{"choices":[{"message":{"content":"{\"category_mappings\":{\"Old Engineering\":\"Engineering\"},\"tag_mappings\":{\"Old Rust\":\"Rust\"}}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
+        );
+
+        assert_eq!(
+            response,
+            OneShotResponse::ImportTaxonomyMapping(ImportTaxonomyMapping {
+                category_mappings: BTreeMap::from([(
+                    "Old Engineering".to_string(),
+                    "Engineering".to_string(),
+                )]),
+                tag_mappings: BTreeMap::from([("Old Rust".to_string(), "Rust".to_string(),)]),
             })
         );
     }

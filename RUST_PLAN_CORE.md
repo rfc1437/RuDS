@@ -99,7 +99,7 @@ Available:
 - Configurable online and airplane-mode OpenAI-compatible endpoints.
 - Secure API-key storage through the operating-system keychain.
 - Model catalog discovery and model selection.
-- Post translation, media translation, image alt text, post analysis, taxonomy analysis, and language detection.
+- Post translation, media translation, image alt text, post analysis, taxonomy analysis, WordPress-import taxonomy mapping, and language detection.
 - Explicit offline gating and user-visible errors.
 - SQLite fields for input, output, cache-read, and cache-write token usage.
 

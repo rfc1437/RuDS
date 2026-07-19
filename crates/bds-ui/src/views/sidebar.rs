@@ -5,7 +5,7 @@ use iced::widget::{Space, button, column, container, image, row, scrollable, tex
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
-use bds_core::model::{Media, Post, Script, Template};
+use bds_core::model::{ImportDefinition, Media, Post, Script, Template};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -627,6 +627,7 @@ pub fn view(
     media: &[Media],
     scripts: &[Script],
     templates: &[Template],
+    imports: &[ImportDefinition],
     post_filter: &PostFilter,
     media_filter: &MediaFilter,
     media_thumbs: &std::collections::HashMap<String, Option<PathBuf>>,
@@ -653,6 +654,7 @@ pub fn view(
         SidebarView::Media => Some(Message::CreateMedia),
         SidebarView::Scripts => Some(Message::CreateScript),
         SidebarView::Templates => Some(Message::CreateTemplate),
+        SidebarView::Import => Some(Message::CreateImport),
         _ => None,
     };
 
@@ -1076,6 +1078,57 @@ pub fn view(
                             .into()
                     })
                     .collect();
+                iced::widget::Column::with_children(items).spacing(1).into()
+            }
+        }
+        SidebarView::Import => {
+            if imports.is_empty() {
+                text(t(locale, placeholder_key(sidebar_view)))
+                    .size(12)
+                    .shaping(Shaping::Advanced)
+                    .color(muted)
+                    .into()
+            } else {
+                let items = imports
+                    .iter()
+                    .map(|definition| {
+                        let definition_name = definition.name.clone();
+                        let style = if active_tab == Some(definition.id.as_str()) {
+                            item_active_style
+                        } else {
+                            item_style
+                        };
+                        let analyzed = if definition.last_analysis_result.is_some() {
+                            t(locale, "import.sidebar.analyzed")
+                        } else {
+                            t(locale, "import.sidebar.pending")
+                        };
+                        button(
+                            container(
+                                column![
+                                    text(definition_name).size(12).shaping(Shaping::Advanced),
+                                    text(analyzed)
+                                        .size(10)
+                                        .shaping(Shaping::Advanced)
+                                        .color(Color::from_rgb(0.50, 0.50, 0.55)),
+                                ]
+                                .spacing(1),
+                            )
+                            .width(Length::Fill),
+                        )
+                        .on_press(Message::OpenTab(Tab {
+                            id: definition.id.clone(),
+                            tab_type: TabType::Import,
+                            title: definition.name.clone(),
+                            is_transient: true,
+                            is_dirty: false,
+                        }))
+                        .padding([5, 8])
+                        .width(Length::Fill)
+                        .style(style)
+                        .into()
+                    })
+                    .collect::<Vec<Element<'static, Message>>>();
                 iced::widget::Column::with_children(items).spacing(1).into()
             }
         }

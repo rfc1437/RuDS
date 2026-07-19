@@ -22,12 +22,14 @@ Open:
 
 - Expose `bds.sync` through the scripting API using the shared Git workflow.
 
-### WordPress import — Open
+### WordPress import — Complete
 
-Open:
+Done:
 
-- WXR parsing, import analysis, recoverable execution, saved import definitions, and import UI.
-- The existing media importer is core functionality and does not implement this workflow.
+- Streaming, untrusted-input-safe WXR parsing for site metadata, posts, pages, attachments, categories, and tags.
+- HTML5-to-Markdown conversion, WordPress shortcode conversion, complete new/update/conflict/duplicate/missing classification, date and macro analysis, and saved project-scoped import definitions.
+- Localized native import sidebar/editor with WXR and uploads pickers, cached analysis reopening, conflict resolution, manual and airplane-gated AI taxonomy mapping, item review, live progress/ETA, and execution results.
+- Taxonomy/posts/media/pages execution through core persistence engines in recoverable 500-item batches, including filesystem rollback, source metadata/status/timestamps, unique-slug import, overwrite/ignore behavior, and media-parent links.
 
 ### Conversational AI and agent tools — Open
 
@@ -39,7 +41,7 @@ Open:
 - Agent integrations such as Claude Code and Copilot where required by the specs.
 - Replace the current Chat placeholders with the working feature.
 
-Core endpoint settings, offline gating, key storage, model discovery, and six one-shot operations are already implemented.
+Core endpoint settings, offline gating, key storage, model discovery, and seven one-shot operations are already implemented.
 
 ### Embeddings, semantic search, and duplicates — Open
 
@@ -123,12 +125,11 @@ Open:
 
 ## Suggested Order
 
-1. WordPress import.
-2. CLI, MCP, and domain events.
-3. Conversational AI and agent tools.
-4. Embeddings and duplicate detection.
-5. Documentation and menu UX.
-6. Headless server and TUI.
-7. A2UI after conversational AI exists.
+1. CLI, MCP, and domain events.
+2. Conversational AI and agent tools.
+3. Embeddings and duplicate detection.
+4. Documentation and menu UX.
+5. Headless server and TUI.
+6. A2UI after conversational AI exists.
 
 The order may change when an extension directly unlocks a concrete user workflow; it must not create a parallel data model or bypass core engines.

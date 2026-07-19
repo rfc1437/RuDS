@@ -7,7 +7,7 @@ use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
 use bds_core::engine::git::GitCommit;
 use bds_core::i18n::UiLocale;
-use bds_core::model::{Media, Post, Project, Script, Template};
+use bds_core::model::{ImportDefinition, Media, Post, Project, Script, Template};
 
 use crate::app::Message;
 use crate::state::navigation::{OutputEntry, PanelTab, SidebarView, TaskSnapshot};
@@ -87,6 +87,7 @@ pub fn view<'a>(
     sidebar_media: &'a [Media],
     sidebar_scripts: &'a [Script],
     sidebar_templates: &'a [Template],
+    sidebar_imports: &'a [ImportDefinition],
     // Sidebar filters
     post_filter: &'a PostFilter,
     media_filter: &'a MediaFilter,
@@ -119,6 +120,7 @@ pub fn view<'a>(
     media_editors: &'a HashMap<String, MediaEditorState>,
     template_editors: &'a HashMap<String, TemplateEditorState>,
     script_editors: &'a HashMap<String, ScriptEditorState>,
+    import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
@@ -147,6 +149,7 @@ pub fn view<'a>(
         media_editors,
         template_editors,
         script_editors,
+        import_editors,
         tags_view_state,
         settings_state,
         dashboard_state,
@@ -200,6 +203,7 @@ pub fn view<'a>(
             sidebar_media,
             sidebar_scripts,
             sidebar_templates,
+            sidebar_imports,
             post_filter,
             media_filter,
             sidebar_media_thumbs,
@@ -382,6 +386,7 @@ fn route_content_area<'a>(
     media_editors: &'a HashMap<String, MediaEditorState>,
     template_editors: &'a HashMap<String, TemplateEditorState>,
     script_editors: &'a HashMap<String, ScriptEditorState>,
+    import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
@@ -397,6 +402,7 @@ fn route_content_area<'a>(
         media_editors,
         template_editors,
         script_editors,
+        import_editors,
         tags_view_state,
         settings_state,
         dashboard_state,
@@ -441,6 +447,13 @@ fn route_content_area<'a>(
         ContentRoute::Scripts(tab_id) => {
             if let Some(state) = script_editors.get(tab_id) {
                 script_editor::view(state, locale)
+            } else {
+                loading_view(locale)
+            }
+        }
+        ContentRoute::Import(tab_id) => {
+            if let Some(state) = import_editors.get(tab_id) {
+                crate::views::import_editor::view(state, locale)
             } else {
                 loading_view(locale)
             }
@@ -490,6 +503,7 @@ enum ContentRoute<'a> {
     Media(&'a str),
     Templates(&'a str),
     Scripts(&'a str),
+    Import(&'a str),
     Tags,
     Settings,
     SiteValidation,
@@ -510,6 +524,7 @@ fn route_kind<'a>(
     media_editors: &'a HashMap<String, MediaEditorState>,
     template_editors: &'a HashMap<String, TemplateEditorState>,
     script_editors: &'a HashMap<String, ScriptEditorState>,
+    import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
     dashboard_state: Option<&'a DashboardState>,
@@ -555,6 +570,13 @@ fn route_kind<'a>(
                 ContentRoute::Loading
             }
         }
+        TabType::Import => {
+            if import_editors.contains_key(tab_id) {
+                ContentRoute::Import(tab_id)
+            } else {
+                ContentRoute::Loading
+            }
+        }
         TabType::Tags => {
             if tags_view_state.is_some() {
                 ContentRoute::Tags
@@ -574,7 +596,6 @@ fn route_kind<'a>(
         TabType::GitDiff => ContentRoute::GitDiff(tab_id),
         TabType::Style
         | TabType::Chat
-        | TabType::Import
         | TabType::MenuEditor
         | TabType::Documentation
         | TabType::ApiDocumentation
@@ -633,11 +654,11 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
         let unsupported = [
             TabType::Style,
             TabType::Chat,
-            TabType::Import,
             TabType::MenuEditor,
             TabType::Documentation,
             TabType::ApiDocumentation,
@@ -653,6 +674,7 @@ mod tests {
                 &empty_media,
                 &empty_templates,
                 &empty_scripts,
+                &empty_imports,
                 None,
                 None,
                 None,
@@ -671,6 +693,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
         let tabs = vec![tab("git-diff:file.txt", TabType::GitDiff, "file.txt")];
         let route = route_kind(
@@ -680,6 +703,7 @@ mod tests {
             &empty_media,
             &empty_templates,
             &empty_scripts,
+            &empty_imports,
             None,
             None,
             None,
@@ -694,6 +718,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
 
         for (tab_type, expected) in [
@@ -708,6 +733,7 @@ mod tests {
                 &empty_media,
                 &empty_templates,
                 &empty_scripts,
+                &empty_imports,
                 None,
                 None,
                 None,
@@ -733,6 +759,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
         let route = route_kind(
             &[],
@@ -741,6 +768,7 @@ mod tests {
             &empty_media,
             &empty_templates,
             &empty_scripts,
+            &empty_imports,
             None,
             None,
             Some(&dashboard),
@@ -758,6 +786,7 @@ mod tests {
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
         let tabs = vec![tab(
             "site_validation",
@@ -772,6 +801,7 @@ mod tests {
             &empty_media,
             &empty_templates,
             &empty_scripts,
+            &empty_imports,
             None,
             None,
             None,

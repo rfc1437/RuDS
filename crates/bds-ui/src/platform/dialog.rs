@@ -95,3 +95,44 @@ pub fn pick_media_replacement(
         |(media_id, path)| Message::MediaReplacementPicked { media_id, path },
     )
 }
+
+/// Pick the WordPress uploads directory for an import definition.
+pub fn pick_import_uploads_folder(definition_id: String, title: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            let path = rfd::AsyncFileDialog::new()
+                .set_title(&title)
+                .pick_folder()
+                .await
+                .map(|handle| handle.path().to_path_buf());
+            (definition_id, path)
+        },
+        |(definition_id, path)| Message::ImportUploadsPicked {
+            definition_id,
+            path,
+        },
+    )
+}
+
+/// Pick a WordPress WXR export for an import definition.
+pub fn pick_import_wxr_file(
+    definition_id: String,
+    title: String,
+    filter_label: String,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let path = rfd::AsyncFileDialog::new()
+                .set_title(&title)
+                .add_filter(&filter_label, &["xml", "wxr"])
+                .pick_file()
+                .await
+                .map(|handle| handle.path().to_path_buf());
+            (definition_id, path)
+        },
+        |(definition_id, path)| Message::ImportWxrPicked {
+            definition_id,
+            path,
+        },
+    )
+}
