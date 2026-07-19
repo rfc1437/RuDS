@@ -47,6 +47,7 @@ pub enum MenuAction {
     // Help
     About,
     OpenDocumentation,
+    OpenApiDocumentation,
     ViewOnGitHub,
     ReportIssue,
 }
@@ -82,6 +83,7 @@ impl MenuAction {
         MenuAction::UploadSite,
         MenuAction::About,
         MenuAction::OpenDocumentation,
+        MenuAction::OpenApiDocumentation,
         MenuAction::ViewOnGitHub,
         MenuAction::ReportIssue,
     ];
@@ -116,6 +118,7 @@ impl MenuAction {
             "upload_site" => Self::UploadSite,
             "about" => Self::About,
             "open_documentation" => Self::OpenDocumentation,
+            "open_api_documentation" => Self::OpenApiDocumentation,
             "view_on_github" => Self::ViewOnGitHub,
             "report_issue" => Self::ReportIssue,
             _ => return None,
@@ -153,6 +156,7 @@ impl MenuAction {
             Self::UploadSite => "menu.item.uploadSite",
             Self::About => "menu.item.about",
             Self::OpenDocumentation => "menu.item.openDocumentation",
+            Self::OpenApiDocumentation => "menu.item.openApiDocumentation",
             Self::ViewOnGitHub => "menu.item.viewOnGitHub",
             Self::ReportIssue => "menu.item.reportIssue",
         }
@@ -483,6 +487,12 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = help_menu.append(&item(&mut reg, MenuAction::About, locale, None));
     let _ = help_menu.append(&PredefinedMenuItem::separator());
     let _ = help_menu.append(&item(&mut reg, MenuAction::OpenDocumentation, locale, None));
+    let _ = help_menu.append(&item(
+        &mut reg,
+        MenuAction::OpenApiDocumentation,
+        locale,
+        None,
+    ));
     let _ = help_menu.append(&item(&mut reg, MenuAction::ViewOnGitHub, locale, None));
     let _ = help_menu.append(&item(&mut reg, MenuAction::ReportIssue, locale, None));
 

@@ -50,19 +50,15 @@ Done:
 - Localized duplicate review with exact-match detection, 500-pair pagination, canonical single/batch dismissal, and post navigation.
 - Embedding-aware filesystem rebuild and metadata diff/repair, settings gating, project-switch/shutdown flushes, and native menu commands.
 
-### Translation QA and documentation UX — Partly done
+### Translation QA and documentation UX — Done
 
 Done:
 
 - Translation validation engine and report view.
-
-Open:
-
-- In-app project documentation browser.
-- Browsable Lua API documentation and examples.
-- Replace Documentation and API Documentation placeholders.
-
-The generated Lua documentation and examples are complete core functionality; this section tracks only their in-app browsing experience.
+- Bundled global `DOCUMENTATION.md` browser with localized loading, empty, missing, and malformed states plus explicit and file-change refresh.
+- Generated Lua API, type, and executable-example browser sourced directly from `docs/scripting/` with embedded packaged fallbacks.
+- Safe native GFM rendering for headings, links, code blocks, lists, and tables, including in-document anchors and confirmed external links without HTML, CSS, or JavaScript execution.
+- Project switches preserve the singleton global documentation tabs and their loaded content.
 
 ### Menu editor and deep links — Partly done
 

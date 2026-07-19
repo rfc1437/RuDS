@@ -2,6 +2,7 @@ pub mod activity_bar;
 pub mod chat_surfaces;
 pub mod chat_view;
 pub mod dashboard;
+pub mod documentation;
 pub mod duplicates;
 pub mod git;
 pub mod import_editor;

@@ -116,6 +116,7 @@ pub enum PostInsertLinkTab {
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
     RebuildSearchIndex,
+    OpenExternalUrl(String),
     DeleteProject(String),
     DeletePost(String),
     DeleteMedia(String),

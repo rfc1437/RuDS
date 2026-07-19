@@ -33,6 +33,7 @@ use crate::views::{
         DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag,
         DashboardTimelineMonth,
     },
+    documentation::{DocumentLoad, DocumentationKind, DocumentationState, current_signature},
     duplicates::DuplicatesState,
     git::{GitDiffLoad, GitDiffState, GitNetworkCompletion, GitSnapshot, GitUiState},
     import_editor::{
@@ -252,6 +253,9 @@ pub enum Message {
     DuplicatesDismissed(Result<(), String>),
     DuplicatesShowMore,
     DuplicatesOpenPost(String),
+    DocumentationRefresh(DocumentationKind),
+    DocumentationLoaded(DocumentationKind, u64, DocumentLoad),
+    DocumentationLinkClicked(DocumentationKind, String),
     EmbeddingReindex,
     EmbeddingBackfill,
     LoadSemanticTagSuggestions(String),
@@ -946,6 +950,8 @@ pub struct BdsApp {
     dashboard_state: Option<DashboardState>,
     site_validation_state: SiteValidationState,
     duplicates_state: DuplicatesState,
+    guide_documentation: DocumentationState,
+    api_documentation: DocumentationState,
     metadata_diff_state: MetadataDiffState,
     translation_validation_state: crate::views::translation_validation::TranslationValidationState,
     git_state: GitUiState,
@@ -1111,6 +1117,8 @@ impl BdsApp {
                 dashboard_state: None,
                 site_validation_state: SiteValidationState::default(),
                 duplicates_state: DuplicatesState::default(),
+                guide_documentation: DocumentationState::new(DocumentationKind::Guide),
+                api_documentation: DocumentationState::new(DocumentationKind::Api),
                 metadata_diff_state: MetadataDiffState::default(),
                 translation_validation_state: Default::default(),
                 git_state: GitUiState::default(),
@@ -1190,6 +1198,8 @@ impl BdsApp {
             dashboard_state: None,
             site_validation_state: SiteValidationState::default(),
             duplicates_state: DuplicatesState::default(),
+            guide_documentation: DocumentationState::new(DocumentationKind::Guide),
+            api_documentation: DocumentationState::new(DocumentationKind::Api),
             metadata_diff_state: MetadataDiffState::default(),
             translation_validation_state: Default::default(),
             git_state: GitUiState::default(),
@@ -1601,8 +1611,13 @@ impl BdsApp {
                     }
                 }
                 let sidebar_task = self.refresh_counts();
+                let documentation_task = self.reload_changed_documentation();
                 self.sync_menu_state();
-                Task::batch([sidebar_task, Task::done(Message::EmbeddingBackfill)])
+                Task::batch([
+                    sidebar_task,
+                    Task::done(Message::EmbeddingBackfill),
+                    documentation_task,
+                ])
             }
             Message::SwitchProject(project_id) => {
                 self.project_dropdown_open = false;
@@ -2238,6 +2253,38 @@ impl BdsApp {
                     is_dirty: false,
                 }))
             }
+            Message::DocumentationRefresh(kind) => self.start_documentation_load(kind),
+            Message::DocumentationLoaded(kind, generation, load) => {
+                let state = self.documentation_state_mut(kind);
+                if state.load_generation == generation {
+                    state.apply(load);
+                }
+                Task::none()
+            }
+            Message::DocumentationLinkClicked(kind, url) => {
+                if url == crate::views::documentation::API_DOCUMENTATION_URL {
+                    self.open_singleton_tab(TabType::ApiDocumentation, "tabBar.apiDocumentation");
+                    return self.start_documentation_load(DocumentationKind::Api);
+                } else if let Some(anchor) = url.strip_prefix("https://ruds.invalid/document#") {
+                    if let Some(offset) = self.documentation_state(kind).parsed.anchors.get(anchor)
+                    {
+                        return iced::widget::scrollable::snap_to(
+                            crate::views::documentation::scroll_id(kind),
+                            iced::widget::scrollable::RelativeOffset { x: 0.0, y: *offset },
+                        );
+                    }
+                    self.notify(
+                        ToastLevel::Error,
+                        &t(self.ui_locale, "documentation.anchorMissing"),
+                    );
+                } else if !self.confirm_external_link(url) {
+                    self.notify(
+                        ToastLevel::Error,
+                        &t(self.ui_locale, "documentation.linkRefused"),
+                    );
+                }
+                Task::none()
+            }
             Message::EmbeddingReindex => self.start_embedding_reindex(),
             Message::EmbeddingBackfill => self.start_embedding_backfill(),
             Message::LoadSemanticTagSuggestions(post_id) => {
@@ -2286,11 +2333,12 @@ impl BdsApp {
                     self.auto_save_due_post_editors();
                 }
                 let actions = std::mem::take(&mut *self.script_menu_actions.lock().unwrap());
-                Task::batch(
-                    actions
-                        .into_iter()
-                        .map(|action| self.dispatch_menu_action(action)),
-                )
+                let mut tasks = actions
+                    .into_iter()
+                    .map(|action| self.dispatch_menu_action(action))
+                    .collect::<Vec<_>>();
+                tasks.push(self.reload_changed_documentation());
+                Task::batch(tasks)
             }
             Message::DomainEventsTick => self.process_domain_events(),
             Message::CancelTask(task_id) => {
@@ -2603,6 +2651,14 @@ impl BdsApp {
                 self.active_modal = None;
                 match action {
                     modal::ConfirmAction::RebuildSearchIndex => self.start_search_index_rebuild(),
+                    modal::ConfirmAction::OpenExternalUrl(url) => {
+                        if (url.starts_with("https://") || url.starts_with("http://"))
+                            && let Err(error) = open::that_detached(&url)
+                        {
+                            self.notify(ToastLevel::Error, &error.to_string());
+                        }
+                        Task::none()
+                    }
                     modal::ConfirmAction::DeleteProject(id) => {
                         Task::done(Message::DeleteProject(id))
                     }
@@ -2797,6 +2853,83 @@ impl BdsApp {
                 Task::none()
             }
         }
+    }
+
+    fn documentation_state(&self, kind: DocumentationKind) -> &DocumentationState {
+        match kind {
+            DocumentationKind::Guide => &self.guide_documentation,
+            DocumentationKind::Api => &self.api_documentation,
+        }
+    }
+
+    fn documentation_state_mut(&mut self, kind: DocumentationKind) -> &mut DocumentationState {
+        match kind {
+            DocumentationKind::Guide => &mut self.guide_documentation,
+            DocumentationKind::Api => &mut self.api_documentation,
+        }
+    }
+
+    fn start_documentation_load(&mut self, kind: DocumentationKind) -> Task<Message> {
+        let generation = self.documentation_state_mut(kind).start_loading();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || match kind {
+                    DocumentationKind::Guide => crate::views::documentation::load_user_guide(),
+                    DocumentationKind::Api => crate::views::documentation::load_api_document(),
+                })
+                .await
+                .unwrap_or_else(|error| DocumentLoad::Malformed {
+                    signature: 0,
+                    error: format!("documentation task panicked: {error}"),
+                })
+            },
+            move |load| Message::DocumentationLoaded(kind, generation, load),
+        )
+    }
+
+    fn reload_changed_documentation(&mut self) -> Task<Message> {
+        let mut changed = Vec::new();
+        for (tab_type, kind) in [
+            (TabType::Documentation, DocumentationKind::Guide),
+            (TabType::ApiDocumentation, DocumentationKind::Api),
+        ] {
+            if !self.tabs.iter().any(|tab| tab.tab_type == tab_type) {
+                continue;
+            }
+            let should_check = self.documentation_state(kind).should_check();
+            if !should_check {
+                continue;
+            }
+            let signature = current_signature(kind);
+            let state = self.documentation_state_mut(kind);
+            state.mark_checked();
+            if state.status == crate::views::documentation::DocumentStatus::NotLoaded
+                || signature != state.signature
+            {
+                changed.push(kind);
+            }
+        }
+        Task::batch(
+            changed
+                .into_iter()
+                .map(|kind| self.start_documentation_load(kind)),
+        )
+    }
+
+    fn confirm_external_link(&mut self, url: String) -> bool {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            return false;
+        }
+        self.active_modal = Some(modal::ModalState::Confirm {
+            title: t(self.ui_locale, "documentation.externalLinkTitle"),
+            message: tw(
+                self.ui_locale,
+                "documentation.externalLinkMessage",
+                &[("url", &url)],
+            ),
+            on_confirm: modal::ConfirmAction::OpenExternalUrl(url),
+        });
+        true
     }
 
     fn start_duplicate_search(&mut self, page: usize) -> Task<Message> {
@@ -3005,6 +3138,8 @@ impl BdsApp {
             self.dashboard_state.as_ref(),
             &self.site_validation_state,
             &self.duplicates_state,
+            &self.guide_documentation,
+            &self.api_documentation,
             &self.metadata_diff_state,
             &self.translation_validation_state,
             &self.git_state,
@@ -3818,7 +3953,11 @@ impl BdsApp {
             }
             MenuAction::OpenDocumentation => {
                 self.open_singleton_tab(TabType::Documentation, "tabBar.documentation");
-                Task::none()
+                self.start_documentation_load(DocumentationKind::Guide)
+            }
+            MenuAction::OpenApiDocumentation => {
+                self.open_singleton_tab(TabType::ApiDocumentation, "tabBar.apiDocumentation");
+                self.start_documentation_load(DocumentationKind::Api)
             }
             MenuAction::ViewOnGitHub => {
                 let _ = open::that("https://github.com/nickarumern/bds");
@@ -8293,6 +8432,7 @@ mod tests {
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::state::tabs::{Tab, TabType};
     use crate::views::chat_view::ChatEditorState;
+    use crate::views::documentation::{DocumentLoad, DocumentationKind};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
@@ -8358,6 +8498,128 @@ mod tests {
         .unwrap();
         std::fs::write(tempdir.path().join("meta/category-meta.json"), "{}\n").unwrap();
         (db, project, tempdir)
+    }
+
+    #[test]
+    fn documentation_external_links_require_confirmation_and_api_help_opens_real_tab() {
+        let (db, project, temp) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+
+        let _ = app.update(Message::DocumentationLinkClicked(
+            DocumentationKind::Guide,
+            "https://example.com/guide".to_string(),
+        ));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::Confirm {
+                on_confirm: modal::ConfirmAction::OpenExternalUrl(ref url),
+                ..
+            }) if url == "https://example.com/guide"
+        ));
+
+        app.active_modal = None;
+        let _ = app.update(Message::DocumentationLinkClicked(
+            DocumentationKind::Guide,
+            crate::views::documentation::API_DOCUMENTATION_URL.to_string(),
+        ));
+        assert!(
+            app.tabs
+                .iter()
+                .any(|tab| tab.tab_type == TabType::ApiDocumentation)
+        );
+        assert_eq!(
+            app.api_documentation.status,
+            crate::views::documentation::DocumentStatus::Loading
+        );
+    }
+
+    #[test]
+    fn project_switch_keeps_global_documentation_loaded() {
+        let (db, project, temp) = setup();
+        let second_dir = temp.path().join("second-project");
+        std::fs::create_dir_all(second_dir.join("meta")).unwrap();
+        for name in [
+            "project.json",
+            "publishing.json",
+            "categories.json",
+            "category-meta.json",
+        ] {
+            std::fs::copy(
+                temp.path().join("meta").join(name),
+                second_dir.join("meta").join(name),
+            )
+            .unwrap();
+        }
+        let second = Project {
+            id: "p2".to_string(),
+            name: "Second Project".to_string(),
+            slug: "second-project".to_string(),
+            data_path: Some(second_dir.to_string_lossy().into_owned()),
+            is_active: false,
+            ..project.clone()
+        };
+        insert_project(db.conn(), &second).unwrap();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        app.projects.push(second.clone());
+        app.tabs.push(Tab {
+            id: "documentation".to_string(),
+            tab_type: TabType::Documentation,
+            title: "Documentation".to_string(),
+            is_transient: false,
+            is_dirty: false,
+        });
+        app.guide_documentation.apply(DocumentLoad::Ready {
+            source: "# Global guide".to_string(),
+            signature: 42,
+        });
+
+        let _ = app.update(Message::SwitchProject(second.id.clone()));
+
+        assert_eq!(
+            app.active_project.as_ref().map(|item| item.id.as_str()),
+            Some("p2")
+        );
+        assert_eq!(app.data_dir.as_deref(), Some(second_dir.as_path()));
+        assert_eq!(
+            app.guide_documentation.status,
+            crate::views::documentation::DocumentStatus::Ready
+        );
+        assert_eq!(app.guide_documentation.signature, 42);
+    }
+
+    #[test]
+    fn stale_documentation_load_cannot_overwrite_a_newer_guide_read() {
+        let (db, project, temp) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        let stale = app.guide_documentation.start_loading();
+        let current = app.guide_documentation.start_loading();
+
+        let _ = app.update(Message::DocumentationLoaded(
+            DocumentationKind::Guide,
+            stale,
+            DocumentLoad::Ready {
+                source: "# Old guide".to_string(),
+                signature: 1,
+            },
+        ));
+        assert_eq!(
+            app.guide_documentation.status,
+            crate::views::documentation::DocumentStatus::Loading
+        );
+
+        let _ = app.update(Message::DocumentationLoaded(
+            DocumentationKind::Guide,
+            current,
+            DocumentLoad::Ready {
+                source: "# New guide".to_string(),
+                signature: 2,
+            },
+        ));
+        assert_eq!(
+            app.guide_documentation.status,
+            crate::views::documentation::DocumentStatus::Ready
+        );
+        assert_eq!(app.guide_documentation.signature, 2);
     }
 
     fn spawn_models_server() -> String {

@@ -18,6 +18,7 @@ use crate::views::{
     activity_bar,
     chat_view::{self, ChatEditorState},
     dashboard::DashboardState,
+    documentation::{self, DocumentationState},
     duplicates::{self, DuplicatesState},
     git::{self, GitDiffState, GitUiState},
     media_editor::{self, MediaEditorState},
@@ -130,6 +131,8 @@ pub fn view<'a>(
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
     duplicates_state: &'a DuplicatesState,
+    guide_documentation: &'a DocumentationState,
+    api_documentation: &'a DocumentationState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
     git_state: &'a GitUiState,
@@ -161,6 +164,8 @@ pub fn view<'a>(
         dashboard_state,
         site_validation_state,
         duplicates_state,
+        guide_documentation,
+        api_documentation,
         metadata_diff_state,
         translation_validation_state,
         git_diffs,
@@ -404,6 +409,8 @@ fn route_content_area<'a>(
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
     duplicates_state: &'a DuplicatesState,
+    guide_documentation: &'a DocumentationState,
+    api_documentation: &'a DocumentationState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
     git_diffs: &'a HashMap<String, GitDiffState>,
@@ -494,6 +501,8 @@ fn route_content_area<'a>(
         }
         ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
         ContentRoute::FindDuplicates => duplicates::view(duplicates_state, locale),
+        ContentRoute::Documentation => documentation::view(guide_documentation, locale),
+        ContentRoute::ApiDocumentation => documentation::view(api_documentation, locale),
         ContentRoute::MetadataDiff => metadata_diff::view(metadata_diff_state, locale),
         ContentRoute::TranslationValidation => {
             translation_validation::view(translation_validation_state, locale)
@@ -530,6 +539,8 @@ enum ContentRoute<'a> {
     Settings,
     SiteValidation,
     FindDuplicates,
+    Documentation,
+    ApiDocumentation,
     MetadataDiff,
     TranslationValidation,
     GitDiff(&'a str),
@@ -619,10 +630,9 @@ fn route_kind<'a>(
         TabType::MetadataDiff => ContentRoute::MetadataDiff,
         TabType::GitDiff => ContentRoute::GitDiff(tab_id),
         TabType::FindDuplicates => ContentRoute::FindDuplicates,
-        TabType::Style
-        | TabType::MenuEditor
-        | TabType::Documentation
-        | TabType::ApiDocumentation => ContentRoute::Placeholder(&tab.title),
+        TabType::Documentation => ContentRoute::Documentation,
+        TabType::ApiDocumentation => ContentRoute::ApiDocumentation,
+        TabType::Style | TabType::MenuEditor => ContentRoute::Placeholder(&tab.title),
         TabType::TranslationValidation => ContentRoute::TranslationValidation,
     }
 }
@@ -679,12 +689,7 @@ mod tests {
         let empty_scripts = HashMap::new();
         let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
-        let unsupported = [
-            TabType::Style,
-            TabType::MenuEditor,
-            TabType::Documentation,
-            TabType::ApiDocumentation,
-        ];
+        let unsupported = [TabType::Style, TabType::MenuEditor];
 
         for tab_type in unsupported {
             let tabs = vec![tab("tool", tab_type.clone(), "Tool")];
@@ -705,6 +710,39 @@ mod tests {
                 ContentRoute::Placeholder(title) => assert_eq!(title, "Tool"),
                 _ => panic!("expected placeholder route for {tab_type:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn documentation_tabs_route_to_real_read_only_views() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let empty_imports = HashMap::new();
+        let site_validation = SiteValidationState::default();
+        for (tab_type, expected_api) in [
+            (TabType::Documentation, false),
+            (TabType::ApiDocumentation, true),
+        ] {
+            let tabs = vec![tab("docs", tab_type, "Docs")];
+            let route = route_kind(
+                &tabs,
+                Some("docs"),
+                &empty_posts,
+                &empty_media,
+                &empty_templates,
+                &empty_scripts,
+                &empty_imports,
+                None,
+                None,
+                None,
+                &site_validation,
+            );
+            assert!(matches!(
+                (route, expected_api),
+                (ContentRoute::Documentation, false) | (ContentRoute::ApiDocumentation, true)
+            ));
         }
     }
 
