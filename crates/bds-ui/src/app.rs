@@ -18,6 +18,7 @@ use bds_core::model::{
     SshMode, Template,
 };
 
+use crate::components::native_edit;
 use crate::components::webview::{self, WebViewConfig, WebViewController};
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
@@ -920,6 +921,7 @@ pub struct BdsApp {
     // Platform
     _menu_bar: Option<muda::Menu>,
     menu_registry: MenuRegistry,
+    native_edit_commands: native_edit::EditCommandQueue,
 
     // i18n
     ui_locale: UiLocale,
@@ -1108,6 +1110,7 @@ impl BdsApp {
                 site_generation_workflows: HashMap::new(),
                 _menu_bar: Some(menu_bar),
                 menu_registry: registry,
+                native_edit_commands: native_edit::command_queue(),
                 ui_locale: locale,
                 content_language: "en".to_string(),
                 blog_languages: Vec::new(),
@@ -1196,6 +1199,7 @@ impl BdsApp {
             site_generation_workflows: HashMap::new(),
             _menu_bar: None,
             menu_registry: MenuRegistry::empty(),
+            native_edit_commands: native_edit::command_queue(),
             ui_locale: UiLocale::En,
             content_language: "en".to_string(),
             blog_languages: Vec::new(),
@@ -3341,62 +3345,66 @@ impl BdsApp {
             None
         };
 
-        workspace::view(
-            self.sidebar_view,
-            self.sidebar_visible,
-            self.sidebar_width,
-            &self.tabs,
-            self.active_tab.as_deref(),
-            self.panel_visible,
-            self.panel_tab,
-            &self.task_snapshots,
-            &self.collapsed_task_groups,
-            &self.output_entries,
-            &self.sidebar_posts,
-            &self.sidebar_media,
-            &self.sidebar_scripts,
-            &self.sidebar_templates,
-            &self.sidebar_imports,
-            &self.chat_conversations,
-            active_post_filter,
-            &self.media_filter,
-            &self.sidebar_media_thumbs,
-            self.sidebar_posts_has_more,
-            self.sidebar_media_has_more,
-            active_name,
-            &self.projects,
-            self.active_project.as_ref().map(|p| p.id.as_str()),
-            self.post_count,
-            self.media_count,
-            self.offline_mode,
-            self.locale_dropdown_open,
-            self.project_dropdown_open,
-            &self.theme_badge,
-            self.ui_locale,
-            &self.toasts,
-            self.active_modal.clone(),
-            self.data_dir.as_deref(),
-            post_preview_widget,
-            &self.post_editors,
-            &self.media_editors,
-            &self.template_editors,
-            &self.script_editors,
-            &self.import_editors,
-            &self.chat_editors,
-            self.tags_view_state.as_ref(),
-            self.settings_state.as_ref(),
-            self.dashboard_state.as_ref(),
-            &self.site_validation_state,
-            &self.duplicates_state,
-            &self.guide_documentation,
-            &self.api_documentation,
-            &self.metadata_diff_state,
-            &self.menu_editor_state,
-            &self.translation_validation_state,
-            &self.git_state,
-            &self.git_diffs,
-            &self.git_file_history,
+        native_edit::native_edit(
+            workspace::view(
+                self.sidebar_view,
+                self.sidebar_visible,
+                self.sidebar_width,
+                &self.tabs,
+                self.active_tab.as_deref(),
+                self.panel_visible,
+                self.panel_tab,
+                &self.task_snapshots,
+                &self.collapsed_task_groups,
+                &self.output_entries,
+                &self.sidebar_posts,
+                &self.sidebar_media,
+                &self.sidebar_scripts,
+                &self.sidebar_templates,
+                &self.sidebar_imports,
+                &self.chat_conversations,
+                active_post_filter,
+                &self.media_filter,
+                &self.sidebar_media_thumbs,
+                self.sidebar_posts_has_more,
+                self.sidebar_media_has_more,
+                active_name,
+                &self.projects,
+                self.active_project.as_ref().map(|p| p.id.as_str()),
+                self.post_count,
+                self.media_count,
+                self.offline_mode,
+                self.locale_dropdown_open,
+                self.project_dropdown_open,
+                &self.theme_badge,
+                self.ui_locale,
+                &self.toasts,
+                self.active_modal.clone(),
+                self.data_dir.as_deref(),
+                post_preview_widget,
+                &self.post_editors,
+                &self.media_editors,
+                &self.template_editors,
+                &self.script_editors,
+                &self.import_editors,
+                &self.chat_editors,
+                self.tags_view_state.as_ref(),
+                self.settings_state.as_ref(),
+                self.dashboard_state.as_ref(),
+                &self.site_validation_state,
+                &self.duplicates_state,
+                &self.guide_documentation,
+                &self.api_documentation,
+                &self.metadata_diff_state,
+                &self.menu_editor_state,
+                &self.translation_validation_state,
+                &self.git_state,
+                &self.git_diffs,
+                &self.git_file_history,
+            ),
+            Arc::clone(&self.native_edit_commands),
         )
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -4144,6 +4152,48 @@ impl BdsApp {
             }
             MenuAction::DisconnectServer => Task::done(Message::RemoteDisconnectRequested),
             // Edit
+            MenuAction::Undo => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::Undo,
+                );
+                Task::none()
+            }
+            MenuAction::Redo => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::Redo,
+                );
+                Task::none()
+            }
+            MenuAction::Cut => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::Cut,
+                );
+                Task::none()
+            }
+            MenuAction::Copy => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::Copy,
+                );
+                Task::none()
+            }
+            MenuAction::Paste => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::Paste,
+                );
+                Task::none()
+            }
+            MenuAction::SelectAll => {
+                native_edit::queue_command(
+                    &self.native_edit_commands,
+                    native_edit::EditCommand::SelectAll,
+                );
+                Task::none()
+            }
             MenuAction::Find => {
                 self.active_modal = Some(modal::ModalState::FindReplace {
                     query: String::new(),
@@ -9332,6 +9382,19 @@ mod tests {
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
         BdsApp::new_for_tests(db, project, tmp.path().to_path_buf())
+    }
+
+    #[test]
+    fn native_paste_menu_action_is_queued_for_the_focused_widget() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.dispatch_menu_action(MenuAction::Paste);
+
+        assert_eq!(
+            app.native_edit_commands.lock().unwrap().pop_front(),
+            Some(crate::components::native_edit::EditCommand::Paste)
+        );
     }
 
     fn enable_generation(tmp: &TempDir) {

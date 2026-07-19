@@ -10,8 +10,9 @@ use bds_core::i18n::{UiLocale, translate};
 
 /// Every custom menu item that the application handles.
 ///
-/// Predefined OS items (Undo, Redo, Cut, Copy, Paste, SelectAll, etc.)
-/// are handled by the platform and do not appear here.
+/// Edit commands are custom actions because Iced widgets are not native Cocoa
+/// text responders; routing them through the app preserves native menu items
+/// and shortcuts while operating on the focused Iced widget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuAction {
     // File
@@ -22,7 +23,13 @@ pub enum MenuAction {
     OpenDataFolder,
     ConnectServer,
     DisconnectServer,
-    // Edit (custom items only)
+    // Edit
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
     Find,
     Replace,
     EditPreferences,
@@ -64,6 +71,12 @@ impl MenuAction {
         MenuAction::OpenDataFolder,
         MenuAction::ConnectServer,
         MenuAction::DisconnectServer,
+        MenuAction::Undo,
+        MenuAction::Redo,
+        MenuAction::Cut,
+        MenuAction::Copy,
+        MenuAction::Paste,
+        MenuAction::SelectAll,
         MenuAction::Find,
         MenuAction::Replace,
         MenuAction::EditPreferences,
@@ -101,6 +114,12 @@ impl MenuAction {
             "open_data_folder" => Self::OpenDataFolder,
             "connect_server" => Self::ConnectServer,
             "disconnect_server" => Self::DisconnectServer,
+            "undo" => Self::Undo,
+            "redo" => Self::Redo,
+            "cut" => Self::Cut,
+            "copy" => Self::Copy,
+            "paste" => Self::Paste,
+            "select_all" => Self::SelectAll,
             "find" => Self::Find,
             "replace" => Self::Replace,
             "edit_preferences" => Self::EditPreferences,
@@ -141,6 +160,12 @@ impl MenuAction {
             Self::OpenDataFolder => "menu.item.openDataFolder",
             Self::ConnectServer => "menu.item.connectServer",
             Self::DisconnectServer => "menu.item.disconnectServer",
+            Self::Undo => "menu.item.undo",
+            Self::Redo => "menu.item.redo",
+            Self::Cut => "menu.item.cut",
+            Self::Copy => "menu.item.copy",
+            Self::Paste => "menu.item.paste",
+            Self::SelectAll => "menu.item.selectAll",
             Self::Find => "menu.item.find",
             Self::Replace => "menu.item.replace",
             Self::EditPreferences => "menu.item.editPreferences",
@@ -357,13 +382,46 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
 
     // -- Edit --
     let edit_menu = Submenu::new(translate(locale, "menu.group.edit"), true);
-    let _ = edit_menu.append(&PredefinedMenuItem::undo(None));
-    let _ = edit_menu.append(&PredefinedMenuItem::redo(None));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Undo,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyZ)),
+    ));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Redo,
+        locale,
+        Some(Accelerator::new(
+            Some(CMD_OR_CTRL | Modifiers::SHIFT),
+            Code::KeyZ,
+        )),
+    ));
     let _ = edit_menu.append(&PredefinedMenuItem::separator());
-    let _ = edit_menu.append(&PredefinedMenuItem::cut(None));
-    let _ = edit_menu.append(&PredefinedMenuItem::copy(None));
-    let _ = edit_menu.append(&PredefinedMenuItem::paste(None));
-    let _ = edit_menu.append(&PredefinedMenuItem::select_all(None));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Cut,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyX)),
+    ));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Copy,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyC)),
+    ));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::Paste,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyV)),
+    ));
+    let _ = edit_menu.append(&item(
+        &mut reg,
+        MenuAction::SelectAll,
+        locale,
+        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyA)),
+    ));
     let _ = edit_menu.append(&PredefinedMenuItem::separator());
     let _ = edit_menu.append(&item(
         &mut reg,
