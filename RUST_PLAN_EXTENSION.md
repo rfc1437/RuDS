@@ -8,17 +8,19 @@ Status describes the current source code as of 2026-07-19. Core one-shot AI, pub
 
 ## Current Extension Status
 
-### Git and richer validation — Partly done
+### Git and richer validation — Complete
 
 Done:
 
 - Site, media, translation, and metadata-diff engines and UI views.
+- `GitEngine` repository initialization and inspection, Git LFS image tracking, status, staged/unstaged and per-file/commit diffs, branch and rename-following file history, remote state, commit, fetch, fast-forward-only pull, push, cancellation, timeouts, and platform-specific authentication guidance.
+- Localized Git sidebar, log panel, read-only inline/side-by-side diff tabs, live task output, airplane-mode gating, and post-pull reconciliation through the normal filesystem rebuild paths and typed events.
+
+### Synchronization scripting bridge — Open
 
 Open:
 
-- `GitEngine`, repository status, history, diff view, commit, fetch, pull, push, and LFS command integration.
-- Expose `bds.sync` after the shared Git/synchronization workflow exists.
-- Replace the Git sidebar and Git log placeholders with working flows.
+- Expose `bds.sync` through the scripting API using the shared Git workflow.
 
 ### WordPress import — Open
 
@@ -121,7 +123,7 @@ Open:
 
 ## Suggested Order
 
-1. Git workflow and WordPress import.
+1. WordPress import.
 2. CLI, MCP, and domain events.
 3. Conversational AI and agent tools.
 4. Embeddings and duplicate detection.

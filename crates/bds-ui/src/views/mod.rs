@@ -1,5 +1,6 @@
 pub mod activity_bar;
 pub mod dashboard;
+pub mod git;
 pub mod media_editor;
 pub mod metadata_diff;
 pub mod modal;

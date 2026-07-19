@@ -31,6 +31,7 @@ use crate::views::{
         DashboardCategory, DashboardRecentPost, DashboardState, DashboardStats, DashboardTag,
         DashboardTimelineMonth,
     },
+    git::{GitDiffLoad, GitDiffState, GitNetworkCompletion, GitSnapshot, GitUiState},
     media_editor::{LinkedPostItem, MediaEditorMsg, MediaEditorState},
     metadata_diff::MetadataDiffState,
     modal,
@@ -47,6 +48,7 @@ use crate::views::{
 
 mod editor_handlers;
 mod engine_handlers;
+mod git_handlers;
 mod preview_handlers;
 mod search;
 mod tasks;
@@ -212,6 +214,52 @@ pub enum Message {
         result: Result<engine::generation::GenerationReport, String>,
     },
     SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
+
+    // Git
+    GitRefresh,
+    GitLoaded {
+        repository_dir: PathBuf,
+        result: Result<GitSnapshot, String>,
+    },
+    GitRemoteInputChanged(String),
+    GitCommitMessageChanged(String),
+    GitInitialize,
+    GitSetRemote,
+    GitCommit,
+    GitFetch,
+    GitPull,
+    GitPush,
+    GitPruneLfs,
+    GitLocalFinished {
+        repository_dir: PathBuf,
+        operation: engine::git::GitOperation,
+        result: Result<GitSnapshot, String>,
+    },
+    GitNetworkFinished {
+        repository_dir: PathBuf,
+        task_id: TaskId,
+        operation: engine::git::GitOperation,
+        result: Result<GitNetworkCompletion, String>,
+    },
+    OpenGitFileDiff(String),
+    OpenGitCommitDiff {
+        hash: String,
+        subject: String,
+    },
+    SelectGitCommitFile {
+        hash: String,
+        change: engine::git::ChangedFile,
+    },
+    GitDiffLoaded {
+        repository_dir: PathBuf,
+        tab_id: String,
+        result: Result<GitDiffLoad, String>,
+    },
+    GitFileHistoryLoaded {
+        repository_dir: PathBuf,
+        path: String,
+        result: Result<Vec<engine::git::GitCommit>, String>,
+    },
 
     // Editor views
     PostEditor(PostEditorMsg),
@@ -823,6 +871,10 @@ pub struct BdsApp {
     site_validation_state: SiteValidationState,
     metadata_diff_state: MetadataDiffState,
     translation_validation_state: crate::views::translation_validation::TranslationValidationState,
+    git_state: GitUiState,
+    git_diffs: HashMap<String, GitDiffState>,
+    git_file_history: Vec<engine::git::GitCommit>,
+    git_file_history_target: Option<String>,
 }
 
 // ───────────────────────────────────────────────────────────
@@ -962,6 +1014,10 @@ impl BdsApp {
                 site_validation_state: SiteValidationState::default(),
                 metadata_diff_state: MetadataDiffState::default(),
                 translation_validation_state: Default::default(),
+                git_state: GitUiState::default(),
+                git_diffs: HashMap::new(),
+                git_file_history: Vec::new(),
+                git_file_history_target: None,
             },
             init_task,
         )
@@ -1028,6 +1084,10 @@ impl BdsApp {
             site_validation_state: SiteValidationState::default(),
             metadata_diff_state: MetadataDiffState::default(),
             translation_validation_state: Default::default(),
+            git_state: GitUiState::default(),
+            git_diffs: HashMap::new(),
+            git_file_history: Vec::new(),
+            git_file_history_target: None,
         }
     }
 
@@ -1053,6 +1113,8 @@ impl BdsApp {
                     && matches!(new_view, SidebarView::Posts | SidebarView::Pages);
                 if needs_post_refresh {
                     self.refresh_sidebar_posts()
+                } else if new_view == SidebarView::Git && new_visible {
+                    self.refresh_git()
                 } else {
                     Task::none()
                 }
@@ -1125,6 +1187,7 @@ impl BdsApp {
                 } else {
                     self.active_tab = None;
                 }
+                self.git_diffs.remove(&id);
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
                 self.sync_embedded_preview_for_active_post()
@@ -1147,6 +1210,7 @@ impl BdsApp {
                 self.flush_active_post_editor();
                 self.tabs.clear();
                 self.active_tab = None;
+                self.git_diffs.clear();
                 self.hide_embedded_preview();
                 Task::none()
             }
@@ -1190,6 +1254,7 @@ impl BdsApp {
                 if let Some(ref db) = self.db {
                     match engine::project::set_active_project(db.conn(), &project_id) {
                         Ok(()) => {
+                            self.reset_git_for_project_change();
                             self.active_project =
                                 self.projects.iter().find(|p| p.id == project_id).cloned();
                             self.preview_session = None;
@@ -1235,7 +1300,7 @@ impl BdsApp {
                     }
                 }
                 self.sync_menu_state();
-                Task::none()
+                self.refresh_git_if_visible()
             }
             Message::ProjectSwitched(result) => {
                 match result {
@@ -1266,6 +1331,7 @@ impl BdsApp {
                             let _ = engine::project::set_active_project(db.conn(), &project.id);
                             self.projects =
                                 engine::project::list_projects(db.conn()).unwrap_or_default();
+                            self.reset_git_for_project_change();
                             self.active_project = Some(project.clone());
                             self.preview_session = None;
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
@@ -1284,7 +1350,7 @@ impl BdsApp {
                         }
                     }
                 }
-                Task::none()
+                self.refresh_git_if_visible()
             }
             Message::ProjectCreated(result) => {
                 match result {
@@ -1354,6 +1420,7 @@ impl BdsApp {
                             let _ = engine::project::set_active_project(db.conn(), &project.id);
                             self.projects =
                                 engine::project::list_projects(db.conn()).unwrap_or_default();
+                            self.reset_git_for_project_change();
                             self.active_project = Some(project.clone());
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
                             self.preview_session = None;
@@ -1367,7 +1434,10 @@ impl BdsApp {
                                 ),
                             );
                             self.sync_menu_state();
-                            return self.refresh_counts();
+                            return Task::batch([
+                                self.refresh_counts(),
+                                self.refresh_git_if_visible(),
+                            ]);
                         }
                         Err(error) => self.notify(
                             ToastLevel::Error,
@@ -1817,7 +1887,11 @@ impl BdsApp {
             // ── Panel ──
             Message::SetPanelTab(tab) => {
                 self.panel_tab = tab;
-                Task::none()
+                if tab == PanelTab::GitLog {
+                    self.refresh_git_file_history()
+                } else {
+                    Task::none()
+                }
             }
 
             // ── Settings ──
@@ -1867,6 +1941,26 @@ impl BdsApp {
             | Message::SiteGenerationSectionDone { .. }
             | Message::SiteGenerationIndexDone { .. }
             | Message::SiteValidationLoaded(_)) => self.handle_engine_message(message),
+
+            // ── Git ──
+            message @ (Message::GitRefresh
+            | Message::GitLoaded { .. }
+            | Message::GitRemoteInputChanged(_)
+            | Message::GitCommitMessageChanged(_)
+            | Message::GitInitialize
+            | Message::GitSetRemote
+            | Message::GitCommit
+            | Message::GitFetch
+            | Message::GitPull
+            | Message::GitPush
+            | Message::GitPruneLfs
+            | Message::GitLocalFinished { .. }
+            | Message::GitNetworkFinished { .. }
+            | Message::OpenGitFileDiff(_)
+            | Message::OpenGitCommitDiff { .. }
+            | Message::SelectGitCommitFile { .. }
+            | Message::GitDiffLoaded { .. }
+            | Message::GitFileHistoryLoaded { .. }) => self.handle_git_message(message),
 
             // ── Toasts ──
             Message::ShowToast(level, msg) => {
@@ -2172,6 +2266,9 @@ impl BdsApp {
             &self.site_validation_state,
             &self.metadata_diff_state,
             &self.translation_validation_state,
+            &self.git_state,
+            &self.git_diffs,
+            &self.git_file_history,
         )
     }
 
@@ -6201,6 +6298,7 @@ mod tests {
         save_editor_settings_state_impl, save_script_editor_state_impl,
         save_template_editor_state_impl,
     };
+    use crate::i18n::t;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
@@ -6214,6 +6312,7 @@ mod tests {
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
     use bds_core::engine::{ai, media, post, script, template};
+    use bds_core::i18n::UiLocale;
     use bds_core::model::{Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
@@ -6343,6 +6442,22 @@ mod tests {
         assert_eq!(
             app.output_entries.last().unwrap().text,
             "Automatic AI actions stay gated by airplane mode."
+        );
+    }
+
+    #[test]
+    fn git_network_actions_are_gated_in_airplane_mode() {
+        let (db, project, tempdir) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, tempdir.path().to_path_buf());
+        app.offline_mode = true;
+
+        let _ = app.update(Message::GitFetch);
+
+        assert!(app.git_state.network_run.is_none());
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == t(UiLocale::En, "git.airplaneBlocked"))
         );
     }
 

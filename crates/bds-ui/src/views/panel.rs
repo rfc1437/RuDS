@@ -2,6 +2,7 @@ use iced::widget::text::Shaping;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
+use bds_core::engine::git::GitCommit;
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
@@ -109,6 +110,7 @@ pub fn view(
     locale: UiLocale,
     active_tab_is_post: bool,
     active_tab_is_post_or_media: bool,
+    git_file_history: &[GitCommit],
 ) -> Element<'static, Message> {
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
 
@@ -349,15 +351,45 @@ pub fn view(
             }
         }
         PanelTab::GitLog => {
-            // Git Log content populated in extension bucket A (git integration)
-            container(
-                text(t(locale, "panel.gitLogPlaceholder"))
-                    .size(12)
-                    .shaping(Shaping::Advanced)
-                    .color(muted),
-            )
-            .padding(8)
-            .into()
+            if git_file_history.is_empty() {
+                container(
+                    text(t(locale, "git.noFileHistory"))
+                        .size(12)
+                        .shaping(Shaping::Advanced)
+                        .color(muted),
+                )
+                .padding(8)
+                .into()
+            } else {
+                let items = git_file_history
+                    .iter()
+                    .map(|commit| {
+                        let hash = commit.hash.clone();
+                        let subject = commit.subject.clone().unwrap_or_else(|| hash.clone());
+                        let short = hash.chars().take(7).collect::<String>();
+                        button(
+                            row![
+                                text(short).size(11).font(iced::Font::MONOSPACE),
+                                text(subject.clone()).size(11),
+                                Space::with_width(Length::Fill),
+                                text(commit.date.clone().unwrap_or_default()).size(10),
+                            ]
+                            .spacing(8),
+                        )
+                        .on_press(Message::OpenGitCommitDiff { hash, subject })
+                        .padding([4, 8])
+                        .width(Length::Fill)
+                        .style(inputs::disclosure_button)
+                        .into()
+                    })
+                    .collect::<Vec<Element<'static, Message>>>();
+                scrollable(
+                    iced::widget::Column::with_children(items)
+                        .spacing(2)
+                        .padding(8),
+                )
+                .into()
+            }
         }
     };
 

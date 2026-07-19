@@ -929,8 +929,6 @@ pub(crate) fn rebuild_canonical_post(
         .to_string();
 
     let hash = content_hash(content.as_bytes());
-    let now = now_unix_ms();
-
     let status = match fm.status.as_str() {
         "published" => PostStatus::Published,
         "archived" => PostStatus::Archived,
@@ -960,7 +958,7 @@ pub(crate) fn rebuild_canonical_post(
             post.tags = fm.tags;
             post.categories = fm.categories;
             post.created_at = fm.created_at;
-            post.updated_at = now;
+            post.updated_at = fm.updated_at;
             post.published_at = fm.published_at;
             qp::update_post(conn, &post)?;
             Ok(false)
@@ -993,7 +991,7 @@ pub(crate) fn rebuild_canonical_post(
                 published_categories: None,
                 published_excerpt: None,
                 created_at: fm.created_at,
-                updated_at: now,
+                updated_at: fm.updated_at,
                 published_at: fm.published_at,
             };
             qp::insert_post(conn, &post)?;
@@ -1747,6 +1745,7 @@ mod tests {
         assert_eq!(post.title, "Rebuilt Post");
         assert_eq!(post.slug, "rebuilt-post");
         assert_eq!(post.tags, vec!["test"]);
+        assert_eq!(post.updated_at, 1_705_320_000_000);
 
         // Verify translation in DB
         let trans =

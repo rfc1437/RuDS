@@ -5,6 +5,7 @@ pub mod calendar;
 pub mod error;
 pub mod gallery_import;
 pub mod generation;
+pub mod git;
 pub mod media;
 pub mod menu;
 pub mod meta;

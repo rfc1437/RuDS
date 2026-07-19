@@ -5,6 +5,7 @@ use iced::widget::text::Shaping;
 use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Background, Color, Element, Length, Padding, Theme};
 
+use bds_core::engine::git::GitCommit;
 use bds_core::i18n::UiLocale;
 use bds_core::model::{Media, Post, Project, Script, Template};
 
@@ -16,6 +17,7 @@ use crate::state::toast::Toast;
 use crate::views::{
     activity_bar,
     dashboard::DashboardState,
+    git::{self, GitDiffState, GitUiState},
     media_editor::{self, MediaEditorState},
     metadata_diff::{self, MetadataDiffState},
     modal, panel,
@@ -123,6 +125,9 @@ pub fn view<'a>(
     site_validation_state: &'a SiteValidationState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
+    git_state: &'a GitUiState,
+    git_diffs: &'a HashMap<String, GitDiffState>,
+    git_file_history: &'a [GitCommit],
 ) -> Element<'a, Message> {
     // Activity bar (leftmost column)
     let activity = activity_bar::view(sidebar_view, sidebar_visible, locale);
@@ -148,6 +153,7 @@ pub fn view<'a>(
         site_validation_state,
         metadata_diff_state,
         translation_validation_state,
+        git_diffs,
     );
 
     // Right column: tab bar + content + panel
@@ -176,6 +182,7 @@ pub fn view<'a>(
             locale,
             active_tab_is_post,
             active_tab_is_post_or_media,
+            git_file_history,
         ));
     }
     let right = container(right_col.width(Length::Fill).height(Length::Fill))
@@ -202,6 +209,8 @@ pub fn view<'a>(
             active_tab,
             locale,
             data_dir,
+            git_state,
+            offline_mode,
         ));
 
         // Resize drag handle: 4px wide strip between sidebar and content
@@ -379,6 +388,7 @@ fn route_content_area<'a>(
     site_validation_state: &'a SiteValidationState,
     metadata_diff_state: &'a MetadataDiffState,
     translation_validation_state: &'a TranslationValidationState,
+    git_diffs: &'a HashMap<String, GitDiffState>,
 ) -> Element<'a, Message> {
     match route_kind(
         tabs,
@@ -454,6 +464,19 @@ fn route_content_area<'a>(
         ContentRoute::TranslationValidation => {
             translation_validation::view(translation_validation_state, locale)
         }
+        ContentRoute::GitDiff(tab_id) => {
+            if let Some(state) = git_diffs.get(tab_id) {
+                let settings = settings_state.cloned().unwrap_or_default();
+                git::diff_view(
+                    state,
+                    &settings.diff_view_style,
+                    settings.wrap_long_lines,
+                    locale,
+                )
+            } else {
+                loading_view(locale)
+            }
+        }
         ContentRoute::Placeholder(title) => welcome::tab_placeholder(locale, title, None),
     }
 }
@@ -472,6 +495,7 @@ enum ContentRoute<'a> {
     SiteValidation,
     MetadataDiff,
     TranslationValidation,
+    GitDiff(&'a str),
     Placeholder(&'a str),
 }
 
@@ -547,11 +571,11 @@ fn route_kind<'a>(
         }
         TabType::SiteValidation => ContentRoute::SiteValidation,
         TabType::MetadataDiff => ContentRoute::MetadataDiff,
+        TabType::GitDiff => ContentRoute::GitDiff(tab_id),
         TabType::Style
         | TabType::Chat
         | TabType::Import
         | TabType::MenuEditor
-        | TabType::GitDiff
         | TabType::Documentation
         | TabType::ApiDocumentation
         | TabType::FindDuplicates => ContentRoute::Placeholder(&tab.title),
@@ -615,7 +639,6 @@ mod tests {
             TabType::Chat,
             TabType::Import,
             TabType::MenuEditor,
-            TabType::GitDiff,
             TabType::Documentation,
             TabType::ApiDocumentation,
             TabType::FindDuplicates,
@@ -640,6 +663,29 @@ mod tests {
                 _ => panic!("expected placeholder route for {tab_type:?}"),
             }
         }
+    }
+
+    #[test]
+    fn git_diff_tab_routes_to_real_view() {
+        let empty_posts = HashMap::new();
+        let empty_media = HashMap::new();
+        let empty_templates = HashMap::new();
+        let empty_scripts = HashMap::new();
+        let site_validation_state = SiteValidationState::default();
+        let tabs = vec![tab("git-diff:file.txt", TabType::GitDiff, "file.txt")];
+        let route = route_kind(
+            &tabs,
+            Some("git-diff:file.txt"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            None,
+            None,
+            None,
+            &site_validation_state,
+        );
+        assert!(matches!(route, ContentRoute::GitDiff("git-diff:file.txt")));
     }
 
     #[test]

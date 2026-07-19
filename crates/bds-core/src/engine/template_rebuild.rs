@@ -8,7 +8,6 @@ use crate::db::queries::template as qt;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Template, TemplateStatus};
 use crate::util::frontmatter::read_template_file;
-use crate::util::now_unix_ms;
 
 /// Report returned by `rebuild_templates_from_filesystem`.
 #[derive(Debug, Default)]
@@ -83,8 +82,6 @@ pub(crate) fn rebuild_single_template(
         .to_string();
 
     let kind = fm.kind.parse().map_err(EngineError::Parse)?;
-    let now = now_unix_ms();
-
     // File exists on disk -> Published; content is None in DB
     let status = TemplateStatus::Published;
 
@@ -100,7 +97,7 @@ pub(crate) fn rebuild_single_template(
             tpl.status = status;
             tpl.content = None;
             tpl.created_at = fm.created_at;
-            tpl.updated_at = now;
+            tpl.updated_at = fm.updated_at;
             qt::update_template(conn, &tpl)?;
             Ok(false)
         }
@@ -117,7 +114,7 @@ pub(crate) fn rebuild_single_template(
                 status,
                 content: None,
                 created_at: fm.created_at,
-                updated_at: now,
+                updated_at: fm.updated_at,
             };
             qt::insert_template(conn, &tpl)?;
             Ok(true)
@@ -236,6 +233,7 @@ updatedAt: \"2024-01-01T00:00:00.000Z\"
         assert_eq!(tpl.version, 3);
         assert_eq!(tpl.status, TemplateStatus::Published);
         assert!(tpl.content.is_none());
+        assert_eq!(tpl.updated_at, 1_704_067_200_000);
     }
 
     #[test]

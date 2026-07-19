@@ -8,7 +8,6 @@ use crate::db::queries::script as qs;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Script, ScriptStatus};
 use crate::util::frontmatter::read_script_file;
-use crate::util::now_unix_ms;
 
 /// Report returned by `rebuild_scripts_from_filesystem`.
 #[derive(Debug, Default)]
@@ -83,8 +82,6 @@ pub(crate) fn rebuild_single_script(
         .to_string();
 
     let kind = fm.kind.parse().map_err(EngineError::Parse)?;
-    let now = now_unix_ms();
-
     // File exists on disk -> Published; content is None in DB
     let status = ScriptStatus::Published;
 
@@ -101,7 +98,7 @@ pub(crate) fn rebuild_single_script(
             script.status = status;
             script.content = None;
             script.created_at = fm.created_at;
-            script.updated_at = now;
+            script.updated_at = fm.updated_at;
             qs::update_script(conn, &script)?;
             Ok(false)
         }
@@ -119,7 +116,7 @@ pub(crate) fn rebuild_single_script(
                 status,
                 content: None,
                 created_at: fm.created_at,
-                updated_at: now,
+                updated_at: fm.updated_at,
             };
             qs::insert_script(conn, &script)?;
             Ok(true)
@@ -246,6 +243,7 @@ end
         assert!(script.enabled);
         assert_eq!(script.version, 5);
         assert_eq!(script.status, ScriptStatus::Published);
+        assert_eq!(script.updated_at, 1_704_067_200_000);
         assert!(script.content.is_none());
     }
 

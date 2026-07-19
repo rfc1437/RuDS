@@ -13,6 +13,7 @@ use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 use crate::state::sidebar_filter::{CalendarYear, MediaFilter, PostFilter};
 use crate::state::tabs::{Tab, TabType};
+use crate::views::git::GitUiState;
 
 /// Sidebar container style — dark background.
 fn sidebar_style(_theme: &Theme) -> container::Style {
@@ -79,7 +80,7 @@ fn placeholder_key(view: SidebarView) -> &'static str {
         SidebarView::Tags => "sidebar.tagsHeader",
         SidebarView::Chat => "sidebar.chatPlaceholder",
         SidebarView::Import => "sidebar.importPlaceholder",
-        SidebarView::Git => "sidebar.gitPlaceholder",
+        SidebarView::Git => "git.noChanges",
         SidebarView::Settings => "sidebar.settingsHeader",
     }
 }
@@ -635,6 +636,8 @@ pub fn view(
     active_tab: Option<&str>,
     locale: UiLocale,
     _data_dir: Option<&Path>,
+    git_state: &GitUiState,
+    offline_mode: bool,
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
@@ -1140,6 +1143,7 @@ pub fn view(
                 .collect();
             iced::widget::Column::with_children(items).spacing(1).into()
         }
+        SidebarView::Git => crate::views::git::sidebar_view(git_state, offline_mode, locale),
         _ => text(t(locale, placeholder_key(sidebar_view)))
             .size(12)
             .shaping(Shaping::Advanced)
