@@ -7,8 +7,8 @@ use diesel::prelude::*;
 use uuid::Uuid;
 
 use crate::db::queries::template as qt;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::{Template, TemplateKind, TemplateStatus};
+use crate::engine::{EngineError, EngineResult, domain_events};
+use crate::model::{DomainEntity, NotificationAction, Template, TemplateKind, TemplateStatus};
 use crate::util::frontmatter::{TemplateFrontmatter, write_template_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
@@ -49,6 +49,7 @@ pub fn create_template(
     };
 
     qt::insert_template(conn, &tpl)?;
+    emit_template(&tpl, NotificationAction::Created);
     Ok(tpl)
 }
 
@@ -108,6 +109,7 @@ pub fn update_template(
     tpl.version += 1;
     tpl.updated_at = now_unix_ms();
     qt::update_template(conn, &tpl)?;
+    emit_template(&tpl, NotificationAction::Updated);
     Ok(tpl)
 }
 
@@ -128,6 +130,7 @@ pub fn save_template(
     }
 
     qt::update_template(conn, &tpl)?;
+    emit_template(&tpl, NotificationAction::Updated);
     Ok(tpl)
 }
 
@@ -190,6 +193,8 @@ pub fn publish_template(
     tpl.updated_at = now;
     qt::update_template(conn, &tpl)?;
 
+    emit_template(&tpl, NotificationAction::Updated);
+
     Ok(tpl)
 }
 
@@ -221,6 +226,8 @@ pub fn unpublish_template(
     tpl.status = TemplateStatus::Draft;
     tpl.updated_at = now_unix_ms();
     qt::update_template(conn, &tpl)?;
+
+    emit_template(&tpl, NotificationAction::Updated);
 
     Ok(tpl)
 }
@@ -264,7 +271,17 @@ pub fn delete_template(
     }
 
     qt::delete_template(conn, template_id)?;
+    emit_template(&tpl, NotificationAction::Deleted);
     Ok(())
+}
+
+fn emit_template(template: &Template, action: NotificationAction) {
+    domain_events::entity_changed(
+        &template.project_id,
+        DomainEntity::Template,
+        &template.id,
+        action,
+    );
 }
 
 // --- Helper functions ---

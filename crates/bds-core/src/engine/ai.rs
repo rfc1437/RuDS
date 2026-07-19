@@ -728,8 +728,7 @@ fn keyring_error(error: keyring::Error) -> EngineError {
 }
 
 fn set_setting(conn: &Connection, key: &str, value: &str, updated_at: i64) -> EngineResult<()> {
-    setting::set_setting_value(conn, key, value, updated_at)?;
-    Ok(())
+    crate::engine::settings::set_at(conn, key, value, updated_at)
 }
 
 fn set_optional_setting(

@@ -28,12 +28,17 @@ pub struct GeneratedFileHash {
 )]
 #[diesel(sql_type = diesel::sql_types::Text)]
 #[serde(rename_all = "lowercase")]
-pub enum NotificationEntity {
+pub enum DomainEntity {
     Post,
     Media,
+    Tag,
     Script,
     Template,
+    Project,
+    Setting,
 }
+
+pub type NotificationEntity = DomainEntity;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize, diesel::AsExpression, diesel::FromSqlRow,
@@ -46,27 +51,33 @@ pub enum NotificationAction {
     Deleted,
 }
 
-impl std::str::FromStr for NotificationEntity {
+impl std::str::FromStr for DomainEntity {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "post" => Ok(Self::Post),
             "media" => Ok(Self::Media),
+            "tag" => Ok(Self::Tag),
             "script" => Ok(Self::Script),
             "template" => Ok(Self::Template),
+            "project" => Ok(Self::Project),
+            "setting" => Ok(Self::Setting),
             _ => Err(format!("invalid NotificationEntity: {value}")),
         }
     }
 }
 
-impl NotificationEntity {
+impl DomainEntity {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Post => "post",
             Self::Media => "media",
+            Self::Tag => "tag",
             Self::Script => "script",
             Self::Template => "template",
+            Self::Project => "project",
+            Self::Setting => "setting",
         }
     }
 }
@@ -102,8 +113,7 @@ impl NotificationAction {
     check_for_backend(diesel::sqlite::Sqlite)
 )]
 pub struct DbNotification {
-    #[diesel(deserialize_as = i32)]
-    pub id: i64,
+    pub id: i32,
     pub entity_type: NotificationEntity,
     pub entity_id: String,
     pub action: NotificationAction,
@@ -112,6 +122,7 @@ pub struct DbNotification {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seen_at: Option<i64>,
     pub created_at: i64,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

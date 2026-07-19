@@ -5,7 +5,8 @@
 --                 lib/bds/desktop/shell_live.ex, lib/bds/cli_sync/watcher.ex
 
 entity EntityChangedEvent {
-    entity: String                  -- post, media, tag, template, script
+    project_id: String
+    entity: String                  -- post, media, tag, template, script, project
     entity_id: String
     action: created | updated | deleted
     -- Same topic and payload shape as the CLI sync watcher, so one
@@ -13,6 +14,7 @@ entity EntityChangedEvent {
 }
 
 entity SettingsChangedEvent {
+    project_id: String?             -- absent for a global setting
     key: String                     -- e.g. ui.language
 }
 
@@ -20,16 +22,18 @@ surface EventBusSurface {
     facing _: EventBus
 
     provides:
-        ContextMutationSucceeded(entity, entity_id, action)
+        ContextMutationSucceeded(project_id, entity, entity_id, action)
         GlobalSettingWritten(key)
         ClientSubscribed()
+        ClientUnsubscribed()
 }
 
 rule BroadcastEntityMutation {
-    when: ContextMutationSucceeded(entity, entity_id, action)
+    when: ContextMutationSucceeded(project_id, entity, entity_id, action)
     -- Posts, Media, Tags, Templates, Scripts broadcast after every
     -- successful create/update/publish/delete (publish maps to updated).
     ensures: EntityChangedEvent.created(
+        project_id: project_id,
         entity: entity,
         entity_id: entity_id,
         action: action
@@ -43,11 +47,16 @@ rule BroadcastSettingsChange {
 
 rule ClientSynchronization {
     when: ClientSubscribed()
-    -- Every shell (LiveView GUI or TUI session) subscribes on mount and
-    -- refreshes affected views on each event; deleted entities close
-    -- their open tabs. This keeps all connected clients synchronized
-    -- regardless of which client or pipeline originated the change.
+    -- Every shell subscribes on mount. Each subscriber receives events in
+    -- publish order and refreshes only the affected project; deleted entities
+    -- close their open tabs. A refresh never writes the mutation again.
     ensures: ClientRefreshOnEvent()
+}
+
+rule ClientUnsubscription {
+    when: ClientUnsubscribed()
+    -- A detached client receives no later events.
+    ensures: ClientDetached()
 }
 
 rule ServerSideUiLanguage {

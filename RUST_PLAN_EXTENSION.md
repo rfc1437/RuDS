@@ -81,7 +81,11 @@ Open:
 - OPML/menu editor UI.
 - Replace the Menu Editor placeholder.
 
-### CLI, MCP, and domain events — Open
+### CLI and MCP — Open; domain events — Done
+
+Done:
+
+- Domain event bus from `events.allium` for desktop, CLI, TUI, server, and future remote clients, including deterministic subscriptions, project scope, and persisted CLI notification consumption/pruning.
 
 Open:
 
@@ -89,7 +93,6 @@ Open:
 - Commands from `cli.allium` and `cli_sync.allium` using the same project, database, engines, and settings as the desktop app.
 - Reuse the core gallery batch-import engine already used by the desktop post editor for the CLI `gallery` command.
 - MCP tools/resources and proposal-based writes from `mcp.allium`.
-- Domain event bus from `events.allium` for desktop, CLI, TUI, and future remote clients.
 - Replace the MCP settings placeholder.
 
 ### Blogmark and transform pipeline — Done

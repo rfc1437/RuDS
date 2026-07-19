@@ -11,10 +11,10 @@ use bds_core::db::Database;
 use bds_core::engine;
 use bds_core::engine::ai::{self, AiEndpointConfig, AiEndpointKind};
 use bds_core::engine::task::{TaskId, TaskManager, TaskStatus};
-use bds_core::i18n::{UiLocale, detect_os_locale};
+use bds_core::i18n::{UiLocale, detect_os_locale, normalize_language};
 use bds_core::model::{
-    ImportDefinition, ImportReport, Media, Post, PostStatus, PostTranslation, Project,
-    PublishingPreferences, Script, SshMode, Template,
+    DomainEntity, DomainEvent, ImportDefinition, ImportReport, Media, NotificationAction, Post,
+    PostStatus, PostTranslation, Project, PublishingPreferences, Script, SshMode, Template,
 };
 
 use crate::components::webview::{self, WebViewConfig, WebViewController};
@@ -144,6 +144,7 @@ pub enum Message {
 
     // Tasks
     TaskTick,
+    DomainEventsTick,
     CancelTask(TaskId),
     ToggleTaskGroup(String),
 
@@ -718,21 +719,10 @@ fn save_script_editor_state_impl(
 }
 
 fn save_editor_settings_state_impl(db: &Database, state: &SettingsViewState) -> Result<(), String> {
-    let now = bds_core::util::now_unix_ms();
     [
-        bds_core::db::queries::setting::set_setting_value(
-            db.conn(),
-            "editor.default_mode",
-            &state.default_mode,
-            now,
-        ),
-        bds_core::db::queries::setting::set_setting_value(
-            db.conn(),
-            "editor.diff_view_style",
-            &state.diff_view_style,
-            now,
-        ),
-        bds_core::db::queries::setting::set_setting_value(
+        engine::settings::set(db.conn(), "editor.default_mode", &state.default_mode),
+        engine::settings::set(db.conn(), "editor.diff_view_style", &state.diff_view_style),
+        engine::settings::set(
             db.conn(),
             "editor.wrap_long_lines",
             if state.wrap_long_lines {
@@ -740,9 +730,8 @@ fn save_editor_settings_state_impl(db: &Database, state: &SettingsViewState) -> 
             } else {
                 "false"
             },
-            now,
         ),
-        bds_core::db::queries::setting::set_setting_value(
+        engine::settings::set(
             db.conn(),
             "editor.hide_unchanged_regions",
             if state.hide_unchanged_regions {
@@ -750,7 +739,6 @@ fn save_editor_settings_state_impl(db: &Database, state: &SettingsViewState) -> 
             } else {
                 "false"
             },
-            now,
         ),
     ]
     .into_iter()
@@ -849,6 +837,7 @@ pub struct BdsApp {
 
     // Tasks
     task_manager: Arc<TaskManager>,
+    domain_events: engine::domain_events::EventSubscription,
     script_menu_actions: Arc<Mutex<Vec<MenuAction>>>,
     task_snapshots: Vec<TaskSnapshot>,
     collapsed_task_groups: HashSet<String>,
@@ -911,8 +900,7 @@ pub struct BdsApp {
 
 impl BdsApp {
     pub fn new() -> (Self, Task<Message>) {
-        let locale = detect_os_locale();
-        let (menu_bar, registry) = menu::build_menu_bar(locale);
+        let os_locale = detect_os_locale();
 
         // Open or create the database
         let db_path = dirs::data_dir()
@@ -929,6 +917,12 @@ impl BdsApp {
         if let Some(ref db) = db {
             let _ = db.migrate();
         }
+        let locale = db
+            .as_ref()
+            .and_then(|db| engine::settings::ui_language(db.conn()).ok().flatten())
+            .map(|language| normalize_language(&language))
+            .unwrap_or(os_locale);
+        let (menu_bar, registry) = menu::build_menu_bar(locale);
         let search_index_rebuild_required = db
             .as_ref()
             .is_some_and(|db| engine::search::prepare_search_index(db.conn()).unwrap_or(true));
@@ -1010,6 +1004,7 @@ impl BdsApp {
                 panel_visible: false,
                 panel_tab: PanelTab::Tasks,
                 task_manager: Arc::new(TaskManager::default()),
+                domain_events: engine::domain_events::subscribe(),
                 script_menu_actions: Arc::new(Mutex::new(Vec::new())),
                 task_snapshots: Vec::new(),
                 collapsed_task_groups: HashSet::new(),
@@ -1083,6 +1078,7 @@ impl BdsApp {
             panel_visible: false,
             panel_tab: PanelTab::Tasks,
             task_manager: Arc::new(TaskManager::default()),
+            domain_events: engine::domain_events::subscribe(),
             script_menu_actions: Arc::new(Mutex::new(Vec::new())),
             task_snapshots: Vec::new(),
             collapsed_task_groups: HashSet::new(),
@@ -1844,6 +1840,7 @@ impl BdsApp {
                         .map(|action| self.dispatch_menu_action(action)),
                 )
             }
+            Message::DomainEventsTick => self.process_domain_events(),
             Message::CancelTask(task_id) => {
                 if self.cancel_site_generation_task(task_id) {
                     return Task::none();
@@ -2036,14 +2033,19 @@ impl BdsApp {
                 Task::none()
             }
             Message::SetUiLocale(locale) => {
-                self.ui_locale = locale;
-                self.locale_dropdown_open = false;
-                menu::update_menu_labels(&self.menu_registry, locale);
-                // Re-translate singleton tab titles per tabs.allium
-                for tab in &mut self.tabs {
-                    if let Some(key) = tab.tab_type.i18n_key() {
-                        tab.title = t(locale, key);
+                if let Some(db) = &self.db {
+                    match engine::settings::set(
+                        db.conn(),
+                        engine::settings::UI_LANGUAGE_KEY,
+                        locale.code(),
+                    ) {
+                        Ok(()) => self.apply_ui_locale(locale),
+                        Err(error) => {
+                            self.add_output(&error.to_string());
+                        }
                     }
+                } else {
+                    self.apply_ui_locale(locale);
                 }
                 Task::none()
             }
@@ -2416,6 +2418,8 @@ impl BdsApp {
 
         let task_tick =
             iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::TaskTick);
+        let domain_event_tick = iced::time::every(std::time::Duration::from_millis(100))
+            .map(|_| Message::DomainEventsTick);
 
         let toast_tick = if !self.toasts.is_empty() {
             iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::ExpireToasts)
@@ -2441,10 +2445,231 @@ impl BdsApp {
             Subscription::none()
         };
 
-        Subscription::batch([menu_sub, task_tick, toast_tick, drag_sub])
+        Subscription::batch([menu_sub, task_tick, domain_event_tick, toast_tick, drag_sub])
     }
 
     // ── Private helpers ──
+
+    fn apply_ui_locale(&mut self, locale: UiLocale) {
+        self.ui_locale = locale;
+        self.locale_dropdown_open = false;
+        menu::update_menu_labels(&self.menu_registry, locale);
+        for tab in &mut self.tabs {
+            if let Some(key) = tab.tab_type.i18n_key() {
+                tab.title = t(locale, key);
+            }
+        }
+    }
+
+    fn process_domain_events(&mut self) -> Task<Message> {
+        if let Some(db) = &self.db {
+            let _ = engine::cli_sync::poll_notifications(db.conn());
+        }
+        let events = self.domain_events.drain();
+        if events.is_empty() {
+            return Task::none();
+        }
+
+        let mut refresh_content = false;
+        for event in events {
+            refresh_content |= self.handle_domain_event(event);
+        }
+        if refresh_content {
+            self.refresh_counts()
+        } else {
+            Task::none()
+        }
+    }
+
+    fn handle_domain_event(&mut self, event: DomainEvent) -> bool {
+        match event {
+            DomainEvent::SettingsChanged { project_id, key } => {
+                let relevant = project_id.is_none()
+                    || project_id.as_deref()
+                        == self
+                            .active_project
+                            .as_ref()
+                            .map(|project| project.id.as_str());
+                if !relevant {
+                    return false;
+                }
+                if key == engine::settings::UI_LANGUAGE_KEY
+                    && let Some(db) = &self.db
+                    && let Ok(Some(language)) = engine::settings::ui_language(db.conn())
+                {
+                    self.apply_ui_locale(normalize_language(&language));
+                }
+                if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.tab_type == TabType::Settings)
+                {
+                    self.settings_state = None;
+                    if let Some(tab) = self
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.tab_type == TabType::Settings)
+                        .cloned()
+                    {
+                        self.load_editor_for_tab(&tab);
+                    }
+                }
+                false
+            }
+            DomainEvent::EntityChanged {
+                project_id,
+                entity: DomainEntity::Project,
+                ..
+            } => {
+                let previous_active = self
+                    .active_project
+                    .as_ref()
+                    .map(|project| project.id.clone());
+                if let Some(db) = &self.db {
+                    self.projects = engine::project::list_projects(db.conn()).unwrap_or_default();
+                    self.active_project = engine::project::get_active_project(db.conn())
+                        .ok()
+                        .flatten();
+                    self.data_dir = self
+                        .active_project
+                        .as_ref()
+                        .and_then(|project| project.data_path.as_deref())
+                        .map(PathBuf::from);
+                }
+                previous_active.as_deref() == Some(project_id.as_str())
+                    || self
+                        .active_project
+                        .as_ref()
+                        .map(|project| project.id.as_str())
+                        == Some(project_id.as_str())
+            }
+            DomainEvent::EntityChanged {
+                project_id,
+                entity,
+                entity_id,
+                action,
+            } => {
+                if self
+                    .active_project
+                    .as_ref()
+                    .map(|project| project.id.as_str())
+                    != Some(project_id.as_str())
+                {
+                    return false;
+                }
+                self.refresh_entity_editor(entity, &entity_id, action);
+                true
+            }
+        }
+    }
+
+    fn refresh_entity_editor(
+        &mut self,
+        entity: DomainEntity,
+        entity_id: &str,
+        action: NotificationAction,
+    ) {
+        if action == NotificationAction::Deleted {
+            match entity {
+                DomainEntity::Post => {
+                    self.post_editors.remove(entity_id);
+                }
+                DomainEntity::Media => {
+                    self.media_editors.remove(entity_id);
+                }
+                DomainEntity::Template => {
+                    self.template_editors.remove(entity_id);
+                }
+                DomainEntity::Script => {
+                    self.script_editors.remove(entity_id);
+                }
+                DomainEntity::Tag => {
+                    self.tags_view_state = None;
+                }
+                DomainEntity::Project | DomainEntity::Setting => {}
+            }
+            if !matches!(entity, DomainEntity::Tag) {
+                self.close_entity_tab(entity_id);
+            }
+            return;
+        }
+
+        if entity == DomainEntity::Tag {
+            self.tags_view_state = None;
+            if let Some(tab) = self
+                .tabs
+                .iter()
+                .find(|tab| tab.tab_type == TabType::Tags)
+                .cloned()
+            {
+                self.load_editor_for_tab(&tab);
+            }
+            return;
+        }
+
+        let tab = self.tabs.iter().find(|tab| tab.id == entity_id).cloned();
+        let Some(tab) = tab else { return };
+        let dirty = match entity {
+            DomainEntity::Post => self
+                .post_editors
+                .get(entity_id)
+                .is_some_and(|state| state.is_dirty),
+            DomainEntity::Media => self
+                .media_editors
+                .get(entity_id)
+                .is_some_and(|state| state.is_dirty),
+            DomainEntity::Template => self
+                .template_editors
+                .get(entity_id)
+                .is_some_and(|state| state.is_dirty),
+            DomainEntity::Script => self
+                .script_editors
+                .get(entity_id)
+                .is_some_and(|state| state.is_dirty),
+            DomainEntity::Tag | DomainEntity::Project | DomainEntity::Setting => false,
+        };
+        if dirty {
+            return;
+        }
+        match entity {
+            DomainEntity::Post => {
+                self.post_editors.remove(entity_id);
+            }
+            DomainEntity::Media => {
+                self.media_editors.remove(entity_id);
+            }
+            DomainEntity::Template => {
+                self.template_editors.remove(entity_id);
+            }
+            DomainEntity::Script => {
+                self.script_editors.remove(entity_id);
+            }
+            DomainEntity::Tag | DomainEntity::Project | DomainEntity::Setting => {}
+        }
+        self.load_editor_for_tab(&tab);
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == entity_id) {
+            tab.title = match entity {
+                DomainEntity::Post => self
+                    .post_editors
+                    .get(entity_id)
+                    .map(|state| state.title.clone()),
+                DomainEntity::Media => self
+                    .media_editors
+                    .get(entity_id)
+                    .map(|state| state.title.clone()),
+                DomainEntity::Template => self
+                    .template_editors
+                    .get(entity_id)
+                    .map(|state| state.title.clone()),
+                DomainEntity::Script => self
+                    .script_editors
+                    .get(entity_id)
+                    .map(|state| state.title.clone()),
+                DomainEntity::Tag | DomainEntity::Project | DomainEntity::Setting => None,
+            }
+            .unwrap_or_else(|| tab.title.clone());
+        }
+    }
 
     fn dispatch_menu_action(&mut self, action: MenuAction) -> Task<Message> {
         match action {
@@ -8586,5 +8811,157 @@ mod tests {
 
         assert_eq!(regenerated, 1);
         assert!(small_thumb.exists());
+    }
+
+    #[test]
+    fn desktop_watcher_consumes_cli_event_refreshes_sidebar_and_marks_seen() {
+        let (db, project, tmp) = setup();
+        let created = script::create_script(
+            db.conn(),
+            &project.id,
+            "From CLI",
+            ScriptKind::Utility,
+            "function main() end",
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project.clone(), &tmp);
+        bds_core::engine::cli_sync::record_cli_event(
+            app.db.as_ref().unwrap().conn(),
+            &bds_core::model::DomainEvent::EntityChanged {
+                project_id: project.id,
+                entity: bds_core::model::DomainEntity::Script,
+                entity_id: created.id.clone(),
+                action: bds_core::model::NotificationAction::Created,
+            },
+        )
+        .unwrap();
+
+        let _ = app.update(Message::DomainEventsTick);
+
+        assert!(
+            app.sidebar_scripts
+                .iter()
+                .any(|script| script.id == created.id)
+        );
+        let rows = bds_core::db::queries::db_notification::list_notifications(
+            app.db.as_ref().unwrap().conn(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].seen_at.is_some());
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn locale_setting_is_persisted_and_external_event_reloads_without_feedback() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.update(Message::SetUiLocale(UiLocale::De));
+        assert_eq!(app.ui_locale, UiLocale::De);
+        assert_eq!(
+            bds_core::engine::settings::ui_language(app.db.as_ref().unwrap().conn())
+                .unwrap()
+                .as_deref(),
+            Some("de")
+        );
+
+        bds_core::engine::settings::set(
+            app.db.as_ref().unwrap().conn(),
+            bds_core::engine::settings::UI_LANGUAGE_KEY,
+            "fr-FR",
+        )
+        .unwrap();
+        let _ = app.update(Message::DomainEventsTick);
+
+        assert_eq!(app.ui_locale, UiLocale::Fr);
+        assert!(app.toasts.is_empty());
+        assert!(
+            bds_core::db::queries::db_notification::list_notifications(
+                app.db.as_ref().unwrap().conn()
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn deleted_entity_event_closes_its_open_editor_without_notification() {
+        let (db, project, tmp) = setup();
+        let created = script::create_script(
+            db.conn(),
+            &project.id,
+            "Delete externally",
+            ScriptKind::Utility,
+            "function main() end",
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        let tab = Tab {
+            id: created.id.clone(),
+            tab_type: TabType::Scripts,
+            title: created.title,
+            is_transient: false,
+            is_dirty: false,
+        };
+        app.tabs.push(tab.clone());
+        app.load_editor_for_tab(&tab);
+
+        script::delete_script(app.db.as_ref().unwrap().conn(), tmp.path(), &created.id).unwrap();
+        let _ = app.update(Message::DomainEventsTick);
+
+        assert!(!app.tabs.iter().any(|tab| tab.id == created.id));
+        assert!(!app.script_editors.contains_key(&created.id));
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn external_update_event_preserves_unsaved_editor_buffer() {
+        let (db, project, tmp) = setup();
+        let created = script::create_script(
+            db.conn(),
+            &project.id,
+            "Edit externally",
+            ScriptKind::Utility,
+            "function main() end",
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project.clone(), &tmp);
+        let tab = Tab {
+            id: created.id.clone(),
+            tab_type: TabType::Scripts,
+            title: created.title,
+            is_transient: false,
+            is_dirty: true,
+        };
+        app.tabs.push(tab.clone());
+        app.load_editor_for_tab(&tab);
+        let editor = app.script_editors.get_mut(&created.id).unwrap();
+        editor.content = "local unsaved buffer".to_string();
+        editor.is_dirty = true;
+
+        script::update_script(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+            &project.id,
+            Some("Remote title"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let _ = app.update(Message::DomainEventsTick);
+
+        assert_eq!(
+            app.script_editors[&created.id].content,
+            "local unsaved buffer"
+        );
+        assert!(app.script_editors[&created.id].is_dirty);
+        assert!(app.toasts.is_empty());
     }
 }

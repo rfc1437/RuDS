@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::db::queries::project as q;
 use crate::engine::site_assets::copy_bundled_site_assets;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::Project;
+use crate::engine::{EngineError, EngineResult, domain_events};
 use crate::model::metadata::ProjectMetadata;
+use crate::model::{DomainEntity, NotificationAction, Project};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 /// The well-known ID of the default project (spec: DefaultProjectExists).
@@ -57,6 +57,8 @@ pub fn create_project(
 
     // Write default meta files
     write_default_meta_files(&data_dir, name)?;
+
+    emit_project(&project, NotificationAction::Created);
 
     Ok(project)
 }
@@ -120,6 +122,7 @@ pub fn open_project(conn: &Connection, folder_path: &Path) -> EngineResult<Proje
         project.data_path = Some(resolved_path);
         project.updated_at = now_unix_ms();
         q::update_project(conn, &project)?;
+        emit_project(&project, NotificationAction::Updated);
         return Ok(project);
     }
 
@@ -138,6 +141,7 @@ pub fn open_project(conn: &Connection, folder_path: &Path) -> EngineResult<Proje
         updated_at: now,
     };
     q::insert_project(conn, &project)?;
+    emit_project(&project, NotificationAction::Created);
     Ok(project)
 }
 
@@ -170,6 +174,7 @@ pub fn ensure_default_project(
             };
             create_directory_structure(&data_dir)?;
             write_default_meta_files(&data_dir, "My Blog")?;
+            emit_project(&project, NotificationAction::Created);
             Ok(project)
         }
         Err(e) => Err(EngineError::Db(e)),
@@ -188,6 +193,12 @@ pub fn get_active_project(conn: &Connection) -> EngineResult<Option<Project>> {
 /// Deactivate all projects, then activate the given one.
 pub fn set_active_project(conn: &Connection, project_id: &str) -> EngineResult<()> {
     q::set_active_project(conn, project_id)?;
+    domain_events::entity_changed(
+        project_id,
+        DomainEntity::Project,
+        project_id,
+        NotificationAction::Updated,
+    );
     Ok(())
 }
 
@@ -236,7 +247,13 @@ pub fn delete_project(
         let _ = fs::remove_dir_all(dir);
     }
 
+    emit_project(&project, NotificationAction::Deleted);
+
     Ok(())
+}
+
+fn emit_project(project: &Project, action: NotificationAction) {
+    domain_events::entity_changed(&project.id, DomainEntity::Project, &project.id, action);
 }
 
 // ── helpers ──────────────────────────────────────────────────────────

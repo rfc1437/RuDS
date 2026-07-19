@@ -6,9 +6,9 @@ use uuid::Uuid;
 use crate::db::queries::post as post_q;
 use crate::db::queries::tag as tag_q;
 use crate::engine::meta;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::Tag;
+use crate::engine::{EngineError, EngineResult, domain_events};
 use crate::model::metadata::TagEntry;
+use crate::model::{DomainEntity, NotificationAction, Tag};
 use crate::util::now_unix_ms;
 
 /// Create a new tag. Case-insensitive duplicate check.
@@ -38,6 +38,7 @@ pub fn create_tag(
     };
     tag_q::insert_tag(conn, &tag)?;
     rewrite_tags_json(conn, data_dir, project_id)?;
+    emit_tag(&tag, NotificationAction::Created);
     Ok(tag)
 }
 
@@ -73,6 +74,7 @@ pub fn update_tag(
     tag.updated_at = now_unix_ms();
     tag_q::update_tag(conn, &tag)?;
     rewrite_tags_json(conn, data_dir, &tag.project_id)?;
+    emit_tag(&tag, NotificationAction::Updated);
     Ok(())
 }
 
@@ -90,6 +92,7 @@ pub fn delete_tag(
     tag_q::delete_tag(conn, tag_id)?;
     rewrite_tags_json(conn, data_dir, project_id)?;
     flush_post_frontmatter(conn, data_dir, &modified)?;
+    emit_tag(&tag, NotificationAction::Deleted);
     Ok(())
 }
 
@@ -133,6 +136,7 @@ pub fn rename_tag(
     tag_q::update_tag(conn, &tag)?;
     rewrite_tags_json(conn, data_dir, project_id)?;
     flush_post_frontmatter(conn, data_dir, &modified)?;
+    emit_tag(&tag, NotificationAction::Updated);
     Ok(())
 }
 
@@ -149,6 +153,7 @@ pub fn merge_tags(
         .map_err(|_| EngineError::NotFound(format!("target tag {target_id}")))?;
 
     let mut all_modified = Vec::new();
+    let mut deleted_tags = Vec::new();
     for &source_id in source_ids {
         let source_tag = tag_q::get_tag_by_id(conn, source_id)
             .map_err(|_| EngineError::NotFound(format!("source tag {source_id}")))?;
@@ -181,11 +186,20 @@ pub fn merge_tags(
         }
 
         tag_q::delete_tag(conn, source_id)?;
+        deleted_tags.push(source_tag);
     }
 
     rewrite_tags_json(conn, data_dir, project_id)?;
     flush_post_frontmatter(conn, data_dir, &all_modified)?;
+    for tag in &deleted_tags {
+        emit_tag(tag, NotificationAction::Deleted);
+    }
+    emit_tag(&target_tag, NotificationAction::Updated);
     Ok(())
+}
+
+fn emit_tag(tag: &Tag, action: NotificationAction) {
+    domain_events::entity_changed(&tag.project_id, DomainEntity::Tag, &tag.id, action);
 }
 
 /// Import tags from meta/tags.json into DB, preserving colors and properties.

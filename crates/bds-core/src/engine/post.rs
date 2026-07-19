@@ -9,8 +9,8 @@ use crate::db::fts;
 use crate::db::queries::post as qp;
 use crate::db::queries::post_link as ql;
 use crate::db::queries::post_translation as qt;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, PostLink, PostStatus, PostTranslation};
+use crate::engine::{EngineError, EngineResult, domain_events};
+use crate::model::{DomainEntity, NotificationAction, Post, PostLink, PostStatus, PostTranslation};
 use crate::util::frontmatter::{
     read_post_file, read_translation_file, write_post_file, write_translation_file,
 };
@@ -89,6 +89,8 @@ pub fn create_post(
 
     // Index for FTS
     fts_index_post(conn, &post)?;
+
+    emit_post(&post, NotificationAction::Created);
 
     Ok(post)
 }
@@ -184,6 +186,8 @@ pub fn update_post(
     // Re-index FTS
     fts_index_post(conn, &post)?;
 
+    emit_post(&post, NotificationAction::Updated);
+
     Ok(post)
 }
 
@@ -205,6 +209,7 @@ pub fn publish_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     match publish_post_in_savepoint(conn, data_dir, post) {
         Ok(post) => {
             conn.release_savepoint()?;
+            emit_post(&post, NotificationAction::Updated);
             Ok(post)
         }
         Err(error) => {
@@ -338,6 +343,7 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
     }
     let now = now_unix_ms();
     qp::update_post_status(conn, post_id, &PostStatus::Archived, now)?;
+    emit_post(&post, NotificationAction::Updated);
     Ok(())
 }
 
@@ -448,6 +454,7 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
     })() {
         Ok(post) => {
             conn.release_savepoint()?;
+            emit_post(&post, NotificationAction::Updated);
             Ok(post)
         }
         Err(error) => {
@@ -496,7 +503,13 @@ pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineR
     // Delete post from DB
     qp::delete_post(conn, post_id)?;
 
+    emit_post(&post, NotificationAction::Deleted);
+
     Ok(())
+}
+
+fn emit_post(post: &Post, action: NotificationAction) {
+    domain_events::entity_changed(&post.project_id, DomainEntity::Post, &post.id, action);
 }
 
 /// Compute the canonical URL for a post: /{YYYY}/{MM}/{DD}/{slug}

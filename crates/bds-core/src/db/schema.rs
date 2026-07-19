@@ -94,6 +94,7 @@ diesel::table! {
         from_cli -> Integer,
         seen_at -> Nullable<BigInt>,
         created_at -> BigInt,
+        project_id -> Nullable<Text>,
     }
 }
 

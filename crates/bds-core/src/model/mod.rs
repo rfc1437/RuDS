@@ -1,3 +1,4 @@
+mod event;
 mod generation;
 mod import;
 mod media;
@@ -8,8 +9,9 @@ mod script;
 mod tag;
 mod template;
 
+pub use event::DomainEvent;
 pub use generation::{
-    DbNotification, GeneratedFileHash, NotificationAction, NotificationEntity,
+    DbNotification, DomainEntity, GeneratedFileHash, NotificationAction, NotificationEntity,
     PublishingPreferences, SshMode,
 };
 pub use import::{

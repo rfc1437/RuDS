@@ -48,6 +48,7 @@ Available:
 - Explicit rebuild-from-filesystem paths for manual file changes. bDS2 does
   not live-watch arbitrary project files; its external-change watcher is the
   extension CLI/database-notification contract.
+- Typed, project-scoped post/media/tag/template/script/project/settings events at shared mutation boundaries, with deterministic subscribers and a one-shot persisted CLI-to-desktop notification bridge.
 
 ### Native desktop shell — Done
 
@@ -55,6 +56,7 @@ Available:
 
 - Iced workspace with activity bar, sidebar, tabs, status bar, task/output panel, toasts, and modal flows.
 - Native muda menus, localized labels, accelerators, and state-dependent command enablement.
+- Event-driven sidebar/editor refresh, deleted-entity tab closure, and persisted server-selected UI language without mutation feedback loops.
 - Native file/folder dialogs and recent-project handling.
 - macOS open-file and URL lifecycle plumbing.
 - Localized UI separate from project content language.

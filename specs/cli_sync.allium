@@ -4,7 +4,8 @@
 -- Distilled from: src/main/engine/CliNotifier.ts, NotificationWatcher.ts
 
 entity DbNotification {
-    entity_type: String             -- post, media, script, template
+    project_id: String?
+    entity_type: String             -- post, media, tag, script, template, project, setting
     entity_id: String
     action: created | updated | deleted
     from_cli: Boolean
@@ -19,14 +20,15 @@ surface CliSyncRuntimeSurface {
     facing _: CliSyncRuntime
 
     provides:
-        CliMutationPerformed(entity_type, entity_id, action)
+        CliMutationPerformed(project_id, entity_type, entity_id, action)
         DbFileChangeDetected()
 }
 
 rule CliWriteNotification {
-    when: CliMutationPerformed(entity_type, entity_id, action)
+    when: CliMutationPerformed(project_id, entity_type, entity_id, action)
     -- CLI inserts notification row; app watches for it
     ensures: DbNotification.created(
+        project_id: project_id,
         entity_type: entity_type,
         entity_id: entity_id,
         action: action,
@@ -43,7 +45,7 @@ rule AppWatchNotifications {
     for n in unseen:
         ensures: n.seen_at = now
         ensures: EngineCacheInvalidated(n.entity_type)
-        ensures: EntityChangedEvent(n.entity_type, n.entity_id, n.action)
+        ensures: EntityChangedEvent(n.project_id, n.entity_type, n.entity_id, n.action)
             -- IPC event to renderer for UI refresh
 }
 

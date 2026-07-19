@@ -12,6 +12,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - WordPress WXR migration with saved analyses, HTML-to-Markdown and shortcode conversion, conflict/taxonomy review, recoverable 500-item execution batches, media-parent linking, progress reporting, and optional AI-assisted taxonomy mapping.
 - Template and Lua script management with explicit syntax-check feedback, using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms.
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
+- Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.

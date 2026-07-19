@@ -10,8 +10,8 @@ use crate::db::queries::media as qm;
 use crate::db::queries::media_translation as qmt;
 use crate::db::queries::post as qp;
 use crate::db::queries::post_media as qpm;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::{Media, MediaTranslation, PostMedia};
+use crate::engine::{EngineError, EngineResult, domain_events};
+use crate::model::{DomainEntity, Media, MediaTranslation, NotificationAction, PostMedia};
 use crate::util::sidecar::{
     MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar,
 };
@@ -178,6 +178,8 @@ pub(crate) fn import_media_at(
     // Index in FTS
     fts_index_media(conn, &media)?;
 
+    emit_media(&media, NotificationAction::Created);
+
     Ok(media)
 }
 
@@ -230,6 +232,8 @@ pub fn update_media(
 
     // Re-index FTS
     fts_index_media(conn, &media)?;
+
+    emit_media(&media, NotificationAction::Updated);
 
     Ok(media)
 }
@@ -338,6 +342,7 @@ pub fn replace_media_file(
     match apply_result {
         Ok(()) => {
             fs::remove_file(backup)?;
+            emit_media(&media, NotificationAction::Updated);
             Ok(Some(media))
         }
         Err(error) => {
@@ -416,7 +421,13 @@ pub fn delete_media(conn: &Connection, data_dir: &Path, media_id: &str) -> Engin
     // Delete from media table
     qm::delete_media(conn, media_id)?;
 
+    emit_media(&media, NotificationAction::Deleted);
+
     Ok(())
+}
+
+fn emit_media(media: &Media, action: NotificationAction) {
+    domain_events::entity_changed(&media.project_id, DomainEntity::Media, &media.id, action);
 }
 
 /// Create or update a translation for a media item.

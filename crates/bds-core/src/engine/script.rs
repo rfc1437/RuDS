@@ -5,8 +5,8 @@ use crate::db::DbConnection as Connection;
 use uuid::Uuid;
 
 use crate::db::queries::script as qs;
-use crate::engine::{EngineError, EngineResult};
-use crate::model::{Script, ScriptKind, ScriptStatus};
+use crate::engine::{EngineError, EngineResult, domain_events};
+use crate::model::{DomainEntity, NotificationAction, Script, ScriptKind, ScriptStatus};
 use crate::util::frontmatter::{ScriptFrontmatter, write_script_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
@@ -53,6 +53,7 @@ pub fn create_script(
     };
 
     qs::insert_script(conn, &script)?;
+    emit_script(&script, NotificationAction::Created);
     Ok(script)
 }
 
@@ -111,6 +112,7 @@ pub fn update_script(
     script.version += 1;
     script.updated_at = now_unix_ms();
     qs::update_script(conn, &script)?;
+    emit_script(&script, NotificationAction::Updated);
     Ok(script)
 }
 
@@ -126,6 +128,7 @@ pub fn save_script(conn: &Connection, script_id: &str, content: &str) -> EngineR
     }
 
     qs::update_script(conn, &script)?;
+    emit_script(&script, NotificationAction::Updated);
     Ok(script)
 }
 
@@ -206,6 +209,8 @@ pub fn publish_script(conn: &Connection, data_dir: &Path, script_id: &str) -> En
     script.updated_at = now;
     qs::update_script(conn, &script)?;
 
+    emit_script(&script, NotificationAction::Updated);
+
     Ok(script)
 }
 
@@ -235,6 +240,8 @@ pub fn unpublish_script(
     script.updated_at = now_unix_ms();
     qs::update_script(conn, &script)?;
 
+    emit_script(&script, NotificationAction::Updated);
+
     Ok(script)
 }
 
@@ -251,7 +258,12 @@ pub fn delete_script(conn: &Connection, data_dir: &Path, script_id: &str) -> Eng
     }
 
     qs::delete_script(conn, script_id)?;
+    emit_script(&script, NotificationAction::Deleted);
     Ok(())
+}
+
+fn emit_script(script: &Script, action: NotificationAction) {
+    domain_events::entity_changed(&script.project_id, DomainEntity::Script, &script.id, action);
 }
 
 // --- Helper functions ---

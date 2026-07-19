@@ -9,7 +9,7 @@ use crate::db::queries::{
     media as media_q, media_translation, post as post_q, post_translation, project as project_q,
     setting,
 };
-use crate::engine::EngineResult;
+use crate::engine::{EngineResult, domain_events};
 use crate::util::now_unix_ms;
 
 const REBUILD_REQUIRED_SETTING: &str = "app.search-index-rebuild-required";
@@ -57,6 +57,7 @@ pub fn prepare_search_index(conn: &Connection) -> EngineResult<bool> {
             return Err(error.into());
         }
     }
+    domain_events::settings_changed(None, REBUILD_REQUIRED_SETTING);
 
     Ok(has_content)
 }
@@ -84,6 +85,7 @@ pub fn rebuild_search_index(
     match result {
         Ok(report) => {
             conn.release_savepoint()?;
+            domain_events::settings_changed(None, REBUILD_REQUIRED_SETTING);
             Ok(report)
         }
         Err(error) => {
