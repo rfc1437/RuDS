@@ -470,3 +470,48 @@ fn cli_mutation_persists_the_shared_event_for_the_desktop_process() {
     );
     assert!(notifications[0].from_cli);
 }
+
+#[test]
+fn cli_mutation_deduplicates_composite_events_and_keeps_the_final_state() {
+    let db = Database::open_in_memory().unwrap();
+    db.migrate().unwrap();
+
+    let result: bds_core::engine::EngineResult<()> = cli_sync::run_cli_mutation(db.conn(), || {
+        bds_core::engine::domain_events::entity_changed(
+            "project",
+            DomainEntity::Post,
+            "created-then-updated",
+            NotificationAction::Created,
+        );
+        bds_core::engine::domain_events::entity_changed(
+            "project",
+            DomainEntity::Post,
+            "created-then-updated",
+            NotificationAction::Updated,
+        );
+        bds_core::engine::domain_events::entity_changed(
+            "project",
+            DomainEntity::Media,
+            "updated-then-deleted",
+            NotificationAction::Updated,
+        );
+        bds_core::engine::domain_events::entity_changed(
+            "project",
+            DomainEntity::Media,
+            "updated-then-deleted",
+            NotificationAction::Deleted,
+        );
+        Err(bds_core::engine::EngineError::Validation(
+            "later composite step failed".into(),
+        ))
+    });
+    assert!(result.is_err());
+
+    let notifications =
+        bds_core::db::queries::db_notification::list_notifications(db.conn()).unwrap();
+    assert_eq!(notifications.len(), 2);
+    assert_eq!(notifications[0].entity_id, "created-then-updated");
+    assert_eq!(notifications[0].action, NotificationAction::Created);
+    assert_eq!(notifications[1].entity_id, "updated-then-deleted");
+    assert_eq!(notifications[1].action, NotificationAction::Deleted);
+}

@@ -28,7 +28,7 @@ Status in this document describes the current source code as of 2026-07-19. It d
 | `bds-core` | Models, SQLite, filesystem formats, engines, rendering, generation, AI, publishing, and Lua |
 | `bds-editor` | Reusable Ropey/Syntect/Cosmic Text editor widget |
 | `bds-ui` | Iced application, native menus/dialogs, platform lifecycle, and embedded preview |
-| `bds-cli` | Extension-only headless automation surface; currently a stub |
+| `bds-cli` | Extension-only headless automation surface over the shared engines |
 
 ## Current Core Status
 

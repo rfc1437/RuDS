@@ -53,7 +53,9 @@ impl DbConnection {
             .batch_execute("ROLLBACK TO bds_operation; RELEASE bds_operation")
     }
 
-    pub(crate) fn database_path(&self) -> diesel::QueryResult<std::path::PathBuf> {
+    /// Filesystem database path for sibling surfaces that must open their own
+    /// short-lived connection (gallery workers, preview servers, Lua hosts).
+    pub fn database_path(&self) -> diesel::QueryResult<std::path::PathBuf> {
         self.with(|conn| {
             diesel::sql_query("SELECT file FROM pragma_database_list WHERE name = 'main'")
                 .get_result::<DatabasePathRow>(conn)

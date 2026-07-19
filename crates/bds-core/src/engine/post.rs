@@ -916,7 +916,7 @@ fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
 
 /// Check if a file stem looks like a translation filename: `{slug}.{lang}`
 /// where lang is a 2-letter code. We look for a dot followed by exactly 2 lowercase letters.
-fn is_translation_filename(stem: &str) -> bool {
+pub(crate) fn is_translation_filename(stem: &str) -> bool {
     if let Some(dot_pos) = stem.rfind('.') {
         let suffix = &stem[dot_pos + 1..];
         suffix.len() == 2 && suffix.chars().all(|c| c.is_ascii_lowercase())

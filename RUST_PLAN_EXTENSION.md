@@ -81,17 +81,17 @@ Open:
 - OPML/menu editor UI.
 - Replace the Menu Editor placeholder.
 
-### CLI and MCP — Open; domain events — Done
+### CLI and domain events — Done; MCP — Open
 
 Done:
 
 - Domain event bus from `events.allium` for desktop, CLI, TUI, server, and future remote clients, including deterministic subscriptions, project scope, and persisted CLI notification consumption/pruning.
+- Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects/settings, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, and guarded launcher installation.
+- CLI process and dispatch tests use temporary databases/projects; CLI mutations persist deduplicated desktop notifications and imported filesystem metadata survives rebuild.
+- Settings → Data exposes the same localized packaged-launcher installer as `bds-cli install`.
 
 Open:
 
-- Implement `bds-cli`; its current binary is only a stub.
-- Commands from `cli.allium` and `cli_sync.allium` using the same project, database, engines, and settings as the desktop app.
-- Reuse the core gallery batch-import engine already used by the desktop post editor for the CLI `gallery` command.
 - MCP tools/resources and proposal-based writes from `mcp.allium`.
 - Replace the MCP settings placeholder.
 

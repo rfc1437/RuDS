@@ -13,6 +13,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Template and Lua script management with explicit syntax-check feedback, using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms.
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
 - Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
+- Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, shared settings/projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
@@ -27,7 +28,7 @@ RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from 
 - `crates/bds-core` — data, engines, rendering, AI, publishing, and Lua
 - `crates/bds-editor` — reusable syntax-highlighting editor
 - `crates/bds-ui` — desktop application and platform integration
-- `crates/bds-cli` — planned automation CLI
+- `crates/bds-cli` — headless automation CLI over the shared engines
 - `specs` — authoritative Allium behavior specifications
 - `fixtures` — compatibility projects and generated-site fixtures
 - `locales` — UI and native-menu translations

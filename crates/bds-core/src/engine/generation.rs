@@ -103,6 +103,20 @@ pub fn generate_starter_site(
     )
 }
 
+/// Forget stored generated-file hashes so the next render writes every
+/// artifact while repopulating the cache with its current content hash.
+pub fn clear_generation_cache(conn: &Connection, project_id: &str) -> EngineResult<usize> {
+    use crate::db::schema::generated_file_hashes;
+    use diesel::prelude::*;
+
+    Ok(conn.with(|connection| {
+        diesel::delete(
+            generated_file_hashes::table.filter(generated_file_hashes::project_id.eq(project_id)),
+        )
+        .execute(connection)
+    })?)
+}
+
 pub fn generate_starter_site_with_progress(
     conn: &Connection,
     output_dir: &Path,

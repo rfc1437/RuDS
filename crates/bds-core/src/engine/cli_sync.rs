@@ -21,10 +21,72 @@ pub fn run_cli_mutation<T>(
 ) -> EngineResult<T> {
     let (result, events) = domain_events::capture_current_thread(operation)
         .map_err(|message| EngineError::Validation(message.to_string()))?;
-    for event in &events {
+    let mut unique = Vec::<DomainEvent>::new();
+    for event in events {
+        if let Some(seen) = unique
+            .iter_mut()
+            .find(|seen| same_notification(seen, &event))
+        {
+            merge_notification_action(seen, &event);
+        } else {
+            unique.push(event);
+        }
+    }
+    for event in &unique {
         record_cli_event(conn, event)?;
     }
     result
+}
+
+fn merge_notification_action(existing: &mut DomainEvent, incoming: &DomainEvent) {
+    let (
+        DomainEvent::EntityChanged {
+            action: existing_action,
+            ..
+        },
+        DomainEvent::EntityChanged {
+            action: incoming_action,
+            ..
+        },
+    ) = (existing, incoming)
+    else {
+        return;
+    };
+    if *incoming_action == NotificationAction::Deleted
+        || *existing_action != NotificationAction::Created
+    {
+        *existing_action = incoming_action.clone();
+    }
+}
+
+fn same_notification(left: &DomainEvent, right: &DomainEvent) -> bool {
+    match (left, right) {
+        (
+            DomainEvent::EntityChanged {
+                project_id: left_project,
+                entity: left_entity,
+                entity_id: left_id,
+                ..
+            },
+            DomainEvent::EntityChanged {
+                project_id: right_project,
+                entity: right_entity,
+                entity_id: right_id,
+                ..
+            },
+        ) => left_project == right_project && left_entity == right_entity && left_id == right_id,
+        (
+            DomainEvent::SettingsChanged {
+                project_id: left_project,
+                key: left_key,
+            },
+            DomainEvent::SettingsChanged {
+                project_id: right_project,
+                key: right_key,
+            },
+        ) => left_project == right_project && left_key == right_key,
+        _ => false,
+    }
 }
 
 pub fn record_cli_event(conn: &Connection, event: &DomainEvent) -> EngineResult<()> {

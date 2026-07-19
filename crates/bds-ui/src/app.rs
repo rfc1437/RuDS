@@ -903,10 +903,7 @@ impl BdsApp {
         let os_locale = detect_os_locale();
 
         // Open or create the database
-        let db_path = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("bds")
-            .join("bds.db");
+        let db_path = bds_core::util::application_database_path();
 
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
@@ -946,10 +943,7 @@ impl BdsApp {
         // If no projects exist, ensure the default project per spec
         let init_task = if projects.is_empty() {
             if let Some(ref db) = db {
-                let default_data = dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("bds")
-                    .join("my-blog");
+                let default_data = bds_core::util::default_project_data_dir();
                 match engine::project::ensure_default_project(db.conn(), Some(&default_data)) {
                     Ok(project) => Task::done(Message::ProjectsLoaded(vec![project])),
                     Err(_) => Task::none(),
@@ -5970,6 +5964,22 @@ impl BdsApp {
             SettingsMsg::OpenDataFolder => {
                 if let Some(ref dir) = self.data_dir {
                     let _ = open::that(dir);
+                }
+            }
+            SettingsMsg::InstallCli => {
+                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+                match engine::cli_launcher::install_packaged_launcher(&home) {
+                    Ok(path) => self.notify(
+                        ToastLevel::Success,
+                        &tw(
+                            self.ui_locale,
+                            "settings.cliInstalled",
+                            &[("path", &path.to_string_lossy())],
+                        ),
+                    ),
+                    Err(error) => {
+                        self.notify_operation_failed("settings.installCli", error.to_string())
+                    }
                 }
             }
             SettingsMsg::FocusSection(section) => {

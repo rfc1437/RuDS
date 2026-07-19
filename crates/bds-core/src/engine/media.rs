@@ -34,6 +34,116 @@ pub struct MediaRebuildReport {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct MediaLinkRebuildReport {
+    pub links: usize,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ThumbnailRepairReport {
+    pub media_repaired: usize,
+    pub thumbnails_generated: usize,
+}
+
+/// Rebuild the exact post/media relationship set stored in canonical media
+/// sidecars. Stale database links are removed as well as missing links added.
+pub fn rebuild_media_links(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<MediaLinkRebuildReport> {
+    conn.begin_savepoint()?;
+    match rebuild_media_links_inner(conn, data_dir, project_id) {
+        Ok(report) => {
+            conn.release_savepoint()?;
+            Ok(report)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
+}
+
+fn rebuild_media_links_inner(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<MediaLinkRebuildReport> {
+    let mut report = MediaLinkRebuildReport::default();
+    for item in qm::list_media_by_project(conn, project_id)? {
+        let sidecar = read_sidecar(&fs::read_to_string(data_dir.join(&item.sidecar_path))?)
+            .map_err(EngineError::Parse)?;
+        for link in qpm::list_post_media_by_media(conn, &item.id)? {
+            qpm::unlink_media(conn, &link.post_id, &item.id)?;
+        }
+        for (sort_order, post_id) in sidecar.linked_post_ids.into_iter().enumerate() {
+            let post = qp::get_post_by_id(conn, &post_id)?;
+            if post.project_id != project_id {
+                return Err(EngineError::Validation(format!(
+                    "media {} sidecar links to a post outside the active project",
+                    item.id
+                )));
+            }
+            qpm::link_media(
+                conn,
+                &PostMedia {
+                    id: Uuid::new_v4().to_string(),
+                    project_id: project_id.to_string(),
+                    post_id,
+                    media_id: item.id.clone(),
+                    sort_order: sort_order as i32,
+                    created_at: now_unix_ms(),
+                },
+            )?;
+            report.links += 1;
+        }
+    }
+    Ok(report)
+}
+
+/// Regenerate all standard thumbnail variants for items missing at least one
+/// variant. Existing complete sets are left untouched.
+pub fn regenerate_missing_thumbnails(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<ThumbnailRepairReport> {
+    let mut report = ThumbnailRepairReport::default();
+    for item in qm::list_media_by_project(conn, project_id)? {
+        if !item.mime_type.starts_with("image/") {
+            continue;
+        }
+        let prefix = &item.id[..2.min(item.id.len())];
+        let missing = THUMBNAIL_SIZES
+            .iter()
+            .filter(|size| {
+                let extension = match size.format {
+                    ThumbnailFormat::Webp => "webp",
+                    ThumbnailFormat::Jpeg => "jpg",
+                };
+                !data_dir
+                    .join("thumbnails")
+                    .join(prefix)
+                    .join(format!("{}-{}.{}", item.id, size.name, extension))
+                    .is_file()
+            })
+            .count();
+        if missing == 0 {
+            continue;
+        }
+        generate_all_thumbnails(
+            &data_dir.join(&item.file_path),
+            &data_dir.join("thumbnails"),
+            &item.id,
+        )
+        .map_err(EngineError::Parse)?;
+        report.media_repaired += 1;
+        report.thumbnails_generated += missing;
+    }
+    Ok(report)
+}
+
 /// Supported image MIME types for import (per media_processing.allium).
 const SUPPORTED_IMAGE_TYPES: &[&str] = &[
     "image/jpeg",
@@ -957,6 +1067,95 @@ mod tests {
         let sc = read_sidecar(&new_content).unwrap();
         assert_eq!(sc.title.as_deref(), Some("New Title"));
         assert_eq!(sc.tags, vec!["updated-tag"]);
+    }
+
+    #[test]
+    fn rebuild_media_links_replaces_stale_links_and_rolls_back_invalid_sidecars() {
+        let (db, dir) = setup();
+        let source = create_test_png(dir.path());
+        let media = import_media(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &source,
+            "photo.png",
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let first = crate::engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "First",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let stale = crate::engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Stale",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        crate::engine::post_media::link_media_to_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &first.id,
+            &media.id,
+            0,
+        )
+        .unwrap();
+        crate::engine::post_media::link_media_to_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &stale.id,
+            &media.id,
+            1,
+        )
+        .unwrap();
+        atomic_write_str(
+            &dir.path().join(&media.sidecar_path),
+            &MediaSidecar::from_media(&media, std::slice::from_ref(&first.id)).to_string(),
+        )
+        .unwrap();
+
+        let report = rebuild_media_links(db.conn(), dir.path(), "p1").unwrap();
+        assert_eq!(report.links, 1);
+        let links = qpm::list_post_media_by_media(db.conn(), &media.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].post_id, first.id);
+
+        atomic_write_str(
+            &dir.path().join(&media.sidecar_path),
+            &MediaSidecar::from_media(&media, &["missing-post".into()]).to_string(),
+        )
+        .unwrap();
+        assert!(rebuild_media_links(db.conn(), dir.path(), "p1").is_err());
+        let links = qpm::list_post_media_by_media(db.conn(), &media.id).unwrap();
+        assert_eq!(
+            links.len(),
+            1,
+            "the failed repair must roll back link deletion"
+        );
+        assert_eq!(links[0].post_id, first.id);
     }
 
     #[test]

@@ -183,7 +183,7 @@ fn import_gallery_image(
     .map_err(|error| error.to_string())?;
 
     let title = if ai_available {
-        enrich_image(
+        enrich_imported_image(
             db.conn(),
             data_dir,
             &imported,
@@ -201,7 +201,9 @@ fn import_gallery_image(
     })
 }
 
-fn enrich_image(
+/// Apply the shared gallery AI enrichment and translation pipeline to one
+/// already-imported image. Returns the generated title when AI was available.
+pub fn enrich_imported_image(
     conn: &crate::db::DbConnection,
     data_dir: &Path,
     imported: &crate::model::Media,

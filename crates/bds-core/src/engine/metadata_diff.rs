@@ -228,6 +228,62 @@ pub fn repair_metadata_diff_item(
     Ok(())
 }
 
+/// Import one content file reported as a filesystem orphan by
+/// [`compute_metadata_diff`]. The normal per-entity rebuild paths remain the
+/// sole parsers and writers for these formats.
+pub fn import_orphan_file(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    orphan: &OrphanFile,
+) -> EngineResult<()> {
+    if orphan.reason != "file_without_db_entry" {
+        return Err(EngineError::Validation(format!(
+            "cannot import an orphan that is absent from the filesystem: {}",
+            orphan.file_path
+        )));
+    }
+    let path = data_dir.join(&orphan.file_path);
+    let canonical_data_dir = data_dir.canonicalize()?;
+    let canonical_path = path.canonicalize()?;
+    if !canonical_path.starts_with(&canonical_data_dir) {
+        return Err(EngineError::Validation(
+            "orphan path is outside the active project".into(),
+        ));
+    }
+
+    if orphan.file_path.starts_with("posts/") && orphan.file_path.ends_with(".md") {
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if crate::engine::post::is_translation_filename(stem) {
+            crate::engine::post::rebuild_translation(conn, data_dir, project_id, &path)?;
+        } else {
+            crate::engine::post::rebuild_canonical_post(conn, data_dir, project_id, &path)?;
+        }
+    } else if orphan.file_path.starts_with("media/") && orphan.file_path.ends_with(".meta") {
+        let raw = fs::read_to_string(&path)?;
+        if read_translation_sidecar(&raw).is_ok() {
+            crate::engine::media::rebuild_translation_sidecar(conn, data_dir, project_id, &path)?;
+        } else {
+            crate::engine::media::rebuild_canonical_media(conn, data_dir, project_id, &path)?;
+        }
+    } else if orphan.file_path.starts_with("scripts/") && orphan.file_path.ends_with(".lua") {
+        crate::engine::script_rebuild::rebuild_single_script(conn, data_dir, project_id, &path)?;
+    } else if orphan.file_path.starts_with("templates/") && orphan.file_path.ends_with(".liquid") {
+        crate::engine::template_rebuild::rebuild_single_template(
+            conn, data_dir, project_id, &path,
+        )?;
+    } else {
+        return Err(EngineError::Validation(format!(
+            "unsupported orphan file: {}",
+            orphan.file_path
+        )));
+    }
+    Ok(())
+}
+
 fn diff_project(
     data_dir: &Path,
     project: &crate::model::Project,

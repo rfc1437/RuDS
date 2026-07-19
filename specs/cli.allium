@@ -1,16 +1,18 @@
 -- allium: 1
--- Workspace CLI tool (issue #25)
+-- Workspace CLI tool (RuDS issue #19; distilled from bDS2 issue #25)
 -- Scope: extension (Bucket G — MCP + Automation)
 -- Distilled from: lib/bds/cli.ex, lib/bds/cli/commands.ex, lib/bds/cli/install.ex,
 --   rel/overlays/cli/bin/bds-cli
 
 entity CliInvocation {
     command: rebuild | repair | render | upload | push | pull | post | media
-        | gallery | config | project | tui | lua
+        | gallery | config | project | tui | lua | install
     incremental: Boolean
     force: Boolean
+    airplane: Boolean
+    json_output: Boolean
     exit_code: Integer
-    -- Parsed by Optimus: subcommands, options, flags, and auto-generated
+    -- Parsed by the native Clap binary: subcommands, options, flags, and auto-generated
     -- help/version output. Unknown commands and invalid options exit 1
     -- with formatted errors on stderr.
 }
@@ -24,8 +26,8 @@ surface CliSurface {
 }
 
 invariant SharedDatabase {
-    -- The CLI boots the application in BDS_MODE=cli: the same repo,
-    -- settings, and cache database as the GUI/TUI app — but with no
+    -- The native CLI resolves the same OS application data path, settings,
+    -- project registry, and cache database as the GUI/TUI app — but with no
     -- HTTP listener, no SSH daemon, no window, and no sync watcher.
     -- Console logging is redirected to the rotating log file so stdout
     -- carries only command output.
@@ -45,6 +47,24 @@ rule ExitCode {
     -- to stderr and exits 1.
     requires: CliInvocation.command = command
     ensures: CliInvocation.exit_code.updated()
+}
+
+rule MachineOutput {
+    when: CliCommandExecuted(command)
+    requires: CliInvocation.json_output
+    -- Successful results use one stable JSON envelope on stdout; execution
+    -- errors use an error envelope on stderr and still exit 1.
+    ensures: CliInvocation.exit_code.updated()
+}
+
+rule AirplaneGate {
+    when: CliCommandExecuted(command)
+    requires: CliInvocation.airplane
+    -- --airplane blocks upload and Git network commands and routes all
+    -- automatic AI work exclusively to the configured local endpoint. If no
+    -- local endpoint exists, deterministic offline fallbacks or an explicit
+    -- notice are used; the online endpoint is never contacted.
+    ensures: OfflineAiGated()
 }
 
 rule RebuildFull {
@@ -158,18 +178,16 @@ rule RunLuaTask {
 }
 
 rule InstallLauncher {
-    when: CliInstallRequested()
-    -- Install buttons in the GUI settings (Data section) and the TUI
-    -- settings (data form action field) both call
-    -- BDS.UI.SettingsForm.run_action("install_cli"): a shim exec'ing
-    -- the release's cli/bin/bds-cli launcher is written to
-    -- ~/.local/bin/bds-cli. Outside a packaged release the action
-    -- reports that installing requires the packaged application.
+    when: CliInstallRequested() or CliCommandExecuted(command: install)
+    -- Settings/Data, the future TUI settings action, and `bds-cli install`
+    -- share one guarded installer. A launcher pointing at the packaged native
+    -- CLI is written to ~/.local/bin/bds-cli. Existing unrelated files are
+    -- never overwritten; outside a packaged release the action reports that
+    -- the packaged CLI executable is required.
     ensures: LauncherInstalled()
 }
 
-invariant LauncherArgv {
-    -- bin/bds eval cannot forward arguments, so the launcher passes the
-    -- argv in BDS_CLI_ARGV joined with the ASCII unit separator (0x1f)
-    -- and the release evaluates BDS.CLI.main().
+invariant NativeArgv {
+    -- The Rust launcher is the native bds-cli executable, so operating-system
+    -- argv is parsed directly without the bDS2 release-eval environment shim.
 }

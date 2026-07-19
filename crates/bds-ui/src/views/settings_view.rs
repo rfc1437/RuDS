@@ -344,6 +344,7 @@ pub enum SettingsMsg {
     RebuildSearchIndex,
     RegenerateThumbnails,
     OpenDataFolder,
+    InstallCli,
     /// Navigate to a specific section from sidebar; expand it, collapse all others.
     FocusSection(SettingsSection),
 }
@@ -996,7 +997,12 @@ fn section_data<'a>(locale: UiLocale) -> Element<'a, Message> {
         .style(inputs::secondary_button)
         .padding([6, 16]);
 
-    column![rebuild_btns, open]
+    let install_cli = button(text(t(locale, "settings.installCli")).size(13))
+        .on_press(Message::Settings(SettingsMsg::InstallCli))
+        .style(inputs::secondary_button)
+        .padding([6, 16]);
+
+    column![rebuild_btns, row![open, install_cli].spacing(8)]
         .spacing(12)
         .padding([0, 16])
         .into()

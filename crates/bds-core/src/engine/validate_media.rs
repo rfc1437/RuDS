@@ -10,7 +10,12 @@ use crate::model::Media;
 use crate::util::{media_sidecar_path, thumbnail_path};
 
 /// Thumbnail sizes per media_processing.allium.
-const THUMBNAIL_SIZES: &[&str] = &["small", "medium", "large", "ai"];
+const THUMBNAIL_VARIANTS: &[(&str, &str)] = &[
+    ("small", "webp"),
+    ("medium", "webp"),
+    ("large", "webp"),
+    ("ai", "jpg"),
+];
 
 /// Types of media validation issues.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +130,7 @@ fn check_media_item(
 
     // 3. Missing thumbnails — only for image types
     if is_image_mime(&media.mime_type) {
-        let ext = thumbnail_extension(&media.mime_type);
-        for size in THUMBNAIL_SIZES {
+        for (size, ext) in THUMBNAIL_VARIANTS {
             let thumb_rel = thumbnail_path(&media.id, size, ext);
             let thumb_path = data_dir.join(&thumb_rel);
             if !thumb_path.exists() {
@@ -160,15 +164,6 @@ fn is_image_mime(mime: &str) -> bool {
     mime.starts_with("image/")
 }
 
-fn thumbnail_extension(mime: &str) -> &str {
-    match mime {
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        _ => "jpg",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,10 +177,15 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_ext_defaults_to_jpg() {
-        assert_eq!(thumbnail_extension("image/jpeg"), "jpg");
-        assert_eq!(thumbnail_extension("image/png"), "png");
-        assert_eq!(thumbnail_extension("image/webp"), "webp");
-        assert_eq!(thumbnail_extension("image/tiff"), "jpg"); // fallback
+    fn thumbnail_variants_match_the_generator_formats() {
+        assert_eq!(
+            THUMBNAIL_VARIANTS,
+            &[
+                ("small", "webp"),
+                ("medium", "webp"),
+                ("large", "webp"),
+                ("ai", "jpg")
+            ]
+        );
     }
 }

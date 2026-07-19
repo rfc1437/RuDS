@@ -14,6 +14,50 @@ use crate::util::now_unix_ms;
 
 const REBUILD_REQUIRED_SETTING: &str = "app.search-index-rebuild-required";
 
+/// Deterministic offline language fallback used when no permitted AI endpoint
+/// is configured. This intentionally mirrors the legacy application's small
+/// heuristic; it is a notice-worthy fallback, not a language model.
+pub fn detect_language(text: &str) -> &'static str {
+    let normalized = text.to_lowercase();
+    if normalized.trim().is_empty() {
+        "en"
+    } else if normalized.contains(['ä', 'ö', 'ü', 'ß']) {
+        "de"
+    } else if normalized.contains([
+        'à', 'â', 'ç', 'é', 'è', 'ê', 'ë', 'î', 'ï', 'ô', 'ù', 'û', 'ÿ', 'œ',
+    ]) {
+        "fr"
+    } else if normalized.contains(['ñ', '¡', '¿']) {
+        "es"
+    } else {
+        detect_language_from_hints(&normalized)
+    }
+}
+
+fn detect_language_from_hints(text: &str) -> &'static str {
+    let padded = format!(" {text} ");
+    let scores = [
+        (
+            "de",
+            [" der ", " die ", " das ", " und ", " ist ", " nicht "],
+        ),
+        ("fr", [" le ", " la ", " les ", " et ", " est ", " pas "]),
+        ("es", [" el ", " la ", " los ", " y ", " es ", " no "]),
+    ];
+    scores
+        .into_iter()
+        .map(|(language, hints)| {
+            let score = hints
+                .into_iter()
+                .filter(|hint| padded.contains(hint))
+                .count();
+            (language, score)
+        })
+        .max_by_key(|(_, score)| *score)
+        .filter(|(_, score)| *score >= 2)
+        .map_or("en", |(language, _)| language)
+}
+
 /// Result of a full reindex operation.
 pub struct ReindexReport {
     pub posts_indexed: usize,
