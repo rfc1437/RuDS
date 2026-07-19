@@ -46,6 +46,7 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - there are no "pre-existing" problems - you own every problem, you fix every problem
 - don't leave unused code in the codebase, remove it instead
 - after implementing / changing things, run the build and run tests to verify all works
+- run `cargo test --workspace` with permission for its loopback test servers on the first attempt; AI mock-server and preview-server tests bind localhost and otherwise fail under sandboxing, causing a pointless rerun
 - do not reference external JavaScript or CSS on CDNs, always bring it into the project
 - do not embedd CSS/JavaScript into HTML, always reference .css and .js files in the project assets
 - always make sure you follow proper i18n best practices. no untranslated string constants.

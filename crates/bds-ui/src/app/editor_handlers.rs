@@ -647,6 +647,7 @@ impl BdsApp {
 
     pub(super) fn handle_script_editor_msg(&mut self, msg: ScriptEditorMsg) -> Task<Message> {
         let mut run_request = None;
+        let mut syntax_notification = None;
         if let Some(tab_id) = self.active_tab.clone()
             && let Some(state) = self.script_editors.get_mut(&tab_id)
         {
@@ -680,14 +681,20 @@ impl BdsApp {
                     return self.save_script_editor(&tab_id);
                 }
                 ScriptEditorMsg::CheckSyntax => {
-                    if let Some(st) = self.script_editors.get_mut(&tab_id) {
-                        match engine::script::validate_script_syntax(&st.content) {
-                            Ok(()) => {
-                                st.validation_error = None;
-                            }
-                            Err(e) => {
-                                st.validation_error = Some(e);
-                            }
+                    match engine::script::validate_script_syntax(&state.content) {
+                        Ok(()) => {
+                            state.validation_error = None;
+                            syntax_notification = Some((
+                                ToastLevel::Success,
+                                t(self.ui_locale, "editor.syntaxValid"),
+                            ));
+                        }
+                        Err(error) => {
+                            state.validation_error = Some(error.clone());
+                            syntax_notification = Some((
+                                ToastLevel::Error,
+                                tw(self.ui_locale, "editor.syntaxInvalid", &[("error", &error)]),
+                            ));
                         }
                     }
                 }
@@ -712,6 +719,9 @@ impl BdsApp {
             {
                 tab.is_dirty = st.is_dirty;
             }
+        }
+        if let Some((level, message)) = syntax_notification {
+            self.notify(level, &message);
         }
         if let Some((source, entrypoint, kind)) = run_request {
             let offline_mode = self.offline_mode;

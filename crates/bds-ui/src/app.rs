@@ -200,6 +200,7 @@ pub enum Message {
     ApplySiteValidation,
     EngineTaskDone {
         task_id: TaskId,
+        operation: &'static str,
         label: String,
         result: Result<String, String>,
     },
@@ -6299,11 +6300,12 @@ mod tests {
         save_template_editor_state_impl,
     };
     use crate::i18n::t;
+    use crate::state::ToastLevel;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::views::media_editor::{MediaEditorMsg, MediaEditorState};
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
-    use crate::views::script_editor::ScriptEditorState;
+    use crate::views::script_editor::{ScriptEditorMsg, ScriptEditorState};
     use crate::views::settings_view::SettingsViewState;
     use crate::views::template_editor::TemplateEditorState;
     use bds_core::db::Database;
@@ -7702,6 +7704,66 @@ mod tests {
             .expect("script editor should be hydrated");
         assert_eq!(editor.entrypoint, "render");
         assert!(editor.content.contains("new script"));
+    }
+
+    #[test]
+    fn script_syntax_check_reports_success_and_failure() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateScript);
+
+        let _ = app.update(Message::ScriptEditor(ScriptEditorMsg::CheckSyntax));
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.message.as_str()),
+            Some(t(UiLocale::En, "editor.syntaxValid").as_str())
+        );
+
+        let _ = app.update(Message::ScriptEditor(ScriptEditorMsg::ContentChanged(
+            "function render(".to_string(),
+        )));
+        let _ = app.update(Message::ScriptEditor(ScriptEditorMsg::CheckSyntax));
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.level),
+            Some(ToastLevel::Error)
+        );
+    }
+
+    #[test]
+    fn rebuild_completion_refreshes_project_metadata_in_settings() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        app.settings_state = Some(app.hydrate_settings_state());
+
+        let mut rebuilt = bds_core::db::queries::project::get_project_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &app.active_project.as_ref().unwrap().id,
+        )
+        .unwrap();
+        rebuilt.description = Some("Description from project.json".to_string());
+        bds_core::db::queries::project::update_project(app.db.as_ref().unwrap().conn(), &rebuilt)
+            .unwrap();
+
+        let label = t(UiLocale::En, "engine.rebuildStarted");
+        let task_id = app.task_manager.submit(&label);
+        let _ = app.update(Message::EngineTaskDone {
+            task_id,
+            operation: "engine.rebuildStarted",
+            label,
+            result: Ok("done".to_string()),
+        });
+
+        assert_eq!(
+            app.active_project
+                .as_ref()
+                .and_then(|project| project.description.as_deref()),
+            Some("Description from project.json")
+        );
+        assert_eq!(
+            app.settings_state
+                .as_ref()
+                .map(|state| state.project_description.text()),
+            Some("Description from project.json\n".to_string())
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Native Iced desktop workspace with localized menus, tabs, sidebars, dialogs, tasks, and embedded Wry previews.
 - Post and translation authoring with draft/published lifecycle, metadata, tags, categories, links, media, and batch gallery-image import.
 - Media import, thumbnails, metadata translations, filters, validation, and post assignment.
-- Template and Lua script management using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms.
+- Template and Lua script management with explicit syntax-check feedback, using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms.
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.

@@ -314,6 +314,7 @@ impl BdsApp {
             },
             move |result| Message::EngineTaskDone {
                 task_id,
+                operation: "engine.reindexStarted",
                 label: label_for_message.clone(),
                 result,
             },
@@ -321,7 +322,7 @@ impl BdsApp {
     }
 
     /// Spawn a blocking engine operation on a background thread via TaskManager.
-    pub(super) fn spawn_engine_task<F>(&mut self, label_key: &str, work: F) -> Task<Message>
+    pub(super) fn spawn_engine_task<F>(&mut self, label_key: &'static str, work: F) -> Task<Message>
     where
         F: FnOnce(PathBuf, String, PathBuf, Arc<TaskManager>, TaskId) -> Result<String, String>
             + Send
@@ -332,7 +333,7 @@ impl BdsApp {
 
     pub(super) fn spawn_grouped_engine_task<F>(
         &mut self,
-        label_key: &str,
+        label_key: &'static str,
         group_name: &str,
         work: F,
     ) -> Task<Message>
@@ -346,7 +347,7 @@ impl BdsApp {
 
     pub(super) fn spawn_engine_task_in_group<F>(
         &mut self,
-        label_key: &str,
+        label_key: &'static str,
         group_name: Option<&str>,
         work: F,
     ) -> Task<Message>
@@ -391,6 +392,7 @@ impl BdsApp {
             },
             move |result| Message::EngineTaskDone {
                 task_id,
+                operation: label_key,
                 label: label_for_msg.clone(),
                 result,
             },

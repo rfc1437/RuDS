@@ -213,6 +213,7 @@ impl BdsApp {
             Message::ApplySiteValidation => self.apply_site_validation(),
             Message::EngineTaskDone {
                 task_id,
+                operation,
                 label,
                 result,
             } => {
@@ -222,6 +223,26 @@ impl BdsApp {
                     _ if cancelled => {}
                     Ok(detail) => {
                         self.task_manager.complete(task_id);
+                        if operation == "engine.rebuildStarted" {
+                            let refreshed = self.db.as_ref().and_then(|db| {
+                                let id = &self.active_project.as_ref()?.id;
+                                bds_core::db::queries::project::get_project_by_id(db.conn(), id)
+                                    .ok()
+                            });
+                            if let Some(project) = refreshed {
+                                if let Some(cached) = self
+                                    .projects
+                                    .iter_mut()
+                                    .find(|cached| cached.id == project.id)
+                                {
+                                    *cached = project.clone();
+                                }
+                                self.active_project = Some(project);
+                                if self.settings_state.is_some() {
+                                    self.settings_state = Some(self.hydrate_settings_state());
+                                }
+                            }
+                        }
                         self.notify(ToastLevel::Success, &format!("{label}: {detail}"));
                     }
                     Err(err) => {
