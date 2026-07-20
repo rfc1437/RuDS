@@ -88,22 +88,17 @@ pub enum Message {
     OpenTab(Tab),
     CloseTab(String),
     SelectTab(String),
-    PinTab(String),
-    ClearTabs,
 
     // Project
     ProjectsLoaded(Vec<Project>),
     SwitchProject(String),
-    ProjectSwitched(Result<String, String>),
     RequestCreateProject,
     RequestOpenProject,
     CreateProject {
         name: String,
         data_path: Option<PathBuf>,
     },
-    ProjectCreated(Result<String, String>),
     DeleteProject(String),
-    ProjectDeleted(Result<String, String>),
 
     // Dialogs
     FolderPicked(Option<PathBuf>),
@@ -177,7 +172,6 @@ pub enum Message {
     ToggleProjectDropdown,
 
     // Toast
-    ShowToast(ToastLevel, String),
     DismissToast(u64),
     ExpireToasts,
 
@@ -332,12 +326,6 @@ pub enum Message {
     Style(StyleMsg),
     ImportEditor(ImportEditorMsg),
     MenuEditor(MenuEditorMsg),
-
-    // Editor data loading
-    PostLoaded(Result<Post, String>),
-    MediaLoaded(Result<Media, String>),
-    TemplateLoaded(Result<Template, String>),
-    ScriptLoaded(Result<Script, String>),
 
     // Async sidebar data
     SidebarPostsLoaded(Vec<Post>),
@@ -1621,20 +1609,6 @@ impl BdsApp {
                 self.enforce_panel_tab_fallback();
                 self.sync_embedded_previews()
             }
-            Message::PinTab(id) => {
-                tabs::pin_tab(&mut self.tabs, &id);
-                Task::none()
-            }
-            Message::ClearTabs => {
-                self.flush_active_post_editor();
-                self.tabs.clear();
-                self.active_tab = None;
-                self.git_diffs.clear();
-                self.hide_embedded_preview();
-                self.hide_embedded_style_preview();
-                Task::none()
-            }
-
             // ── Project management ──
             Message::ProjectsLoaded(projects) => {
                 self.projects = projects;
@@ -1755,20 +1729,6 @@ impl BdsApp {
                     self.sync_embedded_previews(),
                 ])
             }
-            Message::ProjectSwitched(result) => {
-                match result {
-                    Ok(name) => self.notify(
-                        ToastLevel::Success,
-                        &tw(
-                            self.ui_locale,
-                            "projectSelector.toast.switched",
-                            &[("name", &name)],
-                        ),
-                    ),
-                    Err(msg) => self.notify(ToastLevel::Error, &msg),
-                }
-                Task::none()
-            }
             Message::RequestCreateProject => {
                 crate::platform::dialog::pick_folder(t(self.ui_locale, "dialog.selectFolder"))
             }
@@ -1805,20 +1765,6 @@ impl BdsApp {
                 }
                 self.refresh_git_if_visible()
             }
-            Message::ProjectCreated(result) => {
-                match result {
-                    Ok(name) => self.notify(
-                        ToastLevel::Success,
-                        &tw(
-                            self.ui_locale,
-                            "projectSelector.toast.created",
-                            &[("name", &name)],
-                        ),
-                    ),
-                    Err(msg) => self.notify(ToastLevel::Error, &msg),
-                }
-                Task::none()
-            }
             Message::DeleteProject(project_id) => {
                 if let Some(ref db) = self.db {
                     let data_path = self
@@ -1845,13 +1791,6 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            Message::ProjectDeleted(result) => {
-                if let Err(msg) = result {
-                    self.notify(ToastLevel::Error, &msg);
-                }
-                Task::none()
-            }
-
             // ── Dialogs ──
             Message::FolderPicked(path) => {
                 if let Some(path) = path {
@@ -2692,10 +2631,6 @@ impl BdsApp {
             | Message::GitFileHistoryLoaded { .. }) => self.handle_git_message(message),
 
             // ── Toasts ──
-            Message::ShowToast(level, msg) => {
-                self.toasts.push(Toast::new(level, msg));
-                Task::none()
-            }
             Message::DismissToast(id) => {
                 self.toasts.retain(|toast| toast.id != id);
                 Task::none()
@@ -3054,94 +2989,6 @@ impl BdsApp {
             Message::Style(msg) => self.handle_style_msg(msg),
             Message::ImportEditor(msg) => self.handle_import_editor_msg(msg),
             Message::MenuEditor(msg) => self.handle_menu_editor_msg(msg),
-
-            // ── Editor data loading ──
-            Message::PostLoaded(result) => {
-                match result {
-                    Ok(post) => {
-                        let mut translations = self.db.as_ref()
-                            .and_then(|db| bds_core::db::queries::post_translation::list_post_translations_by_post(
-                                db.conn(), &post.id,
-                            ).ok())
-                            .unwrap_or_default();
-                        // Published translations don't store body in DB — read from file
-                        if let Some(ref data_dir) = self.data_dir {
-                            for tr in &mut translations {
-                                if tr.content.is_none() {
-                                    let rel = bds_core::util::paths::translation_file_path(
-                                        post.created_at,
-                                        &post.slug,
-                                        &tr.language,
-                                    );
-                                    let path = data_dir.join(&rel);
-                                    if let Ok(raw) = std::fs::read_to_string(&path)
-                                        && let Ok((_fm, body)) =
-                                            bds_core::util::frontmatter::read_translation_file(&raw)
-                                    {
-                                        tr.content = Some(body);
-                                    }
-                                }
-                            }
-                        }
-                        let (outlinks, backlinks) = self.load_post_links(&post.id);
-                        let linked_media =
-                            self.load_post_media_items(&post.id, post.content.as_deref());
-                        let state = PostEditorState::from_post(
-                            &post,
-                            default_post_editor_mode(self.settings_state.as_ref()),
-                            &self.blog_languages,
-                            &translations,
-                            outlinks,
-                            backlinks,
-                            linked_media,
-                        );
-                        self.post_editors.insert(post.id.clone(), state);
-                    }
-                    Err(e) => self.notify(ToastLevel::Error, &e),
-                }
-                Task::none()
-            }
-            Message::MediaLoaded(result) => {
-                match result {
-                    Ok(media) => {
-                        let translations = self.db.as_ref()
-                            .and_then(|db| bds_core::db::queries::media_translation::list_media_translations_by_media(
-                                db.conn(), &media.id,
-                            ).ok())
-                            .unwrap_or_default();
-                        let linked_posts = self.load_media_linked_posts(&media.id);
-                        let state = MediaEditorState::from_media(
-                            &media,
-                            &self.blog_languages,
-                            &translations,
-                            linked_posts,
-                        );
-                        self.media_editors.insert(media.id.clone(), state);
-                    }
-                    Err(e) => self.notify(ToastLevel::Error, &e),
-                }
-                Task::none()
-            }
-            Message::TemplateLoaded(result) => {
-                match result {
-                    Ok(template) => {
-                        let state = TemplateEditorState::from_template(&template);
-                        self.template_editors.insert(template.id.clone(), state);
-                    }
-                    Err(e) => self.notify(ToastLevel::Error, &e),
-                }
-                Task::none()
-            }
-            Message::ScriptLoaded(result) => {
-                match result {
-                    Ok(script) => {
-                        let state = ScriptEditorState::from_script(&script);
-                        self.script_editors.insert(script.id.clone(), state);
-                    }
-                    Err(e) => self.notify(ToastLevel::Error, &e),
-                }
-                Task::none()
-            }
 
             Message::Noop => Task::none(),
             Message::InitMenuBar => {
