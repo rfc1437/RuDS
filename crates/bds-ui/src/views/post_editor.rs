@@ -870,6 +870,7 @@ pub fn view<'a>(
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
+    let show_content_actions = content_actions_visible(&state.editor_mode);
     let body_toolbar = inputs::toolbar(
         vec![
             row![
@@ -881,7 +882,7 @@ pub fn view<'a>(
             .into(),
         ],
         vec![
-            if state.editor_mode == "markdown" {
+            if show_content_actions {
                 button(
                     text(t(locale, "editor.insertLink"))
                         .size(13)
@@ -894,7 +895,7 @@ pub fn view<'a>(
             } else {
                 Space::new(0, 0).into()
             },
-            if state.editor_mode == "markdown" {
+            if show_content_actions {
                 button(
                     text(t(locale, "editor.insertMedia"))
                         .size(13)
@@ -907,15 +908,19 @@ pub fn view<'a>(
             } else {
                 Space::new(0, 0).into()
             },
-            button(
-                text(t(locale, "editor.gallery"))
-                    .size(13)
-                    .shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::Gallery))
-            .padding([6, 16])
-            .style(inputs::secondary_button)
-            .into(),
+            if show_content_actions {
+                button(
+                    text(t(locale, "editor.gallery"))
+                        .size(13)
+                        .shaping(Shaping::Advanced),
+                )
+                .on_press(Message::PostEditor(PostEditorMsg::Gallery))
+                .padding([6, 16])
+                .style(inputs::secondary_button)
+                .into()
+            } else {
+                Space::new(0, 0).into()
+            },
         ],
     );
     let editor_widget: Element<'a, Message> = if state.editor_mode == "preview" {
@@ -1106,6 +1111,10 @@ fn normalize_editor_mode(mode: &str) -> String {
     }
 }
 
+fn content_actions_visible(mode: &str) -> bool {
+    mode == "markdown"
+}
+
 fn status_badge<'a>(status: &PostStatus) -> Element<'a, Message> {
     let (label, color) = match status {
         PostStatus::Draft => ("Draft", Color::from_rgb(0.8, 0.7, 0.2)),
@@ -1244,5 +1253,11 @@ mod tests {
 
         state.set_editor_mode("preview");
         assert_eq!(state.editor_mode, "preview");
+    }
+
+    #[test]
+    fn content_actions_are_only_visible_in_markdown_mode() {
+        assert!(content_actions_visible("markdown"));
+        assert!(!content_actions_visible("preview"));
     }
 }
