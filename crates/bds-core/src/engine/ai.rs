@@ -197,28 +197,34 @@ pub fn save_endpoint(conn: &Connection, endpoint: &AiEndpointConfig) -> EngineRe
         checked_at,
     )?;
     if endpoint.kind == AiEndpointKind::Online {
-        let entry = endpoint_keyring_entry(endpoint.kind)?;
         if let Some(api_key) = &endpoint.api_key {
-            if api_key.trim().is_empty() {
-                entry.delete_credential().ok();
-                set_setting(
-                    conn,
-                    &endpoint_setting_key(endpoint.kind, "api_key_configured"),
-                    "false",
-                    checked_at,
-                )?;
-            } else {
-                entry.set_password(api_key.trim()).map_err(keyring_error)?;
-                set_setting(
-                    conn,
-                    &endpoint_setting_key(endpoint.kind, "api_key_configured"),
-                    "true",
-                    checked_at,
-                )?;
-            }
+            save_online_api_key_at(conn, api_key, checked_at)?;
         }
     }
     Ok(())
+}
+
+pub fn save_online_api_key(conn: &Connection, api_key: &str) -> EngineResult<()> {
+    save_online_api_key_at(conn, api_key, now_unix_ms())
+}
+
+fn save_online_api_key_at(conn: &Connection, api_key: &str, updated_at: i64) -> EngineResult<()> {
+    let entry = endpoint_keyring_entry(AiEndpointKind::Online)?;
+    let configured = !api_key.trim().is_empty();
+    if configured {
+        entry.set_password(api_key.trim()).map_err(keyring_error)?;
+    } else {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(error) => return Err(keyring_error(error)),
+        }
+    }
+    set_setting(
+        conn,
+        &endpoint_setting_key(AiEndpointKind::Online, "api_key_configured"),
+        if configured { "true" } else { "false" },
+        updated_at,
+    )
 }
 
 pub fn save_model_preferences(

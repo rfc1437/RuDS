@@ -150,7 +150,11 @@ rule CreateGallery {
 
 rule Preferences {
     when: CliCommandExecuted(command: config)
-    -- get/set/list of the global settings store shared with the app.
+    -- get/list expose effective global preferences shared with the app:
+    -- canonical defaults overlaid by persisted values. Project-file settings and
+    -- internal maintenance state are outside this list. Secret-backed keys remain
+    -- visible, but text and JSON output reveal only whether each secret is set;
+    -- get, list, and set confirmation never print secret values.
     ensures: PreferencesAccessed()
 }
 

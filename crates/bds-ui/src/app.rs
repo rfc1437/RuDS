@@ -6796,28 +6796,25 @@ impl BdsApp {
                     .map(|template| template.slug)
                     .collect();
             }
-            if let Ok(setting) =
-                bds_core::db::queries::setting::get_setting_by_key(db.conn(), "editor.default_mode")
+            if let Ok(Some(value)) =
+                engine::settings::get_effective(db.conn(), "editor.default_mode")
             {
-                state.default_mode = setting.value;
+                state.default_mode = value;
             }
-            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(
-                db.conn(),
-                "editor.diff_view_style",
-            ) {
-                state.diff_view_style = setting.value;
+            if let Ok(Some(value)) =
+                engine::settings::get_effective(db.conn(), "editor.diff_view_style")
+            {
+                state.diff_view_style = value;
             }
-            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(
-                db.conn(),
-                "editor.wrap_long_lines",
-            ) {
-                state.wrap_long_lines = setting.value == "true";
+            if let Ok(Some(value)) =
+                engine::settings::get_effective(db.conn(), "editor.wrap_long_lines")
+            {
+                state.wrap_long_lines = value == "true";
             }
-            if let Ok(setting) = bds_core::db::queries::setting::get_setting_by_key(
-                db.conn(),
-                "editor.hide_unchanged_regions",
-            ) {
-                state.hide_unchanged_regions = setting.value == "true";
+            if let Ok(Some(value)) =
+                engine::settings::get_effective(db.conn(), "editor.hide_unchanged_regions")
+            {
+                state.hide_unchanged_regions = value == "true";
             }
             if let Ok(setting) =
                 bds_core::db::queries::setting::get_setting_by_key(db.conn(), "ai.system_prompt")
@@ -6848,7 +6845,7 @@ impl BdsApp {
                 state.title_model = ai_settings.title_model.unwrap_or_default();
                 state.image_model = ai_settings.image_model.unwrap_or_default();
             }
-            state.mcp_enabled = engine::settings::get(db.conn(), "mcp.http.enabled")
+            state.mcp_enabled = engine::settings::get_effective(db.conn(), "mcp.http.enabled")
                 .ok()
                 .flatten()
                 .is_some_and(|value| value == "true");

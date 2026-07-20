@@ -1836,8 +1836,8 @@ impl TuiApp {
                 (
                     "Diff style",
                     "editor.diff_view_style",
-                    FieldKind::Enum(&["unified", "split"]),
-                    "unified",
+                    FieldKind::Enum(&["inline", "side-by-side"]),
+                    "inline",
                 ),
                 (
                     "Wrap long lines",
@@ -2066,7 +2066,7 @@ impl TuiApp {
                     ) {
                     fallback
                 } else {
-                    engine::settings::get(db.conn(), key)?.unwrap_or(fallback)
+                    engine::settings::get_effective(db.conn(), key)?.unwrap_or(fallback)
                 };
                 Ok(SettingField {
                     label: setting_field_label(self.locale, key, label),

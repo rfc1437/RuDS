@@ -74,7 +74,7 @@ Done:
 Done:
 
 - Domain event bus from `events.allium` for desktop, CLI, TUI, server, and future remote clients, including deterministic subscriptions, project scope, and persisted CLI notification consumption/pruning.
-- Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects/settings, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, `server`/`tui` boot modes, and guarded launcher installation.
+- Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects and effective global settings with redacted secret presence, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, `server`/`tui` boot modes, and guarded launcher installation.
 - CLI process and dispatch tests use temporary databases/projects; CLI mutations persist deduplicated desktop notifications and imported filesystem metadata survives rebuild.
 - Settings → Data exposes the same localized packaged-launcher installer as `bds-cli install`; its forwarding launcher executes the packaged CLI in place beside the shared runtime.
 - MCP exposes the complete `bds://` resource set and typed read/search/count tools through packaged stdio and stateless localhost-only HTTP transports with Origin/Host validation and CORS.

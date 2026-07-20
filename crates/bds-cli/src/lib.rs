@@ -874,29 +874,60 @@ fn create_gallery(
 fn config(db: &Database, command: ConfigCommand) -> Result<CommandOutput> {
     match command {
         ConfigCommand::Get { key } => {
-            let value = engine::settings::get(db.conn(), &key)?
+            let value = engine::settings::get_effective(db.conn(), &key)?
                 .ok_or_else(|| anyhow!("{key} is not set"))?;
+            let value = printable_config_value(&key, &value);
             Ok(output(&value, json!({"key": key, "value": value})))
         }
         ConfigCommand::Set { key, value } => {
             cli_sync::run_cli_mutation(db.conn(), || {
-                engine::settings::set(db.conn(), &key, &value)
+                if key == engine::settings::ONLINE_API_KEY {
+                    engine::ai::save_online_api_key(db.conn(), &value)
+                } else {
+                    engine::settings::set(db.conn(), &key, &value)
+                }
             })?;
+            let printable = printable_config_value(&key, &value);
             Ok(output(
-                &format!("{key} = {value}"),
-                json!({"key": key, "value": value}),
+                &format!("{key} = {printable}"),
+                json!({"key": key, "value": printable}),
             ))
         }
         ConfigCommand::List => {
-            let settings = bds_core::db::queries::setting::list_all_settings(db.conn())?;
+            let settings = engine::settings::list_effective(db.conn())?;
             let mut message = String::new();
             let mut values = serde_json::Map::new();
-            for setting in settings {
-                let _ = writeln!(message, "{}={}", setting.key, setting.value);
-                values.insert(setting.key, Value::String(setting.value));
+            for (key, value) in settings {
+                let value = printable_config_value(&key, &value);
+                let _ = writeln!(message, "{key}={value}");
+                values.insert(key, Value::String(value));
             }
             Ok(output(message.trim_end(), Value::Object(values)))
         }
+    }
+}
+
+fn printable_config_value(key: &str, value: &str) -> String {
+    let key = key.to_ascii_lowercase();
+    if [
+        "api_key",
+        "access_key",
+        "private_key",
+        "password",
+        "secret",
+        "token",
+        "credential",
+    ]
+    .iter()
+    .any(|name| key.ends_with(name) || key.split(['.', '-']).any(|part| part == *name))
+    {
+        if value.trim().is_empty() {
+            "<not set>".to_string()
+        } else {
+            "<set>".to_string()
+        }
+    } else {
+        value.to_string()
     }
 }
 
@@ -1268,6 +1299,24 @@ mod tests {
     fn config_and_project_families_dispatch_success_and_failure() {
         let fixture = Fixture::new(false);
         assert!(fixture.run(&["config", "get", "missing"], "").is_err());
+
+        let defaults = fixture.run(&["config", "list"], "").unwrap();
+        assert_eq!(defaults.data["editor.default_mode"], "markdown");
+        assert_eq!(defaults.data["editor.diff_view_style"], "inline");
+        assert_eq!(defaults.data["ai.endpoint.online.api_key"], "<not set>");
+        assert!(
+            !defaults
+                .message
+                .contains("app.search-index-rebuild-required")
+        );
+        assert_eq!(
+            fixture
+                .run(&["config", "get", "editor.default_mode"], "")
+                .unwrap()
+                .message,
+            "markdown"
+        );
+
         fixture
             .run(&["config", "set", "editor.mode", "markdown"], "")
             .unwrap();
@@ -1276,6 +1325,31 @@ mod tests {
             .unwrap();
         assert_eq!(read.data["value"], "markdown");
         assert!(read.to_string().contains("\"ok\":true"));
+
+        let secret = fixture
+            .run(&["config", "set", "service.api_key", "secret-token"], "")
+            .unwrap();
+        assert_eq!(secret.message, "service.api_key = <set>");
+        assert!(!secret.to_string().contains("secret-token"));
+        let secret = fixture
+            .run(&["--json", "config", "get", "service.api_key"], "")
+            .unwrap();
+        assert_eq!(secret.data["value"], "<set>");
+        assert!(!secret.to_string().contains("secret-token"));
+        let secrets = fixture.run(&["--json", "config", "list"], "").unwrap();
+        assert_eq!(secrets.data["service.api_key"], "<set>");
+        assert!(!secrets.to_string().contains("secret-token"));
+
+        let db = open_database(&fixture.database_path).unwrap();
+        engine::settings::set(db.conn(), "ai.endpoint.online.api_key_configured", "true").unwrap();
+        let configured = fixture.run(&["config", "list"], "").unwrap();
+        assert_eq!(configured.data["ai.endpoint.online.api_key"], "<set>");
+        assert!(
+            !configured
+                .message
+                .contains("ai.endpoint.online.api_key_configured")
+        );
+
         assert!(fixture.run(&["project", "switch", "missing"], "").is_err());
 
         let project = fixture._root.path().join("second");
