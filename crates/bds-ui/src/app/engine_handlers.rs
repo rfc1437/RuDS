@@ -219,6 +219,12 @@ impl BdsApp {
             } => {
                 let search_rebuild_finished = self.search_index_rebuild_task_id == Some(task_id);
                 let cancelled = self.task_manager.status(task_id) == Some(TaskStatus::Cancelled);
+                let refresh_semantic_tags = !cancelled
+                    && result.is_ok()
+                    && matches!(
+                        operation,
+                        "embeddings.indexing" | "menu.item.rebuildEmbeddingIndex"
+                    );
                 match &result {
                     _ if cancelled => {}
                     Ok(detail) => {
@@ -265,8 +271,22 @@ impl BdsApp {
                     self.sync_menu_state();
                 }
                 let sidebar_task = self.refresh_counts();
+                let semantic_task = if refresh_semantic_tags {
+                    self.active_tab
+                        .as_ref()
+                        .filter(|id| {
+                            self.tabs
+                                .iter()
+                                .any(|tab| tab.id == id.as_str() && tab.tab_type == TabType::Post)
+                        })
+                        .map_or_else(Task::none, |id| {
+                            Task::done(Message::LoadSemanticTagSuggestions(id.clone()))
+                        })
+                } else {
+                    Task::none()
+                };
                 self.refresh_task_snapshots();
-                sidebar_task
+                Task::batch([sidebar_task, semantic_task])
             }
             Message::SiteGenerationSectionDone {
                 group_id,

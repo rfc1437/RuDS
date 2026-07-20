@@ -419,13 +419,24 @@ impl<'a> EmbeddingService<'a> {
     }
 
     pub fn suggest_tags(&self, post_id: &str) -> EngineResult<Vec<String>> {
+        if !self.enabled() {
+            return Ok(Vec::new());
+        }
         let source = qp::get_post_by_id(self.conn, post_id)?;
         let current = source
             .tags
             .iter()
             .map(|tag| tag.to_lowercase())
             .collect::<HashSet<_>>();
-        let similar = self.find_similar(post_id, 10)?;
+        let Some(key) = qe::get_key_for_post(self.conn, &source.project_id, post_id)? else {
+            return Ok(Vec::new());
+        };
+        let similar = self.search_index(
+            &source.project_id,
+            &decode_vector(&key.vector)?,
+            10,
+            Some(key.label as u64),
+        )?;
         let mut scores = HashMap::<String, (String, f32)>::new();
         for neighbor in similar {
             if let Ok(post) = qp::get_post_by_id(self.conn, &neighbor.post_id) {
@@ -1278,6 +1289,41 @@ mod tests {
                 .iter()
                 .any(|pair| pair.post_id_a == "exact-a" && pair.post_id_b == "exact-b")
         );
+    }
+
+    #[test]
+    fn tag_suggestions_read_the_existing_index_without_running_inference() {
+        let (db, data, cache, project_id, backend) = setup_service(true);
+        insert_post(
+            &db,
+            &project_id,
+            "source",
+            "Space",
+            "rocket launch",
+            &["space"],
+        );
+        insert_post(
+            &db,
+            &project_id,
+            "neighbor",
+            "Science",
+            "rocket mission",
+            &["science"],
+        );
+        let service = EmbeddingService::with_backend(
+            db.conn(),
+            data.path(),
+            cache.path().into(),
+            backend.clone(),
+        );
+        service.index_unindexed(&project_id).unwrap();
+        let inference_count = backend.embedded();
+        let mut changed = qp::get_post_by_id(db.conn(), "source").unwrap();
+        changed.content = Some("content changed after indexing".into());
+        qp::update_post(db.conn(), &changed).unwrap();
+
+        assert_eq!(service.suggest_tags("source").unwrap(), vec!["science"]);
+        assert_eq!(backend.embedded(), inference_count);
     }
 
     #[test]

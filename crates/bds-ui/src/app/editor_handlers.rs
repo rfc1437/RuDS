@@ -7,6 +7,11 @@ impl BdsApp {
             SyncEmbeddedPreview,
             Analyze(String),
             AnalyzeTaxonomy(String),
+            EnsureTag {
+                post_id: String,
+                tag: String,
+            },
+            LoadSemanticTags(String),
             AddGalleryImages(String),
             DetectLanguage(String),
             OpenTranslate(String),
@@ -127,6 +132,9 @@ impl BdsApp {
                 }
                 PostEditorMsg::ToggleMetadata => {
                     state.metadata_expanded = !state.metadata_expanded;
+                    if state.metadata_expanded {
+                        deferred = DeferredPostAction::LoadSemanticTags(state.post_id.clone());
+                    }
                 }
                 PostEditorMsg::ToggleExcerpt => {
                     state.excerpt_expanded = !state.excerpt_expanded;
@@ -139,12 +147,24 @@ impl BdsApp {
                 }
                 PostEditorMsg::TagsInputChanged(s) => {
                     state.tags_input = s;
+                    if state.tags_input.trim().is_empty() {
+                        deferred = DeferredPostAction::LoadSemanticTags(state.post_id.clone());
+                    }
                 }
                 PostEditorMsg::TagsInputSubmit => {
                     let tag = state.tags_input.trim().to_string();
-                    if !tag.is_empty() && !state.tags.contains(&tag) {
-                        state.tags.push(tag);
+                    if !tag.is_empty()
+                        && !state
+                            .tags
+                            .iter()
+                            .any(|current| current.eq_ignore_ascii_case(&tag))
+                    {
+                        state.tags.push(tag.clone());
                         state.mark_dirty();
+                        deferred = DeferredPostAction::EnsureTag {
+                            post_id: state.post_id.clone(),
+                            tag,
+                        };
                     }
                     state.tags_input.clear();
                 }
@@ -156,10 +176,12 @@ impl BdsApp {
                     {
                         state.tags.push(tag.clone());
                         state.mark_dirty();
+                        deferred = DeferredPostAction::EnsureTag {
+                            post_id: state.post_id.clone(),
+                            tag: tag.clone(),
+                        };
                     }
-                    state
-                        .semantic_tag_suggestions
-                        .retain(|candidate| !candidate.eq_ignore_ascii_case(&tag));
+                    state.tags_input.clear();
                 }
                 PostEditorMsg::RemoveTag(tag) => {
                     state.tags.retain(|t| t != &tag);
@@ -286,6 +308,12 @@ impl BdsApp {
             DeferredPostAction::SyncEmbeddedPreview => self.sync_embedded_preview_for_active_post(),
             DeferredPostAction::Analyze(tab_id) => self.run_post_ai_analysis(&tab_id),
             DeferredPostAction::AnalyzeTaxonomy(tab_id) => self.run_post_taxonomy_analysis(&tab_id),
+            DeferredPostAction::EnsureTag { post_id, tag } => {
+                self.ensure_post_editor_tag(&post_id, &tag)
+            }
+            DeferredPostAction::LoadSemanticTags(post_id) => {
+                Task::done(Message::LoadSemanticTagSuggestions(post_id))
+            }
             DeferredPostAction::AddGalleryImages(post_id) => self.add_gallery_images(&post_id),
             DeferredPostAction::DetectLanguage(tab_id) => self.detect_post_language(&tab_id),
             DeferredPostAction::OpenTranslate(tab_id) => self.open_post_translation_modal(&tab_id),

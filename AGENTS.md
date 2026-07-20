@@ -12,6 +12,15 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 - Before implementing or changing UI, read and follow `docs/UI_STYLE_GUIDE.md`.
 - Reuse the shared styling primitives described there so new sidebars and editor areas remain consistent with the post editor.
 
+## Computer Use for the macOS app
+
+- Build the real app bundle with `cargo bundle-macos`.
+- Use Computer Use against the exact app path `target/release/Blogging Desktop Server.app` (resolved to its absolute path), then raise that window before interacting with it.
+- Do not use `cargo run` for Computer Use: it starts RuDS as a child of the command runner and Computer Use cannot attach to it as a macOS app.
+- Do not run `open` on `target/debug/bds-ui`; macOS hands the executable to Ghostty instead of launching RuDS as an app.
+- Do not target only the `de.rfc1437.ruds` bundle identifier because both the installed app and the repository build may share it; always use the exact repository bundle path.
+- Do not improvise with AppleScript, Dock automation, or raw screen-capture workarounds. Use the Computer Use skill and its `node_repl` runtime.
+
 ## Plan Mode
 
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.

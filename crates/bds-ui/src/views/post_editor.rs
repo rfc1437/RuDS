@@ -11,7 +11,7 @@ use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
 use crate::components::{inputs, popover};
-use crate::i18n::t;
+use crate::i18n::{t, tw};
 use crate::views::status_bar;
 
 /// Per editor_post.allium TranslationFlag value.
@@ -76,6 +76,7 @@ pub struct PostEditorState {
     pub quick_actions_open: bool,
     pub tags_input: String,
     pub categories_input: String,
+    pub available_tags: Vec<String>,
     pub semantic_tag_suggestions: Vec<String>,
     pub active_language: String,
     pub canonical_language: String,
@@ -124,6 +125,7 @@ impl Clone for PostEditorState {
             quick_actions_open: self.quick_actions_open,
             tags_input: self.tags_input.clone(),
             categories_input: self.categories_input.clone(),
+            available_tags: self.available_tags.clone(),
             semantic_tag_suggestions: self.semantic_tag_suggestions.clone(),
             active_language: self.active_language.clone(),
             canonical_language: self.canonical_language.clone(),
@@ -190,6 +192,7 @@ impl PostEditorState {
             quick_actions_open: false,
             tags_input: String::new(),
             categories_input: String::new(),
+            available_tags: Vec::new(),
             semantic_tag_suggestions: Vec::new(),
             active_language: canonical_lang.clone(),
             canonical_language: canonical_lang,
@@ -206,6 +209,18 @@ impl PostEditorState {
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
         self.last_edit_at_ms = bds_core::util::now_unix_ms();
+    }
+
+    pub fn restore_view_state(&mut self, previous: &Self) {
+        self.metadata_expanded = previous.metadata_expanded;
+        self.excerpt_expanded = previous.excerpt_expanded;
+        self.editor_mode.clone_from(&previous.editor_mode);
+        self.quick_actions_open = previous.quick_actions_open;
+        self.tags_input.clone_from(&previous.tags_input);
+        self.categories_input.clone_from(&previous.categories_input);
+        self.semantic_tag_suggestions
+            .clone_from(&previous.semantic_tag_suggestions);
+        self.switch_language(&previous.active_language);
     }
 
     pub fn insert_markdown_at_cursor(&mut self, markdown: &str) {
@@ -628,7 +643,12 @@ pub fn view<'a>(
             Message::PostEditor(PostEditorMsg::TagsInputSubmit),
             |tag| Message::PostEditor(PostEditorMsg::RemoveTag(tag)),
         );
-        let semantic_tags: Element<'a, Message> = if state.semantic_tag_suggestions.is_empty() {
+        let semantic_suggestions = visible_semantic_tag_suggestions(
+            &state.semantic_tag_suggestions,
+            &state.tags,
+            &state.tags_input,
+        );
+        let semantic_tags: Element<'a, Message> = if semantic_suggestions.is_empty() {
             Space::new(0, 0).into()
         } else {
             let mut chips = row![
@@ -638,17 +658,54 @@ pub fn view<'a>(
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center);
-            for tag in &state.semantic_tag_suggestions {
+            for tag in semantic_suggestions {
                 chips = chips.push(
                     button(text(format!("+ {tag}")).size(11))
                         .on_press(Message::PostEditor(PostEditorMsg::AddSuggestedTag(
-                            tag.clone(),
+                            tag.to_string(),
                         )))
                         .padding([4, 8])
                         .style(inputs::secondary_button),
                 );
             }
             chips.into()
+        };
+        let matching_suggestions =
+            matching_tag_suggestions(&state.available_tags, &state.tags, &state.tags_input);
+        let query_addable =
+            tag_query_addable(&state.available_tags, &state.tags, &state.tags_input);
+        let matching_tags: Element<'a, Message> = if state.tags_input.trim().is_empty()
+            || (matching_suggestions.is_empty() && !query_addable)
+        {
+            Space::new(0, 0).into()
+        } else {
+            let mut chips = row![
+                text(t(locale, "editor.matchingTags"))
+                    .size(11)
+                    .color(inputs::LABEL_COLOR)
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            for tag in matching_suggestions {
+                chips = chips.push(
+                    button(text(tag).size(11))
+                        .on_press(Message::PostEditor(PostEditorMsg::AddSuggestedTag(
+                            tag.to_string(),
+                        )))
+                        .padding([4, 8])
+                        .style(inputs::secondary_button),
+                );
+            }
+            if query_addable {
+                let query = state.tags_input.trim().to_string();
+                chips = chips.push(
+                    button(text(tw(locale, "editor.createTag", &[("name", &query)])).size(11))
+                        .on_press(Message::PostEditor(PostEditorMsg::AddSuggestedTag(query)))
+                        .padding([4, 8])
+                        .style(inputs::secondary_button),
+                );
+            }
+            chips.wrap().into()
         };
 
         // Categories chip input
@@ -808,6 +865,7 @@ pub fn view<'a>(
                 meta_row2,
                 tags_section,
                 semantic_tags,
+                matching_tags,
                 categories_section,
                 outlinks_section,
                 backlinks_section,
@@ -990,6 +1048,54 @@ pub fn view<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn matching_tag_suggestions<'a>(
+    available: &'a [String],
+    selected: &[String],
+    query: &str,
+) -> Vec<&'a str> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    available
+        .iter()
+        .filter(|tag| {
+            !selected
+                .iter()
+                .any(|current| current.eq_ignore_ascii_case(tag))
+        })
+        .filter(|tag| tag.to_lowercase().contains(&query))
+        .take(8)
+        .map(String::as_str)
+        .collect()
+}
+
+fn tag_query_addable(available: &[String], selected: &[String], query: &str) -> bool {
+    let query = query.trim();
+    !query.is_empty()
+        && !available.iter().any(|tag| tag.eq_ignore_ascii_case(query))
+        && !selected.iter().any(|tag| tag.eq_ignore_ascii_case(query))
+}
+
+fn visible_semantic_tag_suggestions<'a>(
+    semantic: &'a [String],
+    selected: &[String],
+    query: &str,
+) -> Vec<&'a str> {
+    if !query.trim().is_empty() {
+        return Vec::new();
+    }
+    semantic
+        .iter()
+        .filter(|tag| {
+            !selected
+                .iter()
+                .any(|current| current.eq_ignore_ascii_case(tag))
+        })
+        .map(String::as_str)
+        .collect()
 }
 
 /// Chip input: shows existing chips as removable buttons + a text input to add new ones.
@@ -1208,6 +1314,48 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn partial_tag_query_matches_existing_tags_case_insensitively() {
+        let available = vec![
+            "Photography".to_string(),
+            "Photo Essay".to_string(),
+            "Rust".to_string(),
+        ];
+        let selected = vec!["Photography".to_string()];
+
+        assert_eq!(
+            matching_tag_suggestions(&available, &selected, "PHO"),
+            vec!["Photo Essay"]
+        );
+    }
+
+    #[test]
+    fn partial_tag_query_limits_matches_and_exact_names_are_not_addable() {
+        let available = (0..10)
+            .map(|index| format!("tag-{index}"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching_tag_suggestions(&available, &[], "tag").len(), 8);
+        assert!(!tag_query_addable(&available, &[], " TAG-3 "));
+        assert!(tag_query_addable(&available, &[], "new tag"));
+    }
+
+    #[test]
+    fn semantic_tag_suggestions_are_hidden_while_filtering_and_exclude_selected_tags() {
+        let selected = vec!["science".to_string()];
+        let semantic = vec![
+            "science".to_string(),
+            "space".to_string(),
+            "history".to_string(),
+        ];
+
+        assert_eq!(
+            visible_semantic_tag_suggestions(&semantic, &selected, ""),
+            vec!["space", "history"]
+        );
+        assert!(visible_semantic_tag_suggestions(&semantic, &selected, "spa").is_empty());
     }
 
     #[test]

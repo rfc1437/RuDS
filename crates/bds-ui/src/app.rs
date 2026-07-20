@@ -1647,10 +1647,17 @@ impl BdsApp {
                     if self.active_tab.as_deref() != Some(id.as_str()) {
                         self.flush_active_post_editor();
                     }
-                    self.active_tab = Some(id);
+                    self.active_tab = Some(id.clone());
                 }
                 self.enforce_panel_tab_fallback();
-                self.sync_embedded_previews()
+                let semantic_task = self
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == id && tab.tab_type == TabType::Post)
+                    .map_or_else(Task::none, |_| {
+                        Task::done(Message::LoadSemanticTagSuggestions(id))
+                    });
+                Task::batch([self.sync_embedded_previews(), semantic_task])
             }
             // ── Project management ──
             Message::ProjectsLoaded(projects) => {
@@ -4013,6 +4020,7 @@ impl BdsApp {
 
         if entity == DomainEntity::Tag {
             self.tags_view_state = None;
+            self.refresh_post_editor_tag_options();
             if let Some(tab) = self
                 .tabs
                 .iter()
@@ -4026,6 +4034,9 @@ impl BdsApp {
 
         let tab = self.tabs.iter().find(|tab| tab.id == entity_id).cloned();
         let Some(tab) = tab else { return };
+        let previous_post_state = (entity == DomainEntity::Post)
+            .then(|| self.post_editors.get(entity_id).cloned())
+            .flatten();
         let dirty = match entity {
             DomainEntity::Post => self
                 .post_editors
@@ -4064,6 +4075,11 @@ impl BdsApp {
             DomainEntity::Tag | DomainEntity::Project | DomainEntity::Setting => {}
         }
         self.load_editor_for_tab(&tab);
+        if let (Some(previous), Some(current)) =
+            (previous_post_state, self.post_editors.get_mut(entity_id))
+        {
+            current.restore_view_state(&previous);
+        }
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == entity_id) {
             tab.title = match entity {
                 DomainEntity::Post => self
@@ -6016,6 +6032,29 @@ impl BdsApp {
                 },
             )
         }))
+    }
+
+    fn ensure_post_editor_tag(&mut self, post_id: &str, name: &str) -> Task<Message> {
+        let (Some(db), Some(data_dir)) = (self.db.as_ref(), self.data_dir.as_ref()) else {
+            return Task::none();
+        };
+        let Ok(post) = bds_core::db::queries::post::get_post_by_id(db.conn(), post_id) else {
+            return Task::none();
+        };
+        if bds_core::db::queries::tag::get_tag_by_project_and_name(
+            db.conn(),
+            &post.project_id,
+            name,
+        )
+        .is_err()
+            && let Err(error) =
+                engine::tag::create_tag(db.conn(), data_dir, &post.project_id, name, None)
+        {
+            self.notify_operation_failed("editor.tags", error);
+            return Task::none();
+        }
+        self.refresh_post_editor_tag_options();
+        Task::none()
     }
 
     fn insert_link_modal(&mut self, post_id: &str) -> Task<Message> {
@@ -8245,6 +8284,45 @@ impl BdsApp {
         }
     }
 
+    fn project_tag_names(&self, project_id: &str) -> Vec<String> {
+        let Some(db) = self.db.as_ref() else {
+            return Vec::new();
+        };
+        let mut names = bds_core::db::queries::tag::list_tags_by_project(db.conn(), project_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tag| tag.name)
+            .collect::<Vec<_>>();
+        for tag in bds_core::db::queries::post::list_posts_by_project(db.conn(), project_id)
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|post| post.tags)
+        {
+            if !names
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&tag))
+            {
+                names.push(tag);
+            }
+        }
+        names.sort_by_key(|name| name.to_lowercase());
+        names
+    }
+
+    fn refresh_post_editor_tag_options(&mut self) {
+        let Some(project_id) = self
+            .active_project
+            .as_ref()
+            .map(|project| project.id.clone())
+        else {
+            return;
+        };
+        let names = self.project_tag_names(&project_id);
+        for editor in self.post_editors.values_mut() {
+            editor.available_tags.clone_from(&names);
+        }
+    }
+
     /// Load editor state when a tab is opened for an entity.
     fn load_editor_for_tab(&mut self, tab: &Tab) {
         let Some(ref db) = self.db else { return };
@@ -8297,18 +8375,17 @@ impl BdsApp {
                             let (outlinks, backlinks) = self.load_post_links(&post.id);
                             let linked_media =
                                 self.load_post_media_items(&post.id, post.content.as_deref());
-                            self.post_editors.insert(
-                                post.id.clone(),
-                                PostEditorState::from_post(
-                                    &post,
-                                    default_post_editor_mode(self.settings_state.as_ref()),
-                                    &self.blog_languages,
-                                    &translations,
-                                    outlinks,
-                                    backlinks,
-                                    linked_media,
-                                ),
+                            let mut editor = PostEditorState::from_post(
+                                &post,
+                                default_post_editor_mode(self.settings_state.as_ref()),
+                                &self.blog_languages,
+                                &translations,
+                                outlinks,
+                                backlinks,
+                                linked_media,
                             );
+                            editor.available_tags = self.project_tag_names(&post.project_id);
+                            self.post_editors.insert(post.id.clone(), editor);
                         }
                         Err(e) => {
                             self.notify_operation_failed("activity.posts", e);
@@ -9519,10 +9596,12 @@ mod tests {
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
     use bds_core::engine::{
-        ai, blogmark, chat, media, menu, meta, post, script, template, wordpress_import,
+        ai, blogmark, chat, media, menu, meta, post, script, tag, template, wordpress_import,
     };
     use bds_core::i18n::UiLocale;
-    use bds_core::model::{ChatRole, DomainEvent, Project, ScriptKind, TemplateKind};
+    use bds_core::model::{
+        ChatRole, DomainEntity, DomainEvent, NotificationAction, Project, ScriptKind, TemplateKind,
+    };
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -11324,6 +11403,139 @@ mod tests {
                 .snapshots()
                 .iter()
                 .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
+    }
+
+    #[test]
+    fn post_editor_loads_existing_project_tags_for_partial_suggestions() {
+        let (db, project, tmp) = setup();
+        tag::create_tag(db.conn(), tmp.path(), &project.id, "Photography", None).unwrap();
+        let tagged = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Existing",
+            Some("Body"),
+            vec!["Photo Essay".to_string()],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let edited = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Edited",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+
+        let _ = app.open_tab(Tab {
+            id: edited.id.clone(),
+            tab_type: TabType::Post,
+            title: edited.title,
+            is_transient: false,
+            is_dirty: false,
+        });
+
+        assert_eq!(
+            app.post_editors[&edited.id].available_tags,
+            vec!["Photo Essay", "Photography"]
+        );
+        assert_eq!(tagged.tags, vec!["Photo Essay"]);
+    }
+
+    #[test]
+    fn adding_new_tag_from_post_editor_creates_portable_tag_metadata() {
+        let (db, project, tmp) = setup();
+        let edited = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Edited",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project.clone(), &tmp);
+        let _ = app.open_tab(Tab {
+            id: edited.id.clone(),
+            tab_type: TabType::Post,
+            title: edited.title,
+            is_transient: false,
+            is_dirty: false,
+        });
+
+        let _ = app.handle_post_editor_msg(PostEditorMsg::AddSuggestedTag("New Tag".into()));
+
+        assert!(
+            bds_core::db::queries::tag::get_tag_by_project_and_name(
+                app.db.as_ref().unwrap().conn(),
+                &project.id,
+                "new tag",
+            )
+            .is_ok()
+        );
+        assert!(
+            app.post_editors[&edited.id]
+                .tags
+                .contains(&"New Tag".to_string())
+        );
+        let portable = std::fs::read_to_string(tmp.path().join("meta/tags.json")).unwrap();
+        assert!(portable.contains("New Tag"));
+    }
+
+    #[test]
+    fn post_refresh_does_not_drop_loaded_semantic_tag_suggestions() {
+        let (db, project, tmp) = setup();
+        let edited = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Edited",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project.clone(), &tmp);
+        let _ = app.open_tab(Tab {
+            id: edited.id.clone(),
+            tab_type: TabType::Post,
+            title: edited.title,
+            is_transient: false,
+            is_dirty: false,
+        });
+        app.post_editors
+            .get_mut(&edited.id)
+            .unwrap()
+            .semantic_tag_suggestions = vec!["science".to_string()];
+
+        app.handle_domain_event(DomainEvent::EntityChanged {
+            project_id: project.id,
+            entity: DomainEntity::Post,
+            entity_id: edited.id.clone(),
+            action: NotificationAction::Updated,
+        });
+
+        assert_eq!(
+            app.post_editors[&edited.id].semantic_tag_suggestions,
+            vec!["science"]
         );
     }
 
