@@ -48,10 +48,8 @@ Local macOS packages are ad-hoc signed without hardened runtime. A Developer ID 
 - `fixtures` — compatibility projects and generated-site fixtures
 - `locales` — UI and native-menu translations
 
-## Plans and References
+## References
 
-- [Core plan and current status](RUST_PLAN_CORE.md)
-- [Extension plan and current status](RUST_PLAN_EXTENSION.md)
 - [Specification index](SPECIFICATION_INDEX.md)
 - [UI style guide](docs/UI_STYLE_GUIDE.md)
 - `../bDS2` — reference implementation when an Allium contract is ambiguous

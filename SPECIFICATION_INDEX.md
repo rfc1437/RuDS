@@ -204,13 +204,6 @@ Diese Datei dient als Index zu allen Allium-Spezifikationen und Schema-Inventari
   - Korrupte Bilddateien
   - Orphan Media (nicht verlinkt)
 
-## Verfügbare Rust-Plan-Dokumente
-
-| Datei | Beschreibung |
-|-------|--------------|
-| `RUST_PLAN_CORE.md` | Core-Umfang mit aktuellem Implementierungsstand und offenen Punkten |
-| `RUST_PLAN_EXTENSION.md` | Extensions mit aktuellem Implementierungsstand und offenen Punkten |
-
 ## Spezifikations-Abdeckungs-Analyse
 
 ### Vollständig Abgedeckt ✅
