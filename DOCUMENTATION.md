@@ -10,6 +10,9 @@
 - [Working with pages](#working-with-pages)
 - [Working with media](#working-with-media)
 - [Working with translations](#working-with-translations)
+- [Finding content and duplicates](#finding-content-and-duplicates)
+- [Previewing your site](#previewing-your-site)
+- [Editing site navigation](#editing-site-navigation)
 - [Using macros](#using-macros)
 - [Using scripting](#using-scripting)
 - [Using the AI assistant](#using-the-ai-assistant)
@@ -23,6 +26,8 @@
 - [Generating and publishing](#generating-and-publishing)
 - [Typical editorial workflows](#typical-editorial-workflows)
 - [Working fully offline](#working-fully-offline)
+- [Connecting external AI agents (MCP)](#connecting-external-ai-agents-mcp)
+- [Using the command line](#using-the-command-line)
 - [Running a headless server and the terminal UI](#running-a-headless-server-and-the-terminal-ui)
 - [Troubleshooting and recovery](#troubleshooting-and-recovery)
 - [Team conventions](#team-conventions)
@@ -81,7 +86,9 @@ Finally, define language and author defaults. These defaults reduce repetitive e
 
 ## Understanding the interface
 
-The RuDS interface is organized around workflows rather than isolated forms. The Activity Bar on the left moves between major areas such as Posts, Pages, Media, Tags, Import, Source Control, and Settings. The Sidebar changes with the active area and helps with filtering, selection, and navigation. The Editor area is where most work happens and supports tabbed editing for content, configuration, and analysis views.
+The RuDS interface is organized around workflows rather than isolated forms. The Activity Bar on the left moves between the major areas: Posts, Pages, Media, Scripts, Templates, Tags, Chat, Import, Source Control, and Settings. The Sidebar changes with the active area and helps with filtering, selection, and navigation. The Editor area is where most work happens and supports tabbed editing for content, configuration, and analysis views. When no tab is open, the editor area shows the Dashboard with project statistics, a posting timeline, a tag cloud, and recent posts.
+
+The status bar at the bottom shows the active project and holds the airplane-mode switch that decides whether online AI endpoints may be used. It also shows the applied site theme and, during AI chat, running token totals.
 
 The bottom panel and status area matter during longer operations such as imports, rebuild actions, metadata scans, and media work. Toasts provide quick feedback. The Output panel provides deeper detail when something needs attention.
 
@@ -106,6 +113,8 @@ A post combines title, body content, category, tags, excerpt, and status. Titles
 A reliable post workflow is: draft to completion, review structure and metadata, preview the result, publish when editorially ready, then commit immediately.
 
 When you want help refining post metadata, use Quick Actions in the post editor and review AI suggestions for title, summary, and slug. Treat this as editorial assistance, not an automatic rewrite.
+
+The post editor's links panel shows outgoing links to other posts and backlinks from posts that reference the current one. Use it to check context before restructuring or unpublishing, and click a linked post to open it directly.
 
 ### Key takeaways
 
@@ -141,7 +150,7 @@ The Media section is where you import, describe, and maintain assets used by pos
 
 When importing media, add metadata while context is still fresh. Alt text should describe meaning for accessibility. Captions should support reader understanding. Media tags should help later retrieval and reuse.
 
-You can also drag image files into the post editor or paste screenshots from the clipboard. RuDS imports the image into the media library, links it to the current post, and inserts the Markdown image at the cursor position.
+From the post editor you can insert already-imported media at the cursor position, or use the Gallery workflow to import several images at once: RuDS imports them into the media library, links them to the current post, runs the optional AI enrichment for titles and alt text, and inserts the gallery block into the post.
 
 ### Key takeaways
 
@@ -173,12 +182,67 @@ Media items can have translated title, alt text, and caption values per language
 
 When blog languages are configured, RuDS can fill missing translations for posts and linked media. Automatic translation respects airplane mode and the configured AI runtime. If an automatic action cannot run in the current AI mode, RuDS reports that through the UI instead of silently inventing a result.
 
+### Validation report
+
+Use **Blog → Validate Translations** to open a completeness report across all configured languages. It lists missing and outdated translations for posts and media so you can close gaps deliberately instead of discovering them after generation.
+
 ### Key takeaways
 
 - Post translations store title, excerpt, and content separately from the canonical post.
 - Media translations store translated descriptive text while the asset stays shared.
 - Automatic translation keeps posts and linked media aligned across configured languages.
 - Do Not Translate excludes content from multi-language workflows.
+- The translation validation report shows missing languages before they become visible gaps.
+
+[↑ Back to In this article](#in-this-article)
+
+---
+
+## Finding content and duplicates
+
+The sidebar search narrows the current list as you type. Posts, pages, and media support full-text search with language-aware stemming, and the filter panel adds calendar, tag, and category filters that combine with the text query.
+
+When semantic similarity is enabled in the project settings, sidebar search also ranks results by meaning, not only by matching words. The same capability powers related-post ranking in the links panel and tag suggestions in the post editor.
+
+Use **Blog → Find Duplicate Posts** to review pairs of posts with very similar or identical content. The review view pages through candidate pairs, lets you open both posts, and lets you dismiss a pair once you have decided it is intentional. Dismissals are remembered.
+
+### Key takeaways
+
+- Sidebar search combines full-text matching with calendar, tag, and category filters.
+- Semantic similarity, when enabled, improves search, related posts, and tag suggestions.
+- The duplicate review helps consolidate overlapping content deliberately.
+
+[↑ Back to In this article](#in-this-article)
+
+---
+
+## Previewing your site
+
+Preview renders through the same pipeline as site generation, so what you see is what will be published. The preview server runs only on your machine at `127.0.0.1:4123` and is never exposed to the network.
+
+Open a post preview inside the app with **Blog → Preview Post** or view it in your default browser with **File → Open in Browser**. Draft posts have their own preview routes, so you can check work in progress without publishing anything.
+
+### Key takeaways
+
+- Preview and generation share one rendering pipeline; there are no preview-only differences.
+- The preview server is local-only.
+- Drafts can be previewed without publishing.
+
+[↑ Back to In this article](#in-this-article)
+
+---
+
+## Editing site navigation
+
+The site menu is stored as an OPML file in your project (`meta/menu.opml`) and edited visually in the Menu Editor (**Blog → Edit Menu**). The Home entry always stays first; below it you can add page links, submenus, and category entries, including categories that do not exist yet.
+
+Reorder entries by dragging or with the equivalent keyboard controls, indent or unindent to build submenus, and save when the structure is right. The saved menu feeds the same renderer used by preview and generation, so the navigation you build is exactly what appears on the published site.
+
+### Key takeaways
+
+- The menu is a filesystem artifact (`meta/menu.opml`) and therefore Git-reviewable.
+- Home is protected and always first.
+- Preview, generation, and the editor all use the same menu structure.
 
 [↑ Back to In this article](#in-this-article)
 
@@ -283,7 +347,9 @@ The assistant can present results as text, tables, cards, charts, metrics, lists
 
 ## Organizing with tags
 
-Tags are your precision taxonomy tool. Over time, even well-managed projects accumulate near-duplicate tags, naming inconsistencies, and labels that no longer help readers or editors. Use the Tags area to keep taxonomy useful.
+Tags are your precision taxonomy tool. Over time, even well-managed projects accumulate near-duplicate tags, naming inconsistencies, and labels that no longer help readers or editors. Use the Tags area to keep taxonomy useful: the tag cloud shows usage, the manage section covers create, rename, color, and template assignment, and the merge section consolidates overlapping tags.
+
+When semantic similarity is enabled, the post editor suggests existing tags that fit the content you are writing, which helps keep the taxonomy consistent instead of growing new variants.
 
 After significant taxonomy cleanup, create a focused commit that captures the change clearly.
 
@@ -363,7 +429,7 @@ Maintenance actions such as rebuilds and diff scans are repair tools for specifi
 
 Over time, metadata stored in the database and metadata stored on disk can drift apart, especially after external edits, merges, or file operations. The Metadata Diff tool detects these inconsistencies and lets you repair them without rebuilding everything.
 
-The scan covers posts, media, scripts, and templates. Results are grouped by entity type, and field pills let you focus on one kind of difference at a time.
+The scan covers posts and their translations, media and their translated sidecars, scripts, templates, project metadata, and embedding state. Results are grouped by entity type, and field pills let you focus on one kind of difference at a time.
 
 Use DB to File when the database is correct. Use File to DB when the filesystem is correct.
 
@@ -444,21 +510,55 @@ When AI is involved, airplane mode determines which automatic actions are allowe
 
 ---
 
+## Connecting external AI agents (MCP)
+
+RuDS can act as an MCP (Model Context Protocol) server so external AI tools such as Claude Code or GitHub Copilot can read your project and propose changes. Enable it under **Settings → MCP**, which also shows the endpoint status and offers guarded one-click configuration for supported agents.
+
+Reads are direct: agents can browse posts, media, tags, categories, and statistics, and search your content. Writes never happen silently — every write an agent requests becomes a pending proposal that you review and accept or reject in **Settings → MCP**. Only an accepted proposal is applied, exactly once, through the same engines the editors use.
+
+The full list of resources and tools is documented in **Help → MCP Server Documentation**.
+
+### Key takeaways
+
+- MCP is opt-in and configured under Settings → MCP.
+- Agents read directly but can only write through proposals you approve.
+- See Help → MCP Server Documentation for the complete surface.
+
+[↑ Back to In this article](#in-this-article)
+
+---
+
+## Using the command line
+
+RuDS ships a command-line interface for automation: rebuilds, rendering, publishing, Git sync, post and media creation, utility scripts, and more. Install the `bds-cli` launcher from **Settings → Data**; it runs the same engines and the same database as the desktop app, and the app picks up CLI changes automatically.
+
+The complete command reference — including how to start the headless server and the terminal UI — is available in **Help → CLI Documentation**.
+
+### Key takeaways
+
+- The CLI shares engines and data with the desktop app; there is no separate state.
+- Install it from Settings → Data.
+- See Help → CLI Documentation for the full reference.
+
+[↑ Back to In this article](#in-this-article)
+
+---
+
 ## Running a headless server and the terminal UI
 
-RuDS can run without a window on a server (for example a Linux VPS) and be used from several places at once. Start it with `BDS_MODE=server`; the same release binary that runs the desktop app then runs headless. All clients connect through one SSH port (default 2222) — the web endpoint itself stays private on the server.
+RuDS can run without a window on a server (for example a Linux VPS) and be used from several places at once. Start it with `bds-cli server`, or launch the desktop binary with `BDS_MODE=server` — both run the same headless mode. All clients connect through one SSH port (default 2222); nothing else is exposed to the network.
 
 Access is controlled by SSH keys, not passwords. On first start the server creates an `ssh/` folder next to its database (for example `~/Library/Application Support/bds/ssh/` on macOS) containing the host key and an empty `authorized_keys` file. Paste the public keys of every machine that may connect into `authorized_keys`, one per line — the same file format OpenSSH uses.
 
-To work in a terminal, connect with plain `ssh -p 2222 user@server`: the terminal UI opens directly. You can browse posts, media, templates, scripts, and tags, create and edit posts, publish, preview images, and run the one-shot AI actions. The status line at the bottom always shows the available keys.
+To work in a terminal, connect with plain `ssh -p 2222 user@server`: the terminal UI opens directly. You can browse posts, media, templates, scripts, and tags, create and edit posts, publish, preview images, manage settings and Git, and run the one-shot AI actions. The status line at the bottom always shows the available keys. The same terminal UI also runs locally via `bds-cli tui` — see **Help → CLI Documentation** for the complete reference.
 
-To work in the desktop app against a remote server, use **File → Connect to Server…** and enter `user@host` (or `user@host:port`). The app connects with the SSH key from its own local `ssh/` folder and shows the remote workspace in the window; **File → Disconnect from Server** returns to the local workspace. A plain browser works too, through a manual SSH tunnel (`ssh -p 2222 -L 4010:127.0.0.1:4010 user@server`, then open `http://127.0.0.1:4010`).
+To work in the desktop app against a remote server, use **File → Connect to Server…** and enter `user@host` (or `user@host:port`). The app connects with the SSH key from its own local `ssh/` folder and shows the remote workspace in the window; **File → Disconnect from Server** returns to the local workspace.
 
 Everything you see stays synchronized: when a script, another client, or a pipeline changes content on the server, every connected terminal and window updates. The interface language is a server-side setting — changing it in any client changes it for all of them.
 
 ### Key takeaways
 
-- `BDS_MODE=server` runs the same app headless; only the SSH port is exposed.
+- `bds-cli server` (or `BDS_MODE=server`) runs the same app headless; only the SSH port is exposed.
 - Access is public-key only: manage `authorized_keys` in the server's `ssh/` folder.
 - `ssh` gives the terminal UI; **File → Connect to Server…** gives the desktop app; both use the same keys.
 - All connected clients stay synchronized and share one interface language.

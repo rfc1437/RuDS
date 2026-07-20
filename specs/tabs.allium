@@ -29,12 +29,13 @@ surface TabRuntimeSurface {
 
 -- ─── Tab types ────────────────────────────────────────────────
 
--- 17 distinct tab types, each routing to a matching editor view.
+-- 19 distinct tab types, each routing to a matching editor view.
 -- Plus "dashboard" as the no-tab default view.
 --
 -- Tab types: post, media, settings, style, tags, chat, import,
 --   menu_editor, metadata_diff, git_diff, documentation,
---   api_documentation, site_validation, translation_validation,
+--   api_documentation, cli_documentation, mcp_documentation,
+--   site_validation, translation_validation,
 --   scripts, templates, find_duplicates
 --
 -- Editor routes: all of the above plus "dashboard" (shown when no tab is active).
@@ -61,9 +62,10 @@ surface TabSurface {
 
 -- 1. Singleton tool tabs: always one instance, never transient, id = type name.
 --    settings, tags, style, scripts (bare), menu_editor, documentation,
---    api_documentation, metadata_diff, site_validation,
+--    api_documentation, cli_documentation, mcp_documentation,
+--    metadata_diff, site_validation,
 --    translation_validation, find_duplicates
---    Total: 11 singleton types.
+--    Total: 13 singleton types.
 
 -- 2. Entity tabs: keyed by external ID, support preview/pin intent.
 --    post (id = postId), media (id = mediaId)
@@ -162,6 +164,8 @@ rule ResolveEditorRoute {
 -- git_diff:                 Git diff view (file or commit, keyed by tab id)
 -- documentation:            Rendered markdown (DOCUMENTATION.md)
 -- api_documentation:        Rendered markdown (API.md)
+-- cli_documentation:        Rendered markdown (CLI.md)
+-- mcp_documentation:        Rendered markdown (MCP.md)
 -- site_validation:          Generated site link/structure validation
 -- translation_validation:   Translation completeness checks
 -- scripts:                  Script editor (keyed by scriptId)

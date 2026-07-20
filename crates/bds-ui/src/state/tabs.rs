@@ -17,6 +17,8 @@ pub enum TabType {
     Templates,
     Documentation,
     ApiDocumentation,
+    CliDocumentation,
+    McpDocumentation,
     SiteValidation,
     TranslationValidation,
     FindDuplicates,
@@ -25,9 +27,9 @@ pub enum TabType {
 impl TabType {
     /// Singleton tool tabs per tabs.allium: always one instance, id = type name.
     ///
-    /// Singleton types (10): settings, tags, style, menu_editor,
-    /// documentation, api_documentation, metadata_diff, site_validation,
-    /// translation_validation, find_duplicates.
+    /// Singleton types (12): settings, tags, style, menu_editor,
+    /// documentation, api_documentation, cli_documentation, mcp_documentation,
+    /// metadata_diff, site_validation, translation_validation, find_duplicates.
     ///
     /// Entity types (keyed by external ID): post, media, scripts (keyed),
     /// templates (keyed), chat, import, git_diff.
@@ -41,6 +43,8 @@ impl TabType {
                 | Self::MetadataDiff
                 | Self::Documentation
                 | Self::ApiDocumentation
+                | Self::CliDocumentation
+                | Self::McpDocumentation
                 | Self::SiteValidation
                 | Self::TranslationValidation
                 | Self::FindDuplicates
@@ -57,6 +61,8 @@ impl TabType {
             Self::MetadataDiff => "metadata_diff",
             Self::Documentation => "documentation",
             Self::ApiDocumentation => "api_documentation",
+            Self::CliDocumentation => "cli_documentation",
+            Self::McpDocumentation => "mcp_documentation",
             Self::SiteValidation => "site_validation",
             Self::TranslationValidation => "translation_validation",
             Self::FindDuplicates => "find_duplicates",
@@ -76,6 +82,8 @@ impl TabType {
             Self::MetadataDiff => Some("tabBar.metadataDiff"),
             Self::Documentation => Some("tabBar.documentation"),
             Self::ApiDocumentation => Some("tabBar.apiDocumentation"),
+            Self::CliDocumentation => Some("tabBar.cliDocumentation"),
+            Self::McpDocumentation => Some("tabBar.mcpDocumentation"),
             Self::SiteValidation => Some("tabBar.siteValidation"),
             Self::TranslationValidation => Some("tabBar.translationValidation"),
             Self::FindDuplicates => Some("tabBar.findDuplicates"),

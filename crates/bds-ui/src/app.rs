@@ -969,6 +969,8 @@ pub struct BdsApp {
     duplicates_state: DuplicatesState,
     guide_documentation: DocumentationState,
     api_documentation: DocumentationState,
+    cli_documentation: DocumentationState,
+    mcp_documentation: DocumentationState,
     metadata_diff_state: MetadataDiffState,
     menu_editor_state: MenuEditorState,
     translation_validation_state: crate::views::translation_validation::TranslationValidationState,
@@ -1144,6 +1146,8 @@ impl BdsApp {
                 duplicates_state: DuplicatesState::default(),
                 guide_documentation: DocumentationState::new(DocumentationKind::Guide),
                 api_documentation: DocumentationState::new(DocumentationKind::Api),
+                cli_documentation: DocumentationState::new(DocumentationKind::Cli),
+                mcp_documentation: DocumentationState::new(DocumentationKind::Mcp),
                 metadata_diff_state: MetadataDiffState::default(),
                 menu_editor_state: MenuEditorState::default(),
                 translation_validation_state: Default::default(),
@@ -1232,6 +1236,8 @@ impl BdsApp {
             duplicates_state: DuplicatesState::default(),
             guide_documentation: DocumentationState::new(DocumentationKind::Guide),
             api_documentation: DocumentationState::new(DocumentationKind::Api),
+            cli_documentation: DocumentationState::new(DocumentationKind::Cli),
+            mcp_documentation: DocumentationState::new(DocumentationKind::Mcp),
             metadata_diff_state: MetadataDiffState::default(),
             menu_editor_state: MenuEditorState::default(),
             translation_validation_state: Default::default(),
@@ -3127,6 +3133,8 @@ impl BdsApp {
         match kind {
             DocumentationKind::Guide => &self.guide_documentation,
             DocumentationKind::Api => &self.api_documentation,
+            DocumentationKind::Cli => &self.cli_documentation,
+            DocumentationKind::Mcp => &self.mcp_documentation,
         }
     }
 
@@ -3134,6 +3142,8 @@ impl BdsApp {
         match kind {
             DocumentationKind::Guide => &mut self.guide_documentation,
             DocumentationKind::Api => &mut self.api_documentation,
+            DocumentationKind::Cli => &mut self.cli_documentation,
+            DocumentationKind::Mcp => &mut self.mcp_documentation,
         }
     }
 
@@ -3144,6 +3154,8 @@ impl BdsApp {
                 tokio::task::spawn_blocking(move || match kind {
                     DocumentationKind::Guide => crate::views::documentation::load_user_guide(),
                     DocumentationKind::Api => crate::views::documentation::load_api_document(),
+                    DocumentationKind::Cli => crate::views::documentation::load_cli_guide(),
+                    DocumentationKind::Mcp => crate::views::documentation::load_mcp_guide(),
                 })
                 .await
                 .unwrap_or_else(|error| DocumentLoad::Malformed {
@@ -3160,6 +3172,8 @@ impl BdsApp {
         for (tab_type, kind) in [
             (TabType::Documentation, DocumentationKind::Guide),
             (TabType::ApiDocumentation, DocumentationKind::Api),
+            (TabType::CliDocumentation, DocumentationKind::Cli),
+            (TabType::McpDocumentation, DocumentationKind::Mcp),
         ] {
             if !self.tabs.iter().any(|tab| tab.tab_type == tab_type) {
                 continue;
@@ -3413,6 +3427,8 @@ impl BdsApp {
                 &self.duplicates_state,
                 &self.guide_documentation,
                 &self.api_documentation,
+                &self.cli_documentation,
+                &self.mcp_documentation,
                 &self.metadata_diff_state,
                 &self.menu_editor_state,
                 &self.translation_validation_state,
@@ -4348,6 +4364,14 @@ impl BdsApp {
             MenuAction::OpenApiDocumentation => {
                 self.open_singleton_tab(TabType::ApiDocumentation, "tabBar.apiDocumentation");
                 self.start_documentation_load(DocumentationKind::Api)
+            }
+            MenuAction::OpenCliDocumentation => {
+                self.open_singleton_tab(TabType::CliDocumentation, "tabBar.cliDocumentation");
+                self.start_documentation_load(DocumentationKind::Cli)
+            }
+            MenuAction::OpenMcpDocumentation => {
+                self.open_singleton_tab(TabType::McpDocumentation, "tabBar.mcpDocumentation");
+                self.start_documentation_load(DocumentationKind::Mcp)
             }
             MenuAction::ViewOnGitHub => {
                 let _ = open::that("https://github.com/nickarumern/bds");
@@ -9160,6 +9184,34 @@ mod tests {
         );
         assert_eq!(
             app.api_documentation.status,
+            crate::views::documentation::DocumentStatus::Loading
+        );
+    }
+
+    #[test]
+    fn help_menu_opens_cli_and_mcp_documentation_tabs() {
+        let (db, project, temp) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+
+        let _ = app.dispatch_menu_action(MenuAction::OpenCliDocumentation);
+        assert!(
+            app.tabs
+                .iter()
+                .any(|tab| tab.tab_type == TabType::CliDocumentation)
+        );
+        assert_eq!(
+            app.cli_documentation.status,
+            crate::views::documentation::DocumentStatus::Loading
+        );
+
+        let _ = app.dispatch_menu_action(MenuAction::OpenMcpDocumentation);
+        assert!(
+            app.tabs
+                .iter()
+                .any(|tab| tab.tab_type == TabType::McpDocumentation)
+        );
+        assert_eq!(
+            app.mcp_documentation.status,
             crate::views::documentation::DocumentStatus::Loading
         );
     }

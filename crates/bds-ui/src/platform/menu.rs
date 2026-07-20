@@ -57,6 +57,8 @@ pub enum MenuAction {
     About,
     OpenDocumentation,
     OpenApiDocumentation,
+    OpenCliDocumentation,
+    OpenMcpDocumentation,
     ViewOnGitHub,
     ReportIssue,
 }
@@ -101,6 +103,8 @@ impl MenuAction {
         MenuAction::About,
         MenuAction::OpenDocumentation,
         MenuAction::OpenApiDocumentation,
+        MenuAction::OpenCliDocumentation,
+        MenuAction::OpenMcpDocumentation,
         MenuAction::ViewOnGitHub,
         MenuAction::ReportIssue,
     ];
@@ -190,6 +194,8 @@ impl MenuAction {
             Self::About => "menu.item.about",
             Self::OpenDocumentation => "menu.item.openDocumentation",
             Self::OpenApiDocumentation => "menu.item.openApiDocumentation",
+            Self::OpenCliDocumentation => "menu.item.openCliDocumentation",
+            Self::OpenMcpDocumentation => "menu.item.openMcpDocumentation",
             Self::ViewOnGitHub => "menu.item.viewOnGitHub",
             Self::ReportIssue => "menu.item.reportIssue",
         }
@@ -559,6 +565,18 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
     let _ = help_menu.append(&item(
         &mut reg,
         MenuAction::OpenApiDocumentation,
+        locale,
+        None,
+    ));
+    let _ = help_menu.append(&item(
+        &mut reg,
+        MenuAction::OpenCliDocumentation,
+        locale,
+        None,
+    ));
+    let _ = help_menu.append(&item(
+        &mut reg,
+        MenuAction::OpenMcpDocumentation,
         locale,
         None,
     ));

@@ -15,6 +15,8 @@ use crate::i18n::t;
 const API_REFERENCE: &str = include_str!("../../../../docs/scripting/API_REFERENCE.md");
 const API_TYPES: &str = include_str!("../../../../docs/scripting/TYPES.md");
 const USER_GUIDE: &str = include_str!("../../../../DOCUMENTATION.md");
+const CLI_GUIDE: &str = include_str!("../../../../CLI.md");
+const MCP_GUIDE: &str = include_str!("../../../../MCP.md");
 const UTILITY_EXAMPLE: &str = include_str!("../../../../docs/scripting/examples/utility.lua");
 const MACRO_EXAMPLE: &str = include_str!("../../../../docs/scripting/examples/macro.lua");
 const TRANSFORM_EXAMPLE: &str = include_str!("../../../../docs/scripting/examples/transform.lua");
@@ -24,6 +26,8 @@ pub const API_DOCUMENTATION_URL: &str = "https://ruds.invalid/api-documentation"
 pub enum DocumentationKind {
     Guide,
     Api,
+    Cli,
+    Mcp,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +140,8 @@ pub fn scroll_id(kind: DocumentationKind) -> scrollable::Id {
     scrollable::Id::new(match kind {
         DocumentationKind::Guide => "user-documentation",
         DocumentationKind::Api => "api-documentation",
+        DocumentationKind::Cli => "cli-documentation",
+        DocumentationKind::Mcp => "mcp-documentation",
     })
 }
 
@@ -143,10 +149,14 @@ pub fn view(state: &DocumentationState, locale: UiLocale) -> Element<'_, Message
     let title_key = match state.kind {
         DocumentationKind::Guide => "documentation.title",
         DocumentationKind::Api => "documentation.apiTitle",
+        DocumentationKind::Cli => "documentation.cliTitle",
+        DocumentationKind::Mcp => "documentation.mcpTitle",
     };
     let subtitle_key = match state.kind {
         DocumentationKind::Guide => "documentation.subtitle",
         DocumentationKind::Api => "documentation.apiSubtitle",
+        DocumentationKind::Cli => "documentation.cliSubtitle",
+        DocumentationKind::Mcp => "documentation.mcpSubtitle",
     };
     let toolbar = inputs::toolbar(
         vec![
@@ -244,10 +254,21 @@ fn table_row<'a>(values: &'a [String], header: bool) -> Element<'a, Message> {
 }
 
 pub fn load_user_guide() -> DocumentLoad {
-    let path = user_guide_path();
-    match load_document_file(&path) {
+    load_embedded_document(&user_guide_path(), USER_GUIDE)
+}
+
+pub fn load_cli_guide() -> DocumentLoad {
+    load_embedded_document(&root_document_path("CLI.md"), CLI_GUIDE)
+}
+
+pub fn load_mcp_guide() -> DocumentLoad {
+    load_embedded_document(&root_document_path("MCP.md"), MCP_GUIDE)
+}
+
+fn load_embedded_document(path: &Path, embedded: &str) -> DocumentLoad {
+    match load_document_file(path) {
         DocumentLoad::Missing { signature } => DocumentLoad::Ready {
-            source: USER_GUIDE.to_string(),
+            source: embedded.to_string(),
             signature,
         },
         load => load,
@@ -308,6 +329,8 @@ pub fn load_api_document() -> DocumentLoad {
 pub fn current_signature(kind: DocumentationKind) -> u64 {
     match kind {
         DocumentationKind::Guide => file_signature(&user_guide_path()),
+        DocumentationKind::Cli => file_signature(&root_document_path("CLI.md")),
+        DocumentationKind::Mcp => file_signature(&root_document_path("MCP.md")),
         DocumentationKind::Api => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/scripting");
             paths_signature(
@@ -325,7 +348,11 @@ pub fn current_signature(kind: DocumentationKind) -> u64 {
 }
 
 fn user_guide_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../DOCUMENTATION.md")
+    root_document_path("DOCUMENTATION.md")
+}
+
+fn root_document_path(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(name)
 }
 
 pub fn parse_document(source: &str) -> ParsedDocument {

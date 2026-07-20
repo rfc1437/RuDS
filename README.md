@@ -13,7 +13,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Template and Lua script management with explicit syntax-check feedback, using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms.
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.
 - Optional on-device multilingual semantic search and tag suggestions backed by a persistent USearch index, with duplicate-post review and dismissal in the desktop workspace.
-- Read-only in-app browsers for the bundled global `DOCUMENTATION.md` and the generated Lua API reference, public types, and runnable examples, with safe GFM rendering and confirmed external links.
+- Read-only in-app browsers in the Help menu for the bundled global `DOCUMENTATION.md`, the generated Lua API reference with public types and runnable examples, the [CLI/server/TUI documentation](CLI.md), and the [MCP server documentation](MCP.md), with safe GFM rendering and confirmed external links.
 - A localized OPML menu editor manages pages, submenus, and category archives with protected Home ordering, keyboard-accessible tree controls, drag-and-drop, and bDS2-compatible persistence.
 - Project-scoped typed domain events synchronize desktop views with shared-engine and future CLI mutations; persisted CLI notifications are consumed once, and the selected UI language is shared through settings.
 - Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, effective shared settings with secret-presence redaction, projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
@@ -51,6 +51,9 @@ Local macOS packages are ad-hoc signed without hardened runtime. A Developer ID 
 ## References
 
 - [Specification index](SPECIFICATION_INDEX.md)
+- [User guide](DOCUMENTATION.md)
+- [CLI, headless server, and terminal UI](CLI.md)
+- [MCP server](MCP.md)
 - [UI style guide](docs/UI_STYLE_GUIDE.md)
 - `../bDS2` — reference implementation when an Allium contract is ambiguous
 
