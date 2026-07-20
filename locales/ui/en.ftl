@@ -807,3 +807,120 @@ tui-settingDatabase = Database
 tui-settingAutomaticRebuild = Automatic Rebuild
 tui-categoryEditing = Category Editing
 tui-categoryEditingGuiOnly = Category add, edit, and removal remain in the desktop application
+tui-openItemDeleted = The open item was deleted by another client.
+tui-taskRunning = { $label } — running
+tui-taskProgress = { $label } — { $percent }%
+tui-taskComplete = { $label } — complete
+tui-taskFailed = { $label } — { $error }
+tui-taskCancelled = { $label } — cancelled
+tui-untitled = Untitled
+tui-newItemUnavailable = New items are not available in this view.
+tui-editorSource = Source
+tui-savedAndPublished = Saved and published
+tui-saved = Saved
+tui-airplaneAiEndpointRequired = Airplane mode: configure a local AI endpoint first.
+tui-aiWrongResponseType = AI returned the wrong response type.
+tui-aiSuggestions = AI suggestions
+    Title: { $title }
+    Excerpt: { $excerpt }
+tui-aiSuggestionsAdded = AI suggestions added to output
+tui-unpublished = Unpublished
+tui-editorLanguage = Language: { $language }
+tui-commitMessageRequired = Commit message is required.
+tui-taskGitCommit = Git commit
+tui-committed = Committed
+tui-tagNameRequired = Tag name is required.
+tui-tagCreated = Tag created
+tui-tagRenamed = Tag renamed
+tui-tagDeleted = Tag deleted
+tui-deleteCancelled = Delete cancelled
+tui-titleRequired = Title is required.
+tui-confirmYesInput = y
+tui-confirmNoInput = n
+tui-projectSwitched = Project switched
+tui-notDirectory = Not a directory: { $path }
+tui-defaultProjectName = Blog
+tui-projectPathInvalidUtf8 = The project path is not valid UTF-8.
+tui-rebuildSummary = Rebuild: { $posts } posts, { $media } media, { $templates } templates, { $scripts } scripts
+tui-apiKeyConfigured = Configured in the system keychain
+tui-apiKeyConfigureDesktop = Configure in the desktop application
+tui-settingClaudeCode = Claude Code
+tui-settingGithubCopilot = GitHub Copilot
+tui-valueReadOnly = This value is read-only.
+tui-projectNameRequired = Project name must not be empty.
+tui-postsPerPageInvalid = Posts per page must be a number from 1 to 500.
+tui-imageImportConcurrencyInvalid = Image import concurrency must be a number from 1 to 8.
+tui-settingsSaved = Settings saved
+tui-deleteTagConfirm = Delete “{ $name }”, used by { $count } post(s)? Type { $yes } and press Enter.
+tui-markTagsRequired = Mark at least two tags, including the target.
+tui-tagsMerged = Tags merged
+tui-tagColourUpdated = Tag colour updated
+tui-tagTemplateUpdated = Tag template updated
+tui-tagsSynchronized = Synchronized { $count } tags
+tui-noActiveProject = No active project
+tui-noActiveProjectDataFolder = No active project data folder
+tui-detachedHead = detached
+tui-airplaneGitPullBlocked = Airplane mode blocks Git pull.
+tui-taskGitPull = Git pull
+tui-gitPullComplete = Pull complete
+    { $output }
+tui-airplaneGitPushBlocked = Airplane mode blocks Git push.
+tui-taskGitPush = Git push
+tui-gitPushComplete = Push complete
+    { $output }
+tui-commandMetadataDiff = Metadata diff
+tui-commandValidateSite = Validate site
+tui-commandForceRender = Force render
+tui-commandRebuildDatabase = Rebuild database
+tui-commandReindexSearch = Reindex search
+tui-commandValidateTranslations = Validate translations [GUI]
+tui-commandFindDuplicates = Find duplicates [GUI]
+tui-commandUploadSite = Upload site
+tui-commandBrowserPreviewUrl = Browser preview URL
+tui-metadataDiffComplete = Metadata diff complete
+tui-siteValidationComplete = Site validation complete
+tui-filesRendered = Rendered { $count } files
+tui-itemsRebuilt = Rebuilt { $count } items
+tui-postsReindexed = Reindexed { $count } posts
+tui-commandDesktopOnly = This command’s result editor is available in the desktop UI.
+tui-airplaneUploadBlocked = Airplane mode blocks upload.
+tui-uploadRequiresPublishingSettings = Upload requires publishing credentials; use the shared Publishing settings first.
+tui-unknownCommand = Unknown command: { $command }
+tui-metadataChangesApplied = Applied { $count } metadata changes
+tui-validationApplied = Applied validation: { $written } written, { $removed } removed
+tui-diffTruncated = [diff truncated]
+tui-metadataDiffFields = { $entity } { $path }: { $count } field(s)
+tui-metadataOrphan = orphan { $path }: { $reason }
+tui-metadataError = error: { $error }
+tui-noMetadataDifferences = No metadata differences
+tui-siteValidationReport = Missing
+    { $missing }
+
+    Extra
+    { $extra }
+
+    Stale
+    { $stale }
+tui-imagePreview = Image preview
+    { $path }
+
+    { $dimensions }
+tui-commandsTitle = Commands
+tui-foldersTitle = Folders
+tui-promptOpen = open
+tui-promptCommit = commit
+tui-promptConfirm = confirm
+tui-promptValue = >
+tui-readOnlyMarker =  [read-only]
+tui-settingsHint = Enter edits/toggles · Ctrl+S saves · Esc closes
+tui-tagsLoadFailed = Could not load tags
+tui-tagCloudHint = Usage-ordered tag cloud
+tui-tagManageHint = n create · Enter rename · c colour · t template · d delete · s sync
+tui-tagMergeHint = Space marks · select target · m merges
+tui-gitDiffBody = Staged
+    { $staged }
+
+    Unstaged
+    { $unstaged }
+tui-imageDimensions = { $format } · { $width } × { $height } px
+tui-fileBytes = { $count } bytes

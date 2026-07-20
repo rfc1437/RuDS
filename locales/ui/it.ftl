@@ -807,3 +807,120 @@ tui-settingDatabase = Database
 tui-settingAutomaticRebuild = Ricostruzione automatica
 tui-categoryEditing = Modifica delle categorie
 tui-categoryEditingGuiOnly = L’aggiunta, la modifica e la rimozione delle categorie restano nell’applicazione desktop
+tui-openItemDeleted = L’elemento aperto è stato eliminato da un altro client.
+tui-taskRunning = { $label } — in esecuzione
+tui-taskProgress = { $label } — { $percent }%
+tui-taskComplete = { $label } — completato
+tui-taskFailed = { $label } — { $error }
+tui-taskCancelled = { $label } — annullato
+tui-untitled = Senza titolo
+tui-newItemUnavailable = Non è possibile creare nuovi elementi in questa vista.
+tui-editorSource = Sorgente
+tui-savedAndPublished = Salvato e pubblicato
+tui-saved = Salvato
+tui-airplaneAiEndpointRequired = Modalità aereo: configura prima un endpoint IA locale.
+tui-aiWrongResponseType = L’IA ha restituito un tipo di risposta errato.
+tui-aiSuggestions = Suggerimenti IA
+    Titolo: { $title }
+    Estratto: { $excerpt }
+tui-aiSuggestionsAdded = Suggerimenti IA aggiunti all’output
+tui-unpublished = Pubblicazione rimossa
+tui-editorLanguage = Lingua: { $language }
+tui-commitMessageRequired = È richiesto un messaggio di commit.
+tui-taskGitCommit = Commit Git
+tui-committed = Commit creato
+tui-tagNameRequired = È richiesto un nome per il tag.
+tui-tagCreated = Tag creato
+tui-tagRenamed = Tag rinominato
+tui-tagDeleted = Tag eliminato
+tui-deleteCancelled = Eliminazione annullata
+tui-titleRequired = È richiesto un titolo.
+tui-confirmYesInput = s
+tui-confirmNoInput = n
+tui-projectSwitched = Progetto cambiato
+tui-notDirectory = Non è una cartella: { $path }
+tui-defaultProjectName = Blog
+tui-projectPathInvalidUtf8 = Il percorso del progetto non è UTF-8 valido.
+tui-rebuildSummary = Ricostruzione: { $posts } articoli, { $media } media, { $templates } modelli, { $scripts } script
+tui-apiKeyConfigured = Configurata nel portachiavi di sistema
+tui-apiKeyConfigureDesktop = Configura nell’applicazione desktop
+tui-settingClaudeCode = Claude Code
+tui-settingGithubCopilot = GitHub Copilot
+tui-valueReadOnly = Questo valore è di sola lettura.
+tui-projectNameRequired = Il nome del progetto non può essere vuoto.
+tui-postsPerPageInvalid = Gli articoli per pagina devono essere un numero da 1 a 500.
+tui-imageImportConcurrencyInvalid = La concorrenza dell’importazione immagini deve essere un numero da 1 a 8.
+tui-settingsSaved = Impostazioni salvate
+tui-deleteTagConfirm = Eliminare “{ $name }”, usato da { $count } articoli? Digita { $yes } e premi Invio.
+tui-markTagsRequired = Seleziona almeno due tag, incluso quello di destinazione.
+tui-tagsMerged = Tag uniti
+tui-tagColourUpdated = Colore del tag aggiornato
+tui-tagTemplateUpdated = Modello del tag aggiornato
+tui-tagsSynchronized = { $count } tag sincronizzati
+tui-noActiveProject = Nessun progetto attivo
+tui-noActiveProjectDataFolder = Nessuna cartella dati per il progetto attivo
+tui-detachedHead = scollegato
+tui-airplaneGitPullBlocked = La modalità aereo blocca Git pull.
+tui-taskGitPull = Git pull
+tui-gitPullComplete = Pull completato
+    { $output }
+tui-airplaneGitPushBlocked = La modalità aereo blocca Git push.
+tui-taskGitPush = Git push
+tui-gitPushComplete = Push completato
+    { $output }
+tui-commandMetadataDiff = Differenze dei metadati
+tui-commandValidateSite = Convalida sito
+tui-commandForceRender = Forza rendering
+tui-commandRebuildDatabase = Ricostruisci database
+tui-commandReindexSearch = Reindicizza ricerca
+tui-commandValidateTranslations = Convalida traduzioni [GUI]
+tui-commandFindDuplicates = Trova duplicati [GUI]
+tui-commandUploadSite = Carica sito
+tui-commandBrowserPreviewUrl = URL anteprima browser
+tui-metadataDiffComplete = Confronto metadati completato
+tui-siteValidationComplete = Convalida sito completata
+tui-filesRendered = { $count } file renderizzati
+tui-itemsRebuilt = { $count } elementi ricostruiti
+tui-postsReindexed = { $count } articoli reindicizzati
+tui-commandDesktopOnly = L’editor dei risultati di questo comando è disponibile nell’interfaccia desktop.
+tui-airplaneUploadBlocked = La modalità aereo blocca il caricamento.
+tui-uploadRequiresPublishingSettings = Il caricamento richiede credenziali di pubblicazione; usa prima le impostazioni di Pubblicazione condivise.
+tui-unknownCommand = Comando sconosciuto: { $command }
+tui-metadataChangesApplied = { $count } modifiche ai metadati applicate
+tui-validationApplied = Convalida applicata: { $written } scritti, { $removed } rimossi
+tui-diffTruncated = [differenza troncata]
+tui-metadataDiffFields = { $entity } { $path }: { $count } campi
+tui-metadataOrphan = orfano { $path }: { $reason }
+tui-metadataError = errore: { $error }
+tui-noMetadataDifferences = Nessuna differenza nei metadati
+tui-siteValidationReport = Mancanti
+    { $missing }
+
+    Aggiuntivi
+    { $extra }
+
+    Obsoleti
+    { $stale }
+tui-imagePreview = Anteprima immagine
+    { $path }
+
+    { $dimensions }
+tui-commandsTitle = Comandi
+tui-foldersTitle = Cartelle
+tui-promptOpen = apri
+tui-promptCommit = commit
+tui-promptConfirm = conferma
+tui-promptValue = >
+tui-readOnlyMarker =  [sola lettura]
+tui-settingsHint = Invio modifica/attiva · Ctrl+S salva · Esc chiude
+tui-tagsLoadFailed = Impossibile caricare i tag
+tui-tagCloudHint = Nuvola di tag ordinata per utilizzo
+tui-tagManageHint = n crea · Invio rinomina · c colore · t modello · d elimina · s sincronizza
+tui-tagMergeHint = Spazio seleziona · scegli la destinazione · m unisce
+tui-gitDiffBody = In stage
+    { $staged }
+
+    Non in stage
+    { $unstaged }
+tui-imageDimensions = { $format } · { $width } × { $height } px
+tui-fileBytes = { $count } byte

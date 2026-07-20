@@ -34,6 +34,51 @@ const SIDEBAR_WIDTH: u16 = 30;
 const MAX_DIFF_BYTES: usize = 512 * 1024;
 const COLORS: &[&str] = &["", "#7aa2f7", "#9ece6a", "#e0af68", "#bb9af7", "#f7768e"];
 
+#[derive(Clone, Copy)]
+struct CommandSpec {
+    id: &'static str,
+    key: &'static str,
+}
+
+const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        id: "metadata-diff",
+        key: "tui.commandMetadataDiff",
+    },
+    CommandSpec {
+        id: "validate-site",
+        key: "tui.commandValidateSite",
+    },
+    CommandSpec {
+        id: "force-render",
+        key: "tui.commandForceRender",
+    },
+    CommandSpec {
+        id: "rebuild-database",
+        key: "tui.commandRebuildDatabase",
+    },
+    CommandSpec {
+        id: "reindex-search",
+        key: "tui.commandReindexSearch",
+    },
+    CommandSpec {
+        id: "validate-translations-gui",
+        key: "tui.commandValidateTranslations",
+    },
+    CommandSpec {
+        id: "find-duplicates-gui",
+        key: "tui.commandFindDuplicates",
+    },
+    CommandSpec {
+        id: "upload-site",
+        key: "tui.commandUploadSite",
+    },
+    CommandSpec {
+        id: "browser-preview-url",
+        key: "tui.commandBrowserPreviewUrl",
+    },
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TuiView {
     Posts,
@@ -422,15 +467,16 @@ impl TuiApp {
         self.project
             .as_ref()
             .map(|value| value.id.as_str())
-            .ok_or_else(|| anyhow!("no active project"))
+            .ok_or_else(|| anyhow!(self.tr("tui.noActiveProject")))
     }
     fn data_dir(&self) -> Result<&Path> {
         self.data_dir
             .as_deref()
-            .ok_or_else(|| anyhow!("no active project data folder"))
+            .ok_or_else(|| anyhow!(self.tr("tui.noActiveProjectDataFolder")))
     }
 
     pub fn poll(&mut self) -> Result<()> {
+        self.poll_tasks();
         while let Ok(result) = self.background_rx.try_recv() {
             self.status = result.status;
             if let Some(panel) = result.panel {
@@ -449,6 +495,33 @@ impl TuiApp {
                 self.locale = engine::settings::ui_language(db.conn())?
                     .map(|v| normalize_language(&v))
                     .unwrap_or(UiLocale::En);
+                self.reload()?;
+                if let Panel::Settings(section) = self.panel {
+                    self.settings_fields = self.load_setting_fields(section)?;
+                    self.panel_index = self
+                        .panel_index
+                        .min(self.settings_fields.len().saturating_sub(1));
+                }
+                if self
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|prompt| prompt.kind == PromptKind::Command)
+                {
+                    let query = self
+                        .prompt
+                        .as_ref()
+                        .map(|prompt| prompt.value.clone())
+                        .unwrap_or_default();
+                    let candidates = self
+                        .command_names()
+                        .into_iter()
+                        .filter(|name| contains_ci(name, &query))
+                        .collect();
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.candidates = candidates;
+                    }
+                }
+                self.refresh_open_report()?;
             }
             if let bds_core::model::DomainEvent::EntityChanged {
                 project_id,
@@ -489,13 +562,12 @@ impl TuiApp {
                 if editing_deleted {
                     self.editor = None;
                     self.focus = Focus::Sidebar;
-                    self.status = "The open item was deleted by another client.".into();
+                    self.status = self.tr("tui.openItemDeleted");
                 }
                 self.reload()?;
                 self.refresh_open_report()?;
             }
         }
-        self.poll_tasks();
         Ok(())
     }
 
@@ -508,13 +580,13 @@ impl TuiApp {
         let project_id = self.project_id()?;
         self.panel = match action {
             ReportAction::MetadataDiff => Panel::Report {
-                title: "Metadata Diff".into(),
-                body: metadata_report_body(db.conn(), data_dir, project_id)?,
+                title: self.tr("menu.item.metadataDiff"),
+                body: metadata_report_body(db.conn(), data_dir, project_id, self.locale)?,
                 action,
             },
             ReportAction::SiteValidation => Panel::Report {
-                title: "Site Validation".into(),
-                body: site_validation_body(db.conn(), data_dir, project_id)?,
+                title: self.tr("menu.item.validateSite"),
+                body: site_validation_body(db.conn(), data_dir, project_id, self.locale)?,
                 action,
             },
         };
@@ -530,7 +602,7 @@ impl TuiApp {
         let task_id = tasks.submit(label);
         let sender = self.background_tx.clone();
         self.started_task_ids.insert(task_id);
-        self.status = format!("{label} — running");
+        self.status = self.tr_with("tui.taskRunning", &[("label", label)]);
         std::thread::spawn(move || {
             if !tasks.wait_until_runnable(task_id) {
                 return;
@@ -561,20 +633,29 @@ impl TuiApp {
             match task.status {
                 engine::task::TaskStatus::Pending | engine::task::TaskStatus::Running => {
                     self.status = match task.progress {
-                        Some(progress) => format!("{} — {:.0}%", task.label, progress * 100.0),
+                        Some(progress) => self.tr_with(
+                            "tui.taskProgress",
+                            &[
+                                ("label", &task.label),
+                                ("percent", &format!("{:.0}", progress * 100.0)),
+                            ],
+                        ),
                         None => task.label,
                     };
                 }
                 engine::task::TaskStatus::Completed if self.completed_task_ids.insert(task.id) => {
-                    self.status = format!("{} — complete", task.label);
+                    self.status = self.tr_with("tui.taskComplete", &[("label", &task.label)]);
                 }
                 engine::task::TaskStatus::Failed(error)
                     if self.completed_task_ids.insert(task.id) =>
                 {
-                    self.status = format!("{} — {error}", task.label);
+                    self.status = self.tr_with(
+                        "tui.taskFailed",
+                        &[("label", &task.label), ("error", &error)],
+                    );
                 }
                 engine::task::TaskStatus::Cancelled if self.completed_task_ids.insert(task.id) => {
-                    self.status = format!("{} — cancelled", task.label);
+                    self.status = self.tr_with("tui.taskCancelled", &[("label", &task.label)]);
                 }
                 _ => {}
             }
@@ -602,12 +683,12 @@ impl TuiApp {
             TuiView::Posts => {
                 let posts =
                     bds_core::db::queries::post::list_posts_by_project(db.conn(), &project.id)?;
-                for (heading, status) in [
-                    ("Drafts", PostStatus::Draft),
-                    ("Published", PostStatus::Published),
-                    ("Archived", PostStatus::Archived),
+                for (heading_key, status) in [
+                    ("sidebar.drafts", PostStatus::Draft),
+                    ("sidebar.published", PostStatus::Published),
+                    ("sidebar.archived", PostStatus::Archived),
                 ] {
-                    items.push(SidebarItem::Header(heading.into()));
+                    items.push(SidebarItem::Header(self.tr(heading_key)));
                     items.extend(
                         posts
                             .iter()
@@ -619,7 +700,7 @@ impl TuiApp {
                 }
             }
             TuiView::Media => {
-                items.push(SidebarItem::Header("Media".into()));
+                items.push(SidebarItem::Header(self.tr("tui.viewMedia")));
                 items.extend(
                     bds_core::db::queries::media::list_media_by_project(db.conn(), &project.id)?
                         .into_iter()
@@ -633,7 +714,7 @@ impl TuiApp {
                 );
             }
             TuiView::Templates => {
-                items.push(SidebarItem::Header("Templates".into()));
+                items.push(SidebarItem::Header(self.tr("tui.viewTemplates")));
                 items.extend(
                     bds_core::db::queries::template::list_templates_by_project(
                         db.conn(),
@@ -645,7 +726,7 @@ impl TuiApp {
                 );
             }
             TuiView::Scripts => {
-                items.push(SidebarItem::Header("Scripts".into()));
+                items.push(SidebarItem::Header(self.tr("tui.viewScripts")));
                 items.extend(
                     bds_core::db::queries::script::list_scripts_by_project(db.conn(), &project.id)?
                         .into_iter()
@@ -654,11 +735,11 @@ impl TuiApp {
                 );
             }
             TuiView::Tags => {
-                items.push(SidebarItem::Header("Tags".into()));
+                items.push(SidebarItem::Header(self.tr("tui.viewTags")));
                 items.extend(TagSection::ALL.into_iter().map(SidebarItem::TagSection));
             }
             TuiView::Settings => {
-                items.push(SidebarItem::Header("Settings".into()));
+                items.push(SidebarItem::Header(self.tr("tui.viewSettings")));
                 items.extend(
                     SettingSection::ALL
                         .into_iter()
@@ -794,7 +875,7 @@ impl TuiApp {
                 self.prompt = Some(Prompt {
                     kind: PromptKind::Command,
                     value: String::new(),
-                    candidates: command_names().iter().map(ToString::to_string).collect(),
+                    candidates: self.command_names(),
                 })
             }
             TuiKey::Char('p') => self.overlay = Some(Overlay::Projects { selected: 0 }),
@@ -905,13 +986,14 @@ impl TuiApp {
     fn new_item(&mut self) -> Result<()> {
         let db = self.database()?;
         let project_id = self.project_id()?.to_owned();
+        let untitled = self.tr("tui.untitled");
         let entity = match self.view {
             TuiView::Posts => EditorEntity::Post(
                 engine::post::create_post(
                     db.conn(),
                     self.data_dir()?,
                     &project_id,
-                    "Untitled",
+                    &untitled,
                     Some(""),
                     Vec::new(),
                     Vec::new(),
@@ -925,7 +1007,7 @@ impl TuiApp {
                 engine::template::create_template(
                     db.conn(),
                     &project_id,
-                    "Untitled",
+                    &untitled,
                     TemplateKind::Post,
                     "",
                 )?
@@ -935,7 +1017,7 @@ impl TuiApp {
                 engine::script::create_script(
                     db.conn(),
                     &project_id,
-                    "Untitled",
+                    &untitled,
                     ScriptKind::Utility,
                     "function main()\nend\n",
                     Some("main"),
@@ -951,7 +1033,7 @@ impl TuiApp {
                 return Ok(());
             }
             _ => {
-                self.status = "New items are not available in this view.".into();
+                self.status = self.tr("tui.newItemUnavailable");
                 return Ok(());
             }
         };
@@ -1100,11 +1182,10 @@ impl TuiApp {
                 EditorMode::Source
             };
             self.status = if editor.mode == EditorMode::Preview {
-                "Preview"
+                bds_core::i18n::translate(self.locale, "editor.modePreview")
             } else {
-                "Source"
-            }
-            .into();
+                bds_core::i18n::translate(self.locale, "tui.editorSource")
+            };
         }
     }
 
@@ -1186,11 +1267,10 @@ impl TuiApp {
             editor.buffer.set_dirty(false);
         }
         self.status = if publish {
-            "Saved and published"
+            self.tr("tui.savedAndPublished")
         } else {
-            "Saved"
-        }
-        .into();
+            self.tr("tui.saved")
+        };
         self.reload()
     }
 
@@ -1207,7 +1287,7 @@ impl TuiApp {
         let db = self.database()?;
         if let Err(error) = engine::ai::active_endpoint(db.conn(), self.airplane) {
             self.status = if self.airplane {
-                "Airplane mode: configure a local AI endpoint first.".into()
+                self.tr("tui.airplaneAiEndpointRequired")
             } else {
                 error.to_string()
             };
@@ -1219,13 +1299,13 @@ impl TuiApp {
         };
         let (response, _) = engine::ai::run_one_shot(db.conn(), self.airplane, &request)?;
         let engine::ai::OneShotResponse::PostAnalysis(analysis) = response else {
-            bail!("AI returned the wrong response type");
+            bail!(self.tr("tui.aiWrongResponseType"));
         };
-        self.output.push(format!(
-            "AI suggestions\nTitle: {}\nExcerpt: {}",
-            analysis.title, analysis.excerpt
+        self.output.push(self.tr_with(
+            "tui.aiSuggestions",
+            &[("title", &analysis.title), ("excerpt", &analysis.excerpt)],
         ));
-        self.status = "AI suggestions added to output".into();
+        self.status = self.tr("tui.aiSuggestionsAdded");
         Ok(())
     }
 
@@ -1243,7 +1323,7 @@ impl TuiApp {
                 engine::script::unpublish_script(db.conn(), self.data_dir()?, id)?;
             }
         }
-        self.status = "Unpublished".into();
+        self.status = self.tr("tui.unpublished");
         self.reload()
     }
 
@@ -1286,9 +1366,10 @@ impl TuiApp {
             .unwrap_or(0);
         editor.post_language = Some(languages[(index + 1) % languages.len()].clone());
         editor.buffer.set_dirty(true);
-        self.status = format!(
-            "Language: {}",
-            editor.post_language.as_deref().unwrap_or("en")
+        self.status = bds_core::i18n::translate_with(
+            self.locale,
+            "tui.editorLanguage",
+            &[("language", editor.post_language.as_deref().unwrap_or("en"))],
         );
         Ok(())
     }
@@ -1421,10 +1502,11 @@ impl TuiApp {
             self.filters.insert(self.view, prompt.value.clone());
             self.reload()?;
         } else if prompt.kind == PromptKind::Command && refilter {
-            prompt.candidates = command_names()
+            prompt.candidates = self
+                .command_names()
                 .iter()
                 .filter(|name| contains_ci(name, &prompt.value))
-                .map(ToString::to_string)
+                .cloned()
                 .collect();
         }
         self.prompt = Some(prompt);
@@ -1439,34 +1521,36 @@ impl TuiApp {
             }
             PromptKind::Command => {
                 let typed = prompt.value.trim_start_matches(':').trim();
-                let selected = if typed == "?" || command_names().contains(&typed) {
-                    typed
+                let selected = if typed == "?" || self.command_id(typed).is_some() {
+                    typed.to_owned()
                 } else {
                     prompt
                         .candidates
                         .first()
-                        .map(String::as_str)
-                        .unwrap_or(typed)
+                        .cloned()
+                        .unwrap_or_else(|| typed.to_owned())
                 };
-                self.run_command(selected)?;
+                self.run_command(&selected)?;
             }
             PromptKind::ProjectPath => self.open_project_path(&prompt.value)?,
             PromptKind::Commit => {
                 if !self.require_git()? {
                     return Ok(());
                 } else if prompt.value.trim().is_empty() {
-                    self.status = "Commit message is required.".into();
+                    self.status = self.tr("tui.commitMessageRequired");
                     self.prompt = Some(prompt);
                 } else {
                     let data_dir = self.data_dir()?.to_owned();
                     let message = prompt.value;
-                    self.queue_task("Git commit", move || {
+                    let locale = self.locale;
+                    let label = self.tr("tui.taskGitCommit");
+                    self.queue_task(&label, move || {
                         let output = engine::git::GitEngine::new(&data_dir)
                             .commit_all(&message)?
                             .output;
                         Ok(BackgroundResult {
                             status: if output.trim().is_empty() {
-                                "Committed".into()
+                                bds_core::i18n::translate(locale, "tui.committed")
                             } else {
                                 output
                             },
@@ -1483,7 +1567,7 @@ impl TuiApp {
             }
             PromptKind::TagCreate => {
                 if prompt.value.trim().is_empty() {
-                    self.status = "Tag name is required.".into();
+                    self.status = self.tr("tui.tagNameRequired");
                     self.prompt = Some(prompt);
                 } else {
                     let db = self.database()?;
@@ -1494,12 +1578,12 @@ impl TuiApp {
                         prompt.value.trim(),
                         None,
                     )?;
-                    self.status = "Tag created".into();
+                    self.status = self.tr("tui.tagCreated");
                 }
             }
             PromptKind::TagRename(id) => {
                 if prompt.value.trim().is_empty() {
-                    self.status = "Tag name is required.".into();
+                    self.status = self.tr("tui.tagNameRequired");
                 } else {
                     let db = self.database()?;
                     engine::tag::rename_tag(
@@ -1509,21 +1593,25 @@ impl TuiApp {
                         &id,
                         prompt.value.trim(),
                     )?;
-                    self.status = "Tag renamed".into();
+                    self.status = self.tr("tui.tagRenamed");
                 }
             }
             PromptKind::ConfirmDeleteTag(id) => {
-                if prompt.value.eq_ignore_ascii_case("y") {
+                if prompt.value.eq_ignore_ascii_case("y")
+                    || prompt
+                        .value
+                        .eq_ignore_ascii_case(&self.tr("tui.confirmYesInput"))
+                {
                     let db = self.database()?;
                     engine::tag::delete_tag(db.conn(), self.data_dir()?, self.project_id()?, &id)?;
-                    self.status = "Tag deleted".into();
+                    self.status = self.tr("tui.tagDeleted");
                 } else {
-                    self.status = "Delete cancelled".into();
+                    self.status = self.tr("tui.deleteCancelled");
                 }
             }
             PromptKind::EditorTitle => {
                 if prompt.value.trim().is_empty() {
-                    self.status = "Title is required.".into();
+                    self.status = self.tr("tui.titleRequired");
                     self.prompt = Some(prompt);
                 } else if let Some(editor) = &mut self.editor {
                     editor.title = prompt.value.trim().to_owned();
@@ -1540,8 +1628,20 @@ impl TuiApp {
         };
         match &mut overlay {
             Overlay::ConfirmDiscard => match input.key {
-                TuiKey::Char('y') => self.quit = true,
-                TuiKey::Char('n') | TuiKey::Esc => {}
+                TuiKey::Char(value)
+                    if value == 'y'
+                        || self
+                            .tr("tui.confirmYesInput")
+                            .starts_with(value.to_ascii_lowercase()) =>
+                {
+                    self.quit = true
+                }
+                TuiKey::Char(value)
+                    if value == 'n'
+                        || self
+                            .tr("tui.confirmNoInput")
+                            .starts_with(value.to_ascii_lowercase()) => {}
+                TuiKey::Esc => {}
                 _ => self.overlay = Some(overlay),
             },
             Overlay::Projects { selected } => {
@@ -1583,14 +1683,15 @@ impl TuiApp {
         self.project = Some(project);
         self.editor = None;
         self.panel = Panel::Welcome;
-        self.status = "Project switched".into();
+        self.status = self.tr("tui.projectSwitched");
         self.reload()
     }
 
     fn open_project_path(&mut self, value: &str) -> Result<()> {
         let path = expand_home(value);
         if !path.is_dir() {
-            self.status = format!("Not a directory: {}", path.display());
+            self.status =
+                self.tr_with("tui.notDirectory", &[("path", &path.display().to_string())]);
             self.prompt = Some(Prompt {
                 kind: PromptKind::ProjectPath,
                 value: value.into(),
@@ -1617,24 +1718,39 @@ impl TuiApp {
             .file_name()
             .and_then(|name| name.to_str())
             .filter(|name| !name.is_empty())
-            .unwrap_or("Blog");
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| self.tr("tui.defaultProjectName"));
         let project = engine::project::create_project(
             db.conn(),
-            name,
+            &name,
             Some(
                 canonical
                     .to_str()
-                    .ok_or_else(|| anyhow!("project path is not valid UTF-8"))?,
+                    .ok_or_else(|| anyhow!(self.tr("tui.projectPathInvalidUtf8")))?,
             ),
         )?;
         engine::project::set_active_project(db.conn(), &project.id)?;
         let report = engine::rebuild::rebuild_from_filesystem(db.conn(), &canonical, &project.id)?;
-        self.output.push(format!(
-            "Rebuild: {} posts, {} media, {} templates, {} scripts",
-            report.posts_created + report.posts_updated,
-            report.media_created + report.media_updated,
-            report.templates_created + report.templates_updated,
-            report.scripts_created + report.scripts_updated
+        self.output.push(self.tr_with(
+            "tui.rebuildSummary",
+            &[
+                (
+                    "posts",
+                    &(report.posts_created + report.posts_updated).to_string(),
+                ),
+                (
+                    "media",
+                    &(report.media_created + report.media_updated).to_string(),
+                ),
+                (
+                    "templates",
+                    &(report.templates_created + report.templates_updated).to_string(),
+                ),
+                (
+                    "scripts",
+                    &(report.scripts_created + report.scripts_updated).to_string(),
+                ),
+            ],
         ));
         self.activate_project(project)
     }
@@ -1728,16 +1844,14 @@ impl TuiApp {
             .and_then(|path| engine::meta::read_publishing_json(path).ok())
             .unwrap_or_default();
         let ai = engine::ai::load_ai_settings(db.conn(), self.airplane)?;
-        let specs: Vec<(&'static str, &'static str, FieldKind, String)> = match section {
+        let specs: Vec<(&'static str, FieldKind, String)> = match section {
             SettingSection::Project => vec![
                 (
-                    "Project name",
                     "project.name",
                     FieldKind::Text,
                     project.map(|p| p.name.clone()).unwrap_or_default(),
                 ),
                 (
-                    "Description",
                     "project.description",
                     FieldKind::Text,
                     project
@@ -1745,7 +1859,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Data folder",
                     "project.data_path",
                     FieldKind::ReadOnly,
                     self.data_dir
@@ -1754,13 +1867,11 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "UI language",
                     engine::settings::UI_LANGUAGE_KEY,
                     FieldKind::Enum(&["en", "de", "fr", "it", "es"]),
                     self.locale.code().into(),
                 ),
                 (
-                    "Default author",
                     "meta.default_author",
                     FieldKind::Text,
                     metadata
@@ -1769,7 +1880,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Posts per page",
                     "meta.max_posts_per_page",
                     FieldKind::Text,
                     metadata
@@ -1778,7 +1888,6 @@ impl TuiApp {
                         .unwrap_or_else(|| "50".into()),
                 ),
                 (
-                    "Main language",
                     "meta.main_language",
                     FieldKind::Text,
                     metadata
@@ -1787,7 +1896,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Blog languages",
                     "meta.blog_languages",
                     FieldKind::Text,
                     metadata
@@ -1796,7 +1904,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Public URL",
                     "meta.public_url",
                     FieldKind::Text,
                     metadata
@@ -1805,7 +1912,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Image import concurrency",
                     "meta.image_import_concurrency",
                     FieldKind::Text,
                     metadata
@@ -1814,7 +1920,6 @@ impl TuiApp {
                         .unwrap_or_else(|| "4".into()),
                 ),
                 (
-                    "Blogmark category",
                     "meta.blogmark_category",
                     FieldKind::Text,
                     metadata
@@ -1825,33 +1930,20 @@ impl TuiApp {
             ],
             SettingSection::Editor => field_specs(&[
                 (
-                    "Default mode",
                     "editor.default_mode",
                     FieldKind::Enum(&["markdown", "preview"]),
                     "markdown",
                 ),
                 (
-                    "Diff style",
                     "editor.diff_view_style",
                     FieldKind::Enum(&["inline", "side-by-side"]),
                     "inline",
                 ),
-                (
-                    "Wrap long lines",
-                    "editor.wrap_long_lines",
-                    FieldKind::Bool,
-                    "true",
-                ),
-                (
-                    "Hide unchanged",
-                    "editor.hide_unchanged_regions",
-                    FieldKind::Bool,
-                    "false",
-                ),
+                ("editor.wrap_long_lines", FieldKind::Bool, "true"),
+                ("editor.hide_unchanged_regions", FieldKind::Bool, "false"),
             ]),
             SettingSection::Content => vec![
                 (
-                    "Categories",
                     "meta.categories",
                     FieldKind::ReadOnly,
                     self.data_dir()
@@ -1861,7 +1953,6 @@ impl TuiApp {
                         .unwrap_or_default(),
                 ),
                 (
-                    "Category editing",
                     "meta.category_editing",
                     FieldKind::ReadOnly,
                     self.tr("tui.categoryEditingGuiOnly"),
@@ -1869,93 +1960,79 @@ impl TuiApp {
             ],
             SettingSection::Ai => vec![
                 (
-                    "Online endpoint URL",
                     "ai.endpoint.online.url",
                     FieldKind::Text,
                     ai.online.endpoint.url,
                 ),
                 (
-                    "Online chat model",
                     "ai.endpoint.online.model",
                     FieldKind::Text,
                     ai.online.endpoint.model,
                 ),
                 (
-                    "Online API key",
                     "ai.endpoint.online.api_key",
                     FieldKind::ReadOnly,
                     if ai.online.endpoint.api_key_configured {
-                        "Configured in the system keychain".into()
+                        self.tr("tui.apiKeyConfigured")
                     } else {
-                        "Configure in the desktop application".into()
+                        self.tr("tui.apiKeyConfigureDesktop")
                     },
                 ),
                 (
-                    "Online title model",
                     "ai.endpoint.online.title_model",
                     FieldKind::Text,
                     ai.online.title_model.unwrap_or_default(),
                 ),
                 (
-                    "Online image model",
                     "ai.endpoint.online.image_model",
                     FieldKind::Text,
                     ai.online.image_model.unwrap_or_default(),
                 ),
                 (
-                    "Online chat supports tools",
                     "ai.endpoint.online.chat_supports_tools",
                     FieldKind::Bool,
                     ai.online.chat_supports_tools.unwrap_or(false).to_string(),
                 ),
                 (
-                    "Online image supports vision",
                     "ai.endpoint.online.image_supports_vision",
                     FieldKind::Bool,
                     ai.online.image_supports_vision.unwrap_or(false).to_string(),
                 ),
                 (
-                    "Airplane endpoint URL",
                     "ai.endpoint.airplane.url",
                     FieldKind::Text,
                     ai.airplane.endpoint.url,
                 ),
                 (
-                    "Airplane chat model",
                     "ai.endpoint.airplane.model",
                     FieldKind::Text,
                     ai.airplane.endpoint.model,
                 ),
                 (
-                    "Airplane API key",
                     "ai.endpoint.airplane.api_key",
                     FieldKind::ReadOnly,
                     if ai.airplane.endpoint.api_key_configured {
-                        "Configured in the system keychain".into()
+                        self.tr("tui.apiKeyConfigured")
                     } else {
-                        "Configure in the desktop application".into()
+                        self.tr("tui.apiKeyConfigureDesktop")
                     },
                 ),
                 (
-                    "Airplane title model",
                     "ai.endpoint.airplane.title_model",
                     FieldKind::Text,
                     ai.airplane.title_model.unwrap_or_default(),
                 ),
                 (
-                    "Airplane image model",
                     "ai.endpoint.airplane.image_model",
                     FieldKind::Text,
                     ai.airplane.image_model.unwrap_or_default(),
                 ),
                 (
-                    "Airplane chat supports tools",
                     "ai.endpoint.airplane.chat_supports_tools",
                     FieldKind::Bool,
                     ai.airplane.chat_supports_tools.unwrap_or(false).to_string(),
                 ),
                 (
-                    "Airplane image supports vision",
                     "ai.endpoint.airplane.image_supports_vision",
                     FieldKind::Bool,
                     ai.airplane
@@ -1963,22 +2040,11 @@ impl TuiApp {
                         .unwrap_or(false)
                         .to_string(),
                 ),
-                (
-                    "System prompt",
-                    "ai.system_prompt",
-                    FieldKind::Text,
-                    ai.system_prompt,
-                ),
+                ("ai.system_prompt", FieldKind::Text, ai.system_prompt),
             ],
             SettingSection::Technology => vec![
+                ("technology.runtime", FieldKind::ReadOnly, "Lua".into()),
                 (
-                    "Runtime",
-                    "technology.runtime",
-                    FieldKind::ReadOnly,
-                    "Lua".into(),
-                ),
-                (
-                    "Semantic similarity",
                     "meta.semantic_similarity_enabled",
                     FieldKind::Bool,
                     metadata
@@ -1989,25 +2055,21 @@ impl TuiApp {
             ],
             SettingSection::Publishing => vec![
                 (
-                    "SSH host",
                     "publishing.ssh_host",
                     FieldKind::Text,
                     publishing.ssh_host.unwrap_or_default(),
                 ),
                 (
-                    "SSH username",
                     "publishing.ssh_username",
                     FieldKind::Text,
                     publishing.ssh_user.unwrap_or_default(),
                 ),
                 (
-                    "Remote path",
                     "publishing.ssh_remote_path",
                     FieldKind::Text,
                     publishing.ssh_remote_path.unwrap_or_default(),
                 ),
                 (
-                    "Transfer mode",
                     "publishing.ssh_mode",
                     FieldKind::Enum(&["scp", "rsync"]),
                     match publishing.ssh_mode {
@@ -2018,36 +2080,23 @@ impl TuiApp {
             ],
             SettingSection::Data => vec![
                 (
-                    "Database",
                     "data.database",
                     FieldKind::ReadOnly,
                     self.host.database_path().display().to_string(),
                 ),
-                (
-                    "Automatic rebuild",
-                    "data.automatic_rebuild",
-                    FieldKind::Bool,
-                    "true".into(),
-                ),
+                ("data.automatic_rebuild", FieldKind::Bool, "true".into()),
             ],
             SettingSection::Mcp => {
                 let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
                 vec![
+                    ("mcp.http.enabled", FieldKind::Bool, "false".into()),
                     (
-                        "Enable MCP server",
-                        "mcp.http.enabled",
-                        FieldKind::Bool,
-                        "false".into(),
-                    ),
-                    (
-                        "Claude Code",
                         "mcp.agent.claude_code",
                         FieldKind::Bool,
                         engine::mcp::is_agent_configured(engine::mcp::McpAgent::ClaudeCode, &home)
                             .to_string(),
                     ),
                     (
-                        "GitHub Copilot",
                         "mcp.agent.github_copilot",
                         FieldKind::Bool,
                         engine::mcp::is_agent_configured(
@@ -2057,7 +2106,6 @@ impl TuiApp {
                         .to_string(),
                     ),
                     (
-                        "Pending proposals",
                         "mcp.proposals",
                         FieldKind::ReadOnly,
                         engine::mcp::list_pending_proposals(db.conn(), self.project_id()?)?
@@ -2069,7 +2117,7 @@ impl TuiApp {
         };
         specs
             .into_iter()
-            .map(|(label, key, kind, fallback)| {
+            .map(|(key, kind, fallback)| {
                 let value = if kind == FieldKind::ReadOnly
                     || key.starts_with("project.")
                     || key.starts_with("meta.")
@@ -2083,7 +2131,7 @@ impl TuiApp {
                     engine::settings::get_effective(db.conn(), key)?.unwrap_or(fallback)
                 };
                 Ok(SettingField {
-                    label: setting_field_label(self.locale, key, label),
+                    label: setting_field_label(self.locale, key),
                     key,
                     kind,
                     value,
@@ -2097,7 +2145,9 @@ impl TuiApp {
             return Ok(());
         };
         match &field.kind {
-            FieldKind::ReadOnly => self.status = "This value is read-only.".into(),
+            FieldKind::ReadOnly => {
+                self.status = bds_core::i18n::translate(self.locale, "tui.valueReadOnly")
+            }
             FieldKind::Bool => {
                 field.value = (!field.value.eq_ignore_ascii_case("true")).to_string()
             }
@@ -2128,9 +2178,12 @@ impl TuiApp {
             SettingSection::Project => {
                 let name = self.setting_value("project.name").trim();
                 if name.is_empty() {
-                    bail!("project name must not be empty");
+                    bail!(self.tr("tui.projectNameRequired"));
                 }
-                let mut project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
+                let mut project = self
+                    .project
+                    .clone()
+                    .ok_or_else(|| anyhow!(self.tr("tui.noActiveProject")))?;
                 project.name = name.into();
                 project.description = optional_string(self.setting_value("project.description"));
                 project.updated_at = bds_core::util::now_unix_ms();
@@ -2156,14 +2209,12 @@ impl TuiApp {
                     .setting_value("meta.max_posts_per_page")
                     .trim()
                     .parse()
-                    .map_err(|_| anyhow!("posts per page must be a number from 1 to 500"))?;
+                    .map_err(|_| anyhow!(self.tr("tui.postsPerPageInvalid")))?;
                 metadata.image_import_concurrency = self
                     .setting_value("meta.image_import_concurrency")
                     .trim()
                     .parse()
-                    .map_err(|_| {
-                        anyhow!("image import concurrency must be a number from 1 to 8")
-                    })?;
+                    .map_err(|_| anyhow!(self.tr("tui.imageImportConcurrencyInvalid")))?;
                 metadata.validate().map_err(|error| anyhow!(error))?;
                 bds_core::db::queries::project::update_project(db.conn(), &project)?;
                 engine::meta::write_project_json(self.data_dir()?, &metadata)?;
@@ -2263,7 +2314,7 @@ impl TuiApp {
                     .position(|field| field.kind != FieldKind::ReadOnly)
             })
             .unwrap_or(0);
-        self.status = "Settings saved".into();
+        self.status = self.tr("tui.settingsSaved");
         Ok(())
     }
 
@@ -2279,7 +2330,10 @@ impl TuiApp {
 
     fn project_metadata(&self) -> Result<ProjectMetadata> {
         engine::meta::read_project_json(self.data_dir()?).or_else(|_| {
-            let project = self.project.as_ref().ok_or_else(|| anyhow!("no project"))?;
+            let project = self
+                .project
+                .as_ref()
+                .ok_or_else(|| anyhow!(self.tr("tui.noActiveProject")))?;
             Ok(ProjectMetadata {
                 name: project.name.clone(),
                 description: project.description.clone(),
@@ -2373,9 +2427,13 @@ impl TuiApp {
                             .any(|name| name.eq_ignore_ascii_case(&tag.name))
                     })
                     .count();
-            self.status = format!(
-                "Delete '{}' used by {count} post(s)? Type y and Enter.",
-                tag.name
+            self.status = self.tr_with(
+                "tui.deleteTagConfirm",
+                &[
+                    ("name", &tag.name),
+                    ("count", &count.to_string()),
+                    ("yes", &self.tr("tui.confirmYesInput")),
+                ],
             );
             self.prompt = Some(Prompt {
                 kind: PromptKind::ConfirmDeleteTag(tag.id.clone()),
@@ -2401,7 +2459,7 @@ impl TuiApp {
             return Ok(());
         };
         if !self.marked_tags.contains(&target.id) || self.marked_tags.len() < 2 {
-            self.status = "Mark at least two tags, including the target.".into();
+            self.status = self.tr("tui.markTagsRequired");
             return Ok(());
         }
         let sources = self
@@ -2419,7 +2477,7 @@ impl TuiApp {
             &target.id,
         )?;
         self.marked_tags.clear();
-        self.status = "Tags merged".into();
+        self.status = self.tr("tui.tagsMerged");
         Ok(())
     }
 
@@ -2440,7 +2498,7 @@ impl TuiApp {
             Some(COLORS[(index + 1) % COLORS.len()]),
             None,
         )?;
-        self.status = "Tag colour updated".into();
+        self.status = self.tr("tui.tagColourUpdated");
         Ok(())
     }
 
@@ -2470,7 +2528,7 @@ impl TuiApp {
             None,
             Some(&templates[(index + 1) % templates.len()]),
         )?;
-        self.status = "Tag template updated".into();
+        self.status = self.tr("tui.tagTemplateUpdated");
         Ok(())
     }
 
@@ -2478,21 +2536,24 @@ impl TuiApp {
         let db = self.database()?;
         let tags = engine::tag::sync_tags_from_posts(db.conn(), self.project_id()?)?;
         engine::tag::rewrite_tags_json(db.conn(), self.data_dir()?, self.project_id()?)?;
-        self.status = format!("Synchronized {} tags", tags.len());
+        self.status = self.tr_with(
+            "tui.tagsSynchronized",
+            &[("count", &tags.len().to_string())],
+        );
         Ok(())
     }
 }
 
 fn field_specs(
-    values: &[(&'static str, &'static str, FieldKind, &'static str)],
-) -> Vec<(&'static str, &'static str, FieldKind, String)> {
+    values: &[(&'static str, FieldKind, &'static str)],
+) -> Vec<(&'static str, FieldKind, String)> {
     values
         .iter()
-        .map(|(label, key, kind, value)| (*label, *key, kind.clone(), (*value).into()))
+        .map(|(key, kind, value)| (*key, kind.clone(), (*value).into()))
         .collect()
 }
 
-fn setting_field_label(locale: UiLocale, key: &str, fallback: &str) -> String {
+fn setting_field_label(locale: UiLocale, key: &str) -> String {
     let translation_key = match key {
         "project.name" => "settings.projectName",
         "project.description" => "settings.projectDescription",
@@ -2535,8 +2596,10 @@ fn setting_field_label(locale: UiLocale, key: &str, fallback: &str) -> String {
         "data.database" => "tui.settingDatabase",
         "data.automatic_rebuild" => "tui.settingAutomaticRebuild",
         "mcp.http.enabled" => "settings.mcpEnable",
+        "mcp.agent.claude_code" => "tui.settingClaudeCode",
+        "mcp.agent.github_copilot" => "tui.settingGithubCopilot",
         "mcp.proposals" => "settings.mcpProposals",
-        _ => return fallback.into(),
+        _ => return key.into(),
     };
     bds_core::i18n::translate(locale, translation_key)
 }
@@ -2573,7 +2636,7 @@ fn visual_line_metrics(buffer: &EditorBuffer, width: usize) -> (usize, usize) {
 impl TuiApp {
     fn git_items(&self) -> Result<Vec<SidebarItem>> {
         let Some(data_dir) = &self.data_dir else {
-            return Ok(vec![SidebarItem::Empty("No active project".into())]);
+            return Ok(vec![SidebarItem::Empty(self.tr("tui.noActiveProject"))]);
         };
         let git = engine::git::GitEngine::new(data_dir);
         let repository = git.repository()?;
@@ -2584,7 +2647,7 @@ impl TuiApp {
         let branch = remote
             .local_branch
             .clone()
-            .unwrap_or_else(|| "detached".into());
+            .unwrap_or_else(|| self.tr("tui.detachedHead"));
         let mut items = vec![SidebarItem::Header(format!(
             "{branch} ↑{} ↓{}",
             remote.ahead, remote.behind
@@ -2595,7 +2658,7 @@ impl TuiApp {
                 format!("{} {}", file.kind.code(), file.path),
             )
         }));
-        items.push(SidebarItem::Header("History".into()));
+        items.push(SidebarItem::Header(self.tr("git.history")));
         items.extend(git.history(&branch)?.into_iter().map(|commit| {
             let marker = match commit.sync_status {
                 engine::git::SyncStatus::LocalOnly => "↑",
@@ -2618,7 +2681,7 @@ impl TuiApp {
         let patch = engine::git::GitEngine::new(self.data_dir()?)
             .file_diff(path)?
             .patch;
-        self.output = vec![truncate_bytes(&patch, MAX_DIFF_BYTES)];
+        self.output = vec![truncate_bytes(&patch, MAX_DIFF_BYTES, self.locale)];
         self.panel = Panel::Git;
         self.scroll = 0;
         Ok(())
@@ -2626,7 +2689,7 @@ impl TuiApp {
 
     fn open_git_commit(&mut self, hash: &str) -> Result<()> {
         let diff = engine::git::GitEngine::new(self.data_dir()?).commit_diff(hash)?;
-        self.output = vec![truncate_bytes(&diff, MAX_DIFF_BYTES)];
+        self.output = vec![truncate_bytes(&diff, MAX_DIFF_BYTES, self.locale)];
         self.panel = Panel::Git;
         self.scroll = 0;
         Ok(())
@@ -2637,17 +2700,23 @@ impl TuiApp {
             return Ok(());
         }
         if self.airplane {
-            self.status = "Airplane mode blocks Git pull.".into();
+            self.status = self.tr("tui.airplaneGitPullBlocked");
             return Ok(());
         }
         let data_dir = self.data_dir()?.to_owned();
-        self.queue_task("Git pull", move || {
+        let locale = self.locale;
+        let label = self.tr("tui.taskGitPull");
+        self.queue_task(&label, move || {
             let mut output = Vec::new();
             let result = engine::git::GitEngine::new(&data_dir)
                 .pull(|| false, |line| output.push(line.text))?;
             output.push(result.output);
             Ok(BackgroundResult {
-                status: format!("Pull complete\n{}", output.join("\n")),
+                status: bds_core::i18n::translate_with(
+                    locale,
+                    "tui.gitPullComplete",
+                    &[("output", &output.join("\n"))],
+                ),
                 panel: Some(Panel::Git),
                 reload: true,
             })
@@ -2660,17 +2729,23 @@ impl TuiApp {
             return Ok(());
         }
         if self.airplane {
-            self.status = "Airplane mode blocks Git push.".into();
+            self.status = self.tr("tui.airplaneGitPushBlocked");
             return Ok(());
         }
         let data_dir = self.data_dir()?.to_owned();
-        self.queue_task("Git push", move || {
+        let locale = self.locale;
+        let label = self.tr("tui.taskGitPush");
+        self.queue_task(&label, move || {
             let mut output = Vec::new();
             let result = engine::git::GitEngine::new(&data_dir)
                 .push(|| false, |line| output.push(line.text))?;
             output.push(result.output);
             Ok(BackgroundResult {
-                status: format!("Push complete\n{}", output.join("\n")),
+                status: bds_core::i18n::translate_with(
+                    locale,
+                    "tui.gitPushComplete",
+                    &[("output", &output.join("\n"))],
+                ),
                 panel: Some(Panel::Git),
                 reload: true,
             })
@@ -2690,9 +2765,11 @@ impl TuiApp {
 
     fn run_command(&mut self, command: &str) -> Result<()> {
         let command = if command.is_empty() {
-            command_names().first().copied().unwrap_or("")
-        } else {
+            COMMANDS.first().map(|command| command.id).unwrap_or("")
+        } else if command == "?" {
             command
+        } else {
+            self.command_id(command).unwrap_or(command)
         };
         if command == "?" {
             self.panel = Panel::Help;
@@ -2703,36 +2780,42 @@ impl TuiApp {
         let data_dir = self.data_dir()?.to_owned();
         let database_path = self.host.database_path().to_owned();
         match command {
-            "metadata diff" => {
-                self.queue_task("Metadata diff", move || {
+            "metadata-diff" => {
+                let locale = self.locale;
+                let label = self.tr("tui.commandMetadataDiff");
+                self.queue_task(&label, move || {
                     let db = Database::open(&database_path)?;
                     Ok(BackgroundResult {
-                        status: "Metadata diff complete".into(),
+                        status: bds_core::i18n::translate(locale, "tui.metadataDiffComplete"),
                         panel: Some(Panel::Report {
-                            title: "Metadata Diff".into(),
-                            body: metadata_report_body(db.conn(), &data_dir, &project_id)?,
+                            title: bds_core::i18n::translate(locale, "menu.item.metadataDiff"),
+                            body: metadata_report_body(db.conn(), &data_dir, &project_id, locale)?,
                             action: ReportAction::MetadataDiff,
                         }),
                         reload: false,
                     })
                 });
             }
-            "validate site" => {
-                self.queue_task("Validate site", move || {
+            "validate-site" => {
+                let locale = self.locale;
+                let label = self.tr("tui.commandValidateSite");
+                self.queue_task(&label, move || {
                     let db = Database::open(&database_path)?;
                     Ok(BackgroundResult {
-                        status: "Site validation complete".into(),
+                        status: bds_core::i18n::translate(locale, "tui.siteValidationComplete"),
                         panel: Some(Panel::Report {
-                            title: "Site Validation".into(),
-                            body: site_validation_body(db.conn(), &data_dir, &project_id)?,
+                            title: bds_core::i18n::translate(locale, "menu.item.validateSite"),
+                            body: site_validation_body(db.conn(), &data_dir, &project_id, locale)?,
                             action: ReportAction::SiteValidation,
                         }),
                         reload: false,
                     })
                 });
             }
-            "force render" => {
-                self.queue_task("Force render", move || {
+            "force-render" => {
+                let locale = self.locale;
+                let label = self.tr("tui.commandForceRender");
+                self.queue_task(&label, move || {
                     let db = Database::open(&database_path)?;
                     let metadata = engine::meta::read_project_json(&data_dir)?;
                     let posts = published_sources(db.conn(), &data_dir, &project_id)?;
@@ -2745,59 +2828,71 @@ impl TuiApp {
                         metadata.main_language.as_deref().unwrap_or("en"),
                     )?;
                     Ok(BackgroundResult {
-                        status: format!("Rendered {} files", report.written_paths.len()),
+                        status: bds_core::i18n::translate_with(
+                            locale,
+                            "tui.filesRendered",
+                            &[("count", &report.written_paths.len().to_string())],
+                        ),
                         panel: None,
                         reload: false,
                     })
                 });
             }
-            "rebuild database" => {
-                self.queue_task("Rebuild database", move || {
+            "rebuild-database" => {
+                let locale = self.locale;
+                let label = self.tr("tui.commandRebuildDatabase");
+                self.queue_task(&label, move || {
                     let db = Database::open(&database_path)?;
                     let report = engine::rebuild::rebuild_from_filesystem(
                         db.conn(),
                         &data_dir,
                         &project_id,
                     )?;
+                    let count = report.posts_created
+                        + report.posts_updated
+                        + report.media_created
+                        + report.media_updated
+                        + report.templates_created
+                        + report.templates_updated
+                        + report.scripts_created
+                        + report.scripts_updated;
                     Ok(BackgroundResult {
-                        status: format!(
-                            "Rebuilt {} items",
-                            report.posts_created
-                                + report.posts_updated
-                                + report.media_created
-                                + report.media_updated
-                                + report.templates_created
-                                + report.templates_updated
-                                + report.scripts_created
-                                + report.scripts_updated
+                        status: bds_core::i18n::translate_with(
+                            locale,
+                            "tui.itemsRebuilt",
+                            &[("count", &count.to_string())],
                         ),
                         panel: None,
                         reload: true,
                     })
                 });
             }
-            "reindex search" => {
-                self.queue_task("Reindex search", move || {
+            "reindex-search" => {
+                let locale = self.locale;
+                let label = self.tr("tui.commandReindexSearch");
+                self.queue_task(&label, move || {
                     let db = Database::open(&database_path)?;
                     let report = engine::search::reindex_project(db.conn(), &project_id, None)?;
                     Ok(BackgroundResult {
-                        status: format!("Reindexed {} posts", report.posts_indexed),
+                        status: bds_core::i18n::translate_with(
+                            locale,
+                            "tui.postsReindexed",
+                            &[("count", &report.posts_indexed.to_string())],
+                        ),
                         panel: None,
                         reload: false,
                     })
                 });
             }
-            "validate translations [GUI]" | "find duplicates [GUI]" => {
-                self.status = "This command's result editor is available in the desktop UI.".into()
+            "validate-translations-gui" | "find-duplicates-gui" => {
+                self.status = self.tr("tui.commandDesktopOnly")
             }
-            "upload site" if self.airplane => self.status = "Airplane mode blocks upload.".into(),
-            "upload site" => self.status =
-                "Upload requires publishing credentials; use the shared Publishing settings first."
-                    .into(),
-            "browser preview URL" => {
+            "upload-site" if self.airplane => self.status = self.tr("tui.airplaneUploadBlocked"),
+            "upload-site" => self.status = self.tr("tui.uploadRequiresPublishingSettings"),
+            "browser-preview-url" => {
                 self.status = format!("file://{}", data_dir.join("html/index.html").display())
             }
-            _ => self.status = format!("Unknown command: {command}"),
+            _ => self.status = self.tr_with("tui.unknownCommand", &[("command", command)]),
         }
         Ok(())
     }
@@ -2832,9 +2927,12 @@ impl TuiApp {
                         )?;
                     }
                 }
-                self.status = format!(
-                    "Applied {} metadata changes",
-                    report.diffs.len() + report.orphans.len()
+                self.status = self.tr_with(
+                    "tui.metadataChangesApplied",
+                    &[(
+                        "count",
+                        &(report.diffs.len() + report.orphans.len()).to_string(),
+                    )],
                 );
                 self.reload()?;
             }
@@ -2852,10 +2950,12 @@ impl TuiApp {
                     &posts,
                     &sections,
                 )?;
-                self.status = format!(
-                    "Applied validation: {} written, {} removed",
-                    report.written_paths.len(),
-                    report.deleted_paths.len()
+                self.status = self.tr_with(
+                    "tui.validationApplied",
+                    &[
+                        ("written", &report.written_paths.len().to_string()),
+                        ("removed", &report.deleted_paths.len().to_string()),
+                    ],
                 );
             }
         }
@@ -2865,21 +2965,7 @@ impl TuiApp {
     }
 }
 
-fn command_names() -> &'static [&'static str] {
-    &[
-        "metadata diff",
-        "validate site",
-        "force render",
-        "rebuild database",
-        "reindex search",
-        "validate translations [GUI]",
-        "find duplicates [GUI]",
-        "upload site",
-        "browser preview URL",
-    ]
-}
-
-fn truncate_bytes(value: &str, limit: usize) -> String {
+fn truncate_bytes(value: &str, limit: usize, locale: UiLocale) -> String {
     if value.len() <= limit {
         return value.into();
     }
@@ -2887,7 +2973,11 @@ fn truncate_bytes(value: &str, limit: usize) -> String {
     while !value.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}\n\n[diff truncated]", &value[..end])
+    format!(
+        "{}\n\n{}",
+        &value[..end],
+        bds_core::i18n::translate(locale, "tui.diffTruncated")
+    )
 }
 
 fn published_sources(
@@ -2908,29 +2998,39 @@ fn metadata_report_body(
     conn: &bds_core::db::DbConnection,
     data_dir: &Path,
     project_id: &str,
+    locale: UiLocale,
 ) -> Result<String> {
     let report = engine::metadata_diff::compute_metadata_diff(conn, data_dir, project_id)?;
     let mut lines = report
         .diffs
         .iter()
         .map(|item| {
-            format!(
-                "{} {}: {} field(s)",
-                item.entity_type,
-                item.file_path,
-                item.fields.len()
+            bds_core::i18n::translate_with(
+                locale,
+                "tui.metadataDiffFields",
+                &[
+                    ("entity", &item.entity_type),
+                    ("path", &item.file_path),
+                    ("count", &item.fields.len().to_string()),
+                ],
             )
         })
         .collect::<Vec<_>>();
-    lines.extend(
-        report
-            .orphans
-            .iter()
-            .map(|item| format!("orphan {}: {}", item.file_path, item.reason)),
-    );
-    lines.extend(report.errors.iter().map(|error| format!("error: {error}")));
+    lines.extend(report.orphans.iter().map(|item| {
+        bds_core::i18n::translate_with(
+            locale,
+            "tui.metadataOrphan",
+            &[("path", &item.file_path), ("reason", &item.reason)],
+        )
+    }));
+    lines.extend(report.errors.iter().map(|error| {
+        bds_core::i18n::translate_with(locale, "tui.metadataError", &[("error", error)])
+    }));
     if lines.is_empty() {
-        lines.push("No metadata differences".into());
+        lines.push(bds_core::i18n::translate(
+            locale,
+            "tui.noMetadataDifferences",
+        ));
     }
     Ok(lines.join("\n"))
 }
@@ -2939,13 +3039,17 @@ fn site_validation_body(
     conn: &bds_core::db::DbConnection,
     data_dir: &Path,
     project_id: &str,
+    locale: UiLocale,
 ) -> Result<String> {
     let report = engine::validate_site::validate_site(conn, data_dir, project_id)?;
-    Ok(format!(
-        "Missing\n{}\n\nExtra\n{}\n\nStale\n{}",
-        report.missing_pages.join("\n"),
-        report.extra_pages.join("\n"),
-        report.stale_pages.join("\n")
+    Ok(bds_core::i18n::translate_with(
+        locale,
+        "tui.siteValidationReport",
+        &[
+            ("missing", &report.missing_pages.join("\n")),
+            ("extra", &report.extra_pages.join("\n")),
+            ("stale", &report.stale_pages.join("\n")),
+        ],
     ))
 }
 
@@ -3077,16 +3181,22 @@ impl TuiApp {
             ),
             Panel::MediaPreview { title, path } => (
                 title.clone(),
-                format!(
-                    "Image preview\n\n{}\n\n{}",
-                    path.display(),
-                    image_dimensions(path).unwrap_or_else(|| "Preview unavailable".into())
+                self.tr_with(
+                    "tui.imagePreview",
+                    &[
+                        ("path", &path.display().to_string()),
+                        (
+                            "dimensions",
+                            &image_dimensions(path, self.locale)
+                                .unwrap_or_else(|| self.tr("modal.postGallery.unavailable")),
+                        ),
+                    ],
                 ),
             ),
             Panel::Settings(section) => (self.tr(section.key()), self.settings_text()),
             Panel::Tags(section) => (self.tr(section.key()), self.tags_text(*section)),
             Panel::Git => (
-                "Git Diff".into(),
+                self.tr("git.diff"),
                 self.output
                     .last()
                     .cloned()
@@ -3096,7 +3206,10 @@ impl TuiApp {
                 title.clone(),
                 format!("{body}\n\n{}", self.tr("tui.applyCancel")),
             ),
-            Panel::Help => ("Commands".into(), command_names().join("\n")),
+            Panel::Help => (
+                self.tr("tui.commandsTitle"),
+                self.command_names().join("\n"),
+            ),
         };
         Paragraph::new(text)
             .block(
@@ -3113,16 +3226,12 @@ impl TuiApp {
     fn render_editor(&self, area: Rect, editor: &Editor, buffer: &mut Buffer) {
         let dirty = if editor.buffer.is_dirty() { " ●" } else { "" };
         let language = editor.post_language.as_deref().unwrap_or(editor.syntax);
-        let title = format!(
-            " {} — {}{} ",
-            editor.title,
-            if editor.mode == EditorMode::Preview {
-                "Preview"
-            } else {
-                language
-            },
-            dirty
-        );
+        let mode = if editor.mode == EditorMode::Preview {
+            self.tr("editor.modePreview")
+        } else {
+            language.to_owned()
+        };
+        let title = format!(" {} — {}{} ", editor.title, mode, dirty);
         let inner = Block::default()
             .title(title.clone())
             .borders(Borders::BOTTOM)
@@ -3203,14 +3312,18 @@ impl TuiApp {
         );
         let text = if let Some(prompt) = &self.prompt {
             let marker = match prompt.kind {
-                PromptKind::Search => "/",
-                PromptKind::Command => ":",
-                PromptKind::ProjectPath => "open ",
-                PromptKind::Commit => "commit ",
-                PromptKind::ConfirmDeleteTag(_) => "confirm ",
-                _ => "> ",
+                PromptKind::Search => "/".into(),
+                PromptKind::Command => ":".into(),
+                PromptKind::ProjectPath => self.tr("tui.promptOpen"),
+                PromptKind::Commit => self.tr("tui.promptCommit"),
+                PromptKind::ConfirmDeleteTag(_) => self.tr("tui.promptConfirm"),
+                _ => self.tr("tui.promptValue"),
             };
-            format!("{marker}{}", prompt.value)
+            if matches!(prompt.kind, PromptKind::Search | PromptKind::Command) {
+                format!("{marker}{}", prompt.value)
+            } else {
+                format!("{marker} {}", prompt.value)
+            }
         } else if !self.status.is_empty() {
             format!("{transport} · {}", self.status)
         } else {
@@ -3282,10 +3395,7 @@ impl TuiApp {
             return;
         }
         let candidates = if prompt.kind == PromptKind::Command && prompt.value == "?" {
-            command_names()
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect::<Vec<_>>()
+            self.command_names()
         } else {
             prompt.candidates.clone()
         };
@@ -3320,9 +3430,9 @@ impl TuiApp {
             .block(
                 Block::default()
                     .title(if prompt.kind == PromptKind::Command {
-                        "Commands"
+                        self.tr("tui.commandsTitle")
                     } else {
-                        "Folders"
+                        self.tr("tui.foldersTitle")
                     })
                     .borders(Borders::ALL)
                     .style(Style::default().bg(Color::Rgb(31, 34, 42))),
@@ -3343,7 +3453,8 @@ impl TuiApp {
     }
 
     fn settings_text(&self) -> String {
-        self.settings_fields
+        let fields = self
+            .settings_fields
             .iter()
             .enumerate()
             .map(|(index, field)| {
@@ -3357,20 +3468,20 @@ impl TuiApp {
                     field.label,
                     field.value,
                     if field.kind == FieldKind::ReadOnly {
-                        "  [read-only]"
+                        self.tr("tui.readOnlyMarker")
                     } else {
-                        ""
+                        String::new()
                     }
                 )
             })
             .collect::<Vec<_>>()
-            .join("\n")
-            + "\n\nEnter edits/toggles · Ctrl+S saves · Esc closes"
+            .join("\n");
+        format!("{fields}\n\n{}", self.tr("tui.settingsHint"))
     }
 
     fn tags_text(&self, section: TagSection) -> String {
         let Ok(mut tags) = self.tags() else {
-            return "Could not load tags".into();
+            return self.tr("tui.tagsLoadFailed");
         };
         let usage = self.tag_usage();
         if section == TagSection::Cloud {
@@ -3404,16 +3515,14 @@ impl TuiApp {
         if rows.is_empty() {
             rows.push(self.tr("tui.noTags"));
         }
-        rows.push(
-            match section {
-                TagSection::Cloud => "\nUsage-ordered tag cloud",
-                TagSection::Manage => {
-                    "\nn create · Enter rename · c colour · t template · d delete · s sync"
-                }
-                TagSection::Merge => "\nSpace marks · select target · m merges",
-            }
-            .into(),
-        );
+        rows.push(format!(
+            "\n{}",
+            self.tr(match section {
+                TagSection::Cloud => "tui.tagCloudHint",
+                TagSection::Manage => "tui.tagManageHint",
+                TagSection::Merge => "tui.tagMergeHint",
+            })
+        ));
         rows.join("\n")
     }
 
@@ -3437,12 +3546,16 @@ impl TuiApp {
 
     fn git_diff_text(&self) -> String {
         let Ok(data_dir) = self.data_dir() else {
-            return "No active project".into();
+            return self.tr("tui.noActiveProject");
         };
         match engine::git::GitEngine::new(data_dir).diff() {
             Ok(diff) => truncate_bytes(
-                &format!("Staged\n{}\n\nUnstaged\n{}", diff.staged, diff.unstaged),
+                &self.tr_with(
+                    "tui.gitDiffBody",
+                    &[("staged", &diff.staged), ("unstaged", &diff.unstaged)],
+                ),
                 MAX_DIFF_BYTES,
+                self.locale,
             ),
             Err(error) => error.to_string(),
         }
@@ -3450,6 +3563,24 @@ impl TuiApp {
 
     fn tr(&self, key: &str) -> String {
         bds_core::i18n::translate(self.locale, key)
+    }
+
+    fn tr_with(&self, key: &str, params: &[(&str, &str)]) -> String {
+        bds_core::i18n::translate_with(self.locale, key, params)
+    }
+
+    fn command_names(&self) -> Vec<String> {
+        COMMANDS
+            .iter()
+            .map(|command| self.tr(command.key))
+            .collect()
+    }
+
+    fn command_id(&self, name: &str) -> Option<&'static str> {
+        COMMANDS
+            .iter()
+            .find(|command| command.id == name || self.tr(command.key) == name)
+            .map(|command| command.id)
     }
 }
 
@@ -3462,23 +3593,47 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
-fn image_dimensions(path: &Path) -> Option<String> {
+fn image_dimensions(path: &Path, locale: UiLocale) -> Option<String> {
     let data = fs::read(path).ok()?;
     if data.starts_with(b"\x89PNG") && data.len() >= 24 {
-        return Some(format!(
-            "PNG · {} × {} px",
-            u32::from_be_bytes(data[16..20].try_into().ok()?),
-            u32::from_be_bytes(data[20..24].try_into().ok()?)
+        return Some(bds_core::i18n::translate_with(
+            locale,
+            "tui.imageDimensions",
+            &[
+                ("format", "PNG"),
+                (
+                    "width",
+                    &u32::from_be_bytes(data[16..20].try_into().ok()?).to_string(),
+                ),
+                (
+                    "height",
+                    &u32::from_be_bytes(data[20..24].try_into().ok()?).to_string(),
+                ),
+            ],
         ));
     }
     if data.starts_with(b"GIF8") && data.len() >= 10 {
-        return Some(format!(
-            "GIF · {} × {} px",
-            u16::from_le_bytes(data[6..8].try_into().ok()?),
-            u16::from_le_bytes(data[8..10].try_into().ok()?)
+        return Some(bds_core::i18n::translate_with(
+            locale,
+            "tui.imageDimensions",
+            &[
+                ("format", "GIF"),
+                (
+                    "width",
+                    &u16::from_le_bytes(data[6..8].try_into().ok()?).to_string(),
+                ),
+                (
+                    "height",
+                    &u16::from_le_bytes(data[8..10].try_into().ok()?).to_string(),
+                ),
+            ],
         ));
     }
-    Some(format!("{} bytes", data.len()))
+    Some(bds_core::i18n::translate_with(
+        locale,
+        "tui.fileBytes",
+        &[("count", &data.len().to_string())],
+    ))
 }
 
 pub fn run_local(host: ApplicationHost) -> Result<()> {
@@ -3756,6 +3911,12 @@ mod tests {
             )
             .unwrap();
             engine::project::set_active_project(db.conn(), &project.id).unwrap();
+            engine::settings::set(
+                db.conn(),
+                engine::settings::UI_LANGUAGE_KEY,
+                UiLocale::En.code(),
+            )
+            .unwrap();
             Self {
                 _root: root,
                 host,
@@ -3848,7 +4009,7 @@ mod tests {
             .unwrap();
         type_text(&mut app, "Hello **terminal**");
         app.handle_input(TuiInput::ctrl(TuiKey::Char('t'))).unwrap();
-        for _ in 0..8 {
+        for _ in 0..app.tr("tui.untitled").chars().count() {
             app.handle_input(TuiInput::plain(TuiKey::Backspace))
                 .unwrap();
         }
@@ -4067,12 +4228,13 @@ mod tests {
         );
         let removed_prefix = ["style", "."].concat();
         for section in SettingSection::ALL {
+            let fields = app.load_setting_fields(section).unwrap();
             assert!(
-                app.load_setting_fields(section)
-                    .unwrap()
+                fields
                     .iter()
                     .all(|field| !field.key.starts_with(&removed_prefix))
             );
+            assert!(fields.iter().all(|field| field.label != field.key));
         }
         app.set_view(TuiView::Settings).unwrap();
         app.selected_index = 2;
@@ -4086,11 +4248,33 @@ mod tests {
                 .as_deref(),
             Some("false")
         );
+        app.open_settings(SettingSection::Project).unwrap();
+        assert_eq!(
+            app.settings_fields
+                .iter()
+                .find(|field| field.key == "project.name")
+                .unwrap()
+                .label,
+            bds_core::i18n::translate(UiLocale::En, "settings.projectName")
+        );
         engine::settings::set(fixture.db().conn(), engine::settings::UI_LANGUAGE_KEY, "de")
             .unwrap();
         app.poll().unwrap();
         assert_eq!(app.locale(), UiLocale::De);
         assert!(rendered_text(&app, 70, 18).contains("Einstellungen"));
+        assert_eq!(
+            app.settings_fields
+                .iter()
+                .find(|field| field.key == "project.name")
+                .unwrap()
+                .label,
+            bds_core::i18n::translate(UiLocale::De, "settings.projectName")
+        );
+        app.save_settings().unwrap();
+        assert_eq!(
+            app.status,
+            bds_core::i18n::translate(UiLocale::De, "tui.settingsSaved")
+        );
         assert_eq!(fixture.app(true).locale(), UiLocale::De);
     }
 
@@ -4221,7 +4405,7 @@ mod tests {
     fn command_reports_run_as_tasks_and_only_open_after_completion() {
         let fixture = Fixture::new();
         let mut app = fixture.app(false);
-        app.run_command("metadata diff").unwrap();
+        app.run_command("metadata-diff").unwrap();
         assert!(fixture.host.tasks().running_count() + fixture.host.tasks().pending_count() >= 1);
         wait_for(&mut app, |app| {
             matches!(
@@ -4232,9 +4416,19 @@ mod tests {
                 }
             )
         });
-        assert!(app.status.contains("complete"));
+        assert_eq!(app.status, app.tr("tui.metadataDiffComplete"));
+        let report = engine::metadata_diff::compute_metadata_diff(
+            fixture.db().conn(),
+            &fixture.data_dir,
+            &fixture.project.id,
+        )
+        .unwrap();
+        let applied = (report.diffs.len() + report.orphans.len()).to_string();
         app.handle_input(TuiInput::plain(TuiKey::Enter)).unwrap();
-        assert!(app.status.contains("Applied"));
+        assert_eq!(
+            app.status,
+            app.tr_with("tui.metadataChangesApplied", &[("count", &applied)])
+        );
         assert!(matches!(app.panel, Panel::Welcome));
     }
 
@@ -4245,7 +4439,7 @@ mod tests {
         app.handle_input(TuiInput::plain(TuiKey::Char(':')))
             .unwrap();
         let listed = rendered_text(&app, 90, 24);
-        assert!(listed.contains("metadata diff"));
+        assert!(listed.contains(&app.tr("tui.commandMetadataDiff")));
         assert!(listed.contains("[GUI]"));
         let first = app.prompt.as_ref().unwrap().candidates[0].clone();
         app.handle_input(TuiInput::plain(TuiKey::Down)).unwrap();
@@ -4253,7 +4447,12 @@ mod tests {
         app.handle_input(TuiInput::plain(TuiKey::Esc)).unwrap();
         app.handle_input(TuiInput::plain(TuiKey::Char(':')))
             .unwrap();
-        type_text(&mut app, "meta");
+        let query = app
+            .tr("tui.commandMetadataDiff")
+            .chars()
+            .take(4)
+            .collect::<String>();
+        type_text(&mut app, &query);
         app.handle_input(TuiInput::plain(TuiKey::Enter)).unwrap();
         wait_for(&mut app, |app| {
             matches!(
@@ -4315,7 +4514,7 @@ mod tests {
             remote
                 .items
                 .iter()
-                .any(|item| matches!(item, SidebarItem::Post(_, title) if title == "Untitled"))
+                .any(|item| matches!(item, SidebarItem::Post(_, title) if title == &remote.tr("tui.untitled")))
         );
         let local_render = rendered_text(&local, 60, 15);
         let remote_render = rendered_text(&remote, 60, 15);
@@ -4430,7 +4629,7 @@ mod tests {
         app.handle_input(TuiInput::ctrl(TuiKey::Char('g'))).unwrap();
         server.join().unwrap();
         assert!(app.output.last().unwrap().contains("Sharper title"));
-        assert!(app.status.contains("AI"));
+        assert_eq!(app.status, app.tr("tui.aiSuggestionsAdded"));
     }
 
     #[test]
@@ -4498,7 +4697,11 @@ mod tests {
             .unwrap();
         type_text(&mut local, "Commit from terminal");
         local.handle_input(TuiInput::plain(TuiKey::Enter)).unwrap();
-        wait_for(&mut local, |app| app.status == "Git commit — complete");
+        wait_for(&mut local, |app| {
+            app.items.iter().any(
+                |item| matches!(item, SidebarItem::GitCommit(_, subject) if subject.contains("Commit from terminal")),
+            )
+        });
 
         let mut remote = fixture.app(true);
         remote.set_view(TuiView::Git).unwrap();
