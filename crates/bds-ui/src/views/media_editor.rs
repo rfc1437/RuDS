@@ -9,7 +9,7 @@ use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Media, MediaTranslation};
 
 use crate::app::Message;
-use crate::components::inputs;
+use crate::components::{inputs, popover};
 use crate::i18n::t;
 use crate::views::post_editor::TranslationFlag;
 use crate::views::status_bar;
@@ -235,16 +235,48 @@ pub fn view<'a>(
     data_dir: Option<&Path>,
     ai_enabled: bool,
 ) -> Element<'a, Message> {
+    let mut quick_action_items: Vec<Element<'a, Message>> = Vec::new();
+    if state.mime_type.starts_with("image/") {
+        quick_action_items.push(quick_action_item(
+            t(locale, "editor.aiAnalyze"),
+            MediaEditorMsg::AnalyzeWithAi,
+            ai_enabled,
+        ));
+    }
+    quick_action_items.push(quick_action_item(
+        t(locale, "editor.detectLanguage"),
+        MediaEditorMsg::DetectLanguage,
+        ai_enabled,
+    ));
+    quick_action_items.push(quick_action_item(
+        t(locale, "editor.translate"),
+        MediaEditorMsg::TranslateMetadata,
+        ai_enabled,
+    ));
+    let quick_actions_menu: Element<'a, Message> = container(column(quick_action_items).spacing(4))
+        .padding(8)
+        .style(status_bar::dropdown_bg)
+        .into();
+    let quick_actions_button: Element<'a, Message> =
+        button(text(t(locale, "editor.quickActions")).size(13))
+            .on_press_maybe(
+                ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::ToggleQuickActions)),
+            )
+            .style(inputs::secondary_button)
+            .padding([6, 16])
+            .into();
+    let quick_actions: Element<'a, Message> = popover::popover(
+        quick_actions_button,
+        quick_actions_menu,
+        state.quick_actions_open,
+        Message::MediaEditor(MediaEditorMsg::ToggleQuickActions),
+    )
+    .into();
+
     let header_row = inputs::toolbar(
         vec![text(state.original_name.clone()).size(18).into()],
         vec![
-            button(text(t(locale, "editor.quickActions")).size(13))
-                .on_press_maybe(
-                    ai_enabled.then_some(Message::MediaEditor(MediaEditorMsg::ToggleQuickActions)),
-                )
-                .style(inputs::secondary_button)
-                .padding([6, 16])
-                .into(),
+            quick_actions,
             button(text(t(locale, "editor.replaceFile")).size(13))
                 .on_press(Message::MediaEditor(MediaEditorMsg::ReplaceFile))
                 .style(inputs::secondary_button)
@@ -263,38 +295,7 @@ pub fn view<'a>(
         ],
     );
 
-    let header_menu: Element<'a, Message> = if state.quick_actions_open {
-        let mut items: Vec<Element<'a, Message>> = Vec::new();
-        if state.mime_type.starts_with("image/") {
-            items.push(quick_action_item(
-                t(locale, "editor.aiAnalyze"),
-                MediaEditorMsg::AnalyzeWithAi,
-                ai_enabled,
-            ));
-        }
-        items.push(quick_action_item(
-            t(locale, "editor.detectLanguage"),
-            MediaEditorMsg::DetectLanguage,
-            ai_enabled,
-        ));
-        items.push(quick_action_item(
-            t(locale, "editor.translate"),
-            MediaEditorMsg::TranslateMetadata,
-            ai_enabled,
-        ));
-        row![
-            Space::with_width(Length::Fill),
-            container(column(items).spacing(4))
-                .padding(8)
-                .style(status_bar::dropdown_bg),
-        ]
-        .align_y(iced::Alignment::Start)
-        .into()
-    } else {
-        Space::new(0, 0).into()
-    };
-
-    let header = column![header_row, header_menu].spacing(6);
+    let header = header_row;
 
     // Translation flags bar
     let flags = state.translation_flags();

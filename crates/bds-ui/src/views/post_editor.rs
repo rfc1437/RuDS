@@ -10,7 +10,7 @@ use bds_core::model::{Post, PostStatus, PostTranslation};
 use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
 
 use crate::app::Message;
-use crate::components::inputs;
+use crate::components::{inputs, popover};
 use crate::i18n::t;
 use crate::views::status_bar;
 
@@ -409,9 +409,55 @@ pub fn view<'a>(
     .style(inputs::secondary_button)
     .into();
 
+    let quick_actions_menu: Element<'a, Message> = container(
+        column![
+            quick_action_item(
+                locale,
+                t(locale, "editor.aiAnalyze"),
+                PostEditorMsg::AnalyzeWithAi,
+                ai_enabled
+            ),
+            quick_action_item(
+                locale,
+                t(locale, "editor.suggestTaxonomy"),
+                PostEditorMsg::AnalyzeTaxonomy,
+                ai_enabled
+            ),
+            quick_action_item(
+                locale,
+                t(locale, "editor.translate"),
+                PostEditorMsg::Translate,
+                ai_enabled
+            ),
+            quick_action_item(
+                locale,
+                t(locale, "editor.detectLanguage"),
+                PostEditorMsg::DetectLanguage,
+                ai_enabled
+            ),
+            quick_action_item(
+                locale,
+                t(locale, "editor.addGalleryImages"),
+                PostEditorMsg::AddGalleryImages,
+                true
+            ),
+        ]
+        .spacing(4),
+    )
+    .padding(8)
+    .style(status_bar::dropdown_bg)
+    .into();
+    let quick_actions: Element<'a, Message> = popover::popover(
+        quick_actions_button,
+        quick_actions_menu,
+        state.quick_actions_open,
+        Message::PostEditor(PostEditorMsg::ToggleQuickActions),
+    )
+    .into();
+
     let mut header_action_items: Vec<Element<'a, Message>> = vec![
         status_badge(&state.status),
-        quick_actions_button,
+        quick_actions,
         button(
             text(t(locale, "common.save"))
                 .size(13)
@@ -478,54 +524,7 @@ pub fn view<'a>(
     .align_y(iced::Alignment::Center)
     .width(Length::Fill);
 
-    let header_menu: Element<'a, Message> = if state.quick_actions_open {
-        row![
-            Space::with_width(Length::Fill),
-            container(
-                column![
-                    quick_action_item(
-                        locale,
-                        t(locale, "editor.aiAnalyze"),
-                        PostEditorMsg::AnalyzeWithAi,
-                        ai_enabled
-                    ),
-                    quick_action_item(
-                        locale,
-                        t(locale, "editor.suggestTaxonomy"),
-                        PostEditorMsg::AnalyzeTaxonomy,
-                        ai_enabled
-                    ),
-                    quick_action_item(
-                        locale,
-                        t(locale, "editor.translate"),
-                        PostEditorMsg::Translate,
-                        ai_enabled
-                    ),
-                    quick_action_item(
-                        locale,
-                        t(locale, "editor.detectLanguage"),
-                        PostEditorMsg::DetectLanguage,
-                        ai_enabled
-                    ),
-                    quick_action_item(
-                        locale,
-                        t(locale, "editor.addGalleryImages"),
-                        PostEditorMsg::AddGalleryImages,
-                        true
-                    ),
-                ]
-                .spacing(4)
-            )
-            .padding(8)
-            .style(status_bar::dropdown_bg),
-        ]
-        .align_y(iced::Alignment::Start)
-        .into()
-    } else {
-        Space::new(0, 0).into()
-    };
-
-    let header = inputs::card(column![header_row, header_menu].spacing(6)).padding(10);
+    let header = inputs::card(header_row).padding(10);
 
     // ── Collapsible Metadata Section ──
     let meta_toggle_label = if state.metadata_expanded {
