@@ -259,7 +259,6 @@ sidebar-tagsHeader = Tag
 sidebar-drafts = Bozze
 sidebar-published = Pubblicati
 sidebar-archived = Archiviati
-sidebar-loadMore = Carica di più…
 language-en = Inglese
 language-de = Tedesco
 language-fr = Francese

@@ -26,6 +26,8 @@ use "./i18n.allium" as i18n
 
 config {
     default_sidebar_view: String = "posts"
+    sidebar_page_size: Integer = 200
+    sidebar_auto_load_threshold: Decimal = 0.9
 }
 
 -- ─── Shared patterns ─────────────────────────────────────────
@@ -127,7 +129,7 @@ value PostsView {
     draft_section: List<PostListItem>
     published_section: List<PostListItem>
     archived_section: List<PostListItem>
-    has_more: Boolean                   -- pagination, 500 per batch
+    has_more: Boolean                   -- pagination, config.sidebar_page_size per batch
 }
 
 surface PostsViewSurface {
@@ -144,6 +146,10 @@ surface PostsViewSurface {
         view.published_section.count
         view.archived_section.count
         view.has_more
+
+    @guarantee AutomaticPagination
+        -- When scrolling reaches config.sidebar_auto_load_threshold and more items exist,
+        -- the next batch loads in the background. At most one batch loads at a time.
 }
 
 -- Drafts section always shows all drafts regardless of filters.
@@ -216,6 +222,7 @@ value MediaView {
     calendar_filter: CalendarFilter?
     tag_filter: List<String>            -- tags only, no categories for media
     grid: List<MediaGridItem>           -- grid layout (not list)
+    has_more: Boolean
 }
 
 surface MediaViewSurface {
@@ -227,6 +234,11 @@ surface MediaViewSurface {
         view.calendar_filter when view.calendar_filter != null
         view.tag_filter
         view.grid.count
+        view.has_more
+
+    @guarantee AutomaticPagination
+        -- When scrolling reaches config.sidebar_auto_load_threshold and more items exist,
+        -- the next batch loads in the background. At most one batch loads at a time.
 }
 
 value MediaGridItem {

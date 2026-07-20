@@ -825,23 +825,6 @@ pub fn view(
                         top_items.push(make_post_item(p));
                     }
                 }
-
-                // "Load More" button
-                if posts_has_more {
-                    top_items.push(Space::with_height(4.0).into());
-                    top_items.push(
-                        button(
-                            text(t(locale, "sidebar.loadMore"))
-                                .size(11)
-                                .shaping(Shaping::Advanced),
-                        )
-                        .on_press(Message::LoadMorePosts)
-                        .padding([4, 8])
-                        .width(Length::Fill)
-                        .style(filter_button_style)
-                        .into(),
-                    );
-                }
             }
 
             iced::widget::Column::with_children(top_items)
@@ -980,23 +963,6 @@ pub fn view(
                     })
                     .collect();
                 top_items.extend(items);
-
-                // "Load More" button
-                if media_has_more {
-                    top_items.push(Space::with_height(4.0).into());
-                    top_items.push(
-                        button(
-                            text(t(locale, "sidebar.loadMore"))
-                                .size(11)
-                                .shaping(Shaping::Advanced),
-                        )
-                        .on_press(Message::LoadMoreMedia)
-                        .padding([4, 8])
-                        .width(Length::Fill)
-                        .style(filter_button_style)
-                        .into(),
-                    );
-                }
             }
 
             iced::widget::Column::with_children(top_items)
@@ -1254,15 +1220,21 @@ pub fn view(
         .padding(12);
 
     // layout.allium: sidebar width is resizable, passed as parameter
-    container(
-        scrollable(content)
-            .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
-            .style(inputs::scrollable_style),
-    )
-    .width(Length::Fixed(width))
-    .height(Length::Fill)
-    .style(sidebar_style)
-    .into()
+    let mut scrolling = scrollable(content)
+        .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+        .style(inputs::scrollable_style);
+    if matches!(sidebar_view, SidebarView::Posts | SidebarView::Pages) && posts_has_more
+        || sidebar_view == SidebarView::Media && media_has_more
+    {
+        scrolling =
+            scrolling.on_scroll(|viewport| Message::SidebarScrolled(viewport.relative_offset().y));
+    }
+
+    container(scrolling)
+        .width(Length::Fixed(width))
+        .height(Length::Fill)
+        .style(sidebar_style)
+        .into()
 }
 
 #[cfg(test)]

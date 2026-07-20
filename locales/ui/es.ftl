@@ -259,7 +259,6 @@ sidebar-tagsHeader = Etiquetas
 sidebar-drafts = Borradores
 sidebar-published = Publicados
 sidebar-archived = Archivados
-sidebar-loadMore = Cargar más…
 language-en = Inglés
 language-de = Alemán
 language-fr = Francés

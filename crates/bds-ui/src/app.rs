@@ -347,8 +347,7 @@ pub enum Message {
         items: Vec<Media>,
         thumbs: HashMap<String, Option<std::path::PathBuf>>,
     },
-    LoadMorePosts,
-    LoadMoreMedia,
+    SidebarScrolled(f32),
 
     CreatePost,
     CreatePage,
@@ -886,6 +885,8 @@ pub struct BdsApp {
     sidebar_media_thumbs: HashMap<String, Option<std::path::PathBuf>>,
     sidebar_posts_has_more: bool,
     sidebar_media_has_more: bool,
+    sidebar_posts_loading_more: bool,
+    sidebar_media_loading_more: bool,
 
     // Sidebar filters (per sidebar_views.allium PostsView / MediaView)
     post_filter: PostFilter,
@@ -1089,6 +1090,8 @@ impl BdsApp {
                 sidebar_media_thumbs: HashMap::new(),
                 sidebar_posts_has_more: false,
                 sidebar_media_has_more: false,
+                sidebar_posts_loading_more: false,
+                sidebar_media_loading_more: false,
                 post_filter: PostFilter::default(),
                 page_filter: PostFilter::default(),
                 media_filter: MediaFilter::default(),
@@ -1180,6 +1183,8 @@ impl BdsApp {
             sidebar_media_thumbs: HashMap::new(),
             sidebar_posts_has_more: false,
             sidebar_media_has_more: false,
+            sidebar_posts_loading_more: false,
+            sidebar_media_loading_more: false,
             post_filter: PostFilter::default(),
             page_filter: PostFilter::default(),
             media_filter: MediaFilter::default(),
@@ -2702,8 +2707,7 @@ impl BdsApp {
             | Message::SidebarMediaLoaded { .. }
             | Message::SidebarPostsAppended(_)
             | Message::SidebarMediaAppended { .. }
-            | Message::LoadMorePosts
-            | Message::LoadMoreMedia) => self.handle_sidebar_message(message),
+            | Message::SidebarScrolled(_)) => self.handle_sidebar_message(message),
 
             // ── Modal ──
             Message::ShowModal(state) => {

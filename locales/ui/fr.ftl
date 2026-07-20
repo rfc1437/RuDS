@@ -259,7 +259,6 @@ sidebar-tagsHeader = Étiquettes
 sidebar-drafts = Brouillons
 sidebar-published = Publiés
 sidebar-archived = Archivés
-sidebar-loadMore = Charger plus…
 language-en = Anglais
 language-de = Allemand
 language-fr = Français

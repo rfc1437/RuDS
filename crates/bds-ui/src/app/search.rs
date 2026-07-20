@@ -3,8 +3,12 @@ use chrono::Datelike;
 
 impl BdsApp {
     /// Number of items to load per sidebar page.
-    /// Matches the TypeScript app's limit of 500 for initial load.
-    pub(super) const SIDEBAR_PAGE_SIZE: i64 = 500;
+    pub(super) const SIDEBAR_PAGE_SIZE: i64 = 200;
+    const SIDEBAR_AUTO_LOAD_THRESHOLD: f32 = 0.9;
+
+    fn should_auto_load_more(relative_y: f32, has_more: bool, loading: bool) -> bool {
+        relative_y >= Self::SIDEBAR_AUTO_LOAD_THRESHOLD && has_more && !loading
+    }
 
     /// Refresh only sidebar posts using current filter state (async).
     pub(super) fn refresh_sidebar_posts(&mut self) -> Task<Message> {
@@ -94,9 +98,13 @@ impl BdsApp {
 
     /// Load more posts (append to existing sidebar data).
     pub(super) fn load_more_sidebar_posts(&mut self) -> Task<Message> {
+        if self.sidebar_posts_loading_more || !self.sidebar_posts_has_more {
+            return Task::none();
+        }
         let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
             return Task::none();
         };
+        self.sidebar_posts_loading_more = true;
 
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
@@ -378,9 +386,13 @@ impl BdsApp {
 
     /// Load more media (append to existing sidebar data).
     pub(super) fn load_more_sidebar_media(&mut self) -> Task<Message> {
+        if self.sidebar_media_loading_more || !self.sidebar_media_has_more {
+            return Task::none();
+        }
         let (Some(_), Some(project)) = (&self.db, &self.active_project) else {
             return Task::none();
         };
+        self.sidebar_media_loading_more = true;
 
         let db_path = self.db_path.clone();
         let project_id = project.id.clone();
@@ -617,12 +629,14 @@ impl BdsApp {
 
             // ── Async sidebar data ──
             Message::SidebarPostsLoaded(mut posts) => {
+                self.sidebar_posts_loading_more = false;
                 self.sidebar_posts_has_more = posts.len() > Self::SIDEBAR_PAGE_SIZE as usize;
                 posts.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
                 self.sidebar_posts = posts;
                 Task::none()
             }
             Message::SidebarMediaLoaded { mut items, thumbs } => {
+                self.sidebar_media_loading_more = false;
                 self.sidebar_media_has_more = items.len() > Self::SIDEBAR_PAGE_SIZE as usize;
                 items.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
                 self.sidebar_media = items;
@@ -630,21 +644,60 @@ impl BdsApp {
                 Task::none()
             }
             Message::SidebarPostsAppended(mut posts) => {
+                self.sidebar_posts_loading_more = false;
                 self.sidebar_posts_has_more = posts.len() > Self::SIDEBAR_PAGE_SIZE as usize;
                 posts.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
                 self.sidebar_posts.extend(posts);
                 Task::none()
             }
             Message::SidebarMediaAppended { mut items, thumbs } => {
+                self.sidebar_media_loading_more = false;
                 self.sidebar_media_has_more = items.len() > Self::SIDEBAR_PAGE_SIZE as usize;
                 items.truncate(Self::SIDEBAR_PAGE_SIZE as usize);
                 self.sidebar_media.extend(items);
                 self.sidebar_media_thumbs.extend(thumbs);
                 Task::none()
             }
-            Message::LoadMorePosts => self.load_more_sidebar_posts(),
-            Message::LoadMoreMedia => self.load_more_sidebar_media(),
+            Message::SidebarScrolled(relative_y) => match self.sidebar_view {
+                SidebarView::Posts | SidebarView::Pages
+                    if Self::should_auto_load_more(
+                        relative_y,
+                        self.sidebar_posts_has_more,
+                        self.sidebar_posts_loading_more,
+                    ) =>
+                {
+                    self.load_more_sidebar_posts()
+                }
+                SidebarView::Media
+                    if Self::should_auto_load_more(
+                        relative_y,
+                        self.sidebar_media_has_more,
+                        self.sidebar_media_loading_more,
+                    ) =>
+                {
+                    self.load_more_sidebar_media()
+                }
+                _ => Task::none(),
+            },
             _ => unreachable!("non-sidebar message routed to sidebar handler"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BdsApp;
+
+    #[test]
+    fn sidebar_page_size_is_200() {
+        assert_eq!(BdsApp::SIDEBAR_PAGE_SIZE, 200);
+    }
+
+    #[test]
+    fn sidebar_auto_loads_once_near_the_end() {
+        assert!(!BdsApp::should_auto_load_more(0.89, true, false));
+        assert!(BdsApp::should_auto_load_more(0.9, true, false));
+        assert!(!BdsApp::should_auto_load_more(1.0, false, false));
+        assert!(!BdsApp::should_auto_load_more(1.0, true, true));
     }
 }
