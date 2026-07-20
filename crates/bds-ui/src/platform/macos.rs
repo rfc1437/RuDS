@@ -2,10 +2,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSApplication, NSApplicationDelegate};
-use objc2_foundation::{NSArray, NSNotification, NSObject, NSObjectProtocol, NSString, NSURL};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSObject, NSObjectProtocol};
 
 use crate::app::Message;
 
@@ -16,81 +14,83 @@ pub enum LifecycleEvent {
     UrlOpen(String),
 }
 
-/// Ivars for the delegate — holds the sender side of the lifecycle channel.
+/// Ivars for the Apple-event handler — holds the lifecycle sender.
 #[derive(Debug)]
-pub struct DelegateIvars {
+pub struct HandlerIvars {
     tx: mpsc::Sender<LifecycleEvent>,
 }
 
 define_class!(
-    // SAFETY: NSObject has no subclassing requirements. BdsAppDelegate does not impl Drop.
+    // SAFETY: NSObject has no subclassing requirements. BdsAppleEventHandler does not impl Drop.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "BdsAppDelegate"]
-    #[ivars = DelegateIvars]
-    pub struct BdsAppDelegate;
+    #[name = "BdsAppleEventHandler"]
+    #[ivars = HandlerIvars]
+    pub struct BdsAppleEventHandler;
 
     // SAFETY: NSObjectProtocol declares no additional safety requirements.
-    unsafe impl NSObjectProtocol for BdsAppDelegate {}
+    unsafe impl NSObjectProtocol for BdsAppleEventHandler {}
 
-    // SAFETY: Every exported selector below uses the exact AppKit delegate signature and the
-    // class is main-thread-only, as required by NSApplicationDelegate.
-    unsafe impl NSApplicationDelegate for BdsAppDelegate {
-        #[unsafe(method(applicationDidFinishLaunching:))]
-        fn did_finish_launching(&self, _notification: &NSNotification) {
-            // App is already running via Iced; nothing to do here.
-        }
-
-        #[unsafe(method(application:openFile:))]
-        fn application_open_file(&self, _sender: &NSApplication, filename: &NSString) -> bool {
-            let path = PathBuf::from(filename.to_string());
-            let _ = self.ivars().tx.send(LifecycleEvent::FileOpen(path));
-            true
-        }
-
-        #[unsafe(method(application:openURLs:))]
-        fn application_open_urls(&self, _sender: &NSApplication, urls: &NSArray<NSURL>) {
-            for i in 0..urls.len() {
-                if let Some(url) = urls.objectAtIndex(i).absoluteString() {
-                    let _ = self
-                        .ivars()
-                        .tx
-                        .send(LifecycleEvent::UrlOpen(url.to_string()));
-                }
+    impl BdsAppleEventHandler {
+        #[unsafe(method(handleGetURLEvent:withReplyEvent:))]
+        fn handle_get_url_event(
+            &self,
+            event: &NSAppleEventDescriptor,
+            _reply: &NSAppleEventDescriptor,
+        ) {
+            if let Some(url) = event
+                .paramDescriptorForKeyword(four_char_code(*b"----"))
+                .and_then(|descriptor| descriptor.stringValue())
+            {
+                let _ = self
+                    .ivars()
+                    .tx
+                    .send(LifecycleEvent::UrlOpen(url.to_string()));
             }
         }
     }
 );
 
-impl BdsAppDelegate {
+impl BdsAppleEventHandler {
     fn new(mtm: MainThreadMarker, tx: mpsc::Sender<LifecycleEvent>) -> Retained<Self> {
         let this = Self::alloc(mtm);
-        let this = this.set_ivars(DelegateIvars { tx });
+        let this = this.set_ivars(HandlerIvars { tx });
         // SAFETY: `this` has initialized ivars and NSObject's `init` accepts ownership of the
         // allocated receiver, returning the retained initialized object.
         unsafe { msg_send![super(this), init] }
     }
 }
 
-/// Create the macOS lifecycle channel and wire the native delegate.
-///
-/// Returns `(Retained<BdsAppDelegate>, Receiver)`. The delegate must be kept alive
-/// for the lifetime of the application (drop it and the callbacks stop).
+const fn four_char_code(bytes: [u8; 4]) -> u32 {
+    u32::from_be_bytes(bytes)
+}
+
 pub fn lifecycle_channel() -> (mpsc::Sender<LifecycleEvent>, mpsc::Receiver<LifecycleEvent>) {
     mpsc::channel()
 }
 
-/// Install the native Objective-C delegate on NSApplication, wiring it to the given sender.
+/// Install a Get URL Apple-event handler without replacing Winit's application delegate.
 ///
-/// Must be called from the main thread after the Iced application is running.
-/// Returns the retained delegate (caller must keep it alive).
-pub fn install_delegate(tx: mpsc::Sender<LifecycleEvent>) -> Option<Retained<BdsAppDelegate>> {
+/// Must be called after Iced has created its event loop. The returned handler must remain alive.
+pub fn install_lifecycle_handler() -> Option<(
+    Retained<BdsAppleEventHandler>,
+    mpsc::Receiver<LifecycleEvent>,
+)> {
     let mtm = MainThreadMarker::new()?;
-    let delegate = BdsAppDelegate::new(mtm, tx);
-    let app = NSApplication::sharedApplication(mtm);
-    let object = ProtocolObject::from_ref(&*delegate);
-    app.setDelegate(Some(object));
-    Some(delegate)
+    let (tx, receiver) = lifecycle_channel();
+    let handler = BdsAppleEventHandler::new(mtm, tx);
+    let manager = NSAppleEventManager::sharedAppleEventManager();
+    // SAFETY: The selector is implemented above with the two Apple-event descriptor arguments
+    // required by NSAppleEventManager. `handler` is retained by the caller for the app lifetime.
+    unsafe {
+        manager.setEventHandler_andSelector_forEventClass_andEventID(
+            &handler,
+            sel!(handleGetURLEvent:withReplyEvent:),
+            four_char_code(*b"GURL"),
+            four_char_code(*b"GURL"),
+        );
+    }
+    Some((handler, receiver))
 }
 
 /// Poll the macOS lifecycle receiver for the next event and map to a Message.
@@ -99,5 +99,32 @@ pub fn poll_lifecycle(receiver: &mpsc::Receiver<LifecycleEvent>) -> Option<Messa
         Ok(LifecycleEvent::FileOpen(path)) => Some(Message::FileOpenRequested(path)),
         Ok(LifecycleEvent::UrlOpen(url)) => Some(Message::UrlOpenRequested(url)),
         Err(_) => None,
+    }
+}
+
+pub fn drain_lifecycle(receiver: &mpsc::Receiver<LifecycleEvent>) -> Vec<Message> {
+    std::iter::from_fn(|| poll_lifecycle(receiver)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drains_cold_start_events_in_arrival_order() {
+        let (sender, receiver) = lifecycle_channel();
+        sender
+            .send(LifecycleEvent::UrlOpen("ruds://new-post?title=One".into()))
+            .unwrap();
+        sender
+            .send(LifecycleEvent::UrlOpen("ruds://new-post?title=Two".into()))
+            .unwrap();
+
+        let messages = drain_lifecycle(&receiver);
+        assert!(matches!(
+            &messages[..],
+            [Message::UrlOpenRequested(one), Message::UrlOpenRequested(two)]
+                if one.ends_with("One") && two.ends_with("Two")
+        ));
     }
 }

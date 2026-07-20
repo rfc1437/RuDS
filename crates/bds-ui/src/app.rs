@@ -956,6 +956,10 @@ pub struct BdsApp {
     _menu_bar: Option<muda::Menu>,
     menu_registry: MenuRegistry,
     native_edit_commands: native_edit::EditCommandQueue,
+    #[cfg(target_os = "macos")]
+    _lifecycle_handler: Option<objc2::rc::Retained<crate::platform::macos::BdsAppleEventHandler>>,
+    #[cfg(target_os = "macos")]
+    lifecycle_receiver: Option<std::sync::mpsc::Receiver<crate::platform::macos::LifecycleEvent>>,
 
     // i18n
     ui_locale: UiLocale,
@@ -1105,6 +1109,11 @@ impl BdsApp {
             .as_ref()
             .and_then(|db| engine::chat::list_conversations(db.conn()).ok())
             .unwrap_or_default();
+        #[cfg(target_os = "macos")]
+        let (lifecycle_handler, lifecycle_receiver) =
+            crate::platform::macos::install_lifecycle_handler()
+                .map(|(handler, receiver)| (Some(handler), Some(receiver)))
+                .unwrap_or((None, None));
 
         (
             Self {
@@ -1153,6 +1162,10 @@ impl BdsApp {
                 _menu_bar: Some(menu_bar),
                 menu_registry: registry,
                 native_edit_commands: native_edit::command_queue(),
+                #[cfg(target_os = "macos")]
+                _lifecycle_handler: lifecycle_handler,
+                #[cfg(target_os = "macos")]
+                lifecycle_receiver,
                 ui_locale: locale,
                 content_language: "en".to_string(),
                 blog_languages: Vec::new(),
@@ -1250,6 +1263,10 @@ impl BdsApp {
             _menu_bar: None,
             menu_registry: MenuRegistry::empty(),
             native_edit_commands: native_edit::command_queue(),
+            #[cfg(target_os = "macos")]
+            _lifecycle_handler: None,
+            #[cfg(target_os = "macos")]
+            lifecycle_receiver: None,
             ui_locale: UiLocale::En,
             content_language: "en".to_string(),
             blog_languages: Vec::new(),
@@ -2423,6 +2440,15 @@ impl BdsApp {
                     .into_iter()
                     .map(|action| self.dispatch_menu_action(action))
                     .collect::<Vec<_>>();
+                #[cfg(target_os = "macos")]
+                if let Some(receiver) = &self.lifecycle_receiver {
+                    tasks.push(
+                        crate::platform::macos::drain_lifecycle(receiver)
+                            .into_iter()
+                            .map(Task::done)
+                            .fold(Task::none(), Task::chain),
+                    );
+                }
                 tasks.push(self.reload_changed_documentation());
                 Task::batch(tasks)
             }
@@ -2576,6 +2602,8 @@ impl BdsApp {
                     for error in result.transform_errors {
                         self.add_output(&error);
                     }
+                    self.sidebar_view = SidebarView::Posts;
+                    self.sidebar_visible = true;
                     let tab = Tab {
                         id: result.post.id.clone(),
                         tab_type: TabType::Post,
@@ -9446,6 +9474,7 @@ mod tests {
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
     use crate::state::ToastLevel;
+    use crate::state::navigation::SidebarView;
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::state::tabs::{Tab, TabType};
     use crate::views::chat_view::ChatEditorState;
@@ -9463,7 +9492,9 @@ mod tests {
     use bds_core::db::queries::project::insert_project;
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
-    use bds_core::engine::{ai, chat, media, menu, meta, post, script, template, wordpress_import};
+    use bds_core::engine::{
+        ai, blogmark, chat, media, menu, meta, post, script, template, wordpress_import,
+    };
     use bds_core::i18n::UiLocale;
     use bds_core::model::{ChatRole, DomainEvent, Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
@@ -9560,6 +9591,42 @@ mod tests {
         assert!(remote_error_closes_connection("connection_lost"));
         assert!(!remote_error_closes_connection("sync_watcher_error"));
         assert!(!remote_error_closes_connection("engine_error"));
+    }
+
+    #[test]
+    fn imported_blogmark_activates_posts_and_opens_its_editor() {
+        let (db, project, temp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            temp.path(),
+            &project.id,
+            "Saved From Browser",
+            Some("[Saved From Browser](https://example.com/)"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        app.sidebar_view = SidebarView::Settings;
+        app.sidebar_visible = false;
+        let task_id = app.task_manager.submit("Importing blogmark");
+
+        let _ = app.update(Message::BlogmarkImported {
+            task_id,
+            result: Ok(blogmark::BlogmarkImportResult {
+                post: created.clone(),
+                toasts: Vec::new(),
+                transform_errors: Vec::new(),
+            }),
+        });
+
+        assert_eq!(app.sidebar_view, SidebarView::Posts);
+        assert!(app.sidebar_visible);
+        assert_eq!(app.active_tab.as_deref(), Some(created.id.as_str()));
+        assert!(app.post_editors.contains_key(&created.id));
     }
 
     #[test]
