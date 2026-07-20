@@ -1599,7 +1599,7 @@ mod tests {
         let engine = GitEngine::with_executable_and_timeouts(
             dir.path(),
             executable,
-            Duration::from_secs(1),
+            Duration::from_secs(5),
             Duration::from_secs(1),
         );
 

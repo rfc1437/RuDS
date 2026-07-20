@@ -1,4 +1,5 @@
 use std::fmt::Write as _;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -72,6 +73,8 @@ pub enum Command {
         #[command(subcommand)]
         command: ProjectCommand,
     },
+    /// Start the authenticated headless SSH server.
+    Server(ServerArgs),
     /// Start interactive TUI mode (normally intercepted by the packaged launcher).
     Tui,
     /// Run an enabled utility Lua script from the active project.
@@ -82,6 +85,22 @@ pub enum Command {
     },
     /// Install this packaged CLI in ~/.local/bin.
     Install,
+}
+
+#[derive(Debug, Args, Default)]
+pub struct ServerArgs {
+    /// SSH listen address. Defaults to loopback; external access must be explicit.
+    #[arg(long)]
+    pub bind: Option<IpAddr>,
+    /// SSH listen port.
+    #[arg(long)]
+    pub port: Option<u16>,
+    /// Application database path.
+    #[arg(long)]
+    pub database: Option<PathBuf>,
+    /// Private application data directory containing SSH key material.
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -257,10 +276,8 @@ fn execute(command: Command, context: &RunContext, airplane: bool) -> Result<Com
     if matches!(command, Command::Install) {
         return install_launcher(context);
     }
-    if matches!(command, Command::Tui) {
-        bail!(
-            "the packaged bds-cli launcher starts TUI mode directly; a direct CLI invocation cannot own the terminal"
-        );
+    if matches!(command, Command::Tui | Command::Server(_)) {
+        bail!("server and TUI modes are started directly by the native bds-cli entry point");
     }
 
     let db = open_database(&context.database_path)?;
@@ -277,7 +294,7 @@ fn execute(command: Command, context: &RunContext, airplane: bool) -> Result<Com
         Command::Config { command } => config(&db, command),
         Command::Project { command } => project(&db, command),
         Command::Lua { script, args } => run_lua(&db, &script, &args, airplane),
-        Command::Tui | Command::Install => unreachable!(),
+        Command::Server(_) | Command::Tui | Command::Install => unreachable!(),
     }
 }
 
@@ -1143,6 +1160,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Gallery(_) => "gallery",
         Command::Config { .. } => "config",
         Command::Project { .. } => "project",
+        Command::Server(_) => "server",
         Command::Tui => "tui",
         Command::Lua { .. } => "lua",
         Command::Install => "install",
@@ -1223,10 +1241,24 @@ mod tests {
         let help = String::from_utf8(help).unwrap();
         for command in [
             "rebuild", "repair", "render", "upload", "push", "pull", "post", "media", "gallery",
-            "config", "project", "tui", "lua", "install",
+            "config", "project", "server", "tui", "lua", "install",
         ] {
             assert!(help.contains(command), "missing {command} from help");
         }
+        let server = Cli::try_parse_from([
+            "bds-cli",
+            "server",
+            "--bind",
+            "127.0.0.2",
+            "--port",
+            "2233",
+            "--database",
+            "/tmp/bds.db",
+            "--data-dir",
+            "/tmp/bds",
+        ])
+        .unwrap();
+        assert!(matches!(server.command, Command::Server(_)));
         assert!(Cli::try_parse_from(["bds-cli", "unknown"]).is_err());
         assert!(Cli::try_parse_from(["bds-cli", "render", "--incremental", "--force"]).is_err());
         assert!(Cli::try_parse_from(["bds-cli", "repair", "unknown"]).is_err());
@@ -1511,9 +1543,11 @@ mod tests {
         )
         .unwrap();
         let target = fixture.home_dir.join(".local/bin/bds-cli");
-        assert_eq!(
-            target.canonicalize().unwrap(),
-            executable.canonicalize().unwrap()
+        assert!(!target.is_symlink());
+        assert!(
+            std::fs::read_to_string(target)
+                .unwrap()
+                .contains(executable.canonicalize().unwrap().to_str().unwrap())
         );
     }
 }

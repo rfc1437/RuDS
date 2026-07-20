@@ -2,3 +2,19 @@
 bundle-macos = "packager --release --packages bds-ui --formats app --formats dmg"
 bundle-windows = "packager --release --packages bds-ui --formats nsis"
 bundle-linux = "packager --release --packages bds-ui --formats deb --formats appimage"
+
+[target.'cfg(target_os = "macos")']
+rustflags = [
+    "-C", "prefer-dynamic",
+    "-C", "link-arg=-mmacosx-version-min=26.0",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../Resources",
+]
+
+[target.'cfg(target_os = "linux")']
+rustflags = [
+    "-C", "prefer-dynamic",
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN/../lib/bds-ui",
+]
+
+[target.'cfg(target_os = "windows")']
+rustflags = ["-C", "prefer-dynamic"]

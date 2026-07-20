@@ -4,7 +4,7 @@
 
 Extensions add migration, collaboration, automation, alternate clients, and advanced discovery on top of the core blogging workflow. They must reuse core engines and formats, remain reachable through real UI or automation surfaces, and preserve airplane-mode and localization rules.
 
-Status describes the current source code as of 2026-07-19. Core one-shot AI, publishing, rendering, and integrity work is tracked in [RUST_PLAN_CORE.md](RUST_PLAN_CORE.md).
+Status describes the current source code as of 2026-07-20. Core one-shot AI, publishing, rendering, and integrity work is tracked in [RUST_PLAN_CORE.md](RUST_PLAN_CORE.md).
 
 ## Current Extension Status
 
@@ -44,7 +44,7 @@ Done:
 
 ### Embeddings, semantic search, and duplicates — Done
 
-- Lazy, locally cached `multilingual-e5-small` inference with 384-dimensional mean-pooled, normalized vectors and native Core ML acceleration on macOS or DirectML on Windows.
+- Lazy, locally cached `multilingual-e5-small` inference with 384-dimensional mean-pooled, normalized vectors and statically linked ONNX Runtime inside the shared core library, with native Core ML acceleration on macOS or DirectML on Windows.
 - Project-isolated USearch HNSW indexes with SQLite BLOB vectors as the recovery source, debounced persistence, lifecycle updates, rebuild/backfill, and CLI repair.
 - Semantic sidebar search, link ranking, editor tag suggestions, and the bDS2-compatible `bds.embeddings` Lua API.
 - Localized duplicate review with exact-match detection, 500-pair pagination, canonical single/batch dismissal, and post navigation.
@@ -74,9 +74,9 @@ Done:
 Done:
 
 - Domain event bus from `events.allium` for desktop, CLI, TUI, server, and future remote clients, including deterministic subscriptions, project scope, and persisted CLI notification consumption/pruning.
-- Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects/settings, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, and guarded launcher installation.
+- Native `bds-cli` with Clap help/error handling, optional JSON output, shared application paths/database/projects/settings, full and incremental rebuild, derived-data repair, full/targeted/forced generation, publishing, fast-forward Git sync, post/media/gallery creation, offline/local AI routing and translation, project/config operations, sandboxed utility Lua execution, `server`/`tui` boot modes, and guarded launcher installation.
 - CLI process and dispatch tests use temporary databases/projects; CLI mutations persist deduplicated desktop notifications and imported filesystem metadata survives rebuild.
-- Settings → Data exposes the same localized packaged-launcher installer as `bds-cli install`.
+- Settings → Data exposes the same localized packaged-launcher installer as `bds-cli install`; its forwarding launcher executes the packaged CLI in place beside the shared runtime.
 - MCP exposes the complete `bds://` resource set and typed read/search/count tools through packaged stdio and stateless localhost-only HTTP transports with Origin/Host validation and CORS.
 - Every MCP write is an inert persisted proposal until one desktop approval applies it exactly once through the shared post/media/script/template engines; rejection, expiry, concurrent resolution, result state, and normal domain events are covered.
 - Settings → MCP provides localized server enablement/status/endpoint, full proposal review controls, and opt-in guarded Claude Code and GitHub Copilot configuration without secrets.
@@ -93,11 +93,13 @@ Done:
 
 Done:
 
-- Desktop/server/TUI boot selection occurs before desktop initialization; the dedicated `bds-server` binary never depends on or starts the native UI.
+- Desktop/server/TUI boot selection occurs before desktop initialization. `bds-cli server` starts the dedicated headless mode; no standalone `bds-server` executable is built or distributed.
 - The headless host reuses the application database, project registry, `CoreHost` service operations, task manager, MCP loopback endpoint, ordered domain-event bus, and CLI-notification watcher.
 - A loopback-by-default Russh daemon generates and reuses a restrictive RSA host key, validates private directory/file modes, reloads `authorized_keys` for every authentication, and supports explicit external binding only.
 - Versioned native remote-project sessions provide protocol negotiation, server locale, project selection, shared engine calls, replay-safe request IDs, ordered domain events, task snapshots, reconnect, concurrent clients, and graceful shutdown.
 - The desktop uses a restrictive generated Ed25519 identity and TOFU `known_hosts`, with localized File-menu connect/project selection/open/failure/disconnect states. SSH shell channels host server-side terminal sessions and direct forwarding is restricted to the server-owned loopback endpoint.
+- Packaged executables dynamically share `bds-core`, `bds-server`, and the matching Rust standard library. ONNX Runtime remains statically linked into `bds-core`, avoiding both executable duplication and a separately managed ONNX binary.
+- Local macOS packages use non-hardened ad-hoc signatures; Developer ID signing and notarization are optional public-release steps rather than build requirements.
 
 ### Terminal UI — Complete
 

@@ -19,7 +19,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Headless `bds-cli` automation for rebuild/repair/render, publishing and Git sync, post/media/gallery creation, shared settings/projects, utility Lua tasks, JSON I/O, airplane-mode AI routing, and guarded launcher installation from Settings → Data or `bds-cli install`.
 - Local MCP automation over stdio or a localhost-only stateless HTTP endpoint, with project resources, read/search/count tools, inert write proposals, explicit desktop approval, and opt-in Claude Code/Copilot configuration.
 - A full Ratatui terminal workspace, available locally through `bds-cli tui`/`BDS_MODE=tui` and remotely through authenticated SSH shell sessions, with shared post/template/script editing and publishing, project/search/command overlays, settings, tags, Git, reports, task progress, live multi-client updates, locale changes, and airplane-mode AI gating.
-- Headless `bds-server` hosting the shared application engines over a loopback-by-default, public-key-only SSH service, with restrictive private key material, live authorization updates, terminal-session transport, CLI-change synchronization, ordered domain/task events, and native desktop remote-project selection.
+- `bds-cli server` hosting the shared application engines over a loopback-by-default, public-key-only SSH service, with restrictive private key material, live authorization updates, terminal-session transport, CLI-change synchronization, ordered domain/task events, and native desktop remote-project selection.
 - Markdown/Liquid rendering with native macros, multilingual routes, feeds, sitemap, Pagefind, and incremental site generation through cancellable section task groups.
 - Local preview in the app or system browser.
 - Optional one-shot AI translation, description, analysis, taxonomy, and language-detection operations using online or local OpenAI-compatible endpoints with airplane-mode gating.
@@ -30,6 +30,12 @@ The project is under active development. Core blogging workflows are broadly ava
 
 RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from CDNs. The preview is served by the Rust application and displayed by the operating-system webview.
 
+The packaged Apple Silicon application requires macOS 26 or newer.
+
+Packaged executables share native `bds-core` and `bds-server` dynamic libraries. ONNX Runtime is statically contained in `bds-core`; the package does not ship or download a separate ONNX library. The **Install CLI** action writes a small forwarding launcher to `~/.local/bin`, so the command continues to execute the packaged CLI beside the same runtime libraries instead of copying them.
+
+Local macOS packages are ad-hoc signed without hardened runtime. A Developer ID and notarization remain optional release-channel steps for downloads that should pass Gatekeeper without a user override.
+
 ## Repository Map
 
 - `crates/bds-core` — data, engines, rendering, AI, publishing, and Lua
@@ -37,7 +43,7 @@ RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from 
 - `crates/bds-ui` — desktop application and platform integration
 - `crates/bds-cli` — headless automation CLI over the shared engines
 - `crates/bds-mcp` — packaged stdio MCP transport over the shared MCP engine
-- `crates/bds-server` — headless engine host, SSH transport, remote protocol, and desktop client
+- `crates/bds-server` — reusable headless host, SSH transport, remote protocol, and desktop client library
 - `specs` — authoritative Allium behavior specifications
 - `fixtures` — compatibility projects and generated-site fixtures
 - `locales` — UI and native-menu translations
@@ -54,4 +60,4 @@ Contributor workflow and project invariants are documented in [AGENTS.md](AGENTS
 
 ## Headless server
 
-Run `bds-server` for a dedicated headless process, or set `BDS_MODE=server` when launching `bds-ui`. The SSH listener defaults to `127.0.0.1:2222`; use `--bind`/`BDS_SSH_BIND` and `--port`/`BDS_SSH_PORT` to opt into another address. Startup prints the private `authorized_keys` path. The desktop creates its own private `id_ed25519.pub`; add that public key to the server file, then use **File → Connect to Server…** and select a remote project. Host keys are recorded on first connection and verified thereafter. Run `bds-cli tui` or set `BDS_MODE=tui` for the local terminal workspace; an authenticated SSH shell opens the same workspace against server-side data and locale. Press `:` for its command list and `:?` for help.
+Run `bds-cli server` for a dedicated headless process, or set `BDS_MODE=server` when launching `bds-ui`. The SSH listener defaults to `127.0.0.1:2222`; use `--bind`/`BDS_SSH_BIND` and `--port`/`BDS_SSH_PORT` to opt into another address. Startup prints the private `authorized_keys` path. The desktop creates its own private `id_ed25519.pub`; add that public key to the server file, then use **File → Connect to Server…** and select a remote project. Host keys are recorded on first connection and verified thereafter. Run `bds-cli tui` or set `BDS_MODE=tui` for the local terminal workspace; an authenticated SSH shell opens the same workspace against server-side data and locale. Press `:` for its command list and `:?` for help.

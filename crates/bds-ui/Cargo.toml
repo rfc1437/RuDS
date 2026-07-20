@@ -39,12 +39,15 @@ winresource = "0.1"
 product-name = "Blogging Desktop Server"
 identifier = "de.rfc1437.ruds"
 description = "A desktop application for writing and publishing static blogs."
-before-packaging-command = "cargo build --release -p bds-ui -p bds-cli -p bds-mcp -p bds-server"
+before-packaging-command = "cargo run --quiet -p bds-package-runtime"
+before-each-package-command = "cargo run --quiet -p bds-package-runtime -- sign-app-for-dmg"
 binaries = [
     { path = "bds-ui", main = true },
     { path = "bds-cli" },
     { path = "bds-mcp" },
-    { path = "bds-server" },
+]
+resources = [
+    { src = "../../target/release/bds-runtime/*", target = "." },
 ]
 deep-link-protocols = [{ schemes = ["ruds"] }]
 icons = [
@@ -54,8 +57,7 @@ icons = [
 ]
 
 [package.metadata.packager.macos]
-minimum-system-version = "13.0"
-signing-identity = "-"
+minimum-system-version = "26.0"
 
 [package.metadata.packager.nsis]
 installer-icon = "assets/app-icons/bds.ico"

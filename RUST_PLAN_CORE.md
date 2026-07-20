@@ -6,7 +6,7 @@ RuDS is the native Rust replacement for bDS2. Core covers the complete everyday 
 
 The behavioural contract is `specs/*.allium`. When a spec is ambiguous, `../bDS2` is the reference implementation. [RUST_PLAN_EXTENSION.md](RUST_PLAN_EXTENSION.md) contains optional and advanced surfaces.
 
-Status in this document describes the current source code as of 2026-07-19. It deliberately does not track build runs, test runs, release gates, or implementation history.
+Status in this document describes the current source code as of 2026-07-20. It deliberately does not track build runs, test runs, release gates, or implementation history.
 
 ## Non-Negotiable Constraints
 
@@ -25,11 +25,11 @@ Status in this document describes the current source code as of 2026-07-19. It d
 
 | Crate | Responsibility |
 |---|---|
-| `bds-core` | Models, SQLite, filesystem formats, engines, rendering, generation, AI, publishing, and Lua |
+| `bds-core` | Shared dynamic library for models, SQLite, filesystem formats, engines, rendering, generation, AI, publishing, and Lua |
 | `bds-editor` | Reusable Ropey/Syntect/Cosmic Text editor widget |
 | `bds-ui` | Iced application, native menus/dialogs, platform lifecycle, and embedded preview |
 | `bds-cli` | Extension-only headless automation surface over the shared engines |
-| `bds-server` | Extension-only headless engine host and authenticated SSH transport |
+| `bds-server` | Reusable extension-only headless host and authenticated SSH transport library |
 
 ## Current Core Status
 

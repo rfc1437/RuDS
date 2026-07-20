@@ -4,6 +4,9 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["dylib"]
+
 [dependencies]
 uuid = { workspace = true }
 serde = { workspace = true }

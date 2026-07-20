@@ -20,6 +20,33 @@ fn main() -> ExitCode {
         }
     };
 
+    if let bds_cli::Command::Server(args) = &cli.command {
+        let data_root = args
+            .data_dir
+            .clone()
+            .unwrap_or_else(bds_core::util::application_data_dir);
+        let database_path = args
+            .database
+            .clone()
+            .unwrap_or_else(|| data_root.join("bds.db"));
+        let config = match bds_server::ServerConfig::from_environment(database_path, data_root) {
+            Ok(mut config) => {
+                if let Some(bind) = args.bind {
+                    config.bind = bind;
+                }
+                if let Some(port) = args.port {
+                    config.port = port;
+                }
+                config
+            }
+            Err(error) => {
+                eprintln!("Error: {error:#}");
+                return ExitCode::from(1);
+            }
+        };
+        return run_headless(bds_server::boot::BootMode::Server, config);
+    }
+
     if matches!(cli.command, bds_cli::Command::Tui) {
         let data_root = bds_core::util::application_data_dir();
         let config = match bds_server::ServerConfig::from_environment(
@@ -32,13 +59,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
-        return match bds_server::run_headless(bds_server::boot::BootMode::Tui, config) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("Error: {error:#}");
-                ExitCode::from(1)
-            }
-        };
+        return run_headless(bds_server::boot::BootMode::Tui, config);
     }
 
     let json = cli.json;
@@ -67,6 +88,16 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("Error: {error:#}");
             }
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_headless(mode: bds_server::boot::BootMode, config: bds_server::ServerConfig) -> ExitCode {
+    match bds_server::run_headless(mode, config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error:#}");
             ExitCode::from(1)
         }
     }

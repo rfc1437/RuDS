@@ -59,7 +59,8 @@ rule DesktopBoot {
 
 rule ServerBoot {
     when: ApplicationStarted(mode: server)
-    -- Headless: no wx children at all. Works on macOS, Windows, Linux.
+    -- Started by `bds-cli server` or explicit desktop boot mode. Headless: no
+    -- desktop UI children at all. Works on macOS, Windows, Linux.
     ensures: LoopbackEndpointStarted()
         -- HTTP endpoint stays bound to 127.0.0.1; never exposed directly
     ensures: CliSyncWatcherStarted()
