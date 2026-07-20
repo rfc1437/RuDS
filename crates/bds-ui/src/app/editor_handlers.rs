@@ -293,7 +293,7 @@ impl BdsApp {
                 post_id,
                 target_language,
             } => self.translate_post_to(&post_id, &target_language),
-            DeferredPostAction::Save(tab_id) => self.save_post_editor(&tab_id),
+            DeferredPostAction::Save(tab_id) => self.save_post_editor(&tab_id, true),
             DeferredPostAction::Publish(tab_id) => self.publish_post_editor(&tab_id),
             DeferredPostAction::Discard(tab_id) => self.discard_post_editor(&tab_id),
             DeferredPostAction::ShowDelete { tab_id, name } => {

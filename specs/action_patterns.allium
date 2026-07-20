@@ -59,14 +59,15 @@ rule AISuggestionFlow {
 rule AutoTranslationChain {
     when: PostSaved(post_id)
     -- Gate: AIOperationGating + post.doNotTranslate must be false
-    -- Triggered after any post save (auto-save, manual Ctrl+S, or unmount)
+    -- Triggered only by explicit manual save or publish, never by auto-save,
+    -- unmount/tab-switch persistence, post creation, import, or scripting.
     -- For each configured blogLanguage missing a translation for this post:
-    --   1. Enqueue background task: translate metadata (title, excerpt)
-    --      via title model
-    --   2. Enqueue background task: translate content (full markdown)
-    --      via title model
-    --   3. Create/update translation record in DB
-    -- Tasks: sequential per language, parallel across languages
+    --   1. Enqueue one background task for that language
+    --   2. Translate metadata (title, excerpt) via title model
+    --   3. Translate content (full markdown) via title model
+    --   4. Create/update translation record in DB
+    -- A later manual save with no missing languages enqueues no task.
+    -- Work is sequential within a language and parallel across languages.
     -- Progress visible in Tasks panel
 }
 

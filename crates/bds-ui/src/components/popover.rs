@@ -274,27 +274,19 @@ where
             return status;
         }
 
-        let dismiss = matches!(
+        let escape = matches!(
+            event,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(key::Named::Escape),
+                ..
+            })
+        );
+        let outside_press = matches!(
             event,
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 | Event::Touch(iced::touch::Event::FingerPressed { .. })
-                | Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: Key::Named(key::Named::Escape),
-                    ..
-                })
-        );
-        if dismiss && !cursor.is_over(layout.bounds()) {
-            shell.publish(self.on_dismiss.clone());
-            event::Status::Captured
-        } else if dismiss
-            && matches!(
-                event,
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: Key::Named(key::Named::Escape),
-                    ..
-                })
-            )
-        {
+        ) && !cursor.is_over(layout.bounds());
+        if escape || outside_press {
             shell.publish(self.on_dismiss.clone());
             event::Status::Captured
         } else {

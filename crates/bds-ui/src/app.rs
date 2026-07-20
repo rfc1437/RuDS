@@ -5638,11 +5638,21 @@ impl BdsApp {
 
     // ── Editor save/publish helpers ──
 
-    fn save_post_editor(&mut self, post_id: &str) -> Task<Message> {
+    fn save_post_editor(
+        &mut self,
+        post_id: &str,
+        schedule_auto_translation: bool,
+    ) -> Task<Message> {
+        let saves_canonical_post = self
+            .post_editors
+            .get(post_id)
+            .is_some_and(|editor| editor.active_language == editor.canonical_language);
         match self.persist_post_editor_state(post_id) {
             Ok(()) => {
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-                return self.schedule_post_auto_translation(post_id);
+                if schedule_auto_translation && saves_canonical_post {
+                    return self.schedule_post_auto_translation(post_id);
+                }
             }
             Err(e) => self.notify_operation_failed("common.save", e),
         }
@@ -5954,39 +5964,58 @@ impl BdsApp {
     }
 
     fn schedule_post_auto_translation(&mut self, post_id: &str) -> Task<Message> {
-        let Some(db) = self.db.as_ref() else {
+        let (Some(db), Some(data_dir)) = (self.db.as_ref(), self.data_dir.as_ref()) else {
             return Task::none();
         };
+        let Ok(meta) = engine::meta::read_project_json(data_dir) else {
+            return Task::none();
+        };
+        let Ok(post) = bds_core::db::queries::post::get_post_by_id(db.conn(), post_id) else {
+            return Task::none();
+        };
+        let main_language = meta.main_language.unwrap_or_else(|| "en".to_string());
+        let configured =
+            engine::auto_translation::configured_languages(&main_language, &meta.blog_languages);
+        let Ok(targets) =
+            engine::auto_translation::missing_languages(db.conn(), &post, &configured)
+        else {
+            return Task::none();
+        };
+        if targets.is_empty() {
+            return Task::none();
+        }
         if engine::ai::active_endpoint(db.conn(), self.offline_mode).is_err() {
             return Task::none();
         }
         let post_id = post_id.to_string();
         let offline_mode = self.offline_mode;
         let locale = self.ui_locale;
-        self.spawn_grouped_engine_task(
-            "engine.autoTranslationStarted",
-            "AI",
-            move |db_path, _project_id, data_dir, task_manager, task_id| {
-                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                let meta = engine::meta::read_project_json(&data_dir)
+        Task::batch(targets.into_iter().map(|language| {
+            let post_id = post_id.clone();
+            let configured = configured.clone();
+            self.spawn_grouped_engine_task(
+                "engine.autoTranslationStarted",
+                "AI",
+                move |db_path, _project_id, data_dir, task_manager, task_id| {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    let report = engine::auto_translation::translate_missing_language_for_post(
+                        db.conn(),
+                        &data_dir,
+                        &post_id,
+                        &configured,
+                        &language,
+                        offline_mode,
+                        move || task_manager.is_cancelled(task_id),
+                    )
                     .map_err(|error| error.to_string())?;
-                let report = engine::auto_translation::translate_missing_for_post(
-                    db.conn(),
-                    &data_dir,
-                    &post_id,
-                    meta.main_language.as_deref().unwrap_or("en"),
-                    &meta.blog_languages,
-                    offline_mode,
-                    move || task_manager.is_cancelled(task_id),
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(tw(
-                    locale,
-                    "engine.autoTranslationComplete",
-                    &[("count", &report.translated_posts.to_string())],
-                ))
-            },
-        )
+                    Ok(tw(
+                        locale,
+                        "engine.autoTranslationComplete",
+                        &[("count", &report.translated_posts.to_string())],
+                    ))
+                },
+            )
+        }))
     }
 
     fn insert_link_modal(&mut self, post_id: &str) -> Task<Message> {
@@ -6177,7 +6206,7 @@ impl BdsApp {
             tab.is_dirty = true;
         }
         self.active_modal = None;
-        self.save_post_editor(post_id)
+        self.save_post_editor(post_id, false)
     }
 
     fn insert_selected_post_link(&mut self, post_id: &str, linked_post_id: &str) -> Task<Message> {
@@ -9617,8 +9646,10 @@ mod tests {
         )
         .unwrap();
         let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
-        let mut settings = SettingsViewState::default();
-        settings.default_mode = "preview".to_string();
+        let settings = SettingsViewState {
+            default_mode: "preview".to_string(),
+            ..Default::default()
+        };
         app.settings_state = Some(settings);
         app.offline_mode = true;
         app.sidebar_view = SidebarView::Settings;
@@ -11156,6 +11187,138 @@ mod tests {
         .unwrap();
         assert_eq!(saved.title, "Autosaved");
         assert!(!app.post_editors.get(&created.id).unwrap().is_dirty);
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
+    }
+
+    fn auto_translation_test_app(translated_languages: &[&str]) -> (BdsApp, String, TempDir) {
+        let (db, project, tmp) = setup();
+        let mut metadata = bds_core::engine::meta::read_project_json(tmp.path()).unwrap();
+        metadata.main_language = Some("en".to_string());
+        metadata.blog_languages = vec!["en".to_string(), "de".to_string(), "fr".to_string()];
+        bds_core::engine::meta::write_project_json(tmp.path(), &metadata).unwrap();
+        ai::save_endpoint(
+            db.conn(),
+            &ai::AiEndpointConfig {
+                kind: ai::AiEndpointKind::Airplane,
+                url: "http://127.0.0.1:9".to_string(),
+                model: "test".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Original",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        for language in translated_languages {
+            post::upsert_translation(
+                db.conn(),
+                tmp.path(),
+                &created.id,
+                language,
+                "Translated",
+                None,
+                Some("Body"),
+            )
+            .unwrap();
+        }
+        let editor_post =
+            bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        let translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
+            db.conn(),
+            &created.id,
+        )
+        .unwrap();
+        let editor = PostEditorState::from_post(
+            &editor_post,
+            "markdown",
+            &["en".to_string(), "de".to_string(), "fr".to_string()],
+            &translations,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut app = make_app(db, project, &tmp);
+        app.offline_mode = true;
+        app.post_editors.insert(created.id.clone(), editor);
+        app.tabs.push(crate::state::tabs::Tab {
+            id: created.id.clone(),
+            tab_type: crate::state::tabs::TabType::Post,
+            title: created.title,
+            is_transient: false,
+            is_dirty: false,
+        });
+        (app, created.id, tmp)
+    }
+
+    #[test]
+    fn first_manual_save_enqueues_one_task_per_missing_translation() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&[]);
+
+        let _ = app.save_post_editor(&post_id, true);
+
+        assert_eq!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .filter(|task| task.group_name.as_deref() == Some("AI"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn later_manual_save_enqueues_no_translation_task_when_languages_exist() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&["de", "fr"]);
+
+        let _ = app.save_post_editor(&post_id, true);
+
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
+    }
+
+    #[test]
+    fn saving_a_translation_draft_does_not_enqueue_other_languages() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&["de"]);
+        app.post_editors
+            .get_mut(&post_id)
+            .unwrap()
+            .switch_language("de");
+
+        let _ = app.save_post_editor(&post_id, true);
+
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
+    }
+
+    #[test]
+    fn inserting_editor_markdown_persists_without_enqueuing_translations() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&[]);
+
+        let _ = app.insert_markdown_into_post(&post_id, "[Link](/target)");
+
         assert!(
             app.task_manager
                 .snapshots()

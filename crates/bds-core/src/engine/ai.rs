@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use crate::db::DbConnection as Connection;
@@ -13,6 +14,8 @@ use crate::util::now_unix_ms;
 
 const KEYRING_SERVICE: &str = "RuDS";
 const KEYRING_SETTING_PREFIX: &str = "ai.endpoint";
+static TEST_API_KEYS: LazyLock<Mutex<BTreeMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -246,15 +249,11 @@ fn save_endpoint_api_key_at(
     api_key: &str,
     updated_at: i64,
 ) -> EngineResult<()> {
-    let entry = endpoint_keyring_entry(kind)?;
     let configured = !api_key.trim().is_empty();
     if configured {
-        entry.set_password(api_key.trim()).map_err(keyring_error)?;
+        store_endpoint_api_key(kind, api_key.trim())?;
     } else {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(error) => return Err(keyring_error(error)),
-        }
+        delete_endpoint_api_key(kind)?;
     }
     set_setting(
         conn,
@@ -397,8 +396,12 @@ pub fn active_endpoint(conn: &Connection, offline_mode: bool) -> EngineResult<Ai
         ));
     }
     let api_key = if stored.api_key_configured {
-        let entry = endpoint_keyring_entry(kind)?;
-        let password = entry.get_password().map_err(keyring_error)?;
+        let password = read_endpoint_api_key(kind)?.ok_or_else(|| {
+            EngineError::Validation(format!(
+                "AI unavailable - configure {} endpoint in Settings",
+                kind.as_str()
+            ))
+        })?;
         if password.trim().is_empty() {
             return Err(EngineError::Validation(format!(
                 "AI unavailable - configure {} endpoint in Settings",
@@ -419,13 +422,7 @@ pub fn active_endpoint(conn: &Connection, offline_mode: bool) -> EngineResult<Ai
 }
 
 pub fn load_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<Option<String>> {
-    let entry = endpoint_keyring_entry(kind)?;
-    match entry.get_password() {
-        Ok(password) if password.trim().is_empty() => Ok(None),
-        Ok(password) => Ok(Some(password)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(keyring_error(error)),
-    }
+    read_endpoint_api_key(kind)
 }
 
 pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<AiModelInfo>> {
@@ -934,6 +931,64 @@ fn endpoint_keyring_entry(kind: AiEndpointKind) -> EngineResult<Entry> {
     .map_err(keyring_error)
 }
 
+fn store_endpoint_api_key(kind: AiEndpointKind, api_key: &str) -> EngineResult<()> {
+    if cargo_test_process() {
+        TEST_API_KEYS
+            .lock()
+            .map_err(|error| EngineError::Validation(error.to_string()))?
+            .insert(kind.as_str().to_string(), api_key.to_string());
+        return Ok(());
+    }
+    endpoint_keyring_entry(kind)?
+        .set_password(api_key)
+        .map_err(keyring_error)
+}
+
+fn read_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<Option<String>> {
+    if cargo_test_process() {
+        return TEST_API_KEYS
+            .lock()
+            .map_err(|error| EngineError::Validation(error.to_string()))
+            .map(|keys| {
+                keys.get(kind.as_str())
+                    .cloned()
+                    .filter(|key| !key.trim().is_empty())
+            });
+    }
+    match endpoint_keyring_entry(kind)?.get_password() {
+        Ok(password) if password.trim().is_empty() => Ok(None),
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+fn delete_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<()> {
+    if cargo_test_process() {
+        TEST_API_KEYS
+            .lock()
+            .map_err(|error| EngineError::Validation(error.to_string()))?
+            .remove(kind.as_str());
+        return Ok(());
+    }
+    match endpoint_keyring_entry(kind)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+/// Cargo places every unit and integration test executable in a `deps`
+/// directory. Keep those processes on a process-local credential store so a
+/// test can never open an operating-system password prompt.
+fn cargo_test_process() -> bool {
+    cfg!(test)
+        || std::env::current_exe().is_ok_and(|path| {
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .is_some_and(|name| name == "deps")
+        })
+}
+
 fn keyring_error(error: keyring::Error) -> EngineError {
     EngineError::Validation(error.to_string())
 }
@@ -1024,8 +1079,7 @@ mod tests {
     }
 
     fn clear_keyring(kind: AiEndpointKind) {
-        let entry = endpoint_keyring_entry(kind).unwrap();
-        entry.delete_credential().ok();
+        delete_endpoint_api_key(kind).unwrap();
     }
 
     #[test]
@@ -1039,7 +1093,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "touches system keychain; run explicitly when validating keychain integration"]
     fn saves_online_endpoint_with_keychain_secret() {
         clear_keyring(AiEndpointKind::Online);
         let db = setup();
@@ -1245,7 +1298,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "touches system keychain; run explicitly when validating keychain integration"]
     fn run_one_shot_uses_active_endpoint_and_parses_response() {
         clear_keyring(AiEndpointKind::Online);
         let server = spawn_test_server(

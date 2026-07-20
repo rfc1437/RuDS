@@ -178,29 +178,83 @@ pub fn translate_missing_for_post(
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        let result = translate_one_post(
+        merge_reactive_translation_result(
+            &mut report,
+            &post,
+            &language,
+            translate_one_post(
+                conn,
+                data_dir,
+                &post,
+                &language,
+                false,
+                &mut |post, language| translate_post_ai(conn, offline_mode, post, language),
+                &mut |media, language| translate_media_ai(conn, offline_mode, media, language),
+            ),
+        );
+    }
+    Ok(report)
+}
+
+/// Translate one language from the current missing-language set. This is the
+/// reactive editor path: already-created or unconfigured translations are a
+/// silent no-op, and generated translations remain drafts.
+pub fn translate_missing_language_for_post(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+    configured_languages: &[String],
+    language: &str,
+    offline_mode: bool,
+    is_cancelled: impl Fn() -> bool,
+) -> EngineResult<FillMissingTranslationsReport> {
+    let post = qp::get_post_by_id(conn, post_id)?;
+    let targets = missing_languages(conn, &post, configured_languages)?;
+    if !targets.iter().any(|target| target == language) {
+        return Ok(FillMissingTranslationsReport {
+            nothing_to_do: true,
+            ..Default::default()
+        });
+    }
+    if is_cancelled() {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
+    let mut report = FillMissingTranslationsReport::default();
+    merge_reactive_translation_result(
+        &mut report,
+        &post,
+        language,
+        translate_one_post(
             conn,
             data_dir,
             &post,
-            &language,
+            language,
             false,
             &mut |post, language| translate_post_ai(conn, offline_mode, post, language),
             &mut |media, language| translate_media_ai(conn, offline_mode, media, language),
-        );
-        match result {
-            Ok(media_count) => {
-                report.translated_posts += 1;
-                report.translated_media += media_count;
-            }
-            Err(error) => {
-                report.failed_count += 1;
-                report
-                    .errors
-                    .push(format!("{} ({language}): {error}", post.title));
-            }
+        ),
+    );
+    Ok(report)
+}
+
+fn merge_reactive_translation_result(
+    report: &mut FillMissingTranslationsReport,
+    post: &Post,
+    language: &str,
+    result: EngineResult<usize>,
+) {
+    match result {
+        Ok(media_count) => {
+            report.translated_posts += 1;
+            report.translated_media += media_count;
+        }
+        Err(error) => {
+            report.failed_count += 1;
+            report
+                .errors
+                .push(format!("{} ({language}): {error}", post.title));
         }
     }
-    Ok(report)
 }
 
 fn translate_one_post(
@@ -342,7 +396,7 @@ mod tests {
     use crate::db::Database;
     use crate::db::fts::ensure_fts_tables;
     use crate::db::queries::project::{insert_project, make_test_project};
-    use crate::engine::post::{create_post, publish_post};
+    use crate::engine::post::{create_post, publish_post, upsert_translation};
     use tempfile::TempDir;
 
     #[test]
@@ -399,6 +453,52 @@ mod tests {
             assert!(dir.path().join(&translation.file_path).is_file());
             assert!(translation.content.is_none());
         }
+    }
+
+    #[test]
+    fn reactive_language_translation_is_a_no_op_when_translation_exists() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        let dir = TempDir::new().unwrap();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Hello",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Hallo",
+            None,
+            Some("Inhalt"),
+        )
+        .unwrap();
+
+        let report = translate_missing_language_for_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            &["en".to_string(), "de".to_string()],
+            "de",
+            true,
+            || false,
+        )
+        .unwrap();
+
+        assert!(report.nothing_to_do);
+        assert_eq!(report.translated_posts, 0);
     }
 
     #[test]
