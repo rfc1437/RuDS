@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::db::DbConnection as Connection;
-use chrono::{Datelike, TimeZone, Utc};
+use chrono::{Datelike, Local, TimeZone};
 use serde::Serialize;
 
 use crate::db::queries::generated_file_hash as qhash;
@@ -99,7 +99,6 @@ pub fn build_core_generation_paths(main_language: &str, blog_languages: &[String
         "404.html".to_string(),
         "sitemap.xml".to_string(),
         "rss.xml".to_string(),
-        "feed.xml".to_string(),
         "atom.xml".to_string(),
         "calendar.json".to_string(),
     ];
@@ -108,9 +107,7 @@ pub fn build_core_generation_paths(main_language: &str, blog_languages: &[String
         if language != main_language {
             paths.push(format!("{language}/index.html"));
             paths.push(format!("{language}/404.html"));
-            paths.push(format!("{language}/sitemap.xml"));
             paths.push(format!("{language}/rss.xml"));
-            paths.push(format!("{language}/feed.xml"));
             paths.push(format!("{language}/atom.xml"));
         }
     }
@@ -124,8 +121,7 @@ pub fn build_calendar_archive_data(posts: &[Post]) -> CalendarArchiveData {
     let mut days = BTreeMap::new();
 
     for post in posts {
-        let timestamp_ms = post.published_at.unwrap_or(post.created_at);
-        let Some(created_at) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
+        let Some(created_at) = Local.timestamp_millis_opt(post.created_at).single() else {
             continue;
         };
 
@@ -146,5 +142,5 @@ pub fn build_calendar_archive_data(posts: &[Post]) -> CalendarArchiveData {
 }
 
 pub fn build_calendar_json(posts: &[Post]) -> serde_json::Result<String> {
-    serde_json::to_string_pretty(&build_calendar_archive_data(posts))
+    serde_json::to_string(&build_calendar_archive_data(posts))
 }

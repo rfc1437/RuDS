@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{Datelike, TimeZone, Utc};
+use chrono::{Datelike, Local, TimeZone};
 use serde::Serialize;
 
 use crate::i18n::normalize_language;
@@ -17,6 +17,40 @@ const STARTER_MENU_PARTIAL: &str =
     include_str!("../../../../assets/starter-templates/partials/menu.liquid");
 const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str =
     include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
+const STARTER_MENU_ITEMS_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/menu-items.liquid");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PostLanguageVariant {
+    Base,
+    Translation,
+}
+
+pub(crate) fn select_post_language_variant(
+    post: &Post,
+    target_language: &str,
+    main_language: &str,
+    has_translation: bool,
+) -> Option<PostLanguageVariant> {
+    let source_language = post.language.as_deref().unwrap_or(main_language);
+    if target_language.eq_ignore_ascii_case(main_language) {
+        return Some(if has_translation {
+            PostLanguageVariant::Translation
+        } else {
+            PostLanguageVariant::Base
+        });
+    }
+    if post.do_not_translate {
+        return None;
+    }
+    if source_language.eq_ignore_ascii_case(target_language) {
+        Some(PostLanguageVariant::Base)
+    } else if has_translation {
+        Some(PostLanguageVariant::Translation)
+    } else {
+        Some(PostLanguageVariant::Base)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedPage {
@@ -99,8 +133,7 @@ struct PostTemplateContext<'a> {
 }
 
 pub fn build_canonical_post_path(post: &Post, language: &str, main_language: &str) -> String {
-    let timestamp_ms = post.published_at.unwrap_or(post.created_at);
-    let Some(timestamp) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
+    let Some(timestamp) = Local.timestamp_millis_opt(post.created_at).single() else {
         return fallback_language_path(post, language, main_language);
     };
 
@@ -276,8 +309,7 @@ fn starter_partials() -> HashMap<String, String> {
         ),
         (
             "partials/menu-items".to_string(),
-            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}"
-                .to_string(),
+            STARTER_MENU_ITEMS_PARTIAL.to_string(),
         ),
     ])
 }
@@ -310,8 +342,8 @@ fn fallback_language_path(post: &Post, language: &str, main_language: &str) -> S
 }
 
 fn calendar_initial_parts(post: &Post) -> (i32, u32) {
-    let timestamp_ms = post.published_at.unwrap_or(post.created_at);
-    Utc.timestamp_millis_opt(timestamp_ms)
+    Local
+        .timestamp_millis_opt(post.created_at)
         .single()
         .map(|timestamp| (timestamp.year(), timestamp.month()))
         .unwrap_or((1970, 1))
@@ -406,8 +438,7 @@ fn build_day_blocks(posts: &[(Post, String)]) -> Vec<DayBlockContext> {
     let mut current_key: Option<String> = None;
 
     for (post, body) in posts {
-        let timestamp_ms = post.published_at.unwrap_or(post.created_at);
-        let Some(timestamp) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
+        let Some(timestamp) = Local.timestamp_millis_opt(post.created_at).single() else {
             continue;
         };
 
@@ -425,10 +456,10 @@ fn build_day_blocks(posts: &[(Post, String)]) -> Vec<DayBlockContext> {
             blocks.push(DayBlockContext {
                 show_date_marker: true,
                 date_label: format!(
-                    "{:02}.{:02}.{:04}",
-                    timestamp.day(),
+                    "{:04}-{:02}-{:02}",
+                    timestamp.year(),
                     timestamp.month(),
-                    timestamp.year()
+                    timestamp.day()
                 ),
                 posts: Vec::new(),
                 show_separator: false,
@@ -500,7 +531,8 @@ mod tests {
 
     #[test]
     fn canonical_post_paths_follow_language_prefix_rule() {
-        let post = make_post();
+        let mut post = make_post();
+        post.published_at = Some(1_712_678_400_000);
         assert_eq!(
             build_canonical_post_path(&post, "en", "en"),
             "/2024/03/09/hello"
@@ -509,6 +541,52 @@ mod tests {
             build_canonical_post_path(&post, "de", "en"),
             "/de/2024/03/09/hello"
         );
+    }
+
+    #[test]
+    fn canonical_post_paths_use_the_bds2_local_created_date() {
+        let mut post = make_post();
+        post.created_at = 1_711_927_800_000;
+        let local = Local
+            .timestamp_millis_opt(post.created_at)
+            .single()
+            .unwrap();
+
+        assert_eq!(
+            build_canonical_post_path(&post, "en", "en"),
+            format!(
+                "/{:04}/{:02}/{:02}/hello",
+                local.year(),
+                local.month(),
+                local.day()
+            )
+        );
+    }
+
+    #[test]
+    fn language_variants_match_bds2_canonical_and_fallback_rules() {
+        let mut post = make_post();
+        post.language = Some("en".into());
+
+        assert_eq!(
+            select_post_language_variant(&post, "de", "de", true),
+            Some(PostLanguageVariant::Translation)
+        );
+        assert_eq!(
+            select_post_language_variant(&post, "en", "de", false),
+            Some(PostLanguageVariant::Base)
+        );
+        assert_eq!(
+            select_post_language_variant(&post, "fr", "de", true),
+            Some(PostLanguageVariant::Translation)
+        );
+        assert_eq!(
+            select_post_language_variant(&post, "fr", "de", false),
+            Some(PostLanguageVariant::Base)
+        );
+
+        post.do_not_translate = true;
+        assert_eq!(select_post_language_variant(&post, "fr", "de", true), None);
     }
 
     #[test]
@@ -591,8 +669,8 @@ mod tests {
 
         assert_eq!(rendered.relative_path, "de/index.html");
         assert!(rendered.html.contains("archive-day-group"));
-        assert!(rendered.html.contains("09.03.2024"));
-        assert!(rendered.html.contains("10.03.2024"));
+        assert!(rendered.html.contains("2024-03-09"));
+        assert!(rendered.html.contains("2024-03-10"));
         assert!(rendered.html.contains("href=\"/de/2024/03/10/next\""));
     }
 }

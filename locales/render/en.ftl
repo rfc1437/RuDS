@@ -33,3 +33,4 @@ render-month-11 = November
 render-month-12 = December
 render-search-placeholder = Search...
 render-search-ariaLabel = Site search
+render-search-noResults = No results found

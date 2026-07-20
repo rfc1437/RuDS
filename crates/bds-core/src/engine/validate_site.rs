@@ -47,10 +47,9 @@ pub fn validate_site(
             format!("{language}/")
         };
         expected.insert(format!("{prefix}rss.xml"));
-        expected.insert(format!("{prefix}feed.xml"));
         expected.insert(format!("{prefix}atom.xml"));
-        expected.insert(format!("{prefix}sitemap.xml"));
     }
+    expected.insert("sitemap.xml".to_string());
 
     let mut actual = HashSet::new();
     if output_dir.exists() {

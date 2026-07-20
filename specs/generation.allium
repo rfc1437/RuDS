@@ -108,20 +108,30 @@ invariant IncrementalByContentHash {
 }
 
 invariant MultiLanguageRoutes {
-    -- Main language: flat routes (/{yyyy}/{mm}/{dd}/{slug})
+    -- Main language: unprefixed routes (/{yyyy}/{mm}/{dd}/{slug})
     -- Additional languages: prefixed (/{lang}/{yyyy}/{mm}/{dd}/{slug})
     -- Each language subtree gets its own feeds and archives
+    -- Route dates and archive/calendar membership use created_at in local time,
+    -- matching bDS2.
+    -- Posts in the page category additionally render at /{slug} in every tree.
 }
 
 invariant LanguageVariantSelection {
     -- Every language tree renders each post in its own language when a
-    -- matching variant exists, falling back to the post's original language.
-    -- This applies uniformly to single pages, list pages (home/pagination,
-    -- category/tag/date archives), and feeds:
+    -- matching variant exists. The main tree prefers the main-language
+    -- translation and otherwise falls back to the original post. An additional
+    -- tree uses the original post when its source language matches that tree,
+    -- otherwise its matching translation, falling back to the original post.
+    -- This applies uniformly to single pages and list pages (home/pagination,
+    -- category/tag/date archives):
     --   Main tree: a post whose language differs from main_language renders
     --   its main_language translation when one exists (canonical variant).
     --   Additional-language trees: posts resolve to that language's
     --   translation; do_not_translate posts are excluded from those trees.
+    -- Feeds are deliberately narrower: the main feed contains original
+    -- published records, while an additional-language feed contains only
+    -- originals or translations whose language matches that tree. A
+    -- foreign-language HTML fallback is therefore not added to that feed.
 }
 
 invariant CanonicalBaseUrlConfigured {
@@ -146,20 +156,26 @@ rule GenerateCoreSectionPages {
     requires: core in generation.sections
     ensures: FileGenerated("index.html")
     ensures: FileGenerated("sitemap.xml")
-        -- Multi-language sitemap with hreflang alternates
+        -- Single root sitemap with hreflang alternates; no per-language sitemap
     ensures: FileGenerated("rss.xml")
-        -- RSS 2.0 feed (same output name as the old bDS app; templates link /rss.xml)
+        -- bDS2-compatible minimal feed over all published snapshots
     ensures: FileGenerated("atom.xml")
         -- Atom feed
     ensures: FileGenerated("calendar.json")
-        -- Post dates for calendar widget
+        -- created_at counts for all published snapshots, including list-hidden posts
     ensures: FileGenerated("404.html")
         -- Not-found page rendered from the not-found template
+    for p in Posts where status = published and p.categories.contains("page"):
+        ensures: FileGenerated(format("{slug}/index.html", slug: p.slug))
     for lang in generation.blog_languages - {generation.language}:
         ensures: FileGenerated(format("{lang}/index.html", lang: lang))
         ensures: FileGenerated(format("{lang}/rss.xml", lang: lang))
         ensures: FileGenerated(format("{lang}/atom.xml", lang: lang))
         ensures: FileGenerated(format("{lang}/404.html", lang: lang))
+        for p in Posts where status = published and
+                p.categories.contains("page") and not p.do_not_translate:
+            ensures: FileGenerated(format("{lang}/{slug}/index.html",
+                lang: lang, slug: p.slug))
 }
 
 -- Single section: one HTML page per published post
@@ -171,7 +187,7 @@ rule GenerateSinglePostPages {
         let url = post_canonical_url(p)
         ensures: FileGenerated(format("{url}/index.html", url: url))
         for lang in generation.blog_languages - {generation.language}:
-            if p.translations.any(t => t.language.code = lang):
+            if not p.do_not_translate:
                 ensures: FileGenerated(format("{lang}/{url}/index.html",
                     lang: lang, url: url))
 }

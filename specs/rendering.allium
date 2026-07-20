@@ -151,6 +151,11 @@ value RenderLabels {
     -- and macro fallback labels. Month names resolved 1..12 per language.
 }
 
+invariant CompleteStarterNavigation {
+    -- Starter rendering preserves recursive menu children and the archive
+    -- calendar entry, and provides localized search empty-result text.
+}
+
 invariant LabelsUseContentLanguage {
     -- RenderLabels and the i18n filter resolve against the content/render
     -- language, consistent with i18n.allium's split-localization rule.

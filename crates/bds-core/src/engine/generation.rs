@@ -13,10 +13,10 @@ use crate::engine::validate_site::SiteValidationReport;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
-    GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
+    GeneratedWriteOutcome, PostLanguageVariant, build_calendar_json, build_canonical_post_path,
     build_site_render_artifacts, build_site_section_render_artifacts,
-    build_targeted_site_section_render_artifacts, render_markdown_to_html, write_generated_bytes,
-    write_generated_file,
+    build_targeted_site_section_render_artifacts, select_post_language_variant,
+    write_generated_bytes, write_generated_file,
 };
 
 #[derive(Debug, Clone)]
@@ -163,8 +163,6 @@ pub fn render_site_section_with_progress(
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     let data_dir = project_data_dir(output_dir);
-    let category_settings = load_category_settings(&data_dir);
-    let list_posts = filter_posts_for_lists(posts, &category_settings);
     let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
@@ -202,7 +200,7 @@ pub fn render_site_section_with_progress(
             project_id,
             metadata,
             &data_dir,
-            &list_posts,
+            posts,
             &artifacts.route_manifest,
             None,
             &mut report,
@@ -305,8 +303,6 @@ pub fn apply_validation_section_with_progress(
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     let data_dir = project_data_dir(output_dir);
-    let category_settings = load_category_settings(&data_dir);
-    let list_posts = filter_posts_for_lists(posts, &category_settings);
     let input_posts = posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
@@ -368,7 +364,7 @@ pub fn apply_validation_section_with_progress(
             project_id,
             metadata,
             &data_dir,
-            &list_posts,
+            posts,
             &artifacts.route_manifest,
             (!fallback).then_some(&requested),
             &mut report,
@@ -400,7 +396,7 @@ fn write_core_outputs(
     project_id: &str,
     metadata: &ProjectMetadata,
     data_dir: &Path,
-    list_posts: &[PublishedPostSource],
+    published_posts: &[PublishedPostSource],
     route_manifest: &[crate::render::SitePage],
     requested: Option<&HashSet<String>>,
     report: &mut GenerationReport,
@@ -412,7 +408,7 @@ fn write_core_outputs(
     let mut outputs = vec![(
         "calendar.json".to_string(),
         build_calendar_json(
-            &list_posts
+            &published_posts
                 .iter()
                 .map(|source| source.post.clone())
                 .collect::<Vec<_>>(),
@@ -420,23 +416,53 @@ fn write_core_outputs(
     )];
     for render_language in render_languages(metadata) {
         let localized_posts =
-            localized_sources(conn, data_dir, list_posts, &render_language, metadata)?;
-        let prefix = if render_language == metadata.main_language.as_deref().unwrap_or("en") {
+            localized_sources(conn, data_dir, published_posts, &render_language, metadata)?;
+        let is_main = render_language == metadata.main_language.as_deref().unwrap_or("en");
+        let prefix = if is_main {
             String::new()
         } else {
             format!("{render_language}/")
         };
-        let rss = build_rss_xml(metadata, &localized_posts, &render_language);
-        outputs.push((format!("{prefix}rss.xml"), rss.clone()));
-        outputs.push((format!("{prefix}feed.xml"), rss));
+        let mut feed_posts = if is_main {
+            published_posts.to_vec()
+        } else {
+            localized_posts
+                .iter()
+                .filter(|source| {
+                    source
+                        .post
+                        .language
+                        .as_deref()
+                        .is_some_and(|language| language.eq_ignore_ascii_case(&render_language))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        sort_published_sources(&mut feed_posts);
+        outputs.push((
+            format!("{prefix}rss.xml"),
+            build_rss_xml(metadata, &feed_posts, &render_language),
+        ));
         outputs.push((
             format!("{prefix}atom.xml"),
-            build_atom_xml(metadata, &localized_posts, &render_language),
+            build_atom_xml(metadata, &feed_posts, &render_language),
         ));
-        outputs.push((
-            format!("{prefix}sitemap.xml"),
-            build_sitemap_xml(metadata, route_manifest, &localized_posts, &render_language),
-        ));
+        if is_main {
+            let category_settings = load_category_settings(data_dir);
+            let mut sitemap_posts = published_posts.to_vec();
+            sort_published_sources(&mut sitemap_posts);
+            let sitemap_list_posts = filter_posts_for_lists(&sitemap_posts, &category_settings);
+            outputs.push((
+                "sitemap.xml".to_string(),
+                build_sitemap_xml(
+                    metadata,
+                    route_manifest,
+                    &sitemap_posts,
+                    &sitemap_list_posts,
+                    &render_language,
+                ),
+            ));
+        }
     }
     for (path, content) in outputs {
         if is_cancelled() {
@@ -673,10 +699,9 @@ fn expected_paths_for_sections(
                 format!("{language}/")
             };
             expected.insert(format!("{prefix}rss.xml"));
-            expected.insert(format!("{prefix}feed.xml"));
             expected.insert(format!("{prefix}atom.xml"));
-            expected.insert(format!("{prefix}sitemap.xml"));
         }
+        expected.insert("sitemap.xml".to_string());
     }
 
     expected
@@ -775,6 +800,7 @@ pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
         {
             Some(GenerationSection::Single)
         }
+        [_slug, "index.html"] => Some(GenerationSection::Core),
         _ => None,
     }
 }
@@ -782,9 +808,7 @@ pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
 fn has_language_prefix(parts: &[&str]) -> bool {
     match parts {
         [first, second, ..] => {
-            !is_year_segment(first)
-                && *first != "category"
-                && *first != "tag"
+            matches!(*first, "de" | "en" | "es" | "fr" | "it")
                 && (*second == "index.html"
                     || *second == "404.html"
                     || *second == "page"
@@ -859,36 +883,66 @@ fn localized_sources(
     let main_language = metadata.main_language.as_deref().unwrap_or("en");
     let mut localized = Vec::new();
     for source in posts {
-        if language.eq_ignore_ascii_case(main_language) {
-            localized.push(source.clone());
-            continue;
-        }
-        if let Ok(translation) =
-            queries::post_translation::get_post_translation_by_post_and_language(
-                conn,
-                &source.post.id,
-                language,
-            )
-        {
-            let raw = std::fs::read_to_string(
-                data_dir.join(translation.file_path.trim_start_matches('/')),
-            )
-            .map_err(EngineError::Io)?;
-            let (_, body) = crate::util::frontmatter::read_translation_file(&raw)
-                .map_err(EngineError::Parse)?;
-            let mut translated_post = source.post.clone();
-            translated_post.title = translation.title.clone();
-            translated_post.excerpt = translation.excerpt.clone();
-            translated_post.language = Some(translation.language.clone());
-            translated_post.file_path = translation.file_path.clone();
-            translated_post.published_at = translation.published_at.or(source.post.published_at);
-            localized.push(PublishedPostSource {
-                post: translated_post,
-                body_markdown: body,
-            });
+        let translation = queries::post_translation::get_post_translation_by_post_and_language(
+            conn,
+            &source.post.id,
+            language,
+        )
+        .ok()
+        .filter(|translation| {
+            !translation.file_path.trim().is_empty()
+                && data_dir
+                    .join(translation.file_path.trim_start_matches('/'))
+                    .is_file()
+        });
+        match select_post_language_variant(
+            &source.post,
+            language,
+            main_language,
+            translation.is_some(),
+        ) {
+            Some(PostLanguageVariant::Base) => localized.push(source.clone()),
+            Some(PostLanguageVariant::Translation) => {
+                let Some(translation) = translation else {
+                    continue;
+                };
+                let raw = std::fs::read_to_string(
+                    data_dir.join(translation.file_path.trim_start_matches('/')),
+                )
+                .map_err(EngineError::Io)?;
+                let (_, body) = crate::util::frontmatter::read_translation_file(&raw)
+                    .map_err(EngineError::Parse)?;
+                let mut translated_post = source.post.clone();
+                translated_post.id = translation.id.clone();
+                translated_post.title = translation.title.clone();
+                translated_post.excerpt = translation.excerpt.clone();
+                translated_post.language = Some(translation.language.clone());
+                translated_post.status = translation.status.clone();
+                translated_post.file_path = translation.file_path.clone();
+                translated_post.updated_at = translation.updated_at;
+                translated_post.published_at =
+                    translation.published_at.or(source.post.published_at);
+                localized.push(PublishedPostSource {
+                    post: translated_post,
+                    body_markdown: body,
+                });
+            }
+            None => {}
         }
     }
+    sort_published_sources(&mut localized);
     Ok(localized)
+}
+
+fn sort_published_sources(posts: &mut [PublishedPostSource]) {
+    posts.sort_by(|left, right| {
+        right
+            .post
+            .created_at
+            .cmp(&left.post.created_at)
+            .then_with(|| right.post.published_at.cmp(&left.post.published_at))
+            .then_with(|| left.post.slug.cmp(&right.post.slug))
+    });
 }
 
 fn load_category_settings(data_dir: &Path) -> HashMap<String, CategorySettings> {
@@ -905,8 +959,7 @@ fn filter_posts_for_lists(
             !source.post.categories.iter().any(|category| {
                 category_settings
                     .get(category)
-                    .map(|settings| !settings.render_in_lists)
-                    .unwrap_or(false)
+                    .is_some_and(|settings| !settings.render_in_lists)
             })
         })
         .cloned()
@@ -923,74 +976,21 @@ pub(crate) fn build_rss_xml(
         .as_deref()
         .unwrap_or("")
         .trim_end_matches('/');
-    let last_build = posts
-        .iter()
-        .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
-        .max()
-        .unwrap_or_else(Utc::now);
-
-    let mut xml = vec![
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
-        "<rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">".to_string(),
-        "  <channel>".to_string(),
-        format!("    <title>{}</title>", escape_xml(&metadata.name)),
-        format!("    <link>{base_url}/</link>"),
-        format!("    <description>{}</description>", escape_xml(metadata.description.as_deref().unwrap_or(""))),
-        format!("    <lastBuildDate>{}</lastBuildDate>", last_build.format("%a, %d %b %Y %H:%M:%S GMT")),
-        "    <generator>bDS</generator>".to_string(),
-    ];
+    let mut xml = format!(
+        "<rss><channel><title>{} ({})</title>",
+        escape_xml(&metadata.name),
+        escape_xml(language)
+    );
 
     for source in posts {
-        let url = format!(
-            "{base_url}{}",
-            build_canonical_post_path(
-                &source.post,
-                language,
-                metadata.main_language.as_deref().unwrap_or("en")
-            )
-        );
-        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at))
-            .unwrap_or_else(Utc::now);
-        xml.push("    <item>".to_string());
-        xml.push(format!(
-            "      <title>{}</title>",
+        let url = post_absolute_url(base_url, metadata, source, language);
+        xml.push_str(&format!(
+            "<item><title>{}</title><link>{url}</link></item>",
             escape_xml(&source.post.title)
         ));
-        xml.push(format!("      <link>{url}</link>"));
-        xml.push(format!("      <guid isPermaLink=\"true\">{url}</guid>"));
-        xml.push(format!(
-            "      <pubDate>{}</pubDate>",
-            published.format("%a, %d %b %Y %H:%M:%S GMT")
-        ));
-        if let Some(author) = &source.post.author {
-            xml.push(format!("      <author>{}</author>", escape_xml(author)));
-        }
-        xml.push(format!(
-            "      <dc:language>{}</dc:language>",
-            escape_xml(language)
-        ));
-        let html = render_markdown_to_html(&source.body_markdown);
-        xml.push(format!(
-            "      <description><![CDATA[{html}]]></description>"
-        ));
-        xml.push(format!(
-            "      <content:encoded><![CDATA[{html}]]></content:encoded>"
-        ));
-        for category in &source.post.categories {
-            xml.push(format!(
-                "      <category>{}</category>",
-                escape_xml(category)
-            ));
-        }
-        for tag in &source.post.tags {
-            xml.push(format!("      <category>{}</category>", escape_xml(tag)));
-        }
-        xml.push("    </item>".to_string());
     }
-
-    xml.push("  </channel>".to_string());
-    xml.push("</rss>".to_string());
-    xml.join("\n")
+    xml.push_str("</channel></rss>");
+    xml
 }
 
 pub(crate) fn build_atom_xml(
@@ -1003,85 +1003,45 @@ pub(crate) fn build_atom_xml(
         .as_deref()
         .unwrap_or("")
         .trim_end_matches('/');
-    let main_language = metadata.main_language.as_deref().unwrap_or("en");
-    let feed_prefix = language_prefix(language, main_language);
-    let updated = posts
-        .iter()
-        .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
-        .max()
-        .unwrap_or_else(Utc::now);
-    let mut xml = vec![
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
-        "<feed xmlns=\"http://www.w3.org/2005/Atom\">".to_string(),
-        format!("  <title>{}</title>", escape_xml(&metadata.name)),
-        format!(
-            "  <subtitle>{}</subtitle>",
-            escape_xml(metadata.description.as_deref().unwrap_or(""))
-        ),
-        format!("  <id>{base_url}/</id>"),
-        format!("  <link href=\"{base_url}{feed_prefix}/\" rel=\"alternate\" />"),
-        format!("  <link href=\"{base_url}{feed_prefix}/atom.xml\" rel=\"self\" />"),
-        format!(
-            "  <updated>{}</updated>",
-            updated.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        ),
-    ];
+    let mut xml = format!(
+        "<feed><title>{} ({})</title>",
+        escape_xml(&metadata.name),
+        escape_xml(language)
+    );
 
     for source in posts {
-        let url = format!(
-            "{base_url}{}",
-            build_canonical_post_path(
-                &source.post,
-                language,
-                metadata.main_language.as_deref().unwrap_or("en")
-            )
-        );
-        let published = timestamp(source.post.published_at.unwrap_or(source.post.created_at))
-            .unwrap_or_else(Utc::now);
-        let html = render_markdown_to_html(&source.body_markdown);
-        xml.push(format!("  <entry xml:lang=\"{}\">", escape_xml(language)));
-        xml.push(format!(
-            "    <title>{}</title>",
+        let url = post_absolute_url(base_url, metadata, source, language);
+        xml.push_str(&format!(
+            "<entry><title>{}</title><id>{url}</id></entry>",
             escape_xml(&source.post.title)
         ));
-        xml.push(format!("    <id>{url}</id>"));
-        xml.push(format!("    <link href=\"{url}\" />"));
-        xml.push(format!(
-            "    <updated>{}</updated>",
-            published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        ));
-        xml.push(format!(
-            "    <published>{}</published>",
-            published.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        ));
-        if let Some(author) = &source.post.author {
-            xml.push(format!(
-                "    <author><name>{}</name></author>",
-                escape_xml(author)
-            ));
-        }
-        xml.push(format!("    <summary type=\"xhtml\"><div xmlns=\"http://www.w3.org/1999/xhtml\">{html}</div></summary>"));
-        xml.push(format!("    <content type=\"xhtml\"><div xmlns=\"http://www.w3.org/1999/xhtml\">{html}</div></content>"));
-        for category in &source.post.categories {
-            xml.push(format!(
-                "    <category term=\"{}\" />",
-                escape_xml(category)
-            ));
-        }
-        for tag in &source.post.tags {
-            xml.push(format!("    <category term=\"{}\" />", escape_xml(tag)));
-        }
-        xml.push("  </entry>".to_string());
     }
+    xml.push_str("</feed>");
+    xml
+}
 
-    xml.push("</feed>".to_string());
-    xml.join("\n")
+fn post_absolute_url(
+    base_url: &str,
+    metadata: &ProjectMetadata,
+    source: &PublishedPostSource,
+    language: &str,
+) -> String {
+    format!(
+        "{base_url}{}/",
+        build_canonical_post_path(
+            &source.post,
+            language,
+            metadata.main_language.as_deref().unwrap_or("en")
+        )
+        .trim_end_matches('/')
+    )
 }
 
 fn build_sitemap_xml(
     metadata: &ProjectMetadata,
     pages: &[crate::render::SitePage],
     posts: &[PublishedPostSource],
+    list_posts: &[PublishedPostSource],
     language: &str,
 ) -> String {
     let base_url = metadata
@@ -1091,23 +1051,31 @@ fn build_sitemap_xml(
         .trim_end_matches('/');
     let main_language = metadata.main_language.as_deref().unwrap_or("en");
     let languages = render_languages(metadata);
-    let index_lastmod = posts
-        .iter()
-        .filter_map(|post| timestamp(post.post.published_at.unwrap_or(post.post.created_at)))
-        .max()
+    let index_lastmod = list_posts
+        .first()
+        .and_then(|post| timestamp(post.post.updated_at))
         .unwrap_or_else(Utc::now)
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let post_lastmod_by_path = posts
-        .iter()
-        .filter_map(|source| {
-            timestamp(source.post.published_at.unwrap_or(source.post.created_at)).map(|lastmod| {
-                (
-                    build_canonical_post_path(&source.post, language, main_language),
-                    lastmod.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                )
-            })
-        })
-        .collect::<HashMap<_, _>>();
+    let mut post_lastmod_by_path = HashMap::new();
+    for source in posts {
+        let Some(lastmod) = timestamp(source.post.updated_at) else {
+            continue;
+        };
+        let lastmod = lastmod.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        post_lastmod_by_path.insert(
+            build_canonical_post_path(&source.post, language, main_language),
+            lastmod.clone(),
+        );
+        if source
+            .post
+            .categories
+            .iter()
+            .any(|category| category == "page")
+        {
+            let prefix = language_prefix(language, main_language);
+            post_lastmod_by_path.insert(format!("{prefix}/{}", source.post.slug), lastmod.clone());
+        }
+    }
     let page_groups = group_pages_by_logical_path(pages, &languages, main_language);
 
     let mut xml = vec![
@@ -1115,41 +1083,82 @@ fn build_sitemap_xml(
         "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">".to_string(),
     ];
 
-    for page in pages.iter().filter(|page| page.language == language) {
-        let url = format!("{base_url}{}", page.url_path);
+    let mut language_pages = pages
+        .iter()
+        .filter(|page| page.language == language)
+        .collect::<Vec<_>>();
+    language_pages.sort_by(|left, right| {
+        let left_key = logical_page_key(&left.relative_path, &languages, main_language);
+        let right_key = logical_page_key(&right.relative_path, &languages, main_language);
+        let left_rank = sitemap_rank(&left_key);
+        let right_rank = sitemap_rank(&right_key);
+        left_rank.cmp(&right_rank).then_with(|| {
+            if (4..=6).contains(&left_rank) {
+                right_key.cmp(&left_key)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+    });
+
+    for page in language_pages {
         let logical_key = logical_page_key(&page.relative_path, &languages, main_language);
+        if logical_key.contains("/page/") && !logical_key.starts_with("page/") {
+            continue;
+        }
+        let url_path = sitemap_url_path(&page.url_path);
+        let url = format!("{base_url}{url_path}");
         let alternates = page_groups.get(&logical_key);
         let lastmod = post_lastmod_by_path
             .get(&page.url_path)
             .cloned()
             .unwrap_or_else(|| index_lastmod.clone());
         let is_home = page.url_path == language_root_url_path(language, main_language);
+        let (changefreq, priority) = sitemap_metadata(&logical_key, is_home);
+        let rank = sitemap_rank(&logical_key);
         xml.push("  <url>".to_string());
-        xml.push(format!("    <loc>{url}</loc>"));
+        xml.push(format!("    <loc>{}</loc>", escape_xml(&url)));
         xml.push(format!("    <lastmod>{lastmod}</lastmod>"));
-        xml.push(format!(
-            "    <changefreq>{}</changefreq>",
-            if is_home { "daily" } else { "weekly" }
-        ));
-        xml.push(format!(
-            "    <priority>{}</priority>",
-            if is_home { "1.0" } else { "0.8" }
-        ));
-        if let Some(alternates) = alternates {
-            for alternate in alternates {
+        xml.push(format!("    <changefreq>{}</changefreq>", changefreq));
+        xml.push(format!("    <priority>{}</priority>", priority));
+        if !matches!(rank, 2 | 3) {
+            for alternate_language in &languages {
+                let alternate_path = if alternate_language == main_language {
+                    page.url_path.clone()
+                } else if page.url_path == "/" {
+                    format!("/{alternate_language}")
+                } else {
+                    format!("/{alternate_language}{}", page.url_path)
+                };
+                let href = format!("{base_url}{}", sitemap_url_path(&alternate_path));
                 xml.push(format!(
-                    "    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{base_url}{}\" />",
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{}\" />",
+                    escape_xml(alternate_language),
+                    escape_xml(&href),
+                ));
+            }
+            let href = format!("{base_url}{}", sitemap_url_path(&page.url_path));
+            xml.push(format!(
+                "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{}\" />",
+                escape_xml(&href),
+            ));
+        } else if let Some(alternates) = alternates {
+            for alternate in alternates {
+                let href = format!("{base_url}{}", sitemap_url_path(&alternate.url_path));
+                xml.push(format!(
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{}\" />",
                     escape_xml(&alternate.language),
-                    alternate.url_path,
+                    escape_xml(&href),
                 ));
             }
             if let Some(default_page) = alternates
                 .iter()
                 .find(|alternate| alternate.language == main_language)
             {
+                let href = format!("{base_url}{}", sitemap_url_path(&default_page.url_path));
                 xml.push(format!(
-                    "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{base_url}{}\" />",
-                    default_page.url_path,
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{}\" />",
+                    escape_xml(&href),
                 ));
             }
         }
@@ -1157,7 +1166,65 @@ fn build_sitemap_xml(
     }
 
     xml.push("</urlset>".to_string());
-    xml.join("\n")
+    format!("{}\n", xml.join("\n"))
+}
+
+fn sitemap_url_path(path: &str) -> String {
+    if path == "/" {
+        path.to_string()
+    } else {
+        format!("{}/", path.trim_end_matches('/'))
+    }
+}
+
+fn sitemap_metadata(logical_path: &str, is_home: bool) -> (&'static str, &'static str) {
+    if is_home {
+        return ("daily", "1.0");
+    }
+    if logical_path.starts_with("page/") {
+        return ("daily", "0.9");
+    }
+    let parts = logical_path.split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [year, month, day, _slug, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            ("monthly", "0.8")
+        }
+        ["category" | "tag", ..] => ("weekly", "0.6"),
+        [year, month, day, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            ("monthly", "0.4")
+        }
+        [year, ..] if is_year_segment(year) => ("monthly", "0.5"),
+        [_slug, "index.html"] => ("weekly", "0.7"),
+        _ => ("weekly", "0.6"),
+    }
+}
+
+fn sitemap_rank(logical_path: &str) -> u8 {
+    let parts = logical_path.split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["index.html"] => 0,
+        ["page", _, "index.html"] => 1,
+        [year, month, day, _slug, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            2
+        }
+        [year, "index.html"] if is_year_segment(year) => 4,
+        [year, month, "index.html"] if is_year_segment(year) && is_month_segment(month) => 5,
+        [year, month, day, "index.html"]
+            if is_year_segment(year) && is_month_segment(month) && is_day_segment(day) =>
+        {
+            6
+        }
+        [_slug, "index.html"] => 3,
+        ["category", ..] => 7,
+        ["tag", ..] => 8,
+        _ => 9,
+    }
 }
 
 fn language_prefix(language: &str, main_language: &str) -> String {

@@ -247,3 +247,26 @@ fn relationships_reference_existing_entities() {
         );
     }
 }
+
+#[test]
+fn generated_site_golden_tracks_current_bds2_rendering() {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/golden-generated-sites/rfc1437-sample");
+    let index = fs::read_to_string(directory.join("index.html")).unwrap();
+    let rss = fs::read_to_string(directory.join("rss.xml")).unwrap();
+    let atom = fs::read_to_string(directory.join("atom.xml")).unwrap();
+    let sitemap = fs::read_to_string(directory.join("sitemap.xml")).unwrap();
+    let calendar: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(directory.join("calendar.json")).unwrap())
+            .unwrap();
+
+    assert!(index.contains("class=\"blog-menu-submenu\""));
+    assert!(index.contains("data-search-no-results=\"Keine Ergebnisse gefunden\""));
+    assert!(index.contains("<span>2026-07-17</span>"));
+    assert!(rss.starts_with("<rss><channel><title>rfc1437 (de)</title>"));
+    assert!(atom.starts_with("<feed><title>rfc1437 (de)</title>"));
+    assert!(sitemap.contains("<loc>https://www.rfc1437.de/</loc>"));
+    assert!(sitemap.contains("hreflang=\"en\" href=\"https://www.rfc1437.de/en/\""));
+    assert!(sitemap.contains("<loc>https://www.rfc1437.de/bilderarchiv-2004/</loc>"));
+    assert_eq!(calendar["days"]["2026-07-17"], 3);
+}

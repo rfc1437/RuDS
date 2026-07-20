@@ -14,7 +14,7 @@ use crate::db::{Database, queries};
 use crate::engine::generation::PublishedPostSource;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{Post, PostStatus, pico_stylesheet_href};
-use crate::render::build_preview_response;
+use crate::render::{PostLanguageVariant, build_preview_response, select_post_language_variant};
 use crate::util::frontmatter::{read_post_file, read_translation_file};
 
 pub const PREVIEW_HOST: &str = "127.0.0.1";
@@ -204,9 +204,8 @@ fn render_preview_response(
     let metadata = crate::engine::meta::read_project_json(&state.data_dir)?;
     let db = Database::open(&state.db_path)?;
     let preview_posts = collect_preview_posts(state)?;
-    let list_posts = filter_preview_list_posts(&state.data_dir, &preview_posts);
     if path == "/calendar.json" {
-        let posts = list_posts
+        let posts = preview_posts
             .iter()
             .map(|source| source.post.clone())
             .collect::<Vec<_>>();
@@ -220,13 +219,27 @@ fn render_preview_response(
             .into_response());
     }
     if let Some((language, kind)) = preview_feed_request(path, &metadata) {
-        let localized_posts = localized_preview_posts(
-            db.conn(),
-            &state.data_dir,
-            &list_posts,
-            &language,
-            metadata.main_language.as_deref().unwrap_or("en"),
-        )?;
+        let main_language = metadata.main_language.as_deref().unwrap_or("en");
+        let localized_posts = if language.eq_ignore_ascii_case(main_language) {
+            preview_posts.clone()
+        } else {
+            localized_preview_posts(
+                db.conn(),
+                &state.data_dir,
+                &preview_posts,
+                &language,
+                main_language,
+            )?
+            .into_iter()
+            .filter(|source| {
+                source
+                    .post
+                    .language
+                    .as_deref()
+                    .is_some_and(|post_language| post_language.eq_ignore_ascii_case(&language))
+            })
+            .collect()
+        };
         let (content_type, xml) = match kind {
             PreviewFeedKind::Rss => (
                 "application/rss+xml; charset=utf-8",
@@ -414,26 +427,15 @@ fn collect_preview_posts(state: &PreviewServerState) -> EngineResult<Vec<Publish
             post,
         });
     }
-    preview_posts.sort_by_key(|source| source.post.published_at.unwrap_or(source.post.created_at));
+    preview_posts.sort_by(|left, right| {
+        right
+            .post
+            .created_at
+            .cmp(&left.post.created_at)
+            .then_with(|| right.post.published_at.cmp(&left.post.published_at))
+            .then_with(|| left.post.slug.cmp(&right.post.slug))
+    });
     Ok(preview_posts)
-}
-
-fn filter_preview_list_posts(
-    data_dir: &Path,
-    posts: &[PublishedPostSource],
-) -> Vec<PublishedPostSource> {
-    let settings = crate::engine::meta::read_category_meta_json(data_dir).unwrap_or_default();
-    posts
-        .iter()
-        .filter(|source| {
-            !source.post.categories.iter().any(|category| {
-                settings
-                    .get(category)
-                    .is_some_and(|setting| !setting.render_in_lists)
-            })
-        })
-        .cloned()
-        .collect()
 }
 
 fn preview_feed_request(
@@ -460,7 +462,7 @@ fn preview_feed_request(
         _ => return None,
     };
     let kind = match filename {
-        "rss.xml" | "feed.xml" => PreviewFeedKind::Rss,
+        "rss.xml" => PreviewFeedKind::Rss,
         "atom.xml" => PreviewFeedKind::Atom,
         _ => return None,
     };
@@ -474,30 +476,49 @@ fn localized_preview_posts(
     language: &str,
     main_language: &str,
 ) -> EngineResult<Vec<PublishedPostSource>> {
-    if language.eq_ignore_ascii_case(main_language) {
-        return Ok(posts.to_vec());
-    }
-
     let mut localized = Vec::new();
     for source in posts {
-        let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(
+        let translation = queries::post_translation::get_post_translation_by_post_and_language(
             conn,
             &source.post.id,
             language,
-        ) else {
-            continue;
-        };
-        let mut translated_post = source.post.clone();
-        translated_post.title = translation.title.clone();
-        translated_post.excerpt = translation.excerpt.clone();
-        translated_post.language = Some(translation.language.clone());
-        translated_post.status = translation.status.clone();
-        translated_post.file_path = translation.file_path.clone();
-        translated_post.published_at = translation.published_at.or(source.post.published_at);
-        localized.push(PublishedPostSource {
-            post: translated_post,
-            body_markdown: load_translation_body(data_dir, &translation)?,
+        )
+        .ok()
+        .filter(|translation| {
+            (translation.status == PostStatus::Draft && translation.content.is_some())
+                || (!translation.file_path.trim().is_empty()
+                    && data_dir
+                        .join(translation.file_path.trim_start_matches('/'))
+                        .is_file())
         });
+        match select_post_language_variant(
+            &source.post,
+            language,
+            main_language,
+            translation.is_some(),
+        ) {
+            Some(PostLanguageVariant::Base) => localized.push(source.clone()),
+            Some(PostLanguageVariant::Translation) => {
+                let Some(translation) = translation else {
+                    continue;
+                };
+                let mut translated_post = source.post.clone();
+                translated_post.id = translation.id.clone();
+                translated_post.title = translation.title.clone();
+                translated_post.excerpt = translation.excerpt.clone();
+                translated_post.language = Some(translation.language.clone());
+                translated_post.status = translation.status.clone();
+                translated_post.file_path = translation.file_path.clone();
+                translated_post.updated_at = translation.updated_at;
+                translated_post.published_at =
+                    translation.published_at.or(source.post.published_at);
+                localized.push(PublishedPostSource {
+                    post: translated_post,
+                    body_markdown: load_translation_body(data_dir, &translation)?,
+                });
+            }
+            None => {}
+        }
     }
     Ok(localized)
 }
@@ -790,6 +811,25 @@ mod tests {
     }
 
     #[test]
+    fn preview_renders_page_category_post_at_flat_path() {
+        let db = Database::open_in_memory().unwrap();
+        let mut source = make_post();
+        source.post.categories = vec!["page".into()];
+        let response = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &make_metadata(),
+            &[(source.post, source.body_markdown)],
+            "/hello",
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert!(response.html.contains("<h1>Hello</h1>"));
+    }
+
+    #[test]
     fn preview_renders_language_prefixed_single_post() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
@@ -923,11 +963,10 @@ mod tests {
         assert!(translated_draft_html.contains("Deutscher <strong>Entwurf</strong>"));
         assert!(calendar_json.contains("2024"));
         assert!(rss_xml.contains("<rss"));
-        assert!(rss_xml.contains("Draft <strong>body</strong>"));
-        assert!(rss_xml.contains("Filesystem <strong>body</strong>"));
-        assert!(!rss_xml.contains("Stale database body"));
+        assert!(rss_xml.contains("<title>Hello</title>"));
+        assert!(rss_xml.contains("<title>Published from file</title>"));
         assert!(translated_atom_xml.contains("<feed"));
-        assert!(translated_atom_xml.contains("Deutscher <strong>Entwurf</strong>"));
+        assert!(translated_atom_xml.contains("<title>Hallo</title>"));
     }
 
     #[test]

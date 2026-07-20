@@ -15,11 +15,12 @@
     }
     initialized = true;
     var placeholder = root.getAttribute('data-search-placeholder') || 'Search...';
+    var zeroResults = root.getAttribute('data-search-no-results') || 'No results found';
     new PagefindUI({
       element: root,
       showSubResults: true,
       showImages: false,
-      translations: { placeholder: placeholder }
+      translations: { placeholder: placeholder, zero_results: zeroResults }
     });
     var input = root.querySelector('input');
     if (input) {

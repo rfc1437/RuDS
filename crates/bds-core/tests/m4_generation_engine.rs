@@ -11,8 +11,8 @@ use bds_core::engine::generation::{
 use bds_core::engine::meta::write_category_meta_json;
 use bds_core::engine::validate_site::validate_site;
 use bds_core::model::{
-    CategorySettings, Post, PostStatus, Project, ProjectMetadata, Template, TemplateKind,
-    TemplateStatus,
+    CategorySettings, Post, PostStatus, PostTranslation, Project, ProjectMetadata, Template,
+    TemplateKind, TemplateStatus,
 };
 use tempfile::TempDir;
 
@@ -177,7 +177,7 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(report.written_paths.contains(&"index.html".to_string()));
     assert!(report.written_paths.contains(&"calendar.json".to_string()));
     assert!(report.written_paths.contains(&"rss.xml".to_string()));
-    assert!(report.written_paths.contains(&"feed.xml".to_string()));
+    assert!(!report.written_paths.contains(&"feed.xml".to_string()));
     assert!(report.written_paths.contains(&"atom.xml".to_string()));
     assert!(report.written_paths.contains(&"sitemap.xml".to_string()));
     assert!(report.written_paths.contains(&"404.html".to_string()));
@@ -209,7 +209,7 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
 
     assert!(dir.path().join("index.html").exists());
     assert!(dir.path().join("rss.xml").exists());
-    assert!(dir.path().join("feed.xml").exists());
+    assert!(!dir.path().join("feed.xml").exists());
     assert!(dir.path().join("atom.xml").exists());
     assert!(dir.path().join("sitemap.xml").exists());
     assert!(dir.path().join("assets/pico.min.css").exists());
@@ -217,12 +217,186 @@ fn generation_engine_writes_core_and_single_post_artifacts() {
     assert!(dir.path().join("2024/03/09/hello/index.html").exists());
 
     let rss = std::fs::read_to_string(dir.path().join("rss.xml")).unwrap();
-    assert!(rss.contains("<rss version=\"2.0\""));
-    assert!(rss.contains("https://example.com/2024/03/09/hello"));
+    assert_eq!(
+        rss,
+        "<rss><channel><title>Blog (en)</title><item><title>next</title><link>https://example.com/2024/03/10/next/</link></item><item><title>hello</title><link>https://example.com/2024/03/09/hello/</link></item></channel></rss>"
+    );
+    let atom = std::fs::read_to_string(dir.path().join("atom.xml")).unwrap();
+    assert_eq!(
+        atom,
+        "<feed><title>Blog (en)</title><entry><title>next</title><id>https://example.com/2024/03/10/next/</id></entry><entry><title>hello</title><id>https://example.com/2024/03/09/hello/</id></entry></feed>"
+    );
 
     let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
     assert!(sitemap.contains("https://example.com/2024/03/09/hello"));
     assert!(sitemap.contains("https://example.com/category/article"));
+}
+
+#[test]
+fn mixed_source_languages_use_the_main_language_at_canonical_urls() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.main_language = Some("de".into());
+    metadata.blog_languages = vec!["de".into(), "en".into()];
+    bds_core::engine::meta::write_project_json(dir.path(), &metadata).unwrap();
+    insert_template(
+        db.conn(),
+        &Template {
+            id: "template-post".into(),
+            project_id: "p1".into(),
+            slug: "post".into(),
+            title: "Post".into(),
+            kind: TemplateKind::Post,
+            enabled: true,
+            version: 1,
+            file_path: String::new(),
+            status: TemplateStatus::Published,
+            content: Some("ID={{ post.id }} {{ post.content }}".into()),
+            created_at: 1,
+            updated_at: 1,
+        },
+    )
+    .unwrap();
+
+    let mut english_source = make_post("english-source", 1_710_000_000_000);
+    english_source.language = Some("en".into());
+    write_published_snapshot(&dir, &mut english_source, "English source body");
+    bds_core::db::queries::post::insert_post(db.conn(), &english_source).unwrap();
+    let german_translation = PostTranslation {
+        id: "translation-english-de".into(),
+        project_id: "p1".into(),
+        translation_for: english_source.id.clone(),
+        language: "de".into(),
+        title: "Deutsche Übersetzung".into(),
+        excerpt: None,
+        content: None,
+        status: PostStatus::Published,
+        file_path: "posts/english-source.de.md".into(),
+        checksum: None,
+        created_at: english_source.created_at,
+        updated_at: english_source.updated_at,
+        published_at: english_source.published_at,
+    };
+    bds_core::db::queries::post_translation::insert_post_translation(
+        db.conn(),
+        &german_translation,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(&german_translation.file_path),
+        bds_core::util::frontmatter::write_translation_file(
+            &german_translation,
+            "Deutscher Übersetzungstext",
+        ),
+    )
+    .unwrap();
+
+    let mut german_without_translation = make_post("german-fallback", 1_710_172_800_000);
+    german_without_translation.language = Some("de".into());
+    german_without_translation.title = "Deutscher Fallback".into();
+
+    let mut german_source = make_post("german-source", 1_710_086_400_000);
+    german_source.language = Some("de".into());
+    german_source.title = "Deutsche Quelle".into();
+    write_published_snapshot(&dir, &mut german_source, "Deutscher Quelltext");
+    bds_core::db::queries::post::insert_post(db.conn(), &german_source).unwrap();
+    let english_translation = PostTranslation {
+        id: "translation-german-en".into(),
+        project_id: "p1".into(),
+        translation_for: german_source.id.clone(),
+        language: "en".into(),
+        title: "English translation".into(),
+        excerpt: None,
+        content: None,
+        status: PostStatus::Published,
+        file_path: "posts/german-source.en.md".into(),
+        checksum: None,
+        created_at: german_source.created_at,
+        updated_at: german_source.updated_at,
+        published_at: german_source.published_at,
+    };
+    bds_core::db::queries::post_translation::insert_post_translation(
+        db.conn(),
+        &english_translation,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(&english_translation.file_path),
+        bds_core::util::frontmatter::write_translation_file(
+            &english_translation,
+            "English translation body",
+        ),
+    )
+    .unwrap();
+
+    let mut german_private = make_post("german-private", 1_710_259_200_000);
+    german_private.language = Some("de".into());
+    german_private.do_not_translate = true;
+
+    let output = dir.path().join("html");
+    let sources = vec![
+        PublishedPostSource {
+            post: english_source,
+            body_markdown: "English source body".into(),
+        },
+        PublishedPostSource {
+            post: german_source,
+            body_markdown: "Deutscher Quelltext".into(),
+        },
+        PublishedPostSource {
+            post: german_without_translation,
+            body_markdown: "Unübersetzter Quelltext".into(),
+        },
+        PublishedPostSource {
+            post: german_private,
+            body_markdown: "Nur auf Deutsch".into(),
+        },
+    ];
+    generate_starter_site(db.conn(), &output, "p1", &metadata, &sources, "de").unwrap();
+
+    let canonical_english_source =
+        std::fs::read_to_string(output.join("2024/03/09/english-source/index.html")).unwrap();
+    let localized_english_source =
+        std::fs::read_to_string(output.join("en/2024/03/09/english-source/index.html")).unwrap();
+    let canonical_german_source =
+        std::fs::read_to_string(output.join("2024/03/10/german-source/index.html")).unwrap();
+    let localized_german_source =
+        std::fs::read_to_string(output.join("en/2024/03/10/german-source/index.html")).unwrap();
+    let localized_fallback =
+        std::fs::read_to_string(output.join("en/2024/03/11/german-fallback/index.html")).unwrap();
+
+    assert!(canonical_english_source.contains("Deutscher Übersetzungstext"));
+    assert!(canonical_english_source.contains("ID=translation-english-de"));
+    assert!(localized_english_source.contains("English source body"));
+    assert!(localized_english_source.contains("ID=post-english-source"));
+    assert!(canonical_german_source.contains("Deutscher Quelltext"));
+    assert!(localized_german_source.contains("English translation body"));
+    assert!(localized_fallback.contains("Unübersetzter Quelltext"));
+    assert!(
+        output
+            .join("2024/03/12/german-private/index.html")
+            .is_file()
+    );
+    assert!(
+        !output
+            .join("en/2024/03/12/german-private/index.html")
+            .exists()
+    );
+
+    let sitemap = std::fs::read_to_string(output.join("sitemap.xml")).unwrap();
+    assert!(sitemap.contains("https://example.com/2024/03/09/english-source"));
+    assert!(sitemap.contains("https://example.com/en/2024/03/09/english-source"));
+    assert!(sitemap.contains("https://example.com/2024/03/10/german-source"));
+    assert!(sitemap.contains("https://example.com/en/2024/03/10/german-source"));
+    assert!(sitemap.contains("https://example.com/2024/03/12/german-private"));
+    assert!(!sitemap.contains("https://example.com/en/2024/03/12/german-private"));
+    let main_rss = std::fs::read_to_string(output.join("rss.xml")).unwrap();
+    let english_rss = std::fs::read_to_string(output.join("en/rss.xml")).unwrap();
+    assert!(main_rss.contains("<title>english-source</title>"));
+    assert!(!main_rss.contains("<title>Deutsche Übersetzung</title>"));
+    assert!(english_rss.contains("<title>english-source</title>"));
+    assert!(english_rss.contains("<title>English translation</title>"));
+    assert!(!english_rss.contains("<title>Deutscher Fallback</title>"));
 }
 
 #[test]
@@ -345,7 +519,8 @@ fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
 
     assert!(report.written_paths.contains(&"en/atom.xml".to_string()));
     assert!(report.written_paths.contains(&"en/rss.xml".to_string()));
-    assert!(report.written_paths.contains(&"en/sitemap.xml".to_string()));
+    assert!(!report.written_paths.contains(&"en/sitemap.xml".to_string()));
+    assert!(!report.written_paths.contains(&"feed.xml".to_string()));
     assert!(report.written_paths.contains(&"en/404.html".to_string()));
     assert!(
         report
@@ -354,17 +529,77 @@ fn multilingual_generation_writes_language_aware_atom_and_sitemap_routes() {
     );
 
     let atom = std::fs::read_to_string(dir.path().join("en/atom.xml")).unwrap();
-    assert!(
-        atom.contains("<link href=\"https://example.com/en/\" rel=\"alternate\" />")
-            || atom.contains("<link href=\"https://example.com/en\" rel=\"alternate\" />")
-    );
-    assert!(atom.contains("<link href=\"https://example.com/en/atom.xml\" rel=\"self\" />"));
+    assert!(atom.starts_with("<feed><title>Blog (en)</title>"));
 
     let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
     assert!(sitemap.contains("hreflang=\"de\" href=\"https://example.com/\""));
-    assert!(sitemap.contains("hreflang=\"en\" href=\"https://example.com/en\""));
+    assert!(sitemap.contains("hreflang=\"en\" href=\"https://example.com/en/\""));
     assert!(sitemap.contains("hreflang=\"x-default\" href=\"https://example.com/\""));
     assert!(sitemap.contains("https://example.com/category/article"));
+}
+
+#[test]
+fn page_category_posts_also_generate_flat_routes() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let mut page = make_post("about", 1_710_000_000_000);
+    page.categories = vec!["page".into()];
+    let posts = vec![PublishedPostSource {
+        post: page,
+        body_markdown: "About this site".into(),
+    }];
+
+    let report =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+
+    assert!(
+        report
+            .written_paths
+            .contains(&"about/index.html".to_string())
+    );
+    assert!(dir.path().join("about/index.html").is_file());
+    let sitemap = std::fs::read_to_string(dir.path().join("sitemap.xml")).unwrap();
+    assert!(sitemap.contains("<loc>https://example.com/about/</loc>"));
+}
+
+#[test]
+fn page_aliases_belong_to_core_while_dated_posts_belong_to_single() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let mut page = make_post("about", 1_710_000_000_000);
+    page.categories = vec!["page".into()];
+    let posts = vec![PublishedPostSource {
+        post: page,
+        body_markdown: "About this site".into(),
+    }];
+
+    let single = render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        GenerationSection::Single,
+        |_current, _total, _url| {},
+        || false,
+    )
+    .unwrap();
+    assert_eq!(single.written_paths, vec!["2024/03/09/about/index.html"]);
+    assert!(!dir.path().join("about/index.html").exists());
+
+    let core = render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        GenerationSection::Core,
+        |_current, _total, _url| {},
+        || false,
+    )
+    .unwrap();
+    assert!(core.written_paths.contains(&"about/index.html".to_string()));
+    assert!(dir.path().join("about/index.html").is_file());
 }
 
 #[test]
@@ -457,12 +692,12 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
         std::fs::read_to_string(dir.path().join("category/featured/index.html")).unwrap();
     assert!(featured_html.contains("FEATURED:[Featured Post|false]"));
 
-    let feed = std::fs::read_to_string(dir.path().join("feed.xml")).unwrap();
-    assert!(!feed.contains("hidden-post"));
-    assert!(feed.contains("featured-post"));
+    let rss = std::fs::read_to_string(dir.path().join("rss.xml")).unwrap();
+    assert!(rss.contains("hidden-post"));
+    assert!(rss.contains("featured-post"));
 
     let calendar = std::fs::read_to_string(dir.path().join("calendar.json")).unwrap();
-    assert!(!calendar.contains("2024-03-09"));
+    assert!(calendar.contains("2024-03-09"));
     assert!(calendar.contains("2024-03-10"));
 }
 
@@ -484,7 +719,7 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
     assert!(second.skipped_paths.contains(&"index.html".to_string()));
     assert!(second.skipped_paths.contains(&"calendar.json".to_string()));
     assert!(second.skipped_paths.contains(&"rss.xml".to_string()));
-    assert!(second.skipped_paths.contains(&"feed.xml".to_string()));
+    assert!(!second.skipped_paths.contains(&"feed.xml".to_string()));
     assert!(
         second
             .skipped_paths
@@ -506,12 +741,12 @@ fn site_validation_detects_stale_and_missing_outputs() {
 
     generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
     std::fs::write(dir.path().join("index.html"), "tampered").unwrap();
-    std::fs::remove_file(dir.path().join("feed.xml")).unwrap();
+    std::fs::remove_file(dir.path().join("atom.xml")).unwrap();
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
 
     assert!(report.stale_pages.contains(&"index.html".to_string()));
-    assert!(report.missing_pages.contains(&"feed.xml".to_string()));
+    assert!(report.missing_pages.contains(&"atom.xml".to_string()));
     assert!(report.extra_pages.is_empty());
 }
 
@@ -529,7 +764,7 @@ fn apply_validation_repairs_core_section_outputs() {
 
     generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
     std::fs::write(dir.path().join("index.html"), "tampered").unwrap();
-    std::fs::remove_file(dir.path().join("feed.xml")).unwrap();
+    std::fs::remove_file(dir.path().join("atom.xml")).unwrap();
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
     let sections = sections_from_validation_report(&report);

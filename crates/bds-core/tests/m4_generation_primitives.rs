@@ -111,20 +111,20 @@ fn generated_write_rewrites_stale_file_even_when_db_hash_matches() {
 }
 
 #[test]
-fn core_generation_paths_include_language_prefixed_variants() {
+fn core_generation_paths_match_bds2_outputs() {
     let paths = build_core_generation_paths("en", &["en".into(), "de".into(), "fr".into()]);
     assert!(paths.contains(&"index.html".to_string()));
     assert!(paths.contains(&"404.html".to_string()));
     assert!(paths.contains(&"sitemap.xml".to_string()));
     assert!(paths.contains(&"rss.xml".to_string()));
-    assert!(paths.contains(&"feed.xml".to_string()));
+    assert!(!paths.contains(&"feed.xml".to_string()));
     assert!(paths.contains(&"atom.xml".to_string()));
     assert!(paths.contains(&"calendar.json".to_string()));
     assert!(paths.contains(&"de/index.html".to_string()));
     assert!(paths.contains(&"de/404.html".to_string()));
-    assert!(paths.contains(&"de/sitemap.xml".to_string()));
+    assert!(!paths.contains(&"de/sitemap.xml".to_string()));
     assert!(paths.contains(&"de/rss.xml".to_string()));
-    assert!(paths.contains(&"de/feed.xml".to_string()));
+    assert!(!paths.contains(&"de/feed.xml".to_string()));
     assert!(paths.contains(&"de/atom.xml".to_string()));
     assert!(paths.contains(&"fr/index.html".to_string()));
 }
@@ -138,6 +138,7 @@ fn calendar_json_groups_posts_by_year_month_day() {
     ];
 
     let json = build_calendar_json(&posts).unwrap();
+    assert!(!json.contains('\n'));
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(parsed["years"]["2024"], 3);
@@ -145,4 +146,16 @@ fn calendar_json_groups_posts_by_year_month_day() {
     assert_eq!(parsed["months"]["2024-04"], 1);
     assert_eq!(parsed["days"]["2024-03-09"], 2);
     assert_eq!(parsed["days"]["2024-04-09"], 1);
+}
+
+#[test]
+fn calendar_json_uses_created_at_instead_of_published_at() {
+    let mut post = make_post("a", 1_710_000_000_000);
+    post.published_at = Some(1_712_678_400_000);
+
+    let json = build_calendar_json(&[post]).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["days"]["2024-03-09"], 1);
+    assert!(parsed["days"].get("2024-04-09").is_none());
 }

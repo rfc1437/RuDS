@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::db::DbConnection as Connection;
-use chrono::{Datelike, TimeZone, Utc};
+use chrono::{Datelike, Local, TimeZone, Utc};
 use rayon::prelude::*;
 use serde_json::{Value, json};
 
@@ -17,8 +17,8 @@ use crate::model::{
     TemplateKind, TemplateStatus,
 };
 use crate::render::{
-    RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
-    render_liquid_template_with_host, resolve_post_template,
+    PostLanguageVariant, RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
+    render_liquid_template_with_host, resolve_post_template, select_post_language_variant,
 };
 use crate::scripting::{CoreHost, HostApi, UnavailableHost};
 use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
@@ -36,6 +36,8 @@ const STARTER_MENU_PARTIAL: &str =
     include_str!("../../../../assets/starter-templates/partials/menu.liquid");
 const STARTER_LANGUAGE_SWITCHER_PARTIAL: &str =
     include_str!("../../../../assets/starter-templates/partials/language-switcher.liquid");
+const STARTER_MENU_ITEMS_PARTIAL: &str =
+    include_str!("../../../../assets/starter-templates/partials/menu-items.liquid");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SitePage {
@@ -81,6 +83,7 @@ struct TemplateBundle {
 #[derive(Debug, Clone)]
 struct RenderPostRecord {
     post: Post,
+    source_post_id: String,
     body_markdown: String,
 }
 
@@ -278,47 +281,64 @@ fn build_site_render_artifacts_with_mode(
             canonical_post_path_by_slug(&localized_posts, &language, &main_language);
         for record in &localized_posts {
             let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
-            let relative_path = format!("{}/index.html", canonical_path.trim_start_matches('/'));
-            artifacts.route_manifest.push(SitePage {
-                language: language.clone(),
-                relative_path: relative_path.clone(),
-                url_path: canonical_path.clone(),
-                html: String::new(),
-            });
-            if section.is_some_and(|section| section != GenerationSection::Single) {
-                continue;
+            let mut post_paths = vec![(canonical_path, GenerationSection::Single)];
+            if record
+                .post
+                .categories
+                .iter()
+                .any(|category| category == "page")
+            {
+                post_paths.push((
+                    if language == main_language {
+                        format!("/{}", record.post.slug)
+                    } else {
+                        format!("/{language}/{}", record.post.slug)
+                    },
+                    GenerationSection::Core,
+                ));
             }
-            if requested_paths.is_some_and(|requested| !requested.contains(&relative_path)) {
-                continue;
+            for (url_path, route_section) in post_paths {
+                let relative_path = format!("{}/index.html", url_path.trim_start_matches('/'));
+                artifacts.route_manifest.push(SitePage {
+                    language: language.clone(),
+                    relative_path: relative_path.clone(),
+                    url_path: url_path.clone(),
+                    html: String::new(),
+                });
+                if section.is_some_and(|section| section != route_section)
+                    || requested_paths.is_some_and(|requested| !requested.contains(&relative_path))
+                {
+                    continue;
+                }
+                let html = render_post_route(
+                    conn,
+                    metadata,
+                    &language,
+                    &main_language,
+                    record,
+                    &localized_posts,
+                    &tags,
+                    &category_settings,
+                    &media_by_id,
+                    &canonical_map,
+                    &menu_items,
+                    &post_data_json_by_id,
+                    &bundle,
+                    is_preview,
+                )?;
+                artifacts.pagefind_documents.push(PagefindDocument {
+                    language: language.clone(),
+                    relative_path: relative_path.clone(),
+                    url_path: url_path.clone(),
+                    html: html.clone(),
+                });
+                artifacts.pages.push(SitePage {
+                    language: language.clone(),
+                    relative_path,
+                    url_path,
+                    html,
+                });
             }
-            let html = render_post_route(
-                conn,
-                metadata,
-                &language,
-                &main_language,
-                record,
-                &localized_posts,
-                &tags,
-                &category_settings,
-                &media_by_id,
-                &canonical_map,
-                &menu_items,
-                &post_data_json_by_id,
-                &bundle,
-                is_preview,
-            )?;
-            artifacts.pagefind_documents.push(PagefindDocument {
-                language: language.clone(),
-                relative_path: relative_path.clone(),
-                url_path: canonical_path.clone(),
-                html: html.clone(),
-            });
-            artifacts.pages.push(SitePage {
-                language: language.clone(),
-                relative_path,
-                url_path: canonical_path,
-                html,
-            });
         }
     }
 
@@ -513,47 +533,61 @@ fn load_language_posts(
 ) -> Result<Vec<RenderPostRecord>, Box<dyn Error + Send + Sync>> {
     let mut posts = Vec::new();
     for (post, body) in published_posts {
-        if language.eq_ignore_ascii_case(main_language) {
-            posts.push(RenderPostRecord {
+        let translation = queries::post_translation::get_post_translation_by_post_and_language(
+            conn, &post.id, language,
+        )
+        .ok()
+        .filter(|translation| {
+            (is_preview && translation.status == PostStatus::Draft && translation.content.is_some())
+                || (!translation.file_path.trim().is_empty()
+                    && data_dir
+                        .join(translation.file_path.trim_start_matches('/'))
+                        .is_file())
+        });
+        match select_post_language_variant(post, language, main_language, translation.is_some()) {
+            Some(PostLanguageVariant::Base) => posts.push(RenderPostRecord {
                 post: post.clone(),
+                source_post_id: post.id.clone(),
                 body_markdown: body.clone(),
-            });
-            continue;
-        }
-
-        if let Ok(translation) =
-            queries::post_translation::get_post_translation_by_post_and_language(
-                conn, &post.id, language,
-            )
-        {
-            let translated_body = if is_preview && translation.status == PostStatus::Draft {
-                match &translation.content {
-                    Some(content) => content.clone(),
-                    None => read_translation_body(data_dir, &translation.file_path)?,
-                }
-            } else {
-                read_translation_body(data_dir, &translation.file_path)?
-            };
-            let mut translated_post = post.clone();
-            translated_post.title = translation.title.clone();
-            translated_post.excerpt = translation.excerpt.clone();
-            translated_post.language = Some(translation.language.clone());
-            translated_post.status = translation.status.clone();
-            translated_post.file_path = translation.file_path.clone();
-            translated_post.published_at = translation.published_at.or(post.published_at);
-            posts.push(RenderPostRecord {
-                post: translated_post,
-                body_markdown: translated_body,
-            });
+            }),
+            Some(PostLanguageVariant::Translation) => {
+                let Some(translation) = translation else {
+                    continue;
+                };
+                let translated_body = if is_preview && translation.status == PostStatus::Draft {
+                    match &translation.content {
+                        Some(content) => content.clone(),
+                        None => read_translation_body(data_dir, &translation.file_path)?,
+                    }
+                } else {
+                    read_translation_body(data_dir, &translation.file_path)?
+                };
+                let mut translated_post = post.clone();
+                translated_post.id = translation.id.clone();
+                translated_post.title = translation.title.clone();
+                translated_post.excerpt = translation.excerpt.clone();
+                translated_post.language = Some(translation.language.clone());
+                translated_post.status = translation.status.clone();
+                translated_post.file_path = translation.file_path.clone();
+                translated_post.updated_at = translation.updated_at;
+                translated_post.published_at = translation.published_at.or(post.published_at);
+                posts.push(RenderPostRecord {
+                    post: translated_post,
+                    source_post_id: post.id.clone(),
+                    body_markdown: translated_body,
+                });
+            }
+            None => {}
         }
     }
 
     posts.sort_by(|left, right| {
         right
             .post
-            .published_at
-            .unwrap_or(right.post.created_at)
-            .cmp(&left.post.published_at.unwrap_or(left.post.created_at))
+            .created_at
+            .cmp(&left.post.created_at)
+            .then_with(|| right.post.published_at.cmp(&left.post.published_at))
+            .then_with(|| left.post.slug.cmp(&right.post.slug))
     });
     Ok(posts)
 }
@@ -607,10 +641,7 @@ fn build_language_routes(
                 .or_default()
                 .push(record.clone());
         }
-        if let Some(timestamp) = Utc
-            .timestamp_millis_opt(record.post.published_at.unwrap_or(record.post.created_at))
-            .single()
-        {
+        if let Some(timestamp) = Local.timestamp_millis_opt(record.post.created_at).single() {
             year_posts
                 .entry(timestamp.year())
                 .or_default()
@@ -791,8 +822,8 @@ fn render_list_route(
         "calendar_initial_month": route.posts.first().map(|post| calendar_initial_parts(&post.post).1).unwrap_or(1),
         "archive_context": route.archive_context,
         "show_archive_range_heading": false,
-        "min_date": route.posts.last().map(|record| timestamp_parts(record.post.published_at.unwrap_or(record.post.created_at))),
-        "max_date": route.posts.first().map(|record| timestamp_parts(record.post.published_at.unwrap_or(record.post.created_at))),
+        "min_date": route.posts.last().map(|record| timestamp_parts(record.post.created_at)),
+        "max_date": route.posts.first().map(|record| timestamp_parts(record.post.created_at)),
         "day_blocks": build_day_blocks(&route.posts, category_settings),
         "is_list_page": route.current_page > 1,
         "is_first_page": route.current_page == 1,
@@ -866,19 +897,19 @@ fn render_post_route(
         .or_else(|| resolved.content.clone())
         .unwrap_or_else(|| STARTER_SINGLE_POST_TEMPLATE.to_string());
 
-    let linked_media = queries::post_media::list_post_media_by_post(conn, &record.post.id)
+    let linked_media = queries::post_media::list_post_media_by_post(conn, &record.source_post_id)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|link| media_by_id.get(&link.media_id))
         .map(media_context)
         .collect::<Vec<_>>();
     let outgoing_links =
-        queries::post_link::list_links_by_source(conn, &record.post.id).unwrap_or_default();
+        queries::post_link::list_links_by_source(conn, &record.source_post_id).unwrap_or_default();
     let incoming_links =
-        queries::post_link::list_links_by_target(conn, &record.post.id).unwrap_or_default();
+        queries::post_link::list_links_by_target(conn, &record.source_post_id).unwrap_or_default();
     let post_by_id = all_posts
         .iter()
-        .map(|item| (item.post.id.clone(), item))
+        .map(|item| (item.source_post_id.clone(), item))
         .collect::<HashMap<_, _>>();
     let outgoing_link_context = outgoing_links
         .iter()
@@ -1072,8 +1103,7 @@ fn build_day_blocks(
     let mut current_label = String::new();
 
     for record in posts {
-        let timestamp_ms = record.post.published_at.unwrap_or(record.post.created_at);
-        let Some(timestamp) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
+        let Some(timestamp) = Local.timestamp_millis_opt(record.post.created_at).single() else {
             continue;
         };
         let key = format!(
@@ -1091,13 +1121,8 @@ fn build_day_blocks(
             }));
             current_posts = Vec::new();
         }
+        current_label = key.clone();
         current_key = key;
-        current_label = format!(
-            "{:02}.{:02}.{:04}",
-            timestamp.day(),
-            timestamp.month(),
-            timestamp.year()
-        );
         let show_title = should_show_list_title(&record.post, category_settings);
         current_posts.push(json!({
             "id": record.post.id,
@@ -1631,8 +1656,7 @@ fn starter_partials() -> HashMap<String, String> {
         ),
         (
             "partials/menu-items".to_string(),
-            "{% for item in items %}<a href=\"{{ item.href }}\">{{ item.title }}</a>{% endfor %}"
-                .to_string(),
+            STARTER_MENU_ITEMS_PARTIAL.to_string(),
         ),
     ])
 }
@@ -1644,8 +1668,8 @@ fn pico_stylesheet_href(metadata: &ProjectMetadata) -> Option<String> {
 }
 
 fn calendar_initial_parts(post: &Post) -> (i32, u32) {
-    let timestamp_ms = post.published_at.unwrap_or(post.created_at);
-    Utc.timestamp_millis_opt(timestamp_ms)
+    Local
+        .timestamp_millis_opt(post.created_at)
         .single()
         .map(|timestamp| (timestamp.year(), timestamp.month()))
         .unwrap_or((1970, 1))
@@ -1669,6 +1693,22 @@ fn queries_category_settings(
 mod menu_tests {
     use super::*;
     use crate::engine::menu::{MenuItem, MenuItemKind};
+
+    #[test]
+    fn starter_menu_partial_keeps_nested_submenus_and_calendar_navigation() {
+        let partials = starter_partials();
+        let menu_items = partials.get("partials/menu-items").unwrap();
+
+        assert!(menu_items.contains("blog-menu-submenu"));
+        assert!(menu_items.contains("data-blog-calendar-toggle"));
+        assert!(menu_items.contains("data-blog-calendar-root"));
+        assert!(
+            partials
+                .get("partials/language-switcher")
+                .unwrap()
+                .contains("data-search-no-results")
+        );
+    }
 
     #[test]
     fn preview_request_paths_select_only_the_matching_generated_page() {
