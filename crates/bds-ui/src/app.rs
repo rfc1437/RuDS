@@ -1627,26 +1627,7 @@ impl BdsApp {
             }
 
             // ── Tabs ──
-            Message::OpenTab(tab) => {
-                self.flush_active_post_editor();
-                let idx = tabs::open_tab(&mut self.tabs, tab);
-                let mut semantic_post_id = None;
-                if let Some(t) = self.tabs.get(idx) {
-                    self.active_tab = Some(t.id.clone());
-                    let tab_clone = t.clone();
-                    if tab_clone.tab_type == TabType::Post {
-                        semantic_post_id = Some(tab_clone.id.clone());
-                    }
-                    self.load_editor_for_tab(&tab_clone);
-                }
-                self.enforce_panel_tab_fallback();
-                self.sync_menu_state();
-                let mut tasks = vec![self.sync_embedded_previews()];
-                if let Some(post_id) = semantic_post_id {
-                    tasks.push(Task::done(Message::LoadSemanticTagSuggestions(post_id)));
-                }
-                Task::batch(tasks)
-            }
+            Message::OpenTab(tab) => self.open_tab(tab),
             Message::CloseTab(id) => {
                 if self.active_tab.as_deref() == Some(id.as_str()) {
                     self.flush_active_post_editor();
@@ -2611,13 +2592,9 @@ impl BdsApp {
                         is_transient: false,
                         is_dirty: false,
                     };
-                    let index = tabs::open_tab(&mut self.tabs, tab);
-                    self.active_tab = self.tabs.get(index).map(|tab| tab.id.clone());
-                    if let Some(tab) = self.tabs.get(index).cloned() {
-                        self.load_editor_for_tab(&tab);
-                    }
+                    let open_editor = self.open_tab(tab);
                     self.notify(ToastLevel::Success, &t(self.ui_locale, "blogmark.imported"));
-                    self.refresh_counts()
+                    Task::batch([open_editor, self.refresh_counts()])
                 }
                 Err(error) => {
                     if self.task_manager.status(task_id) != Some(TaskStatus::Cancelled) {
@@ -5520,6 +5497,26 @@ impl BdsApp {
                 .find(|tab| tab.id == *id)
                 .map(|tab| tab.tab_type.clone())
         })
+    }
+
+    fn open_tab(&mut self, tab: Tab) -> Task<Message> {
+        self.flush_active_post_editor();
+        let index = tabs::open_tab(&mut self.tabs, tab);
+        let mut semantic_post_id = None;
+        if let Some(tab) = self.tabs.get(index).cloned() {
+            self.active_tab = Some(tab.id.clone());
+            if tab.tab_type == TabType::Post {
+                semantic_post_id = Some(tab.id.clone());
+            }
+            self.load_editor_for_tab(&tab);
+        }
+        self.enforce_panel_tab_fallback();
+        self.sync_menu_state();
+        let mut tasks = vec![self.sync_embedded_previews()];
+        if let Some(post_id) = semantic_post_id {
+            tasks.push(Task::done(Message::LoadSemanticTagSuggestions(post_id)));
+        }
+        Task::batch(tasks)
     }
 
     fn find_next_in_active_editor(&mut self, query: &str) -> bool {
@@ -9596,6 +9593,16 @@ mod tests {
     #[test]
     fn imported_blogmark_activates_posts_and_opens_its_editor() {
         let (db, project, temp) = setup();
+        ai::save_endpoint(
+            db.conn(),
+            &ai::AiEndpointConfig {
+                kind: ai::AiEndpointKind::Airplane,
+                url: "http://127.0.0.1:9".to_string(),
+                model: "test".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
         let created = post::create_post(
             db.conn(),
             temp.path(),
@@ -9610,6 +9617,10 @@ mod tests {
         )
         .unwrap();
         let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        let mut settings = SettingsViewState::default();
+        settings.default_mode = "preview".to_string();
+        app.settings_state = Some(settings);
+        app.offline_mode = true;
         app.sidebar_view = SidebarView::Settings;
         app.sidebar_visible = false;
         let task_id = app.task_manager.submit("Importing blogmark");
@@ -9627,6 +9638,13 @@ mod tests {
         assert!(app.sidebar_visible);
         assert_eq!(app.active_tab.as_deref(), Some(created.id.as_str()));
         assert!(app.post_editors.contains_key(&created.id));
+        assert!(app.embedded_preview.is_some());
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
     }
 
     #[test]
@@ -11078,6 +11096,16 @@ mod tests {
     #[test]
     fn task_tick_autosaves_dirty_post_editor() {
         let (db, project, tmp) = setup();
+        ai::save_endpoint(
+            db.conn(),
+            &ai::AiEndpointConfig {
+                kind: ai::AiEndpointKind::Airplane,
+                url: "http://127.0.0.1:9".to_string(),
+                model: "test".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
         let created = post::create_post(
             db.conn(),
             tmp.path(),
@@ -11108,6 +11136,7 @@ mod tests {
         editor.last_edit_at_ms = bds_core::util::now_unix_ms() - POST_AUTO_SAVE_DELAY_MS - 100;
 
         let mut app = make_app(db, project, &tmp);
+        app.offline_mode = true;
         app.post_editors.insert(created.id.clone(), editor);
         app.tabs.push(crate::state::tabs::Tab {
             id: created.id.clone(),
@@ -11127,6 +11156,12 @@ mod tests {
         .unwrap();
         assert_eq!(saved.title, "Autosaved");
         assert!(!app.post_editors.get(&created.id).unwrap().is_dirty);
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
     }
 
     #[test]

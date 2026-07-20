@@ -26,7 +26,7 @@ The project is under active development. Core blogging workflows are broadly ava
 - Persistent conversational AI with safe Markdown, streamed and cancellable responses, model/session/token tracking, bounded project-aware blog tools, and localized conversation management in the Chat workspace. Allowlisted render tools add persistent native cards, charts, forms, lists, metrics, mind maps, tables, and tabs without executing assistant-provided HTML or JavaScript.
 - SSH-agent-based SCP or rsync publishing.
 - Integrated Git workflow with repository initialization, Git LFS image tracking, status and diffs, branch/file history, commits, remotes, cancellable fetch/pull/push, and post-pull filesystem reconciliation; network actions respect airplane mode.
-- Site, media, and translation validation plus `ruds://new-post` Blogmark capture and Lua transforms; bDS2 keeps its separate `bds2://` bookmarklet protocol.
+- Site, media, and translation validation plus `ruds://new-post` Blogmark capture and Lua transforms; captures open directly in the post editor and defer automatic translation until an explicit save or publish. bDS2 keeps its separate `bds2://` bookmarklet protocol.
 
 RuDS uses no JavaScript application runtime and loads no CSS or JavaScript from CDNs. The preview is served by the Rust application and displayed by the operating-system webview.
 
