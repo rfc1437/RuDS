@@ -795,6 +795,89 @@ mod tests {
     }
 
     #[test]
+    fn list_document_titles_match_blog_description_in_preview_and_generation() {
+        let db = Database::open_in_memory().unwrap();
+        let mut metadata = make_metadata();
+        metadata.name = "Fallback Blog".into();
+        metadata.description = Some("  My Preview Blog  ".into());
+        metadata.max_posts_per_page = 1;
+        let mut first = make_post();
+        first.post.categories = vec!["article".into()];
+        first.post.tags = vec!["rust".into()];
+        let mut second = first.clone();
+        second.post.id = "post-2".into();
+        second.post.slug = "second".into();
+        second.post.title = "Second".into();
+        let posts = vec![
+            (first.post, first.body_markdown),
+            (second.post, second.body_markdown),
+        ];
+
+        let generated = crate::render::build_site_render_artifacts(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+        )
+        .unwrap();
+
+        for path in [
+            "/",
+            "/page/2",
+            "/category/article",
+            "/category/article/page/2",
+            "/tag/rust",
+            "/tag/rust/page/2",
+            "/2024",
+            "/2024/page/2",
+            "/2024/03",
+            "/2024/03/page/2",
+            "/2024/03/09",
+            "/2024/03/09/page/2",
+        ] {
+            let preview = build_preview_response(
+                db.conn(),
+                Path::new("."),
+                "project-1",
+                &metadata,
+                &posts,
+                path,
+            )
+            .unwrap();
+            assert_eq!(preview.status_code, 200, "missing preview route {path}");
+            assert!(
+                preview.html.contains("<title>My Preview Blog</title>"),
+                "wrong preview title for {path}"
+            );
+
+            let generated_page = generated
+                .pages
+                .iter()
+                .find(|page| page.url_path == path)
+                .unwrap_or_else(|| panic!("missing generated route {path}"));
+            assert!(
+                generated_page
+                    .html
+                    .contains("<title>My Preview Blog</title>"),
+                "wrong generated title for {path}"
+            );
+        }
+
+        metadata.description = Some("   ".into());
+        let fallback = build_preview_response(
+            db.conn(),
+            Path::new("."),
+            "project-1",
+            &metadata,
+            &posts,
+            "/",
+        )
+        .unwrap();
+        assert!(fallback.html.contains("<title>Fallback Blog</title>"));
+    }
+
+    #[test]
     fn preview_renders_single_post_for_canonical_path() {
         let db = Database::open_in_memory().unwrap();
         let source = make_post();

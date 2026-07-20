@@ -17,8 +17,9 @@ use crate::model::{
     TemplateKind, TemplateStatus,
 };
 use crate::render::{
-    PostLanguageVariant, RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
-    render_liquid_template_with_host, resolve_post_template, select_post_language_variant,
+    PostLanguageVariant, RenderCategorySettings, RenderTemplateLookup, blog_page_title,
+    build_canonical_post_path, render_liquid_template_with_host, resolve_post_template,
+    select_post_language_variant,
 };
 use crate::scripting::{CoreHost, HostApi, UnavailableHost};
 use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
@@ -625,12 +626,13 @@ fn build_language_routes(
     category_settings: &HashMap<String, CategorySettings>,
 ) -> Vec<RouteSpec> {
     let per_page = metadata.max_posts_per_page.max(1) as usize;
+    let page_title = blog_page_title(metadata).to_string();
     let mut routes = Vec::new();
     routes.extend(paginated_route_specs(
         posts,
         per_page,
         language_root_prefix(language, metadata),
-        metadata.name.clone(),
+        page_title.clone(),
         None,
         None,
     ));
@@ -679,7 +681,7 @@ fn build_language_routes(
                 "{}/category/{slug}",
                 language_root_prefix(language, metadata)
             ),
-            category.clone(),
+            page_title.clone(),
             Some(json!({"kind": "category", "name": category})),
             category_settings
                 .get(&category)
@@ -698,7 +700,7 @@ fn build_language_routes(
             &records,
             per_page,
             format!("{}/tag/{slug}", language_root_prefix(language, metadata)),
-            display_name.clone(),
+            page_title.clone(),
             Some(json!({"kind": "tag", "name": display_name})),
             None,
         ));
@@ -709,7 +711,7 @@ fn build_language_routes(
             &records,
             per_page,
             format!("{}/{year}", language_root_prefix(language, metadata)),
-            format!("{} {year}", metadata.name),
+            page_title.clone(),
             Some(json!({"kind": "year", "year": year})),
             None,
         ));
@@ -723,7 +725,7 @@ fn build_language_routes(
                 "{}/{year}/{month:02}",
                 language_root_prefix(language, metadata)
             ),
-            format!("{} {year}-{month:02}", metadata.name),
+            page_title.clone(),
             Some(json!({"kind": "month", "year": year, "month": month})),
             None,
         ));
@@ -737,7 +739,7 @@ fn build_language_routes(
                 "{}/{year}/{month:02}/{day:02}",
                 language_root_prefix(language, metadata)
             ),
-            format!("{} {year}-{month:02}-{day:02}", metadata.name),
+            page_title.clone(),
             Some(json!({"kind": "day", "year": year, "month": month, "day": day})),
             None,
         ));

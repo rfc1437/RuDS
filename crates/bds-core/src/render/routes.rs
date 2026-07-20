@@ -52,6 +52,15 @@ pub(crate) fn select_post_language_variant(
     }
 }
 
+pub(crate) fn blog_page_title(metadata: &ProjectMetadata) -> &str {
+    metadata
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+        .unwrap_or_else(|| metadata.name.trim())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedPage {
     pub relative_path: String,
@@ -257,7 +266,7 @@ pub fn render_starter_list_page_with_media_map(
     let context = ListTemplateContext {
         language: language.to_string(),
         language_prefix: language_prefix(language, main_language(metadata)),
-        page_title: metadata.name.clone(),
+        page_title: blog_page_title(metadata).to_string(),
         pico_stylesheet_href: Some(crate::model::pico_stylesheet_href(
             metadata.pico_theme.as_deref(),
         )),
@@ -587,6 +596,17 @@ mod tests {
 
         post.do_not_translate = true;
         assert_eq!(select_post_language_variant(&post, "fr", "de", true), None);
+    }
+
+    #[test]
+    fn blog_page_title_prefers_trimmed_description_and_falls_back_to_name() {
+        let mut metadata = make_metadata();
+        metadata.name = "  Fallback Blog  ".into();
+        metadata.description = Some("  Blog Description  ".into());
+        assert_eq!(blog_page_title(&metadata), "Blog Description");
+
+        metadata.description = Some("   ".into());
+        assert_eq!(blog_page_title(&metadata), "Fallback Blog");
     }
 
     #[test]
