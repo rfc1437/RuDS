@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+name: Liquid
+file_extensions:
+  - liquid
+scope: text.html.liquid
+contexts:
+  main:
+    - match: '\{\{-?'
+      scope: punctuation.section.embedded.begin.liquid
+      push: liquid-output
+    - match: '\{%-?\s*comment\b[^%]*-?%\}'
+      scope: comment.block.liquid
+      push: liquid-comment
+    - match: '\{%-?'
+      scope: punctuation.section.embedded.begin.liquid
+      push: liquid-tag
+    - include: scope:text.html.basic
+
+  liquid-output:
+    - meta_scope: meta.embedded.liquid
+    - match: '-?\}\}'
+      scope: punctuation.section.embedded.end.liquid
+      pop: true
+    - include: liquid-values
+
+  liquid-tag:
+    - meta_scope: meta.embedded.liquid
+    - match: '-?%\}'
+      scope: punctuation.section.embedded.end.liquid
+      pop: true
+    - match: '\b(assign|capture|case|comment|cycle|decrement|echo|elsif|else|endcase|endcapture|endif|endfor|endunless|endcomment|for|if|include|increment|liquid|paginate|raw|render|tablerow|unless|when)\b'
+      scope: keyword.control.liquid
+    - match: '[><=!]=?|\.|:'
+      scope: keyword.operator.liquid
+    - include: liquid-values
+
+  liquid-values:
+    - match: '\|\s*[a-zA-Z_][\w-]*'
+      scope: support.function.filter.liquid
+    - match: '\b(true|false|nil|blank|empty|contains)\b'
+      scope: constant.language.liquid
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.liquid
+    - match: '"([^"\\]|\\.)*"'
+      scope: string.quoted.double.liquid
+    - match: "'([^'\\\\]|\\\\.)*'"
+      scope: string.quoted.single.liquid
+    - match: '[a-zA-Z_][\w.-]*'
+      scope: variable.other.liquid
+    - match: '[,()\[\]]'
+      scope: punctuation.separator.liquid
+
+  liquid-comment:
+    - meta_scope: comment.block.liquid
+    - match: '\{%-?\s*endcomment\s*-?%\}'
+      scope: comment.block.liquid
+      pop: true

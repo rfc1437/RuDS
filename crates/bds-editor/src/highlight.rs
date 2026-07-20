@@ -2,7 +2,11 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use syntect::highlighting::{Style, ThemeSet};
-use syntect::parsing::{SyntaxReference, SyntaxSet};
+use syntect::parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet};
+
+const MARKDOWN_WITH_MACROS_SYNTAX: &str =
+    include_str!("../syntaxes/Markdown with Macros.sublime-syntax");
+const LIQUID_SYNTAX: &str = include_str!("../syntaxes/Liquid.sublime-syntax");
 
 /// Global highlighter singleton (expensive to create, safe to share).
 static GLOBAL_HIGHLIGHTER: LazyLock<Highlighter> = LazyLock::new(Highlighter::new);
@@ -17,7 +21,7 @@ pub struct Highlighter {
     syntax_set: SyntaxSet,
     theme_set: ThemeSet,
     theme_name: String,
-    /// Extension aliases (e.g. "liquid" → "html")
+    /// Extension aliases used by the application editors.
     extension_aliases: HashMap<String, String>,
 }
 
@@ -26,13 +30,24 @@ pub type HighlightedLine = Vec<(Style, String)>;
 
 impl Highlighter {
     pub fn new() -> Self {
+        let mut syntax_builder = SyntaxSet::load_defaults_newlines().into_builder();
+        for (definition, name) in [
+            (MARKDOWN_WITH_MACROS_SYNTAX, "Markdown with Macros"),
+            (LIQUID_SYNTAX, "Liquid"),
+        ] {
+            syntax_builder.add(
+                SyntaxDefinition::load_from_str(definition, true, Some(name))
+                    .unwrap_or_else(|error| panic!("invalid {name} syntax definition: {error}")),
+            );
+        }
+
         let mut extension_aliases = HashMap::new();
-        // Liquid templates use HTML syntax highlighting
-        extension_aliases.insert("liquid".into(), "html".into());
+        extension_aliases.insert("md".into(), "bds-md".into());
+        extension_aliases.insert("markdown".into(), "bds-md".into());
         extension_aliases.insert("njk".into(), "html".into());
 
         Self {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
+            syntax_set: syntax_builder.build(),
             theme_set: ThemeSet::load_defaults(),
             theme_name: "base16-ocean.dark".to_string(),
             extension_aliases,
@@ -40,7 +55,7 @@ impl Highlighter {
     }
 
     /// Find the syntax definition for a file extension.
-    /// Resolves aliases (e.g. liquid → html) before lookup.
+    /// Resolves application aliases before lookup.
     pub fn syntax_for_extension(&self, ext: &str) -> &SyntaxReference {
         let resolved = self
             .extension_aliases
@@ -123,6 +138,18 @@ impl Default for Highlighter {
 mod tests {
     use super::*;
 
+    fn foreground_for<'a>(
+        line: &'a HighlightedLine,
+        fragment: &str,
+    ) -> &'a syntect::highlighting::Color {
+        &line
+            .iter()
+            .find(|(_, text)| text.contains(fragment))
+            .unwrap_or_else(|| panic!("missing highlighted fragment {fragment:?} in {line:?}"))
+            .0
+            .foreground
+    }
+
     #[test]
     fn highlight_markdown() {
         let h = Highlighter::new();
@@ -142,11 +169,81 @@ mod tests {
     }
 
     #[test]
-    fn liquid_uses_html_syntax() {
+    fn markdown_uses_bds_macro_syntax() {
         let h = Highlighter::new();
-        let liquid_syntax = h.syntax_for_extension("liquid");
-        let html_syntax = h.syntax_for_extension("html");
-        assert_eq!(liquid_syntax.name, html_syntax.name);
+        assert_eq!(h.syntax_for_extension("md").name, "Markdown with Macros");
+    }
+
+    #[test]
+    fn liquid_uses_dedicated_syntax() {
+        let h = Highlighter::new();
+        assert_eq!(h.syntax_for_extension("liquid").name, "Liquid");
+    }
+
+    #[test]
+    fn markdown_macro_components_receive_distinct_styles() {
+        let h = Highlighter::new();
+        let lines = h.highlight_lines(
+            "plain\n[[gallery columns=\"3\"]]",
+            h.syntax_for_extension("md"),
+        );
+        let plain = foreground_for(&lines[0], "plain");
+        assert_ne!(
+            foreground_for(&lines[1], "[[gallery"),
+            plain,
+            "macro name should be highlighted: {:?}",
+            lines[1]
+        );
+        assert_ne!(
+            foreground_for(&lines[1], "columns"),
+            plain,
+            "attribute name should be highlighted: {:?}",
+            lines[1]
+        );
+        assert_ne!(
+            foreground_for(&lines[1], "\"3\""),
+            plain,
+            "attribute value should be highlighted: {:?}",
+            lines[1]
+        );
+    }
+
+    #[test]
+    fn markdown_constructs_receive_distinct_styles() {
+        let h = Highlighter::new();
+        let lines = h.highlight_lines(
+            "plain\n# Heading\n[link](https://example.com)\n`code`\n**strong**\n*emphasis*\n- item",
+            h.syntax_for_extension("md"),
+        );
+        let plain = foreground_for(&lines[0], "plain");
+        for (line, fragment) in [
+            (1, "Heading"),
+            (2, "link"),
+            (3, "code"),
+            (4, "strong"),
+            (5, "emphasis"),
+            (6, "- "),
+        ] {
+            assert_ne!(
+                foreground_for(&lines[line], fragment),
+                plain,
+                "Markdown fragment {fragment:?} should be colored: {:?}",
+                lines[line]
+            );
+        }
+    }
+
+    #[test]
+    fn liquid_tags_filters_and_comments_receive_distinct_styles() {
+        let h = Highlighter::new();
+        let lines = h.highlight_lines(
+            "plain\n{{ post.title | escape }}\n{% if post %}body{% endif %}\n{% comment %}hidden{% endcomment %}",
+            h.syntax_for_extension("liquid"),
+        );
+        let plain = foreground_for(&lines[0], "plain");
+        assert_ne!(foreground_for(&lines[1], "escape"), plain);
+        assert_ne!(foreground_for(&lines[2], "if"), plain);
+        assert_ne!(foreground_for(&lines[3], "hidden"), plain);
     }
 
     #[test]
@@ -168,6 +265,30 @@ mod tests {
         let h = Highlighter::new();
         let syntax = h.syntax_for_extension("lua");
         assert_ne!(syntax.name, "Plain Text");
+    }
+
+    #[test]
+    fn editor_syntaxes_produce_distinct_foreground_colors() {
+        let h = Highlighter::new();
+        for (extension, source) in [
+            ("md", "# Heading\n[link](https://example.com)\n`code`"),
+            (
+                "liquid",
+                "<h1>{{ post.title }}</h1>\n{% if post %}Body{% endif %}",
+            ),
+            (
+                "lua",
+                "local answer = function(value)\n  -- comment\n  return value + 42\nend",
+            ),
+        ] {
+            let colors = h
+                .highlight_lines(source, h.syntax_for_extension(extension))
+                .into_iter()
+                .flatten()
+                .map(|(style, _)| style.foreground)
+                .collect::<std::collections::HashSet<_>>();
+            assert!(colors.len() > 1, "{extension} should use syntax colors");
+        }
     }
 
     #[test]

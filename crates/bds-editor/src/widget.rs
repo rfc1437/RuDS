@@ -118,12 +118,23 @@ fn committed_text_input(text: Option<&str>, is_command_shortcut: bool) -> Option
 
 /// Convert syntect RGBA color to Iced Color.
 fn syntect_to_iced(c: syntect::highlighting::Color) -> Color {
-    Color::from_rgba(
-        c.r as f32 / 255.0,
-        c.g as f32 / 255.0,
-        c.b as f32 / 255.0,
-        c.a as f32 / 255.0,
-    )
+    let (red, green, blue) = match (c.r, c.g, c.b) {
+        // Translate the base16-ocean theme to the bDS2/VS Dark editor palette.
+        (0x65, 0x73, 0x7E) => (0x6A, 0x99, 0x55), // comments
+        (0xB4, 0x8E, 0xAD) => (0xC5, 0x86, 0xC0), // keywords
+        (0xA3, 0xBE, 0x8C) => (0xCE, 0x91, 0x78), // strings
+        (0xD0, 0x87, 0x70) => (0xB5, 0xCE, 0xA8), // numbers
+        (0xEB, 0xCB, 0x8B) => (0xDC, 0xDC, 0xAA), // functions
+        (0x96, 0xB5, 0xB4) => (0x4E, 0xC9, 0xB0), // types
+        (0xBF, 0x61, 0x6A) => (0x56, 0x9C, 0xD6), // tags
+        (0x8F, 0xA1, 0xB3) => (0x9C, 0xDC, 0xFE), // attributes and links
+        (0xAB, 0x79, 0x67) => (0xCE, 0x91, 0x78), // attribute values
+        (0xC0, 0xC5, 0xCE) | (0xA7, 0xAD, 0xBA) | (0xDF, 0xE1, 0xE8) | (0xEF, 0xF1, 0xF5) => {
+            (0xD4, 0xD4, 0xD4)
+        }
+        _ => (c.r, c.g, c.b),
+    };
+    rgba8(red, green, blue, c.a as f32 / 255.0)
 }
 
 /// Compute word-wrap break offsets for a line. Returns the char offsets where
@@ -1103,7 +1114,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::committed_text_input;
+    use super::{committed_text_input, rgb8, syntect_to_iced};
+    use syntect::highlighting::Color as SyntectColor;
 
     #[test]
     fn committed_text_input_accepts_regular_and_ime_text() {
@@ -1118,5 +1130,36 @@ mod tests {
         assert_eq!(committed_text_input(Some("\n"), false), None);
         assert_eq!(committed_text_input(Some("\u{7f}"), false), None);
         assert_eq!(committed_text_input(None, false), None);
+    }
+
+    #[test]
+    fn syntax_palette_uses_the_bds2_editor_colors() {
+        assert_eq!(
+            syntect_to_iced(SyntectColor {
+                r: 101,
+                g: 115,
+                b: 126,
+                a: 255,
+            }),
+            rgb8(0x6A, 0x99, 0x55)
+        );
+        assert_eq!(
+            syntect_to_iced(SyntectColor {
+                r: 180,
+                g: 142,
+                b: 173,
+                a: 255,
+            }),
+            rgb8(0xC5, 0x86, 0xC0)
+        );
+        assert_eq!(
+            syntect_to_iced(SyntectColor {
+                r: 163,
+                g: 190,
+                b: 140,
+                a: 255,
+            }),
+            rgb8(0xCE, 0x91, 0x78)
+        );
     }
 }

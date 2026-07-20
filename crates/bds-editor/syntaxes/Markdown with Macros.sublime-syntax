@@ -1,0 +1,53 @@
+%YAML 1.2
+---
+name: Markdown with Macros
+file_extensions:
+  - bds-md
+scope: text.html.markdown.bds
+contexts:
+  main:
+    - match: '\[\[[a-zA-Z][\w-]*'
+      scope: keyword.control.macro.bds
+      push: macro-parameters
+    - match: '^#{1,6}\s.*$'
+      scope: keyword.control.heading.markdown
+    - match: '^\s*>+'
+      scope: string.quoted.block.markdown
+    - match: '^\s*[-+*]\s'
+      scope: keyword.control.list.unnumbered.markdown
+    - match: '^\s*\d+\.\s'
+      scope: keyword.control.list.numbered.markdown
+    - match: '^\s*```\w*'
+      scope: keyword.control.code-fence.markdown
+      push: fenced-code
+    - match: '\*\*[^*]+\*\*|__[^_]+__'
+      scope: entity.name.function.strong.markdown
+    - match: '\*[^*]+\*|_[^_]+_'
+      scope: string.quoted.emphasis.markdown
+    - match: '`[^`]+`'
+      scope: string.quoted.inline-code.markdown
+    - match: '!?\[[^\]]*\]\([^)]*\)'
+      scope: string.quoted.link.inline.markdown
+    - match: '!?\[[^\]]*\]\[[^\]]*\]'
+      scope: string.quoted.link.reference.markdown
+
+  macro-parameters:
+    - meta_scope: meta.macro.bds
+    - match: '\]\]'
+      scope: keyword.control.macro.bds
+      pop: true
+    - match: '[a-zA-Z][\w-]*(?=\s*=)'
+      scope: entity.other.attribute-name.bds
+    - match: '='
+      scope: punctuation.separator.key-value.bds
+    - match: '"[^"\n]*"'
+      scope: string.quoted.double.bds
+    - match: '\s+'
+    - match: '[^\]"=\s]+'
+      scope: string.unquoted.attribute-value.bds
+
+  fenced-code:
+    - meta_scope: string.unquoted.code-block.markdown
+    - match: '^\s*```\s*$'
+      scope: keyword.control.code-fence.markdown
+      pop: true
