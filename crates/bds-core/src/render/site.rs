@@ -13,8 +13,8 @@ use crate::db::queries;
 use crate::engine::generation::{GenerationSection, classify_generated_path};
 use crate::engine::menu::{self, MenuItemKind};
 use crate::model::{
-    CategorySettings, Media, Post, ProjectMetadata, ScriptKind, Tag, Template, TemplateKind,
-    TemplateStatus,
+    CategorySettings, Media, Post, PostStatus, ProjectMetadata, ScriptKind, Tag, Template,
+    TemplateKind, TemplateStatus,
 };
 use crate::render::{
     RenderCategorySettings, RenderTemplateLookup, build_canonical_post_path,
@@ -185,8 +185,14 @@ fn build_site_render_artifacts_with_mode(
 
     let mut artifacts = SiteRenderArtifacts::default();
     for language in languages {
-        let localized_posts =
-            load_language_posts(conn, data_dir, published_posts, &language, &main_language)?;
+        let localized_posts = load_language_posts(
+            conn,
+            data_dir,
+            published_posts,
+            &language,
+            &main_language,
+            is_preview,
+        )?;
         let localized_list_posts = filter_posts_for_lists(&localized_posts, &category_settings);
         let routes = build_language_routes(
             &localized_list_posts,
@@ -327,6 +333,8 @@ pub fn build_preview_response(
     published_posts: &[(Post, String)],
     requested_path: &str,
 ) -> Result<PreviewRenderResult, Box<dyn Error + Send + Sync>> {
+    let normalized = normalize_request_path(requested_path);
+    let requested_paths = HashSet::from([preview_relative_path(&normalized)]);
     let artifacts = build_site_render_artifacts_with_mode(
         conn,
         data_dir,
@@ -335,9 +343,8 @@ pub fn build_preview_response(
         published_posts,
         true,
         None,
-        None,
+        Some(&requested_paths),
     )?;
-    let normalized = normalize_request_path(requested_path);
     if let Some(page) = artifacts
         .pages
         .iter()
@@ -502,6 +509,7 @@ fn load_language_posts(
     published_posts: &[(Post, String)],
     language: &str,
     main_language: &str,
+    is_preview: bool,
 ) -> Result<Vec<RenderPostRecord>, Box<dyn Error + Send + Sync>> {
     let mut posts = Vec::new();
     for (post, body) in published_posts {
@@ -518,8 +526,14 @@ fn load_language_posts(
                 conn, &post.id, language,
             )
         {
-            let raw = fs::read_to_string(data_dir.join(&translation.file_path))?;
-            let (_, translated_body) = read_translation_file(&raw)?;
+            let translated_body = if is_preview && translation.status == PostStatus::Draft {
+                match &translation.content {
+                    Some(content) => content.clone(),
+                    None => read_translation_body(data_dir, &translation.file_path)?,
+                }
+            } else {
+                read_translation_body(data_dir, &translation.file_path)?
+            };
             let mut translated_post = post.clone();
             translated_post.title = translation.title.clone();
             translated_post.excerpt = translation.excerpt.clone();
@@ -542,6 +556,18 @@ fn load_language_posts(
             .cmp(&left.post.published_at.unwrap_or(left.post.created_at))
     });
     Ok(posts)
+}
+
+fn read_translation_body(
+    data_dir: &Path,
+    file_path: &str,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    if file_path.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let raw = fs::read_to_string(data_dir.join(file_path))?;
+    let (_, body) = read_translation_file(&raw)?;
+    Ok(body)
 }
 
 fn build_language_routes(
@@ -1014,11 +1040,11 @@ fn menu_item_href(item: &menu::MenuItem, language: &str, main_language: &str) ->
 }
 
 fn prefixed_slug_path(prefix: &str, slug: &str) -> String {
-    format!("{}{}/", prefix_or_root(prefix), slug.trim_matches('/'))
-}
-
-fn prefix_or_root(prefix: &str) -> &str {
-    if prefix.is_empty() { "/" } else { prefix }
+    format!(
+        "{}/{}/",
+        prefix.trim_end_matches('/'),
+        slug.trim_matches('/')
+    )
 }
 
 fn route_href(route: &RouteSpec, page: usize) -> String {
@@ -1514,6 +1540,20 @@ fn normalize_request_path(path: &str) -> String {
     }
 }
 
+fn preview_relative_path(requested_path: &str) -> String {
+    let normalized = normalize_request_path(requested_path);
+    if normalized == "/" {
+        return "index.html".to_string();
+    }
+
+    let trimmed = normalized.trim_start_matches('/');
+    if trimmed == "404" || trimmed.ends_with("/404") {
+        format!("{trimmed}.html")
+    } else {
+        format!("{trimmed}/index.html")
+    }
+}
+
 fn relative_to_url_path(relative_path: &str) -> String {
     if relative_path == "index.html" {
         return "/".to_string();
@@ -1631,6 +1671,18 @@ mod menu_tests {
     use crate::engine::menu::{MenuItem, MenuItemKind};
 
     #[test]
+    fn preview_request_paths_select_only_the_matching_generated_page() {
+        assert_eq!(preview_relative_path("/"), "index.html");
+        assert_eq!(
+            preview_relative_path("/2024/03/hello"),
+            "2024/03/hello/index.html"
+        );
+        assert_eq!(preview_relative_path("/de"), "de/index.html");
+        assert_eq!(preview_relative_path("/404"), "404.html");
+        assert_eq!(preview_relative_path("/de/404"), "de/404.html");
+    }
+
+    #[test]
     fn renderer_consumes_the_saved_opml_tree() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
@@ -1663,6 +1715,7 @@ mod menu_tests {
         assert_eq!(rendered[1]["href"], "/about/");
         assert_eq!(rendered[2]["children"][0]["href"], "/category/long-form/");
         let translated = build_menu_items(dir.path(), "de", "en").unwrap();
+        assert_eq!(translated[1]["href"], "/de/about/");
         assert_eq!(
             translated[2]["children"][0]["href"],
             "/de/category/long-form/"

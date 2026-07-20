@@ -221,15 +221,17 @@ Use **Blog → Find Duplicate Posts** to review pairs of posts with very similar
 
 ## Previewing your site
 
-Preview renders through the same pipeline as site generation, so what you see is what will be published. The preview server runs only on your machine at `127.0.0.1:4123` and is never exposed to the network.
+Preview renders through the same templates, routes, and asset files as site generation, so navigation and host-absolute links behave like the generated site. The preview server runs only on your machine at `127.0.0.1:4123` and is never exposed to the network.
 
-Open a post preview inside the app with **Blog → Preview Post** or view it in your default browser with **File → Open in Browser**. Draft posts have their own preview routes, so you can check work in progress without publishing anything.
+Switch a post editor from **Markdown** to **Preview** to render that post at its normal generated-site URL inside RuDS. Use **File → Open in Browser** for the complete navigable blog: with a post editor active it starts on that post, and otherwise it starts on the home page. **Blog → Preview Post** also opens the active post in the default browser.
+
+The preview includes draft and published posts on normal site routes. Draft content comes from the database, including draft translations; published content comes from the Markdown files that generation will use. Media, styles, scripts, images, and Pagefind files are served from their project filesystem locations, with packaged defaults used only when a project asset is absent.
 
 ### Key takeaways
 
-- Preview and generation share one rendering pipeline; there are no preview-only differences.
+- Preview and generation share one renderer and URL structure; preview overlays draft database content.
 - The preview server is local-only.
-- Drafts can be previewed without publishing.
+- Browser and embedded previews remain navigable across normal site routes.
 
 [↑ Back to In this article](#in-this-article)
 

@@ -756,13 +756,20 @@ fn referenced_media_ids(content: &str) -> Vec<String> {
     ids
 }
 
-fn draft_preview_url(post_id: &str, language: &str) -> String {
+fn preview_base_url() -> String {
     format!(
-        "http://{}:{}/__draft/{}?language={}",
+        "http://{}:{}",
         engine::preview::PREVIEW_HOST,
         engine::preview::PREVIEW_PORT,
-        post_id,
-        language
+    )
+}
+
+fn post_preview_url(post: &Post, language: &str, main_language: &str) -> String {
+    let path = bds_core::render::build_canonical_post_path(post, language, main_language);
+    format!(
+        "{}{path}?draft=true&post_id={}",
+        preview_base_url(),
+        post.id
     )
 }
 
@@ -4089,7 +4096,7 @@ impl BdsApp {
                 Some(TabType::MenuEditor) => Task::done(Message::MenuEditor(MenuEditorMsg::Save)),
                 _ => Task::none(),
             },
-            MenuAction::OpenInBrowser => self.preview_active_post(),
+            MenuAction::OpenInBrowser => self.open_preview_in_browser(),
             MenuAction::OpenDataFolder => {
                 if let Some(ref dir) = self.data_dir {
                     let _ = open::that(dir);
@@ -8626,8 +8633,20 @@ impl BdsApp {
             .map(|editor| editor.active_language.clone())
             .filter(|language| !language.is_empty())
             .unwrap_or_else(|| self.content_language.clone());
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| t(self.ui_locale, "common.databaseUnavailable"))?;
+        let post = bds_core::db::queries::post::get_post_by_id(db.conn(), post_id)
+            .map_err(|error| error.to_string())?;
+        let main_language = self
+            .data_dir
+            .as_deref()
+            .and_then(|data_dir| engine::meta::read_project_json(data_dir).ok())
+            .and_then(|metadata| metadata.main_language)
+            .unwrap_or_else(|| language.clone());
 
-        Ok(draft_preview_url(post_id, &language))
+        Ok(post_preview_url(&post, &language, &main_language))
     }
 
     fn active_post_uses_embedded_preview(&self) -> bool {
@@ -8784,6 +8803,25 @@ impl BdsApp {
 
         if let Err(error) = open::that(&url) {
             self.notify(ToastLevel::Error, &error.to_string());
+        }
+        Task::none()
+    }
+
+    fn open_preview_in_browser(&mut self) -> Task<Message> {
+        let active_post = active_post_tab_id(self.active_tab.as_deref(), &self.tabs);
+        let url = match active_post {
+            Some(post_id) => self.preview_url_for_post(&post_id),
+            None => self
+                .ensure_preview_server()
+                .map(|()| format!("{}/", preview_base_url())),
+        };
+        match url {
+            Ok(url) => {
+                if let Err(error) = open::that(url) {
+                    self.notify(ToastLevel::Error, &error.to_string());
+                }
+            }
+            Err(error) => self.notify(ToastLevel::Error, &error),
         }
         Task::none()
     }
@@ -9339,6 +9377,13 @@ fn dropped_image_target(active_tab: Option<&str>, tabs: &[Tab], path: &Path) -> 
         .map(|tab| tab.id.clone())
 }
 
+fn active_post_tab_id(active_tab: Option<&str>, tabs: &[Tab]) -> Option<String> {
+    let active_tab = active_tab?;
+    tabs.iter()
+        .find(|tab| tab.id == active_tab && tab.tab_type == TabType::Post)
+        .map(|tab| tab.id.clone())
+}
+
 fn split_csv_values(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -9376,11 +9421,11 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, dropped_image_target, localize_chat_error, month_abbreviation,
-        persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
-        persist_post_editor_state_impl, remote_error_closes_connection,
-        save_editor_settings_state_impl, save_script_editor_state_impl,
-        save_template_editor_state_impl,
+        PostStatus, SettingsMsg, active_post_tab_id, dropped_image_target, localize_chat_error,
+        month_abbreviation, persist_media_editor_state_impl,
+        persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
+        remote_error_closes_connection, save_editor_settings_state_impl,
+        save_script_editor_state_impl, save_template_editor_state_impl,
     };
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
@@ -9851,6 +9896,33 @@ mod tests {
             dropped_image_target(None, &tabs, Path::new("photo.png")),
             None
         );
+    }
+
+    #[test]
+    fn browser_preview_targets_the_active_post_or_the_site_root() {
+        let tabs = vec![
+            Tab {
+                id: "post-1".to_string(),
+                tab_type: TabType::Post,
+                title: "Post".to_string(),
+                is_transient: false,
+                is_dirty: false,
+            },
+            Tab {
+                id: "settings".to_string(),
+                tab_type: TabType::Settings,
+                title: "Settings".to_string(),
+                is_transient: false,
+                is_dirty: false,
+            },
+        ];
+
+        assert_eq!(
+            active_post_tab_id(Some("post-1"), &tabs),
+            Some("post-1".to_string())
+        );
+        assert_eq!(active_post_tab_id(Some("settings"), &tabs), None);
+        assert_eq!(active_post_tab_id(None, &tabs), None);
     }
 
     #[test]
@@ -10790,15 +10862,28 @@ mod tests {
     }
 
     #[test]
-    fn draft_preview_url_points_at_local_preview_server() {
-        let url = super::draft_preview_url("post-42", "de");
+    fn post_preview_url_uses_the_generated_site_route() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Preview Route",
+            Some("Body"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let path = bds_core::render::build_canonical_post_path(&created, "de", "en");
 
         assert_eq!(
-            url,
+            super::post_preview_url(&created, "de", "en"),
             format!(
-                "http://{}:{}/__draft/post-42?language=de",
-                bds_core::engine::preview::PREVIEW_HOST,
-                bds_core::engine::preview::PREVIEW_PORT,
+                "http://127.0.0.1:4123{path}?draft=true&post_id={}",
+                created.id
             )
         );
     }

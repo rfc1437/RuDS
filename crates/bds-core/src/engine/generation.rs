@@ -913,7 +913,7 @@ fn filter_posts_for_lists(
         .collect()
 }
 
-fn build_rss_xml(
+pub(crate) fn build_rss_xml(
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
     language: &str,
@@ -993,7 +993,7 @@ fn build_rss_xml(
     xml.join("\n")
 }
 
-fn build_atom_xml(
+pub(crate) fn build_atom_xml(
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
     language: &str,

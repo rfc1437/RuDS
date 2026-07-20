@@ -248,9 +248,8 @@ pub(crate) fn action_enabled(
     match action {
         MenuAction::Save => savable_tab,
         MenuAction::Find | MenuAction::Replace => text_editor,
-        MenuAction::OpenInBrowser | MenuAction::PublishSelected | MenuAction::PreviewPost => {
-            has_project && post_tab
-        }
+        MenuAction::OpenInBrowser => has_project,
+        MenuAction::PublishSelected | MenuAction::PreviewPost => has_project && post_tab,
         MenuAction::UploadSite => has_project && !offline,
         MenuAction::NewPost
         | MenuAction::ImportMedia
@@ -709,6 +708,20 @@ mod tests {
             true,
             None,
             true,
+            true
+        ));
+        assert!(action_enabled(
+            MenuAction::OpenInBrowser,
+            true,
+            None,
+            false,
+            true
+        ));
+        assert!(!action_enabled(
+            MenuAction::OpenInBrowser,
+            false,
+            Some(&TabType::Post),
+            false,
             true
         ));
         assert!(!action_enabled(

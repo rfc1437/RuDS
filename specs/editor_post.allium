@@ -163,7 +163,9 @@ surface PostEditorSurface {
     @guarantee EditorModes
         -- Markdown: code editor with markdown-with-macros language,
         --   highlighting [[macro ...]] syntax. Word wrap on, minimap off, 14px font.
-        -- Preview: iframe showing rendered preview.
+        -- Preview: iframe served by the localhost preview server at the post's
+        --   normal generated-site URL, using the shared site renderer. Draft
+        --   content comes from DB; published content and assets come from files.
         -- Markdown and Preview are the only editor modes.
 
     @guarantee DragDropImages

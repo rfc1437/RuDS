@@ -52,14 +52,17 @@ rule StopPreview {
 rule OpenPreviewInBrowser {
     when: OpenPreviewInBrowserRequested(project)
     -- Starts or reuses the project's localhost preview server, then opens its
-    -- base URL in the external system browser. This is separate from the
-    -- post editor's internal preview pane (editor_post.allium EditorModes).
-    ensures: ExternalBrowserOpened(url: preview_base_url(project))
+    -- base URL in the external system browser when no post editor is active.
+    -- With an active post editor it opens that post's normal generated-site URL.
+    -- This is separate from the post editor's internal preview pane.
+    ensures: ExternalBrowserOpened(
+        url: active_post_generated_url or preview_base_url(project)
+    )
 }
 
 -- Route resolution
 -- Preview renders all posts (published + draft) on-demand via Liquid templates.
--- Content priority: DB content (draft edits) over published .md file content.
+-- Draft content comes from the DB; published content comes from its .md file.
 -- See invariant PreviewDraftOverlay below.
 
 rule ServePostPreview {
@@ -67,15 +70,16 @@ rule ServePostPreview {
     requires: is_post_path(path)
         -- path matches "/{yyyy}/{mm}/{dd}/{slug}"
     -- Finds post by slug+date regardless of status (published or draft).
-    -- Content resolved via editor_body: DB content if present, else .md file.
+    -- Draft bodies resolve from DB; published bodies resolve from .md files.
     -- Renders via Liquid template with full PageRenderer context.
     ensures: PreviewResponse(rendered_html)
 }
 
 rule ServeDraftPreview {
     when: PreviewDraftRequest(path, post_id)
-    -- Explicit draft preview by post_id (used by editor preview pane).
-    -- Renders draft content (from DB, not filesystem).
+    -- Editor preview uses the post's canonical generated route with draft and
+    -- post_id query markers, so links continue through the normal route tree.
+    -- Renders draft content from DB and published content from the filesystem.
     ensures: PreviewResponse(rendered_html)
 }
 
@@ -100,6 +104,16 @@ rule ServeAssets {
     ensures: PreviewResponse(asset_file)
 }
 
+rule ServeGeneratedRuntimeData {
+    when: PreviewRequest(path)
+    requires: path = "/calendar.json" or is_feed_path(path)
+        or is_pagefind_path(path) or is_image_path(path)
+    -- Calendar and feed data use the preview post universe and normal list
+    -- visibility rules. Pagefind and image files are read from the same project
+    -- filesystem locations as the generated site.
+    ensures: PreviewResponse(runtime_file)
+}
+
 rule ServeLanguagePrefixedRoute {
     when: PreviewRequest(path)
     requires: is_language_prefixed(path)
@@ -115,15 +129,15 @@ invariant PreviewDraftOverlay {
     -- Post universe: all posts with status in {published, draft}.
     --   Archived posts are excluded.
     --
-    -- Content priority (per post):
-    --   1. DB content field (draft edits not yet published)  → used when non-nil
-    --   2. Published .md file (last-published snapshot)      → used when DB content is nil
-    --   3. Empty string                                      → fallback if neither exists
+-- Content source (per post or translation):
+--   1. status=draft      → DB content, falling back to its last-published file
+--   2. status=published  → published .md file
+--   3. No DB body or file → empty string
     --
     -- This means:
     --   - A purely draft post (never published) renders from DB content.
     --   - A published-then-edited post renders from DB content (the draft edits).
-    --   - A published post with no pending edits renders from its .md file.
+    --   - A published post renders from its .md file.
     --
     -- Contrast with generation (see generation.allium GenerationPublishedOnly):
     --   Generation uses *only* published .md file content, never DB draft content,

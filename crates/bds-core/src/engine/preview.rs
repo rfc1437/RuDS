@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use crate::db::{Database, queries};
 use crate::engine::generation::PublishedPostSource;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, PostStatus, ProjectMetadata, pico_stylesheet_href};
+use crate::model::{Post, PostStatus, pico_stylesheet_href};
 use crate::render::build_preview_response;
 use crate::util::frontmatter::{read_post_file, read_translation_file};
 
@@ -67,6 +67,12 @@ struct DraftPreviewQuery {
 struct StylePreviewQuery {
     theme: Option<String>,
     mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewFeedKind {
+    Rss,
+    Atom,
 }
 
 pub fn start_preview_server(
@@ -197,8 +203,43 @@ fn render_preview_response(
 
     let metadata = crate::engine::meta::read_project_json(&state.data_dir)?;
     let db = Database::open(&state.db_path)?;
-    let published_posts = collect_published_posts(state, &metadata)?;
-    let input_posts = published_posts
+    let preview_posts = collect_preview_posts(state)?;
+    let list_posts = filter_preview_list_posts(&state.data_dir, &preview_posts);
+    if path == "/calendar.json" {
+        let posts = list_posts
+            .iter()
+            .map(|source| source.post.clone())
+            .collect::<Vec<_>>();
+        let json = crate::render::build_calendar_json(&posts)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            json,
+        )
+            .into_response());
+    }
+    if let Some((language, kind)) = preview_feed_request(path, &metadata) {
+        let localized_posts = localized_preview_posts(
+            db.conn(),
+            &state.data_dir,
+            &list_posts,
+            &language,
+            metadata.main_language.as_deref().unwrap_or("en"),
+        )?;
+        let (content_type, xml) = match kind {
+            PreviewFeedKind::Rss => (
+                "application/rss+xml; charset=utf-8",
+                crate::engine::generation::build_rss_xml(&metadata, &localized_posts, &language),
+            ),
+            PreviewFeedKind::Atom => (
+                "application/atom+xml; charset=utf-8",
+                crate::engine::generation::build_atom_xml(&metadata, &localized_posts, &language),
+            ),
+        };
+        return Ok((StatusCode::OK, [(header::CONTENT_TYPE, content_type)], xml).into_response());
+    }
+    let input_posts = preview_posts
         .iter()
         .map(|source| (source.post.clone(), source.body_markdown.clone()))
         .collect::<Vec<_>>();
@@ -360,32 +401,115 @@ fn render_draft_preview(
     Ok(response.html)
 }
 
-fn collect_published_posts(
-    state: &PreviewServerState,
-    _metadata: &ProjectMetadata,
-) -> EngineResult<Vec<PublishedPostSource>> {
+fn collect_preview_posts(state: &PreviewServerState) -> EngineResult<Vec<PublishedPostSource>> {
     let db = Database::open(&state.db_path)?;
     let posts = queries::post::list_posts_by_project(db.conn(), &state.project_id)?;
-    let mut published = Vec::new();
+    let mut preview_posts = Vec::new();
     for post in posts
         .into_iter()
-        .filter(|post| matches!(post.status, PostStatus::Published))
+        .filter(|post| matches!(post.status, PostStatus::Draft | PostStatus::Published))
     {
-        published.push(PublishedPostSource {
+        preview_posts.push(PublishedPostSource {
             body_markdown: load_post_body(&state.data_dir, &post)?,
             post,
         });
     }
-    published.sort_by_key(|source| source.post.published_at.unwrap_or(source.post.created_at));
-    Ok(published)
+    preview_posts.sort_by_key(|source| source.post.published_at.unwrap_or(source.post.created_at));
+    Ok(preview_posts)
+}
+
+fn filter_preview_list_posts(
+    data_dir: &Path,
+    posts: &[PublishedPostSource],
+) -> Vec<PublishedPostSource> {
+    let settings = crate::engine::meta::read_category_meta_json(data_dir).unwrap_or_default();
+    posts
+        .iter()
+        .filter(|source| {
+            !source.post.categories.iter().any(|category| {
+                settings
+                    .get(category)
+                    .is_some_and(|setting| !setting.render_in_lists)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+fn preview_feed_request(
+    path: &str,
+    metadata: &crate::model::ProjectMetadata,
+) -> Option<(String, PreviewFeedKind)> {
+    let segments = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let (language, filename) = match segments.as_slice() {
+        [filename] => (metadata.main_language.as_deref().unwrap_or("en"), *filename),
+        [language, filename]
+            if metadata
+                .blog_languages
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(language))
+                && !language
+                    .eq_ignore_ascii_case(metadata.main_language.as_deref().unwrap_or("en")) =>
+        {
+            (*language, *filename)
+        }
+        _ => return None,
+    };
+    let kind = match filename {
+        "rss.xml" | "feed.xml" => PreviewFeedKind::Rss,
+        "atom.xml" => PreviewFeedKind::Atom,
+        _ => return None,
+    };
+    Some((language.to_string(), kind))
+}
+
+fn localized_preview_posts(
+    conn: &crate::db::DbConnection,
+    data_dir: &Path,
+    posts: &[PublishedPostSource],
+    language: &str,
+    main_language: &str,
+) -> EngineResult<Vec<PublishedPostSource>> {
+    if language.eq_ignore_ascii_case(main_language) {
+        return Ok(posts.to_vec());
+    }
+
+    let mut localized = Vec::new();
+    for source in posts {
+        let Ok(translation) = queries::post_translation::get_post_translation_by_post_and_language(
+            conn,
+            &source.post.id,
+            language,
+        ) else {
+            continue;
+        };
+        let mut translated_post = source.post.clone();
+        translated_post.title = translation.title.clone();
+        translated_post.excerpt = translation.excerpt.clone();
+        translated_post.language = Some(translation.language.clone());
+        translated_post.status = translation.status.clone();
+        translated_post.file_path = translation.file_path.clone();
+        translated_post.published_at = translation.published_at.or(source.post.published_at);
+        localized.push(PublishedPostSource {
+            post: translated_post,
+            body_markdown: load_translation_body(data_dir, &translation)?,
+        });
+    }
+    Ok(localized)
 }
 
 fn load_post_body(data_dir: &Path, post: &Post) -> EngineResult<String> {
-    if let Some(content) = &post.content {
+    if post.status == PostStatus::Draft
+        && let Some(content) = &post.content
+    {
         return Ok(content.clone());
     }
-    if let Some(content) = &post.published_content {
-        return Ok(content.clone());
+    if post.file_path.trim().is_empty() {
+        return Ok(String::new());
     }
     load_markdown_body(data_dir, &post.file_path, false)
 }
@@ -394,8 +518,13 @@ fn load_translation_body(
     data_dir: &Path,
     translation: &crate::model::PostTranslation,
 ) -> EngineResult<String> {
-    if let Some(content) = &translation.content {
+    if translation.status == PostStatus::Draft
+        && let Some(content) = &translation.content
+    {
         return Ok(content.clone());
+    }
+    if translation.file_path.trim().is_empty() {
+        return Ok(String::new());
     }
     load_markdown_body(data_dir, &translation.file_path, true)
 }
@@ -420,6 +549,14 @@ fn serve_project_file(data_dir: &Path, path: &str) -> EngineResult<Option<Respon
         return Ok(Some(response));
     }
     if let Some(response) = serve_scoped_file(data_dir, path, "/assets/", "assets")? {
+        return Ok(Some(response));
+    }
+    if let Some(response) = serve_scoped_file(data_dir, path, "/images/", "images")? {
+        return Ok(Some(response));
+    }
+    if let Some(response) =
+        serve_scoped_file(&data_dir.join("html"), path, "/pagefind/", "pagefind")?
+    {
         return Ok(Some(response));
     }
     Ok(None)
@@ -496,7 +633,7 @@ mod tests {
     use super::*;
     use crate::db::queries;
     use crate::engine::meta;
-    use crate::model::{Post, PostStatus, Project, ProjectMetadata};
+    use crate::model::{Post, PostStatus, PostTranslation, Project, ProjectMetadata};
     use std::sync::{Mutex, OnceLock};
 
     fn preview_port_guard() -> &'static Mutex<()> {
@@ -530,6 +667,17 @@ mod tests {
         )
         .unwrap();
         (dir, db)
+    }
+
+    fn response_text(response: Response) -> String {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let bytes = runtime
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
     }
 
     fn make_metadata() -> ProjectMetadata {
@@ -701,6 +849,88 @@ mod tests {
     }
 
     #[test]
+    fn canonical_preview_routes_overlay_drafts_and_use_files_for_published_posts() {
+        let (dir, db) = setup_preview_fixture();
+        let draft = make_draft_post();
+        queries::post::insert_post(db.conn(), &draft).unwrap();
+        queries::post_translation::insert_post_translation(
+            db.conn(),
+            &PostTranslation {
+                id: "translation-1".into(),
+                project_id: "project-1".into(),
+                translation_for: draft.id.clone(),
+                language: "de".into(),
+                title: "Hallo".into(),
+                excerpt: None,
+                content: Some("Deutscher **Entwurf**".into()),
+                status: PostStatus::Draft,
+                file_path: String::new(),
+                checksum: None,
+                created_at: draft.created_at,
+                updated_at: draft.updated_at,
+                published_at: None,
+            },
+        )
+        .unwrap();
+
+        let mut published = make_draft_post();
+        published.id = "post-2".into();
+        published.title = "Published from file".into();
+        published.slug = "published-from-file".into();
+        published.status = PostStatus::Published;
+        published.content = Some("Stale database body".into());
+        published.file_path = "posts/2024/03/published-from-file.md".into();
+        queries::post::insert_post(db.conn(), &published).unwrap();
+        std::fs::write(
+            dir.path().join(&published.file_path),
+            crate::util::frontmatter::write_post_file(&published, "Filesystem **body**"),
+        )
+        .unwrap();
+
+        let state = PreviewServerState {
+            db_path: dir.path().join("bds.db"),
+            data_dir: dir.path().to_path_buf(),
+            project_id: "project-1".into(),
+        };
+        let draft_path = crate::render::build_canonical_post_path(&draft, "en", "en");
+        let published_path = crate::render::build_canonical_post_path(&published, "en", "en");
+        let translated_draft_path = crate::render::build_canonical_post_path(&draft, "de", "en");
+
+        let draft_response = render_preview_response(&state, &draft_path, None, None).unwrap();
+        let published_response =
+            render_preview_response(&state, &published_path, None, None).unwrap();
+        let index_response = render_preview_response(&state, "/", None, None).unwrap();
+        let translated_draft_response =
+            render_preview_response(&state, &translated_draft_path, None, None).unwrap();
+        let calendar_response =
+            render_preview_response(&state, "/calendar.json", None, None).unwrap();
+        let rss_response = render_preview_response(&state, "/rss.xml", None, None).unwrap();
+        let translated_atom_response =
+            render_preview_response(&state, "/de/atom.xml", None, None).unwrap();
+        let draft_html = response_text(draft_response);
+        let published_html = response_text(published_response);
+        let index_html = response_text(index_response);
+        let translated_draft_html = response_text(translated_draft_response);
+        let calendar_json = response_text(calendar_response);
+        let rss_xml = response_text(rss_response);
+        let translated_atom_xml = response_text(translated_atom_response);
+
+        assert!(draft_html.contains("Draft <strong>body</strong>"));
+        assert!(published_html.contains("Filesystem <strong>body</strong>"));
+        assert!(!published_html.contains("Stale database body"));
+        assert!(index_html.contains("Hello"));
+        assert!(index_html.contains("Published from file"));
+        assert!(translated_draft_html.contains("Deutscher <strong>Entwurf</strong>"));
+        assert!(calendar_json.contains("2024"));
+        assert!(rss_xml.contains("<rss"));
+        assert!(rss_xml.contains("Draft <strong>body</strong>"));
+        assert!(rss_xml.contains("Filesystem <strong>body</strong>"));
+        assert!(!rss_xml.contains("Stale database body"));
+        assert!(translated_atom_xml.contains("<feed"));
+        assert!(translated_atom_xml.contains("Deutscher <strong>Entwurf</strong>"));
+    }
+
+    #[test]
     fn preview_server_blocks_media_path_traversal() {
         let _guard = preview_port_guard().lock().unwrap();
         let (dir, _db) = setup_preview_fixture();
@@ -731,8 +961,16 @@ mod tests {
         let _guard = preview_port_guard().lock().unwrap();
         let (dir, _db) = setup_preview_fixture();
         std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+        std::fs::create_dir_all(dir.path().join("images")).unwrap();
+        std::fs::create_dir_all(dir.path().join("html/pagefind")).unwrap();
         std::fs::write(dir.path().join("media/ok.txt"), "ok").unwrap();
         std::fs::write(dir.path().join("assets/site.css"), "body { color: red; }").unwrap();
+        std::fs::write(dir.path().join("images/custom.svg"), "<svg></svg>").unwrap();
+        std::fs::write(
+            dir.path().join("html/pagefind/pagefind-ui.js"),
+            "window.pagefind = true;",
+        )
+        .unwrap();
 
         let server = start_preview_server(
             dir.path().join("bds.db"),
@@ -754,10 +992,28 @@ mod tests {
             .unwrap();
         let media_body = media.text().unwrap();
         let asset_body = asset.text().unwrap();
+        let image_body = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/images/custom.svg"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let pagefind_body = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/pagefind/pagefind-ui.js"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
         server.stop().unwrap();
 
         assert_eq!(media_body, "ok");
         assert!(asset_body.contains("color: red"));
+        assert!(image_body.contains("<svg>"));
+        assert!(pagefind_body.contains("window.pagefind"));
     }
 
     #[test]
