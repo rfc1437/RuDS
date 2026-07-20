@@ -182,9 +182,12 @@ fn build_site_render_artifacts_with_mode(
     let category_settings = queries_category_settings(data_dir)?;
     let media_items = queries::media::list_media_by_project(conn, project_id).unwrap_or_default();
     let media_by_id = media_items
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|media| (media.id.clone(), media))
         .collect::<HashMap<_, _>>();
+    let project_media = media_items.iter().map(media_context).collect::<Vec<_>>();
+    let project_tags = build_published_tag_counts(published_posts, &tags);
 
     let mut artifacts = SiteRenderArtifacts::default();
     for language in languages {
@@ -212,7 +215,10 @@ fn build_site_render_artifacts_with_mode(
                 url_path: route.url_path.clone(),
                 html: String::new(),
             }));
-        let post_data_json_by_id = build_post_data_json_by_id(&localized_posts);
+        let linked_media_by_post_id =
+            build_linked_media_by_post_id(conn, &localized_posts, &media_by_id);
+        let post_data_json_by_id =
+            build_post_data_json_by_id(&localized_posts, &linked_media_by_post_id);
         let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
             .par_iter()
@@ -232,6 +238,8 @@ fn build_site_render_artifacts_with_mode(
                     &category_settings,
                     &menu_items,
                     &post_data_json_by_id,
+                    &project_media,
+                    &project_tags,
                     &bundle,
                     is_preview,
                 )
@@ -319,10 +327,12 @@ fn build_site_render_artifacts_with_mode(
                     &localized_posts,
                     &tags,
                     &category_settings,
-                    &media_by_id,
+                    &linked_media_by_post_id,
                     &canonical_map,
                     &menu_items,
                     &post_data_json_by_id,
+                    &project_media,
+                    &project_tags,
                     &bundle,
                     is_preview,
                 )?;
@@ -795,6 +805,8 @@ fn render_list_route(
     category_settings: &HashMap<String, CategorySettings>,
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
+    project_media: &[Value],
+    project_tags: &[Value],
     bundle: &TemplateBundle,
     is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
@@ -839,6 +851,8 @@ fn render_list_route(
         "canonical_post_path_by_slug": canonical_map,
         "canonical_media_path_by_source_path": canonical_media_paths(posts),
         "post_data_json_by_id": post_data_json_by_id,
+        "project": { "media": project_media },
+        "Tags": project_tags,
         "post_categories": taxonomy_counts.0,
         "post_tags": taxonomy_counts.1,
         "tag_color_by_name": taxonomy_counts.2,
@@ -865,10 +879,12 @@ fn render_post_route(
     all_posts: &[RenderPostRecord],
     tags: &[Tag],
     category_settings: &HashMap<String, CategorySettings>,
-    media_by_id: &HashMap<String, Media>,
+    linked_media_by_post_id: &HashMap<String, Vec<Value>>,
     canonical_post_path_by_slug: &HashMap<String, String>,
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
+    project_media: &[Value],
+    project_tags: &[Value],
     bundle: &TemplateBundle,
     is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
@@ -897,12 +913,10 @@ fn render_post_route(
         .or_else(|| resolved.content.clone())
         .unwrap_or_else(|| STARTER_SINGLE_POST_TEMPLATE.to_string());
 
-    let linked_media = queries::post_media::list_post_media_by_post(conn, &record.source_post_id)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|link| media_by_id.get(&link.media_id))
-        .map(media_context)
-        .collect::<Vec<_>>();
+    let linked_media = linked_media_by_post_id
+        .get(&record.post.id)
+        .cloned()
+        .unwrap_or_default();
     let outgoing_links =
         queries::post_link::list_links_by_source(conn, &record.source_post_id).unwrap_or_default();
     let incoming_links =
@@ -947,6 +961,8 @@ fn render_post_route(
         "canonical_post_path_by_slug": canonical_post_path_by_slug,
         "canonical_media_path_by_source_path": canonical_media_paths(all_posts),
         "post_data_json_by_id": post_data_json_by_id,
+        "project": { "media": project_media },
+        "Tags": project_tags,
         "day_blocks": Vec::<Value>::new(),
         "archive_context": serde_json::Value::Null,
         "show_archive_range_heading": false,
@@ -1238,9 +1254,34 @@ fn extract_media_refs(markdown: &str) -> Vec<String> {
     refs
 }
 
-fn build_post_data_json_by_id(posts: &[RenderPostRecord]) -> HashMap<String, Value> {
+fn build_linked_media_by_post_id(
+    conn: &Connection,
+    posts: &[RenderPostRecord],
+    media_by_id: &HashMap<String, Media>,
+) -> HashMap<String, Vec<Value>> {
+    let mut result = HashMap::new();
+    for record in posts {
+        let media = queries::post_media::list_post_media_by_post(conn, &record.source_post_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|link| media_by_id.get(&link.media_id))
+            .map(media_context)
+            .collect();
+        result.insert(record.post.id.clone(), media);
+    }
+    result
+}
+
+fn build_post_data_json_by_id(
+    posts: &[RenderPostRecord],
+    linked_media_by_post_id: &HashMap<String, Vec<Value>>,
+) -> HashMap<String, Value> {
     posts.iter()
         .map(|record| {
+            let linked_media = linked_media_by_post_id
+                .get(&record.post.id)
+                .cloned()
+                .unwrap_or_default();
             (
                 record.post.id.clone(),
                 json!({
@@ -1255,10 +1296,55 @@ fn build_post_data_json_by_id(posts: &[RenderPostRecord]) -> HashMap<String, Val
                     "updated_at": timestamp_parts(record.post.updated_at),
                     "tags": record.post.tags,
                     "categories": record.post.categories,
+                    "linked_media": linked_media,
                 }),
             )
         })
         .collect()
+}
+
+fn build_published_tag_counts(posts: &[(Post, String)], tags: &[Tag]) -> Vec<Value> {
+    let mut counts = HashMap::<String, usize>::new();
+    for (post, _) in posts {
+        if post.status != PostStatus::Published {
+            continue;
+        }
+        for name in &post.tags {
+            if !name.trim().is_empty() {
+                *counts.entry(name.trim().to_string()).or_default() += 1;
+            }
+        }
+    }
+
+    let mut items = counts
+        .into_iter()
+        .map(|(name, count)| {
+            let color = tags
+                .iter()
+                .find(|tag| tag.name.eq_ignore_ascii_case(&name))
+                .and_then(|tag| tag.color.clone())
+                .filter(|color| !color.is_empty());
+            json!({
+                "name": name,
+                "slug": slugify(&name),
+                "color": color,
+                "post_count": count,
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        right["post_count"]
+            .as_u64()
+            .cmp(&left["post_count"].as_u64())
+            .then_with(|| {
+                left["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .cmp(&right["name"].as_str().unwrap_or_default().to_lowercase())
+            })
+    });
+    items
 }
 
 fn build_taxonomy_counts(
@@ -1411,6 +1497,7 @@ fn media_context(media: &Media) -> Value {
         "width": media.width,
         "height": media.height,
         "file_path": canonical_media_path(media),
+        "created_at": media.created_at,
     })
 }
 

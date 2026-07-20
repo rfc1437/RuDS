@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use chrono::{Datelike, TimeZone, Utc};
 use serde_json::{Map, Value as JsonValue};
+
+use crate::i18n::translate_render;
 
 #[derive(Clone)]
 pub(crate) struct MacroRenderContext {
@@ -60,8 +63,8 @@ fn render_macro(invocation: &str, context: &MacroRenderContext) -> Option<String
 
     match name {
         "gallery" => Some(render_gallery(&args, context)),
-        "youtube" => Some(render_youtube(&args)),
-        "vimeo" => Some(render_vimeo(&args)),
+        "youtube" => Some(render_youtube(&args, context)),
+        "vimeo" => Some(render_vimeo(&args, context)),
         "photo_archive" => Some(render_photo_archive(&args, context)),
         "tag_cloud" => Some(render_tag_cloud(&args, context)),
         _ => render_script_macro(name, &args, context),
@@ -189,41 +192,40 @@ fn render_gallery(args: &HashMap<String, JsonValue>, context: &MacroRenderContex
         .and_then(value_as_u64)
         .map(|value| value.clamp(1, 6) as usize)
         .unwrap_or(3);
-    let images = args
+    let mut images = args
         .get("images")
         .and_then(JsonValue::as_array)
         .cloned()
-        .or_else(|| linked_media(context));
+        .or_else(|| linked_media(context))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(is_image)
+        .collect::<Vec<_>>();
+    images.sort_by(media_newest_first);
 
-    let Some(images) = images else {
-        return empty_block(
-            &format!("macro-gallery gallery-cols-{columns}"),
-            "gallery-empty",
-            "No media available.",
-        );
-    };
     if images.is_empty() {
         return empty_block(
             &format!("macro-gallery gallery-cols-{columns}"),
             "gallery-empty",
-            "No media available.",
+            &render_translation(context, "render.gallery.empty"),
         );
     }
 
-    let gallery_id = context.post_id.as_deref().unwrap_or("gallery");
+    let gallery_id = format!("gallery-{}", context.post_id.as_deref().unwrap_or_default());
     let mut html = format!(
-        "<section class=\"macro-gallery gallery-cols-{columns}\"><div class=\"gallery-container\">"
+        "<section class=\"macro-gallery gallery-cols-{columns}\" data-post-id=\"{}\" data-columns=\"{columns}\" data-lightbox=\"true\"><div class=\"gallery-container gallery-lightbox\">",
+        escape_html_attr(context.post_id.as_deref().unwrap_or_default()),
     );
     for image in images {
         let Some(path) = image_path(&image) else {
             continue;
         };
         let title = image_title(&image);
-        let alt = image_alt(&image, title.as_deref());
+        let alt = image_alt(&image);
         html.push_str(&format!(
             "<a class=\"gallery-item\" href=\"{}\" data-lightbox=\"{}\"{}><img src=\"{}\" alt=\"{}\" loading=\"lazy\" /></a>",
             escape_html_attr(&path),
-            escape_html_attr(gallery_id),
+            escape_html_attr(&gallery_id),
             title
                 .as_deref()
                 .map(|value| format!(" data-title=\"{}\"", escape_html_attr(value)))
@@ -232,11 +234,22 @@ fn render_gallery(args: &HashMap<String, JsonValue>, context: &MacroRenderContex
             escape_html_attr(&alt),
         ));
     }
-    html.push_str("</div></section>");
+    html.push_str("</div>");
+    if let Some(caption) = args
+        .get("caption")
+        .map(stringify_scalar)
+        .filter(|caption| !caption.is_empty())
+    {
+        html.push_str(&format!(
+            "<figcaption class=\"gallery-caption\">{}</figcaption>",
+            escape_html(&caption)
+        ));
+    }
+    html.push_str("</section>");
     html
 }
 
-fn render_youtube(args: &HashMap<String, JsonValue>) -> String {
+fn render_youtube(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
     let video_id = args.get("id").map(stringify_scalar).unwrap_or_default();
     if video_id.is_empty() {
         return empty_block(
@@ -245,53 +258,73 @@ fn render_youtube(args: &HashMap<String, JsonValue>) -> String {
             "Missing YouTube video id.",
         );
     }
+    let title = macro_title(args, context, "render.video.youtubeTitle");
     format!(
-        "<section class=\"macro-youtube\"><iframe src=\"https://www.youtube.com/embed/{}\" title=\"YouTube video\" loading=\"lazy\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe></section>",
+        "<section class=\"macro-youtube\"><iframe src=\"https://www.youtube.com/embed/{}?rel=0\" title=\"{}\" loading=\"lazy\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe></section>",
         escape_html_attr(&video_id),
+        escape_html_attr(&title),
     )
 }
 
-fn render_vimeo(args: &HashMap<String, JsonValue>) -> String {
+fn render_vimeo(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
     let video_id = args.get("id").map(stringify_scalar).unwrap_or_default();
     if video_id.is_empty() {
         return empty_block("macro-vimeo", "gallery-empty", "Missing Vimeo video id.");
     }
+    let title = macro_title(args, context, "render.video.vimeoTitle");
     format!(
-        "<section class=\"macro-vimeo\"><iframe src=\"https://player.vimeo.com/video/{}\" title=\"Vimeo video\" loading=\"lazy\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen></iframe></section>",
+        "<section class=\"macro-vimeo\"><iframe src=\"https://player.vimeo.com/video/{}\" title=\"{}\" loading=\"lazy\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen></iframe></section>",
         escape_html_attr(&video_id),
+        escape_html_attr(&title),
     )
 }
 
 fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
-    let media = args
+    let mut media = args
         .get("media")
         .and_then(JsonValue::as_array)
         .cloned()
-        .or_else(|| linked_media(context));
+        .or_else(|| project_media(context))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(is_image)
+        .collect::<Vec<_>>();
+    media.sort_by(media_newest_first);
 
-    let Some(media) = media else {
-        return empty_block(
-            "macro-photo-archive",
-            "photo-archive-empty",
-            "No photos available.",
-        );
-    };
+    let year = args.get("year").and_then(value_as_i32);
+    let month = args.get("month").and_then(value_as_u32);
+    if args.contains_key("year") && year.is_none() {
+        media.clear();
+    } else if let Some(year) = year {
+        media.retain(|item| {
+            media_archive_month(item).is_some_and(|(item_year, item_month)| {
+                item_year == year && month.is_none_or(|month| item_month == month)
+            })
+        });
+    } else {
+        media.truncate(200);
+    }
+
     if media.is_empty() {
         return empty_block(
             "macro-photo-archive",
             "photo-archive-empty",
-            "No photos available.",
+            &render_translation(context, "render.photoArchive.empty"),
         );
     }
 
-    let mut grouped = BTreeMap::<String, Vec<JsonValue>>::new();
+    let mut grouped = BTreeMap::<(i32, u32), Vec<JsonValue>>::new();
     for item in media {
-        let bucket = item
-            .get("file_path")
-            .and_then(JsonValue::as_str)
-            .and_then(month_bucket)
-            .unwrap_or_else(|| "Archive".to_string());
-        grouped.entry(bucket).or_default().push(item);
+        if let Some(bucket) = media_archive_month(&item) {
+            grouped.entry(bucket).or_default().push(item);
+        }
+    }
+    if grouped.is_empty() {
+        return empty_block(
+            "macro-photo-archive",
+            "photo-archive-empty",
+            &render_translation(context, "render.photoArchive.empty"),
+        );
     }
 
     let single_month = grouped.len() == 1;
@@ -303,21 +336,28 @@ fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRender
             ""
         }
     );
-    for (bucket, items) in grouped.into_iter().rev() {
-        html.push_str("<section class=\"photo-archive-month\">");
+    let month_limit = if year.is_none() { 10 } else { usize::MAX };
+    for ((year, month), items) in grouped.into_iter().rev().take(month_limit) {
+        let label = format!(
+            "{} {year}",
+            render_translation(context, &format!("render.month.{month}"))
+        );
+        html.push_str(
+            "<section class=\"photo-archive-month-wrapper\"><div class=\"photo-archive-month\">",
+        );
         html.push_str(&format!(
             "<header class=\"photo-archive-month-label\"><span>{}</span></header>",
-            escape_html(&bucket),
+            escape_html(&label),
         ));
         html.push_str("<div class=\"photo-archive-gallery\">");
         for item in items {
             let Some(path) = image_path(&item) else {
                 continue;
             };
-            let title = image_title(&item);
-            let alt = image_alt(&item, title.as_deref());
+            let title = image_archive_title(&item);
+            let alt = image_alt(&item);
             html.push_str(&format!(
-                "<a class=\"photo-archive-item\" href=\"{}\"{}><img src=\"{}\" alt=\"{}\" loading=\"lazy\" /></a>",
+                "<a class=\"photo-archive-item\" href=\"{}\" data-lightbox=\"{year}-{month}\"{}><img src=\"{}\" alt=\"{}\" loading=\"lazy\" /></a>",
                 escape_html_attr(&path),
                 title
                     .as_deref()
@@ -327,7 +367,7 @@ fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRender
                 escape_html_attr(&alt),
             ));
         }
-        html.push_str("</div></section>");
+        html.push_str("</div></div></section>");
     }
     html.push_str("</div></section>");
     html
@@ -341,21 +381,37 @@ fn render_tag_cloud(args: &HashMap<String, JsonValue>, context: &MacroRenderCont
         .or_else(|| tag_items(context));
 
     let Some(tags) = tags else {
-        return empty_block("macro-tag-cloud", "tag-cloud-empty", "No tags available.");
+        return empty_block(
+            "macro-tag-cloud",
+            "tag-cloud-empty",
+            &render_translation(context, "render.tagCloud.empty"),
+        );
     };
     if tags.is_empty() {
-        return empty_block("macro-tag-cloud", "tag-cloud-empty", "No tags available.");
+        return empty_block(
+            "macro-tag-cloud",
+            "tag-cloud-empty",
+            &render_translation(context, "render.tagCloud.empty"),
+        );
     }
 
     let words = build_tag_cloud_words(&tags, context);
     if words.is_empty() {
-        return empty_block("macro-tag-cloud", "tag-cloud-empty", "No tags available.");
+        return empty_block(
+            "macro-tag-cloud",
+            "tag-cloud-empty",
+            &render_translation(context, "render.tagCloud.empty"),
+        );
     }
 
+    let orientation = normalize_tag_cloud_orientation(args.get("orientation"));
+    let width = tag_cloud_dimension(args.get("width"), 320, 1600, 900);
+    let height = tag_cloud_dimension(args.get("height"), 180, 900, 420);
     let words_json = serde_json::to_string(&words).unwrap_or_else(|_| "[]".to_string());
     format!(
-        "<section class=\"macro-tag-cloud\" data-tag-cloud=\"true\" data-color-distribution=\"quantile\" data-color-theme=\"pico\" data-color-easing=\"0.7\" data-width=\"900\" data-height=\"420\" data-orientation=\"mixed-diagonal\" data-tag-cloud-words='{}'><svg class=\"tag-cloud-canvas\" aria-label=\"Tag cloud\"></svg></section>",
+        "<section class=\"macro-tag-cloud\" data-tag-cloud=\"true\" data-color-distribution=\"quantile\" data-color-theme=\"pico\" data-color-easing=\"0.7\" data-width=\"{width}\" data-height=\"{height}\" data-orientation=\"{orientation}\" data-tag-cloud-words=\"{}\"><svg class=\"tag-cloud-canvas\" viewBox=\"0 0 {width} {height}\" preserveAspectRatio=\"xMidYMid meet\" aria-label=\"{}\"></svg></section>",
         escape_html_attr(&words_json),
+        escape_html_attr(&render_translation(context, "render.tagCloud.ariaLabel")),
     )
 }
 
@@ -371,7 +427,8 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
         .max()
         .unwrap_or(min_count.max(1));
 
-    tags.iter()
+    let mut words = tags
+        .iter()
         .filter_map(|tag| {
             let name = tag.get("name").and_then(JsonValue::as_str)?;
             let slug = tag
@@ -381,9 +438,9 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
                 .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
             let count = tag.get("post_count").and_then(value_as_u64).unwrap_or(1);
             let size = if max_count == min_count {
-                36.0
+                35.0
             } else {
-                18.0 + (((count - min_count) as f64 / (max_count - min_count) as f64) * 38.0)
+                14.0 + (((count - min_count) as f64 / (max_count - min_count) as f64) * 42.0)
             };
             let color = tag
                 .get("color")
@@ -398,25 +455,130 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
                         .and_then(JsonValue::as_str)
                         .map(ToOwned::to_owned)
                 });
-            Some(serde_json::json!({
-                "text": name,
-                "count": count,
-                "url": format!("/tag/{slug}"),
-                "size": size.round(),
-                "color": color,
-            }))
+            let mut word = Map::from_iter([
+                ("text".into(), JsonValue::String(name.into())),
+                ("count".into(), JsonValue::from(count)),
+                ("url".into(), JsonValue::String(format!("/tag/{slug}/"))),
+                ("size".into(), JsonValue::from(size.round() as u64)),
+            ]);
+            if let Some(color) = color.filter(|color| !color.is_empty()) {
+                word.insert("color".into(), JsonValue::String(color));
+            }
+            Some(JsonValue::Object(word))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    words.sort_by(|left, right| {
+        right["count"]
+            .as_u64()
+            .cmp(&left["count"].as_u64())
+            .then_with(|| {
+                left["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .cmp(&right["text"].as_str().unwrap_or_default().to_lowercase())
+            })
+    });
+    words
 }
 
 fn linked_media(context: &MacroRenderContext) -> Option<Vec<JsonValue>> {
-    lookup_path("post.linked_media", context).and_then(|value| value.as_array().cloned())
+    lookup_path("post.linked_media", context)
+        .and_then(|value| value.as_array().cloned())
+        .or_else(|| {
+            let post_id = context.post_id.as_deref()?;
+            context
+                .roots
+                .get("post_data_json_by_id")?
+                .get(post_id)?
+                .get("linked_media")?
+                .as_array()
+                .cloned()
+        })
+}
+
+fn project_media(context: &MacroRenderContext) -> Option<Vec<JsonValue>> {
+    lookup_path("project.media", context).and_then(|value| value.as_array().cloned())
 }
 
 fn tag_items(context: &MacroRenderContext) -> Option<Vec<JsonValue>> {
-    lookup_path("post_tags", context)
+    lookup_path("Tags", context)
         .and_then(|value| value.as_array().cloned())
-        .or_else(|| lookup_path("Tags", context).and_then(|value| value.as_array().cloned()))
+        .or_else(|| lookup_path("post_tags", context).and_then(|value| value.as_array().cloned()))
+}
+
+fn is_image(media: &JsonValue) -> bool {
+    media
+        .get("mime_type")
+        .and_then(JsonValue::as_str)
+        .is_none_or(|mime_type| mime_type.starts_with("image/"))
+}
+
+fn media_newest_first(left: &JsonValue, right: &JsonValue) -> std::cmp::Ordering {
+    right
+        .get("created_at")
+        .and_then(JsonValue::as_i64)
+        .cmp(&left.get("created_at").and_then(JsonValue::as_i64))
+        .then_with(|| {
+            left.get("id")
+                .and_then(JsonValue::as_str)
+                .cmp(&right.get("id").and_then(JsonValue::as_str))
+        })
+}
+
+fn media_archive_month(media: &JsonValue) -> Option<(i32, u32)> {
+    media
+        .get("created_at")
+        .and_then(JsonValue::as_i64)
+        .and_then(|timestamp| Utc.timestamp_millis_opt(timestamp).single())
+        .map(|timestamp| (timestamp.year(), timestamp.month()))
+        .or_else(|| {
+            media
+                .get("file_path")
+                .and_then(JsonValue::as_str)
+                .and_then(month_bucket)
+        })
+}
+
+fn normalize_tag_cloud_orientation(value: Option<&JsonValue>) -> &'static str {
+    match value
+        .map(stringify_scalar)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "mixed_hv" | "mixed-hv" | "hv" | "horizontal_vertical" => "mixed-hv",
+        "mixed_diagonal" | "mixed-diagonal" | "diagonal" | "diag" => "mixed-diagonal",
+        _ => "horizontal",
+    }
+}
+
+fn tag_cloud_dimension(value: Option<&JsonValue>, min: u64, max: u64, default: u64) -> u64 {
+    value
+        .and_then(value_as_u64)
+        .filter(|value| (min..=max).contains(value))
+        .unwrap_or(default)
+}
+
+fn macro_title(
+    args: &HashMap<String, JsonValue>,
+    context: &MacroRenderContext,
+    translation_key: &str,
+) -> String {
+    args.get("title")
+        .map(stringify_scalar)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| render_translation(context, translation_key))
+}
+
+fn render_translation(context: &MacroRenderContext, key: &str) -> String {
+    let language = context
+        .roots
+        .get("language")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("en");
+    translate_render(language, key)
 }
 
 fn image_path(image: &JsonValue) -> Option<String> {
@@ -439,22 +601,62 @@ fn image_title(image: &JsonValue) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
         })
+        .or_else(|| image_name(image))
 }
 
-fn image_alt(image: &JsonValue, fallback: Option<&str>) -> String {
+fn image_archive_title(image: &JsonValue) -> Option<String> {
+    image
+        .get("title")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| image_name(image))
+}
+
+fn image_alt(image: &JsonValue) -> String {
     image
         .get("alt")
         .and_then(JsonValue::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| fallback.map(ToOwned::to_owned))
+        .or_else(|| {
+            image
+                .get("title")
+                .and_then(JsonValue::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| image_name(image))
         .unwrap_or_default()
+}
+
+fn image_name(image: &JsonValue) -> Option<String> {
+    image
+        .get("original_name")
+        .or_else(|| image.get("filename"))
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn value_as_u64(value: &JsonValue) -> Option<u64> {
     value
         .as_u64()
-        .or_else(|| value.as_i64().map(|number| number.max(0) as u64))
+        .or_else(|| value.as_i64().and_then(|number| number.try_into().ok()))
+        .or_else(|| value.as_str().and_then(|number| number.parse().ok()))
+}
+
+fn value_as_u32(value: &JsonValue) -> Option<u32> {
+    value_as_u64(value)
+        .and_then(|number| number.try_into().ok())
+        .filter(|month| (1..=12).contains(month))
+}
+
+fn value_as_i32(value: &JsonValue) -> Option<i32> {
+    value
+        .as_i64()
+        .and_then(|number| number.try_into().ok())
+        .or_else(|| value.as_str().and_then(|number| number.parse().ok()))
 }
 
 fn stringify_scalar(value: &JsonValue) -> String {
@@ -467,11 +669,11 @@ fn stringify_scalar(value: &JsonValue) -> String {
     }
 }
 
-fn month_bucket(path: &str) -> Option<String> {
+fn month_bucket(path: &str) -> Option<(i32, u32)> {
     let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
     match segments.as_slice() {
         ["media", year, month, ..] if year.len() == 4 && month.len() == 2 => {
-            Some(format!("{year}-{month}"))
+            Some((year.parse().ok()?, month.parse().ok()?))
         }
         _ => None,
     }
@@ -537,7 +739,7 @@ mod tests {
         );
 
         assert!(html.contains("macro-gallery gallery-cols-2"));
-        assert!(html.contains("data-lightbox=\"post-1\""));
+        assert!(html.contains("data-lightbox=\"gallery-post-1\""));
         assert!(html.contains("macro-tag-cloud"));
         assert!(html.contains("data-tag-cloud=\"true\""));
     }

@@ -196,9 +196,17 @@ impl Filter for MarkdownFilter {
         };
         let macro_context = MacroRenderContext {
             roots: collect_macro_roots(runtime),
-            post_id: runtime
-                .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
-                .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string())),
+            post_id: args
+                .post_id
+                .as_ref()
+                .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string()))
+                .or_else(|| {
+                    runtime
+                        .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
+                        .and_then(|value| {
+                            value.as_scalar().map(|scalar| scalar.to_kstr().to_string())
+                        })
+                }),
             host: Arc::clone(&self.host),
         };
 
@@ -216,6 +224,7 @@ fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {
 
     for key in [
         "post",
+        "post_data_json_by_id",
         "post_tags",
         "tag_color_by_name",
         "project",

@@ -654,7 +654,9 @@ mod tests {
     use super::*;
     use crate::db::queries;
     use crate::engine::meta;
-    use crate::model::{Post, PostStatus, PostTranslation, Project, ProjectMetadata};
+    use crate::model::{
+        Media, Post, PostMedia, PostStatus, PostTranslation, Project, ProjectMetadata, Tag,
+    };
     use std::sync::{Mutex, OnceLock};
 
     fn preview_port_guard() -> &'static Mutex<()> {
@@ -808,6 +810,167 @@ mod tests {
         .html;
         assert!(html.contains("<h1>Hello</h1>"));
         assert!(html.contains("<strong>world</strong>"));
+    }
+
+    #[test]
+    fn project_macros_render_real_data_in_preview_and_generation() {
+        let (dir, db) = setup_preview_fixture();
+        let mut source = make_post();
+        source.post.tags = vec!["Rust".into(), "Preview".into()];
+        source.body_markdown = "[[gallery]]\n\n[[photo_archive year=2024 month=4]]\n\n[[tag_cloud orientation=diag width=1000 height=500]]".into();
+        queries::post::insert_post(db.conn(), &source.post).unwrap();
+
+        for tag in ["Rust", "Preview"] {
+            queries::tag::insert_tag(
+                db.conn(),
+                &Tag {
+                    id: format!("tag-{tag}"),
+                    project_id: "project-1".into(),
+                    name: tag.into(),
+                    color: (tag == "Rust").then(|| "#ff6600".into()),
+                    post_template_slug: None,
+                    created_at: 1_710_000_000_000,
+                    updated_at: 1_710_000_000_000,
+                },
+            )
+            .unwrap();
+        }
+
+        let media = [
+            (
+                "linked-image",
+                "image/jpeg",
+                "media/2024/04/linked.jpg",
+                1_712_016_000_000,
+            ),
+            (
+                "archive-image",
+                "image/png",
+                "media/2024/04/archive.png",
+                1_713_484_800_000,
+            ),
+            (
+                "old-image",
+                "image/jpeg",
+                "media/2023/12/old.jpg",
+                1_702_512_000_000,
+            ),
+            (
+                "linked-video",
+                "video/mp4",
+                "media/2024/04/video.mp4",
+                1_713_571_200_000,
+            ),
+        ];
+        for (id, mime_type, file_path, created_at) in media {
+            queries::media::insert_media(
+                db.conn(),
+                &Media {
+                    id: id.into(),
+                    project_id: "project-1".into(),
+                    filename: file_path.rsplit('/').next().unwrap().into(),
+                    original_name: format!("{id}.original"),
+                    mime_type: mime_type.into(),
+                    size: 10,
+                    width: Some(100),
+                    height: Some(80),
+                    title: Some(id.into()),
+                    alt: Some(format!("{id} alt")),
+                    caption: None,
+                    author: None,
+                    language: None,
+                    file_path: file_path.into(),
+                    sidecar_path: format!("{file_path}.yaml"),
+                    checksum: None,
+                    tags: Vec::new(),
+                    created_at,
+                    updated_at: created_at,
+                },
+            )
+            .unwrap();
+        }
+        for (index, media_id) in ["linked-image", "linked-video"].into_iter().enumerate() {
+            queries::post_media::link_media(
+                db.conn(),
+                &PostMedia {
+                    id: format!("link-{media_id}"),
+                    project_id: "project-1".into(),
+                    post_id: source.post.id.clone(),
+                    media_id: media_id.into(),
+                    sort_order: index as i32,
+                    created_at: 1_713_571_200_000,
+                },
+            )
+            .unwrap();
+        }
+
+        let posts = vec![(source.post.clone(), source.body_markdown.clone())];
+        let preview_single = build_preview_response(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &posts,
+            "/2024/03/09/hello",
+        )
+        .unwrap()
+        .html;
+        let preview_list = build_preview_response(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &posts,
+            "/",
+        )
+        .unwrap()
+        .html;
+        let generated = crate::render::build_site_render_artifacts(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &posts,
+        )
+        .unwrap();
+        let generated_single = &generated
+            .pages
+            .iter()
+            .find(|page| page.url_path == "/2024/03/09/hello")
+            .unwrap()
+            .html;
+        let generated_list = &generated
+            .pages
+            .iter()
+            .find(|page| page.url_path == "/")
+            .unwrap()
+            .html;
+
+        for rendered in [
+            &preview_single,
+            &preview_list,
+            generated_single,
+            generated_list,
+        ] {
+            assert!(rendered.contains("class=\"gallery-item\""));
+            assert!(rendered.contains("data-lightbox=\"gallery-post-1\""));
+            assert!(rendered.contains("/media/2024/04/linked.jpg"));
+            assert!(!rendered.contains("gallery-empty"));
+            assert!(!rendered.contains("/media/2024/04/video.mp4"));
+
+            assert!(rendered.contains("class=\"photo-archive-item\""));
+            assert!(rendered.contains("/media/2024/04/archive.png"));
+            assert!(!rendered.contains("/media/2023/12/old.jpg"));
+            assert!(!rendered.contains("photo-archive-empty"));
+
+            assert!(rendered.contains("&quot;text&quot;:&quot;Rust&quot;"));
+            assert!(rendered.contains("&quot;color&quot;:&quot;#ff6600&quot;"));
+            assert!(rendered.contains("&quot;size&quot;:35"));
+            assert!(rendered.contains("data-orientation=\"mixed-diagonal\""));
+            assert!(rendered.contains("data-width=\"1000\""));
+            assert!(rendered.contains("data-height=\"500\""));
+            assert!(!rendered.contains("tag-cloud-empty"));
+        }
     }
 
     #[test]
