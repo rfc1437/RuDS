@@ -84,6 +84,7 @@ pub struct ChatSendOptions {
     pub max_output_tokens: u64,
     pub max_tool_rounds: usize,
     pub enable_tools: bool,
+    pub model_supports_tools: Option<bool>,
     pub event_handler: Option<Arc<dyn Fn(ChatEvent) + Send + Sync>>,
 }
 
@@ -96,6 +97,7 @@ impl Default for ChatSendOptions {
             max_output_tokens: DEFAULT_OUTPUT_TOKENS,
             max_tool_rounds: MAX_TOOL_ROUNDS,
             enable_tools: true,
+            model_supports_tools: None,
             event_handler: None,
         }
     }
@@ -467,7 +469,7 @@ pub fn send_chat_message(
     offline_mode: bool,
     conversation_id: &str,
     content: &str,
-    options: ChatSendOptions,
+    mut options: ChatSendOptions,
 ) -> EngineResult<ChatTurnResult> {
     let content = content.trim();
     if content.is_empty() {
@@ -480,6 +482,11 @@ pub fn send_chat_message(
         Some(endpoint) => validate_runtime_endpoint(endpoint)?,
         None => ai::active_endpoint(conn, offline_mode)?,
     };
+    if options.model_supports_tools.is_none() {
+        options.model_supports_tools = ai::load_ai_settings(conn, offline_mode)?
+            .active()
+            .chat_supports_tools;
+    }
     let model = options
         .model
         .clone()
@@ -568,7 +575,11 @@ fn run_turns(
 ) -> EngineResult<ChatTurnResult> {
     let mut total_usage = TokenUsage::default();
     let max_rounds = options.max_tool_rounds.min(MAX_TOOL_ROUNDS);
-    let supports_tools = options.enable_tools && chat_tools::model_supports_tools(conn, model)?;
+    let supports_tools = options.enable_tools
+        && match options.model_supports_tools {
+            Some(supports_tools) => supports_tools,
+            None => chat_tools::model_supports_tools(conn, model)?,
+        };
     let catalog_model = list_models(conn)?
         .into_iter()
         .find(|candidate| candidate.id == model);
@@ -841,7 +852,28 @@ fn request_completion(
     if let Some(api_key) = endpoint.api_key.as_deref() {
         request = request.bearer_auth(api_key);
     }
-    let mut response = request.send()?.error_for_status()?;
+    let mut response = request.send()?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        let detail = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .pointer("/error/message")
+                    .or_else(|| value.get("error"))
+                    .or_else(|| value.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| body.trim().to_string());
+        let detail = (!detail.is_empty())
+            .then_some(format!(": {detail}"))
+            .unwrap_or_default();
+        return Err(EngineError::Parse(format!(
+            "AI provider returned {status}{detail}"
+        )));
+    }
     let is_stream = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)

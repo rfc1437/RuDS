@@ -7,7 +7,9 @@ use crate::util::now_unix_ms;
 
 pub const UI_LANGUAGE_KEY: &str = "ui.language";
 pub const ONLINE_API_KEY: &str = "ai.endpoint.online.api_key";
+pub const AIRPLANE_API_KEY: &str = "ai.endpoint.airplane.api_key";
 const ONLINE_API_KEY_CONFIGURED: &str = "ai.endpoint.online.api_key_configured";
+const AIRPLANE_API_KEY_CONFIGURED: &str = "ai.endpoint.airplane.api_key_configured";
 const DEFAULTS: &[(&str, &str)] = &[
     ("editor.default_mode", "markdown"),
     ("editor.diff_view_style", "inline"),
@@ -15,9 +17,18 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("editor.hide_unchanged_regions", "false"),
     ("ai.endpoint.online.url", ""),
     ("ai.endpoint.online.model", ""),
+    ("ai.endpoint.online.title_model", ""),
+    ("ai.endpoint.online.image_model", ""),
+    ("ai.endpoint.online.chat_supports_tools", ""),
+    ("ai.endpoint.online.image_supports_vision", ""),
     (ONLINE_API_KEY, ""),
     ("ai.endpoint.airplane.url", ""),
     ("ai.endpoint.airplane.model", ""),
+    ("ai.endpoint.airplane.title_model", ""),
+    ("ai.endpoint.airplane.image_model", ""),
+    ("ai.endpoint.airplane.chat_supports_tools", ""),
+    ("ai.endpoint.airplane.image_supports_vision", ""),
+    (AIRPLANE_API_KEY, ""),
     ("ai.default_model", ""),
     ("ai.title_model", ""),
     ("ai.image_model", ""),
@@ -37,9 +48,14 @@ pub fn get(conn: &Connection, key: &str) -> EngineResult<Option<String>> {
 }
 
 pub fn get_effective(conn: &Connection, key: &str) -> EngineResult<Option<String>> {
-    if key == ONLINE_API_KEY {
+    if key == ONLINE_API_KEY || key == AIRPLANE_API_KEY {
+        let configured_key = if key == ONLINE_API_KEY {
+            ONLINE_API_KEY_CONFIGURED
+        } else {
+            AIRPLANE_API_KEY_CONFIGURED
+        };
         return Ok(Some(
-            get(conn, ONLINE_API_KEY_CONFIGURED)?
+            get(conn, configured_key)?
                 .filter(|value| value == "true")
                 .map_or_else(String::new, |_| "configured".to_string()),
         ));
@@ -69,12 +85,17 @@ pub fn list_effective(conn: &Connection) -> EngineResult<BTreeMap<String, String
         if !value.key.starts_with("app.")
             && value.key != ONLINE_API_KEY
             && value.key != ONLINE_API_KEY_CONFIGURED
+            && value.key != AIRPLANE_API_KEY
+            && value.key != AIRPLANE_API_KEY_CONFIGURED
         {
             values.insert(value.key, value.value);
         }
     }
     if get(conn, ONLINE_API_KEY_CONFIGURED)?.as_deref() == Some("true") {
         values.insert(ONLINE_API_KEY.to_string(), "configured".to_string());
+    }
+    if get(conn, AIRPLANE_API_KEY_CONFIGURED)?.as_deref() == Some("true") {
+        values.insert(AIRPLANE_API_KEY.to_string(), "configured".to_string());
     }
     Ok(values)
 }

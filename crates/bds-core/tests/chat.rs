@@ -234,6 +234,33 @@ fn malformed_stream_and_provider_error_keep_reopenable_user_turn() {
 }
 
 #[test]
+fn non_success_response_preserves_provider_error_detail() {
+    let (_root, db, project_id, data_dir) = setup();
+    let conversation = chat::create_conversation(db.conn(), Some("plain-model")).unwrap();
+    let (url, server) = serve(vec![MockResponse::status(
+        400,
+        "application/json",
+        "{\"error\":{\"message\":\"tokenizer.chat_template is not set\"}}",
+    )]);
+
+    let error = chat::send_chat_message(
+        db.conn(),
+        &data_dir,
+        &project_id,
+        false,
+        &conversation.id,
+        "Hello",
+        options(url, |_| {}),
+    )
+    .unwrap_err()
+    .to_string();
+    server.join().unwrap();
+
+    assert!(error.contains("400"));
+    assert!(error.contains("tokenizer.chat_template is not set"));
+}
+
+#[test]
 fn cancellation_persists_only_received_content_and_never_runs_later_work() {
     let (_root, db, project_id, data_dir) = setup();
     let conversation = chat::create_conversation(db.conn(), Some("plain-model")).unwrap();

@@ -47,7 +47,8 @@ use crate::views::{
     post_editor::{LinkedMediaItem, PostEditorMsg, PostEditorState, ResolvedPostLink},
     script_editor::{ScriptEditorMsg, ScriptEditorState},
     settings_view::{
-        AiModelOption, SettingsCategoryRow, SettingsMsg, SettingsViewState, default_category_rows,
+        AiModeViewState, AiModelOption, SettingsCategoryRow, SettingsMsg, SettingsViewState,
+        default_category_rows,
     },
     site_validation::SiteValidationState,
     tags_view::{self, TagsMsg, TagsSection, TagsViewState},
@@ -1501,13 +1502,14 @@ impl BdsApp {
                 conversation_id,
                 result,
             } => {
+                let locale = self.ui_locale;
                 if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
                     state.streaming = false;
                     state.clear_streaming();
                     state.active_tool = None;
                     match result {
                         Ok(_) => state.error = None,
-                        Err(error) => state.error = Some(error),
+                        Err(error) => state.error = Some(localize_chat_error(locale, &error)),
                     }
                     if let Some(db) = &self.db {
                         state.set_messages(
@@ -2572,6 +2574,22 @@ impl BdsApp {
             // ── Settings ──
             Message::SetOfflineMode(mode) => {
                 self.offline_mode = mode;
+                let models = self.chat_model_options();
+                let selected = self.db.as_ref().and_then(|db| {
+                    ai::load_ai_settings(db.conn(), mode)
+                        .ok()
+                        .map(|settings| settings.active().endpoint.model.clone())
+                        .filter(|model| !model.trim().is_empty())
+                });
+                for (id, state) in &mut self.chat_editors {
+                    state.model_options = models.clone();
+                    if let Some(model) = selected.as_ref() {
+                        state.conversation.model = Some(model.clone());
+                        if let Some(db) = &self.db {
+                            let _ = engine::chat::set_conversation_model(db.conn(), id, model);
+                        }
+                    }
+                }
                 self.sync_menu_state();
                 Task::none()
             }
@@ -3546,60 +3564,31 @@ impl BdsApp {
 
     fn chat_model_options(&self) -> Vec<ChatModelChoice> {
         let mut models = self
-            .db
+            .settings_state
             .as_ref()
-            .and_then(|db| engine::chat::list_models(db.conn()).ok())
-            .into_iter()
-            .flatten()
-            .map(|model| {
-                let context = model.context_window.div_ceil(1_000).to_string();
-                let output = model.max_output_tokens.div_ceil(1_000).to_string();
-                let capability = t(
-                    self.ui_locale,
-                    if model.supports_tools {
-                        "chat.model.tools"
-                    } else {
-                        "chat.model.textOnly"
-                    },
-                );
-                ChatModelChoice {
-                    id: model.id,
-                    label: tw(
-                        self.ui_locale,
-                        "chat.model.option",
-                        &[
-                            ("provider", &model.provider),
-                            ("name", &model.name),
-                            ("context", &context),
-                            ("output", &output),
-                            ("capability", &capability),
-                        ],
-                    ),
-                }
+            .map(|state| {
+                let mode = if self.offline_mode {
+                    &state.airplane_ai
+                } else {
+                    &state.online_ai
+                };
+                mode.model_options
+                    .iter()
+                    .map(|model| ChatModelChoice {
+                        id: model.id.clone(),
+                        label: model.label.clone(),
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>();
+            .unwrap_or_default();
         if let Some(db) = &self.db
             && let Ok(settings) = ai::load_ai_settings(db.conn(), self.offline_mode)
         {
-            if let Some(model) = settings.default_model
-                && !models.iter().any(|choice| choice.id == model)
-            {
+            let model = settings.active().endpoint.model.clone();
+            if !model.trim().is_empty() && !models.iter().any(|choice| choice.id == model) {
                 models.push(ChatModelChoice {
                     id: model.clone(),
                     label: model,
-                });
-            }
-            let endpoint_model = if self.offline_mode {
-                settings.airplane_endpoint.model
-            } else {
-                settings.online_endpoint.model
-            };
-            if !endpoint_model.trim().is_empty()
-                && !models.iter().any(|choice| choice.id == endpoint_model)
-            {
-                models.push(ChatModelChoice {
-                    id: endpoint_model.clone(),
-                    label: endpoint_model,
                 });
             }
         }
@@ -3610,10 +3599,17 @@ impl BdsApp {
 
     fn create_chat_conversation(&mut self) -> Task<Message> {
         let model = self
-            .chat_model_options()
-            .into_iter()
-            .next()
-            .map(|choice| choice.id);
+            .db
+            .as_ref()
+            .and_then(|db| ai::load_ai_settings(db.conn(), self.offline_mode).ok())
+            .map(|settings| settings.active().endpoint.model.clone())
+            .filter(|model| !model.trim().is_empty())
+            .or_else(|| {
+                self.chat_model_options()
+                    .into_iter()
+                    .next()
+                    .map(|choice| choice.id)
+            });
         let title = model.as_deref().map_or_else(
             || t(self.ui_locale, "chat.new"),
             |model| tw(self.ui_locale, "chat.newWithModel", &[("model", model)]),
@@ -3735,6 +3731,7 @@ impl BdsApp {
                     conversation_id,
                     message,
                 } => {
+                    let message = localize_chat_error(self.ui_locale, &message);
                     if let Some(state) = self.chat_editors.get_mut(&conversation_id) {
                         state.error = Some(message);
                     }
@@ -3939,15 +3936,15 @@ impl BdsApp {
                     .iter()
                     .any(|tab| tab.tab_type == TabType::Settings)
                 {
-                    self.settings_state = None;
-                    if let Some(tab) = self
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.tab_type == TabType::Settings)
-                        .cloned()
-                    {
-                        self.load_editor_for_tab(&tab);
+                    let active_section = self
+                        .settings_state
+                        .as_ref()
+                        .and_then(|state| state.active_section.clone());
+                    let mut state = self.hydrate_settings_state();
+                    if let Some(section) = active_section {
+                        state.focus_section(section);
                     }
+                    self.settings_state = Some(state);
                 }
                 false
             }
@@ -6822,28 +6819,8 @@ impl BdsApp {
                 state.system_prompt = iced::widget::text_editor::Content::with_text(&setting.value);
             }
             if let Ok(ai_settings) = ai::load_ai_settings(db.conn(), self.offline_mode) {
-                state.online_endpoint_url = ai_settings.online_endpoint.url;
-                state.online_endpoint_model = ai_settings.online_endpoint.model;
-                state.online_api_key_configured = ai_settings.online_endpoint.api_key_configured;
-                if !state.online_endpoint_model.is_empty() {
-                    state.online_model_options = vec![AiModelOption {
-                        id: state.online_endpoint_model.clone(),
-                        label: state.online_endpoint_model.clone(),
-                        supports_vision: false,
-                    }];
-                }
-                state.airplane_endpoint_url = ai_settings.airplane_endpoint.url;
-                state.airplane_endpoint_model = ai_settings.airplane_endpoint.model;
-                if !state.airplane_endpoint_model.is_empty() {
-                    state.airplane_model_options = vec![AiModelOption {
-                        id: state.airplane_endpoint_model.clone(),
-                        label: state.airplane_endpoint_model.clone(),
-                        supports_vision: false,
-                    }];
-                }
-                state.default_model = ai_settings.default_model.unwrap_or_default();
-                state.title_model = ai_settings.title_model.unwrap_or_default();
-                state.image_model = ai_settings.image_model.unwrap_or_default();
+                state.online_ai = Self::ai_mode_view_state(ai_settings.online);
+                state.airplane_ai = Self::ai_mode_view_state(ai_settings.airplane);
             }
             state.mcp_enabled = engine::settings::get_effective(db.conn(), "mcp.http.enabled")
                 .ok()
@@ -6874,7 +6851,6 @@ impl BdsApp {
                 })
                 .collect();
         }
-        state.offline_mode = self.offline_mode;
         state
     }
 
@@ -7507,51 +7483,58 @@ impl BdsApp {
                 state.ssh_username.clear();
                 state.ssh_remote_path.clear();
             }
-            SettingsMsg::OfflineModeChanged(b) => {
-                state.offline_mode = b;
-                return Task::done(Message::SetOfflineMode(b));
+            SettingsMsg::AiEndpointUrlChanged(kind, value) => {
+                Self::ai_mode_state_mut(state, kind).endpoint_url = value;
             }
-            SettingsMsg::OnlineEndpointUrlChanged(value) => {
-                state.online_endpoint_url = value;
+            SettingsMsg::AiApiKeyChanged(kind, value) => {
+                Self::ai_mode_state_mut(state, kind).api_key_input = value;
             }
-            SettingsMsg::OnlineEndpointModelChanged(value) => {
-                state.online_endpoint_model = value;
+            SettingsMsg::AiChatModelChanged(kind, value) => {
+                let mode = Self::ai_mode_state_mut(state, kind);
+                mode.chat_supports_tools = mode
+                    .model_options
+                    .iter()
+                    .find(|option| option.id == value)
+                    .is_some_and(|option| option.supports_tools);
+                mode.chat_model = value;
             }
-            SettingsMsg::OnlineApiKeyChanged(value) => {
-                state.online_api_key_input = value;
+            SettingsMsg::AiTitleModelChanged(kind, value) => {
+                Self::ai_mode_state_mut(state, kind).title_model = value;
             }
-            SettingsMsg::AirplaneEndpointUrlChanged(value) => {
-                state.airplane_endpoint_url = value;
+            SettingsMsg::AiImageModelChanged(kind, value) => {
+                let mode = Self::ai_mode_state_mut(state, kind);
+                mode.image_supports_vision = mode
+                    .model_options
+                    .iter()
+                    .find(|option| option.id == value)
+                    .is_some_and(|option| option.supports_vision);
+                mode.image_model = value;
             }
-            SettingsMsg::AirplaneEndpointModelChanged(value) => {
-                state.airplane_endpoint_model = value;
+            SettingsMsg::AiToolsChanged(kind, value) => {
+                Self::ai_mode_state_mut(state, kind).chat_supports_tools = value;
             }
-            SettingsMsg::DefaultModelChanged(value) => {
-                state.default_model = value;
+            SettingsMsg::AiVisionChanged(kind, value) => {
+                Self::ai_mode_state_mut(state, kind).image_supports_vision = value;
             }
-            SettingsMsg::TitleModelChanged(value) => {
-                state.title_model = value;
-            }
-            SettingsMsg::ImageModelChanged(value) => {
-                state.image_model = value;
-            }
-            SettingsMsg::RefreshOnlineModels => {
+            SettingsMsg::RefreshAiModels(kind) => {
                 if let Some(db) = &self.db {
-                    match Self::refresh_ai_models(db, state, AiEndpointKind::Online) {
-                        Ok(()) => {
-                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
-                        }
-                        Err(error) => self.notify_operation_failed("common.save", error),
+                    match Self::refresh_ai_models(db, state, kind) {
+                        Ok(()) => self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "settings.modelsLoaded"),
+                        ),
+                        Err(error) => self.notify_operation_failed("settings.refreshModels", error),
                     }
                 }
             }
-            SettingsMsg::RefreshAirplaneModels => {
+            SettingsMsg::TestAi(kind) => {
                 if let Some(db) = &self.db {
-                    match Self::refresh_ai_models(db, state, AiEndpointKind::Airplane) {
-                        Ok(()) => {
-                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
-                        }
-                        Err(error) => self.notify_operation_failed("common.save", error),
+                    match Self::test_ai_settings(db, state, kind) {
+                        Ok(()) => self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "settings.testChatSuccess"),
+                        ),
+                        Err(error) => self.notify_operation_failed("settings.testChat", error),
                     }
                 }
             }
@@ -8160,37 +8143,14 @@ impl BdsApp {
                 }
             }
             TabType::Settings if self.settings_state.is_none() => {
-                let mut state = SettingsViewState::default();
-                if let Some(ref project) = self.active_project {
-                    state.project_name = project.name.clone();
-                    state.project_description = iced::widget::text_editor::Content::with_text(
-                        &project.description.clone().unwrap_or_default(),
-                    );
-                    state.data_path = project.data_path.clone().unwrap_or_default();
-                }
-                if let Some(ref data_dir) = self.data_dir {
-                    if let Ok(meta) = engine::meta::read_project_json(data_dir) {
-                        state.public_url = meta.public_url.unwrap_or_default();
-                        state.default_author = meta.default_author.unwrap_or_default();
-                        state.max_posts_per_page = meta.max_posts_per_page.to_string();
-                        state.image_import_concurrency = meta.image_import_concurrency.to_string();
-                    }
-                    if let Ok(pub_prefs) = engine::meta::read_publishing_json(data_dir) {
-                        state.ssh_host = pub_prefs.ssh_host.unwrap_or_default();
-                        state.ssh_username = pub_prefs.ssh_user.unwrap_or_default();
-                        state.ssh_remote_path = pub_prefs.ssh_remote_path.unwrap_or_default();
-                        state.ssh_mode = format!("{:?}", pub_prefs.ssh_mode).to_lowercase();
-                    }
-                }
-                state.offline_mode = self.offline_mode;
-                self.settings_state = Some(state);
+                self.settings_state = Some(self.hydrate_settings_state());
             }
             _ => {}
         }
     }
 
     fn refresh_ai_models(
-        db: &Database,
+        _db: &Database,
         state: &mut SettingsViewState,
         kind: AiEndpointKind,
     ) -> Result<(), String> {
@@ -8201,90 +8161,120 @@ impl BdsApp {
             .map(|model| AiModelOption {
                 id: model.id,
                 label: model.name,
+                supports_tools: model.supports_tools,
                 supports_vision: model.supports_vision,
             })
             .collect::<Vec<_>>();
-        match kind {
-            AiEndpointKind::Online => state.online_model_options = options,
-            AiEndpointKind::Airplane => state.airplane_model_options = options,
+        Self::ai_mode_state_mut(state, kind).model_options = options;
+        Ok(())
+    }
+
+    fn test_ai_settings(
+        _db: &Database,
+        state: &SettingsViewState,
+        kind: AiEndpointKind,
+    ) -> Result<(), String> {
+        let endpoint = Self::compose_ai_endpoint(state, kind)?;
+        let mode = Self::ai_mode_state(state, kind);
+        let models = [&mode.chat_model, &mode.title_model, &mode.image_model]
+            .into_iter()
+            .filter(|model| !model.trim().is_empty())
+            .collect::<std::collections::BTreeSet<_>>();
+        if models.is_empty() {
+            return Err("select at least one model".to_string());
         }
-        let _ = db;
+        for model in models {
+            ai::test_chat(&endpoint, model).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
     fn save_ai_settings_state(db: &Database, state: &mut SettingsViewState) -> Result<(), String> {
-        if Self::endpoint_has_configuration(state, AiEndpointKind::Online) {
-            let online_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Online)?;
-            ai::test_endpoint(&online_endpoint).map_err(|error| error.to_string())?;
-            ai::save_endpoint(db.conn(), &online_endpoint).map_err(|error| error.to_string())?;
-            state.online_api_key_input.clear();
-            state.online_api_key_configured = true;
+        for kind in [AiEndpointKind::Online, AiEndpointKind::Airplane] {
+            if Self::endpoint_has_configuration(state, kind) {
+                let endpoint = Self::compose_ai_endpoint(state, kind)?;
+                ai::save_endpoint(db.conn(), &endpoint).map_err(|error| error.to_string())?;
+            }
+            let mode = Self::ai_mode_state(state, kind);
+            ai::save_model_preferences(
+                db.conn(),
+                kind,
+                (!mode.title_model.trim().is_empty()).then_some(mode.title_model.as_str()),
+                (!mode.image_model.trim().is_empty()).then_some(mode.image_model.as_str()),
+                Some(mode.chat_supports_tools),
+                Some(mode.image_supports_vision),
+            )
+            .map_err(|error| error.to_string())?;
         }
-        if Self::endpoint_has_configuration(state, AiEndpointKind::Airplane) {
-            let airplane_endpoint = Self::compose_ai_endpoint(state, AiEndpointKind::Airplane)?;
-            ai::test_endpoint(&airplane_endpoint).map_err(|error| error.to_string())?;
-            ai::save_endpoint(db.conn(), &airplane_endpoint).map_err(|error| error.to_string())?;
+        ai::save_system_prompt(db.conn(), &state.system_prompt.text())
+            .map_err(|error| error.to_string())?;
+        for kind in [AiEndpointKind::Online, AiEndpointKind::Airplane] {
+            let mode = Self::ai_mode_state_mut(state, kind);
+            if !mode.api_key_input.trim().is_empty() {
+                mode.api_key_configured = true;
+            }
+            mode.api_key_input.clear();
         }
-        ai::save_model_preferences(
-            db.conn(),
-            (!state.default_model.trim().is_empty()).then_some(state.default_model.as_str()),
-            (!state.title_model.trim().is_empty()).then_some(state.title_model.as_str()),
-            (!state.image_model.trim().is_empty()).then_some(state.image_model.as_str()),
-            &state.system_prompt.text(),
-        )
-        .map_err(|error| error.to_string())?;
         Ok(())
     }
 
     fn endpoint_has_configuration(state: &SettingsViewState, kind: AiEndpointKind) -> bool {
-        match kind {
-            AiEndpointKind::Online => {
-                !state.online_endpoint_url.trim().is_empty()
-                    || !state.online_endpoint_model.trim().is_empty()
-                    || !state.online_api_key_input.trim().is_empty()
-                    || state.online_api_key_configured
-            }
-            AiEndpointKind::Airplane => {
-                !state.airplane_endpoint_url.trim().is_empty()
-                    || !state.airplane_endpoint_model.trim().is_empty()
-            }
-        }
+        let mode = Self::ai_mode_state(state, kind);
+        !mode.endpoint_url.trim().is_empty()
+            || !mode.chat_model.trim().is_empty()
+            || !mode.api_key_input.trim().is_empty()
+            || mode.api_key_configured
     }
 
     fn compose_ai_endpoint(
         state: &SettingsViewState,
         kind: AiEndpointKind,
     ) -> Result<AiEndpointConfig, String> {
-        let (url, model, configured) = match kind {
-            AiEndpointKind::Online => (
-                state.online_endpoint_url.trim().to_string(),
-                state.online_endpoint_model.trim().to_string(),
-                state.online_api_key_configured,
-            ),
-            AiEndpointKind::Airplane => (
-                state.airplane_endpoint_url.trim().to_string(),
-                state.airplane_endpoint_model.trim().to_string(),
-                false,
-            ),
-        };
-        let api_key = if kind == AiEndpointKind::Online {
-            let input = state.online_api_key_input.trim();
-            if !input.is_empty() {
-                Some(input.to_string())
-            } else if configured {
-                ai::load_endpoint_api_key(kind).map_err(|error| error.to_string())?
-            } else {
-                None
-            }
+        let mode = Self::ai_mode_state(state, kind);
+        let input = mode.api_key_input.trim();
+        let api_key = if !input.is_empty() {
+            Some(input.to_string())
+        } else if mode.api_key_configured {
+            ai::load_endpoint_api_key(kind).map_err(|error| error.to_string())?
         } else {
             None
         };
         Ok(AiEndpointConfig {
             kind,
-            url,
-            model,
+            url: mode.endpoint_url.trim().to_string(),
+            model: mode.chat_model.trim().to_string(),
             api_key,
         })
+    }
+
+    fn ai_mode_state(state: &SettingsViewState, kind: AiEndpointKind) -> &AiModeViewState {
+        match kind {
+            AiEndpointKind::Online => &state.online_ai,
+            AiEndpointKind::Airplane => &state.airplane_ai,
+        }
+    }
+
+    fn ai_mode_state_mut(
+        state: &mut SettingsViewState,
+        kind: AiEndpointKind,
+    ) -> &mut AiModeViewState {
+        match kind {
+            AiEndpointKind::Online => &mut state.online_ai,
+            AiEndpointKind::Airplane => &mut state.airplane_ai,
+        }
+    }
+
+    fn ai_mode_view_state(settings: ai::AiModeSettings) -> AiModeViewState {
+        AiModeViewState {
+            endpoint_url: settings.endpoint.url,
+            chat_model: settings.endpoint.model,
+            title_model: settings.title_model.unwrap_or_default(),
+            image_model: settings.image_model.unwrap_or_default(),
+            api_key_configured: settings.endpoint.api_key_configured,
+            chat_supports_tools: settings.chat_supports_tools.unwrap_or(false),
+            image_supports_vision: settings.image_supports_vision.unwrap_or(false),
+            ..Default::default()
+        }
     }
 
     fn ensure_preview_server(&mut self) -> Result<(), String> {
@@ -8995,6 +8985,16 @@ fn language_label(locale: UiLocale, code: &str) -> String {
     }
 }
 
+fn localize_chat_error(locale: UiLocale, error: &str) -> String {
+    if error.contains("AI unavailable - configure") {
+        t(locale, "chat.unavailable.guidance")
+    } else if let Some(detail) = error.strip_prefix("parse error: AI provider returned ") {
+        format!("{} {detail}", t(locale, "chat.providerError"))
+    } else {
+        error.to_string()
+    }
+}
+
 fn remote_error_closes_connection(code: &str) -> bool {
     code == "connection_lost"
 }
@@ -9003,10 +9003,11 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, month_abbreviation, persist_media_editor_state_impl,
-        persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
-        remote_error_closes_connection, save_editor_settings_state_impl,
-        save_script_editor_state_impl, save_template_editor_state_impl,
+        PostStatus, SettingsMsg, localize_chat_error, month_abbreviation,
+        persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
+        persist_post_editor_state_impl, remote_error_closes_connection,
+        save_editor_settings_state_impl, save_script_editor_state_impl,
+        save_template_editor_state_impl,
     };
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
@@ -9020,7 +9021,7 @@ mod tests {
     use crate::views::modal;
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
     use crate::views::script_editor::{ScriptEditorMsg, ScriptEditorState};
-    use crate::views::settings_view::SettingsViewState;
+    use crate::views::settings_view::{AiModeViewState, SettingsSection, SettingsViewState};
     use crate::views::template_editor::TemplateEditorState;
     use bds_core::db::Database;
     use bds_core::db::fts::ensure_fts_tables;
@@ -9029,7 +9030,7 @@ mod tests {
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
     use bds_core::engine::{ai, chat, media, menu, meta, post, script, template, wordpress_import};
     use bds_core::i18n::UiLocale;
-    use bds_core::model::{ChatRole, Project, ScriptKind, TemplateKind};
+    use bds_core::model::{ChatRole, DomainEvent, Project, ScriptKind, TemplateKind};
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -9922,8 +9923,11 @@ mod tests {
     fn save_ai_settings_allows_airplane_only_configuration() {
         let (db, _project, _tmp) = setup();
         let mut state = SettingsViewState {
-            airplane_endpoint_url: spawn_models_server(),
-            airplane_endpoint_model: "llama3.2".to_string(),
+            airplane_ai: AiModeViewState {
+                endpoint_url: spawn_models_server(),
+                chat_model: "llama3.2".to_string(),
+                ..Default::default()
+            },
             system_prompt: iced::widget::text_editor::Content::with_text("Use JSON only."),
             ..SettingsViewState::default()
         };
@@ -9931,11 +9935,84 @@ mod tests {
         BdsApp::save_ai_settings_state(&db, &mut state).unwrap();
 
         let settings = ai::load_ai_settings(db.conn(), false).unwrap();
-        assert!(settings.online_endpoint.url.is_empty());
-        assert!(settings.online_endpoint.model.is_empty());
-        assert_eq!(settings.airplane_endpoint.url, state.airplane_endpoint_url);
-        assert_eq!(settings.airplane_endpoint.model, "llama3.2");
+        assert!(settings.online.endpoint.url.is_empty());
+        assert!(settings.online.endpoint.model.is_empty());
+        assert_eq!(
+            settings.airplane.endpoint.url,
+            state.airplane_ai.endpoint_url
+        );
+        assert_eq!(settings.airplane.endpoint.model, "llama3.2");
         assert_eq!(settings.system_prompt.trim_end(), "Use JSON only.");
+    }
+
+    #[test]
+    fn settings_change_rehydrates_ai_configuration() {
+        let (db, project, tmp) = setup();
+        bds_core::engine::settings::set(
+            db.conn(),
+            "ai.endpoint.online.url",
+            "http://127.0.0.1:9000/v1",
+        )
+        .unwrap();
+        bds_core::engine::settings::set(
+            db.conn(),
+            "ai.endpoint.online.model",
+            "mlx-community--gemma-4-12B-8bit",
+        )
+        .unwrap();
+        bds_core::engine::settings::set(db.conn(), "ai.endpoint.online.api_key_configured", "true")
+            .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        app.tabs.push(Tab {
+            id: "settings".to_string(),
+            tab_type: TabType::Settings,
+            title: "Settings".to_string(),
+            is_transient: false,
+            is_dirty: false,
+        });
+        let mut settings_state = SettingsViewState::default();
+        settings_state.focus_section(SettingsSection::AI);
+        app.settings_state = Some(settings_state);
+
+        app.handle_domain_event(DomainEvent::SettingsChanged {
+            project_id: None,
+            key: "ai.endpoint.online.url".to_string(),
+        });
+
+        let state = app.settings_state.as_ref().unwrap();
+        assert_eq!(state.online_ai.endpoint_url, "http://127.0.0.1:9000/v1");
+        assert_eq!(
+            state.online_ai.chat_model,
+            "mlx-community--gemma-4-12B-8bit"
+        );
+        assert!(state.online_ai.api_key_configured);
+        assert_eq!(state.active_section, Some(SettingsSection::AI));
+    }
+
+    #[test]
+    fn ai_unavailable_chat_errors_are_localized() {
+        let raw = "validation error: AI unavailable - configure online endpoint in Settings";
+        for locale in UiLocale::all() {
+            assert_eq!(
+                localize_chat_error(*locale, raw),
+                t(*locale, "chat.unavailable.guidance")
+            );
+        }
+        let provider =
+            "parse error: AI provider returned 400 Bad Request: tokenizer.chat_template is not set";
+        for locale in UiLocale::all() {
+            assert_eq!(
+                localize_chat_error(*locale, provider),
+                format!(
+                    "{} 400 Bad Request: tokenizer.chat_template is not set",
+                    t(*locale, "chat.providerError")
+                )
+            );
+        }
+        assert_eq!(
+            localize_chat_error(UiLocale::En, "connection refused"),
+            "connection refused"
+        );
     }
 
     #[test]

@@ -201,6 +201,31 @@ pub fn labeled_input<'a, Message: Clone + 'a>(
     .into()
 }
 
+/// A labeled password input field.
+pub fn labeled_secure_input<'a, Message: Clone + 'a>(
+    label: &str,
+    placeholder: &str,
+    value: &str,
+    on_change: impl Fn(String) -> Message + 'a,
+) -> Element<'a, Message> {
+    column![
+        text(label.to_string())
+            .size(12)
+            .color(LABEL_COLOR)
+            .shaping(Shaping::Advanced),
+        text_input(placeholder, value)
+            .on_input(on_change)
+            .secure(true)
+            .size(14)
+            .padding([8, 10])
+            .width(Length::Fill)
+            .style(field_style),
+    ]
+    .spacing(6)
+    .width(Length::Fill)
+    .into()
+}
+
 /// A labeled select/dropdown field.
 pub fn labeled_select<'a, T, Message>(
     label: &str,

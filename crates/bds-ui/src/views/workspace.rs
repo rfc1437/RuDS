@@ -649,14 +649,14 @@ fn is_ai_enabled(settings_state: Option<&SettingsViewState>, offline_mode: bool)
         return false;
     };
 
-    if offline_mode {
-        !state.airplane_endpoint_url.trim().is_empty()
-            && !state.airplane_endpoint_model.trim().is_empty()
+    let mode = if offline_mode {
+        &state.airplane_ai
     } else {
-        !state.online_endpoint_url.trim().is_empty()
-            && !state.online_endpoint_model.trim().is_empty()
-            && (state.online_api_key_configured || !state.online_api_key_input.trim().is_empty())
-    }
+        &state.online_ai
+    };
+    !mode.endpoint_url.trim().is_empty()
+        && !mode.chat_model.trim().is_empty()
+        && (offline_mode || mode.api_key_configured || !mode.api_key_input.trim().is_empty())
 }
 
 fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
@@ -965,14 +965,14 @@ mod tests {
         assert!(!is_ai_enabled(Some(&settings), false));
         assert!(!is_ai_enabled(Some(&settings), true));
 
-        settings.online_endpoint_url = "https://api.example.com/v1".to_string();
-        settings.online_endpoint_model = "gpt-4.1-mini".to_string();
-        settings.online_api_key_configured = true;
+        settings.online_ai.endpoint_url = "https://api.example.com/v1".to_string();
+        settings.online_ai.chat_model = "gpt-4.1-mini".to_string();
+        settings.online_ai.api_key_configured = true;
         assert!(is_ai_enabled(Some(&settings), false));
         assert!(!is_ai_enabled(Some(&settings), true));
 
-        settings.airplane_endpoint_url = "http://localhost:11434/v1".to_string();
-        settings.airplane_endpoint_model = "llama3.2".to_string();
+        settings.airplane_ai.endpoint_url = "http://localhost:11434/v1".to_string();
+        settings.airplane_ai.chat_model = "llama3.2".to_string();
         assert!(is_ai_enabled(Some(&settings), true));
     }
 }

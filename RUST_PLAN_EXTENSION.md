@@ -40,7 +40,7 @@ Done:
 - Project-aware tools over statistics, FTS search, posts, media, templates, scripts, tags/categories, metadata mutation through shared engines, and allowlisted workspace navigation.
 - Localized Chat sidebar/editor with conversation and model controls, safe GFM text rendering with blocked external images, streaming/tool state, multiline send/stop controls, and status-bar token totals.
 - Fixed native A2UI cards, charts, forms, lists, metrics, mind maps, tables, and tabs with safe nested fallbacks, persistent stable-ID interaction state, debounced form values, and strictly allowlisted application actions.
-- Online/airplane endpoint routing uses the shared secure endpoint and model infrastructure; unavailable modes direct the user to the existing localized AI settings.
+- Online/airplane routing swaps the complete active profile—endpoint, credentials, chat/title/image models, and tool/vision overrides—through the status-bar switch; unavailable modes direct the user to the localized two-profile AI settings.
 
 ### Embeddings, semantic search, and duplicates — Done
 

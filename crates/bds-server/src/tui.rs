@@ -1872,62 +1872,99 @@ impl TuiApp {
             ],
             SettingSection::Ai => vec![
                 (
-                    "Airplane mode",
-                    "ai.airplane_mode",
-                    FieldKind::Bool,
-                    self.airplane.to_string(),
-                ),
-                (
                     "Online endpoint URL",
                     "ai.endpoint.online.url",
                     FieldKind::Text,
-                    ai.online_endpoint.url,
+                    ai.online.endpoint.url,
                 ),
                 (
-                    "Online endpoint model",
+                    "Online chat model",
                     "ai.endpoint.online.model",
                     FieldKind::Text,
-                    ai.online_endpoint.model,
+                    ai.online.endpoint.model,
                 ),
                 (
                     "Online API key",
                     "ai.endpoint.online.api_key",
                     FieldKind::ReadOnly,
-                    if ai.online_endpoint.api_key_configured {
+                    if ai.online.endpoint.api_key_configured {
                         "Configured in the system keychain".into()
                     } else {
                         "Configure in the desktop application".into()
                     },
                 ),
                 (
+                    "Online title model",
+                    "ai.endpoint.online.title_model",
+                    FieldKind::Text,
+                    ai.online.title_model.unwrap_or_default(),
+                ),
+                (
+                    "Online image model",
+                    "ai.endpoint.online.image_model",
+                    FieldKind::Text,
+                    ai.online.image_model.unwrap_or_default(),
+                ),
+                (
+                    "Online chat supports tools",
+                    "ai.endpoint.online.chat_supports_tools",
+                    FieldKind::Bool,
+                    ai.online.chat_supports_tools.unwrap_or(false).to_string(),
+                ),
+                (
+                    "Online image supports vision",
+                    "ai.endpoint.online.image_supports_vision",
+                    FieldKind::Bool,
+                    ai.online.image_supports_vision.unwrap_or(false).to_string(),
+                ),
+                (
                     "Airplane endpoint URL",
                     "ai.endpoint.airplane.url",
                     FieldKind::Text,
-                    ai.airplane_endpoint.url,
+                    ai.airplane.endpoint.url,
                 ),
                 (
-                    "Airplane endpoint model",
+                    "Airplane chat model",
                     "ai.endpoint.airplane.model",
                     FieldKind::Text,
-                    ai.airplane_endpoint.model,
+                    ai.airplane.endpoint.model,
                 ),
                 (
-                    "Default model",
-                    "ai.default_model",
-                    FieldKind::Text,
-                    ai.default_model.unwrap_or_default(),
+                    "Airplane API key",
+                    "ai.endpoint.airplane.api_key",
+                    FieldKind::ReadOnly,
+                    if ai.airplane.endpoint.api_key_configured {
+                        "Configured in the system keychain".into()
+                    } else {
+                        "Configure in the desktop application".into()
+                    },
                 ),
                 (
-                    "Title model",
-                    "ai.title_model",
+                    "Airplane title model",
+                    "ai.endpoint.airplane.title_model",
                     FieldKind::Text,
-                    ai.title_model.unwrap_or_default(),
+                    ai.airplane.title_model.unwrap_or_default(),
                 ),
                 (
-                    "Image model",
-                    "ai.image_model",
+                    "Airplane image model",
+                    "ai.endpoint.airplane.image_model",
                     FieldKind::Text,
-                    ai.image_model.unwrap_or_default(),
+                    ai.airplane.image_model.unwrap_or_default(),
+                ),
+                (
+                    "Airplane chat supports tools",
+                    "ai.endpoint.airplane.chat_supports_tools",
+                    FieldKind::Bool,
+                    ai.airplane.chat_supports_tools.unwrap_or(false).to_string(),
+                ),
+                (
+                    "Airplane image supports vision",
+                    "ai.endpoint.airplane.image_supports_vision",
+                    FieldKind::Bool,
+                    ai.airplane
+                        .image_supports_vision
+                        .unwrap_or(false)
+                        .to_string(),
                 ),
                 (
                     "System prompt",
@@ -2056,14 +2093,8 @@ impl TuiApp {
                     || key.starts_with("publishing.")
                     || key.starts_with("ai.endpoint.")
                     || key.starts_with("mcp.agent.")
-                    || matches!(
-                        key,
-                        "ai.airplane_mode"
-                            | "ai.default_model"
-                            | "ai.title_model"
-                            | "ai.image_model"
-                            | "ai.system_prompt"
-                    ) {
+                    || key == "ai.system_prompt"
+                {
                     fallback
                 } else {
                     engine::settings::get_effective(db.conn(), key)?.unwrap_or(fallback)
@@ -2304,25 +2335,27 @@ impl TuiApp {
                         kind,
                         url: url.into(),
                         model: model.into(),
-                        api_key: if kind == AiEndpointKind::Online {
-                            engine::ai::load_endpoint_api_key(kind)?
-                        } else {
-                            None
-                        },
+                        api_key: engine::ai::load_endpoint_api_key(kind)?,
                     },
                 )?;
             }
+            let prefix = format!("ai.endpoint.{}", kind.as_str());
+            engine::ai::save_model_preferences(
+                db.conn(),
+                kind,
+                optional_str(self.setting_value(&format!("{prefix}.title_model"))),
+                optional_str(self.setting_value(&format!("{prefix}.image_model"))),
+                Some(
+                    self.setting_value(&format!("{prefix}.chat_supports_tools"))
+                        .eq_ignore_ascii_case("true"),
+                ),
+                Some(
+                    self.setting_value(&format!("{prefix}.image_supports_vision"))
+                        .eq_ignore_ascii_case("true"),
+                ),
+            )?;
         }
-        engine::ai::save_model_preferences(
-            db.conn(),
-            optional_str(self.setting_value("ai.default_model")),
-            optional_str(self.setting_value("ai.title_model")),
-            optional_str(self.setting_value("ai.image_model")),
-            self.setting_value("ai.system_prompt"),
-        )?;
-        self.airplane = self
-            .setting_value("ai.airplane_mode")
-            .eq_ignore_ascii_case("true");
+        engine::ai::save_system_prompt(db.conn(), self.setting_value("ai.system_prompt"))?;
         Ok(())
     }
 
@@ -2496,15 +2529,20 @@ fn setting_field_label(locale: UiLocale, key: &str, fallback: &str) -> String {
         "meta.blogmark_category" => "settings.blogmarkCategory",
         "meta.categories" => "editor.categories",
         "meta.category_editing" => "tui.categoryEditing",
-        "ai.airplane_mode" => "settings.offlineMode",
         "ai.endpoint.online.url" => "settings.onlineEndpointUrl",
-        "ai.endpoint.online.model" => "settings.onlineEndpointModel",
+        "ai.endpoint.online.model" => "settings.onlineChatModel",
         "ai.endpoint.online.api_key" => "settings.onlineApiKey",
+        "ai.endpoint.online.title_model" => "settings.onlineTitleModel",
+        "ai.endpoint.online.image_model" => "settings.onlineImageModel",
+        "ai.endpoint.online.chat_supports_tools" => "settings.onlineModelSupportsTools",
+        "ai.endpoint.online.image_supports_vision" => "settings.onlineModelSupportsVision",
         "ai.endpoint.airplane.url" => "settings.airplaneEndpointUrl",
-        "ai.endpoint.airplane.model" => "settings.airplaneEndpointModel",
-        "ai.default_model" => "settings.defaultModel",
-        "ai.title_model" => "settings.titleModel",
-        "ai.image_model" => "settings.imageAnalysisModel",
+        "ai.endpoint.airplane.model" => "settings.airplaneChatModel",
+        "ai.endpoint.airplane.api_key" => "settings.airplaneApiKey",
+        "ai.endpoint.airplane.title_model" => "settings.airplaneTitleModel",
+        "ai.endpoint.airplane.image_model" => "settings.airplaneImageModel",
+        "ai.endpoint.airplane.chat_supports_tools" => "settings.airplaneModelSupportsTools",
+        "ai.endpoint.airplane.image_supports_vision" => "settings.airplaneModelSupportsVision",
         "ai.system_prompt" => "settings.systemPrompt",
         "technology.runtime" => "tui.settingRuntime",
         "meta.semantic_similarity_enabled" => "settings.semanticSimilarityEnabled",
@@ -4083,16 +4121,9 @@ mod tests {
             .find(|field| field.key == "ai.endpoint.airplane.model")
             .unwrap()
             .value = "local-model".into();
-        remote
-            .settings_fields
-            .iter_mut()
-            .find(|field| field.key == "ai.default_model")
-            .unwrap()
-            .value = "local-model".into();
         remote.save_settings().unwrap();
         let ai = engine::ai::load_ai_settings(fixture.db().conn(), false).unwrap();
-        assert_eq!(ai.airplane_endpoint.model, "local-model");
-        assert_eq!(ai.default_model.as_deref(), Some("local-model"));
+        assert_eq!(ai.airplane.endpoint.model, "local-model");
     }
 
     #[test]

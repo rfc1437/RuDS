@@ -27,6 +27,7 @@ fn dialog_keys_exist_in_all_locales() {
 #[test]
 fn toast_keys_exist_in_all_locales() {
     let keys = [
+        "editor.saved",
         "projectSelector.toast.switched",
         "projectSelector.toast.switchFailed",
         "projectSelector.toast.created",

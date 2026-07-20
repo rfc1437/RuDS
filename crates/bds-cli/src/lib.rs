@@ -883,6 +883,12 @@ fn config(db: &Database, command: ConfigCommand) -> Result<CommandOutput> {
             cli_sync::run_cli_mutation(db.conn(), || {
                 if key == engine::settings::ONLINE_API_KEY {
                     engine::ai::save_online_api_key(db.conn(), &value)
+                } else if key == engine::settings::AIRPLANE_API_KEY {
+                    engine::ai::save_endpoint_api_key(
+                        db.conn(),
+                        engine::ai::AiEndpointKind::Airplane,
+                        &value,
+                    )
                 } else {
                     engine::settings::set(db.conn(), &key, &value)
                 }

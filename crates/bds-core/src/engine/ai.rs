@@ -53,12 +53,28 @@ pub struct StoredAiEndpointConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AiSettings {
     pub offline_mode: bool,
-    pub default_model: Option<String>,
+    pub system_prompt: String,
+    pub online: AiModeSettings,
+    pub airplane: AiModeSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AiModeSettings {
+    pub endpoint: StoredAiEndpointConfig,
     pub title_model: Option<String>,
     pub image_model: Option<String>,
-    pub system_prompt: String,
-    pub online_endpoint: StoredAiEndpointConfig,
-    pub airplane_endpoint: StoredAiEndpointConfig,
+    pub chat_supports_tools: Option<bool>,
+    pub image_supports_vision: Option<bool>,
+}
+
+impl AiSettings {
+    pub fn active(&self) -> &AiModeSettings {
+        if self.offline_mode {
+            &self.airplane
+        } else {
+            &self.online
+        }
+    }
 }
 
 impl Default for StoredAiEndpointConfig {
@@ -78,6 +94,7 @@ pub struct AiModelInfo {
     pub name: String,
     pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,
+    pub supports_tools: bool,
     pub supports_vision: bool,
 }
 
@@ -163,21 +180,28 @@ pub enum OneShotResponse {
 }
 
 pub fn load_ai_settings(conn: &Connection, offline_mode: bool) -> EngineResult<AiSettings> {
-    let online_endpoint = load_endpoint(conn, AiEndpointKind::Online)?;
-    let airplane_endpoint = load_endpoint(conn, AiEndpointKind::Airplane)?;
-    let default_model = get_optional_setting(conn, "ai.default_model")?;
-    let title_model = get_optional_setting(conn, "ai.title_model")?;
-    let image_model = get_optional_setting(conn, "ai.image_model")?;
+    let legacy_chat_model = get_optional_setting(conn, "ai.default_model")?;
+    let legacy_title_model = get_optional_setting(conn, "ai.title_model")?;
+    let legacy_image_model = get_optional_setting(conn, "ai.image_model")?;
     let system_prompt = get_optional_setting(conn, "ai.system_prompt")?.unwrap_or_default();
 
     Ok(AiSettings {
         offline_mode,
-        default_model,
-        title_model,
-        image_model,
         system_prompt,
-        online_endpoint,
-        airplane_endpoint,
+        online: load_mode_settings(
+            conn,
+            AiEndpointKind::Online,
+            legacy_chat_model.as_deref(),
+            legacy_title_model.as_deref(),
+            legacy_image_model.as_deref(),
+        )?,
+        airplane: load_mode_settings(
+            conn,
+            AiEndpointKind::Airplane,
+            legacy_chat_model.as_deref(),
+            legacy_title_model.as_deref(),
+            legacy_image_model.as_deref(),
+        )?,
     })
 }
 
@@ -196,20 +220,32 @@ pub fn save_endpoint(conn: &Connection, endpoint: &AiEndpointConfig) -> EngineRe
         endpoint.model.trim(),
         checked_at,
     )?;
-    if endpoint.kind == AiEndpointKind::Online {
-        if let Some(api_key) = &endpoint.api_key {
-            save_online_api_key_at(conn, api_key, checked_at)?;
-        }
+    set_setting(conn, "ai.default_model", "", checked_at)?;
+    if let Some(api_key) = &endpoint.api_key {
+        save_endpoint_api_key_at(conn, endpoint.kind, api_key, checked_at)?;
     }
     Ok(())
 }
 
 pub fn save_online_api_key(conn: &Connection, api_key: &str) -> EngineResult<()> {
-    save_online_api_key_at(conn, api_key, now_unix_ms())
+    save_endpoint_api_key(conn, AiEndpointKind::Online, api_key)
 }
 
-fn save_online_api_key_at(conn: &Connection, api_key: &str, updated_at: i64) -> EngineResult<()> {
-    let entry = endpoint_keyring_entry(AiEndpointKind::Online)?;
+pub fn save_endpoint_api_key(
+    conn: &Connection,
+    kind: AiEndpointKind,
+    api_key: &str,
+) -> EngineResult<()> {
+    save_endpoint_api_key_at(conn, kind, api_key, now_unix_ms())
+}
+
+fn save_endpoint_api_key_at(
+    conn: &Connection,
+    kind: AiEndpointKind,
+    api_key: &str,
+    updated_at: i64,
+) -> EngineResult<()> {
+    let entry = endpoint_keyring_entry(kind)?;
     let configured = !api_key.trim().is_empty();
     if configured {
         entry.set_password(api_key.trim()).map_err(keyring_error)?;
@@ -221,7 +257,7 @@ fn save_online_api_key_at(conn: &Connection, api_key: &str, updated_at: i64) -> 
     }
     set_setting(
         conn,
-        &endpoint_setting_key(AiEndpointKind::Online, "api_key_configured"),
+        &endpoint_setting_key(kind, "api_key_configured"),
         if configured { "true" } else { "false" },
         updated_at,
     )
@@ -229,17 +265,44 @@ fn save_online_api_key_at(conn: &Connection, api_key: &str, updated_at: i64) -> 
 
 pub fn save_model_preferences(
     conn: &Connection,
-    default_model: Option<&str>,
+    kind: AiEndpointKind,
     title_model: Option<&str>,
     image_model: Option<&str>,
-    system_prompt: &str,
+    chat_supports_tools: Option<bool>,
+    image_supports_vision: Option<bool>,
 ) -> EngineResult<()> {
     let updated_at = now_unix_ms();
-    set_optional_setting(conn, "ai.default_model", default_model, updated_at)?;
-    set_optional_setting(conn, "ai.title_model", title_model, updated_at)?;
-    set_optional_setting(conn, "ai.image_model", image_model, updated_at)?;
-    set_setting(conn, "ai.system_prompt", system_prompt, updated_at)?;
+    set_optional_setting(
+        conn,
+        &endpoint_setting_key(kind, "title_model"),
+        title_model,
+        updated_at,
+    )?;
+    set_optional_setting(
+        conn,
+        &endpoint_setting_key(kind, "image_model"),
+        image_model,
+        updated_at,
+    )?;
+    set_optional_bool_setting(
+        conn,
+        &endpoint_setting_key(kind, "chat_supports_tools"),
+        chat_supports_tools,
+        updated_at,
+    )?;
+    set_optional_bool_setting(
+        conn,
+        &endpoint_setting_key(kind, "image_supports_vision"),
+        image_supports_vision,
+        updated_at,
+    )?;
+    set_setting(conn, "ai.title_model", "", updated_at)?;
+    set_setting(conn, "ai.image_model", "", updated_at)?;
     Ok(())
+}
+
+pub fn save_system_prompt(conn: &Connection, system_prompt: &str) -> EngineResult<()> {
+    set_setting(conn, "ai.system_prompt", system_prompt, now_unix_ms())
 }
 
 pub fn active_endpoint(conn: &Connection, offline_mode: bool) -> EngineResult<AiEndpointConfig> {
@@ -255,13 +318,19 @@ pub fn active_endpoint(conn: &Connection, offline_mode: bool) -> EngineResult<Ai
             kind.as_str()
         )));
     }
-    let api_key = if kind == AiEndpointKind::Online {
+    if kind == AiEndpointKind::Online && !stored.api_key_configured {
+        return Err(EngineError::Validation(
+            "AI unavailable - configure online endpoint in Settings".to_string(),
+        ));
+    }
+    let api_key = if stored.api_key_configured {
         let entry = endpoint_keyring_entry(kind)?;
         let password = entry.get_password().map_err(keyring_error)?;
         if password.trim().is_empty() {
-            return Err(EngineError::Validation(
-                "AI unavailable - configure online endpoint in Settings".to_string(),
-            ));
+            return Err(EngineError::Validation(format!(
+                "AI unavailable - configure {} endpoint in Settings",
+                kind.as_str()
+            )));
         }
         Some(password)
     } else {
@@ -287,7 +356,7 @@ pub fn load_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<Option<String
 }
 
 pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<AiModelInfo>> {
-    validate_endpoint_config(endpoint)?;
+    validate_endpoint_access(endpoint)?;
     let client = build_http_client()?;
     let request = client.get(models_url(&endpoint.url));
     let response = with_auth(request, endpoint).send()?.error_for_status()?;
@@ -325,11 +394,17 @@ pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<Ai
                     .any(|value| value.as_str() == Some("vision"))
             })
             .unwrap_or(false);
+        let supports_tools = model
+            .get("supports_tools")
+            .or_else(|| model.get("supportsTools"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         result.push(AiModelInfo {
             id,
             name,
             context_window,
             max_output_tokens,
+            supports_tools,
             supports_vision,
         });
     }
@@ -337,8 +412,25 @@ pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<Ai
     Ok(result)
 }
 
-pub fn test_endpoint(endpoint: &AiEndpointConfig) -> EngineResult<()> {
-    let _ = refresh_model_catalog(endpoint)?;
+pub fn test_chat(endpoint: &AiEndpointConfig, model: &str) -> EngineResult<()> {
+    validate_endpoint_access(endpoint)?;
+    if model.trim().is_empty() {
+        return Err(EngineError::Validation("model is required".to_string()));
+    }
+    let payload = json!({
+        "model": model.trim(),
+        "messages": [{"role": "user", "content": "Reply with OK."}],
+        "max_tokens": 8,
+        "stream": false,
+    });
+    with_auth(
+        build_http_client()?
+            .post(chat_completions_url(&endpoint.url))
+            .json(&payload),
+        endpoint,
+    )
+    .send()?
+    .error_for_status()?;
     Ok(())
 }
 
@@ -433,15 +525,48 @@ fn load_endpoint(conn: &Connection, kind: AiEndpointKind) -> EngineResult<Stored
     })
 }
 
-fn validate_endpoint_config(endpoint: &AiEndpointConfig) -> EngineResult<()> {
-    if endpoint.url.trim().is_empty() {
-        return Err(EngineError::Validation(
-            "endpoint url is required".to_string(),
-        ));
+fn load_mode_settings(
+    conn: &Connection,
+    kind: AiEndpointKind,
+    legacy_chat_model: Option<&str>,
+    legacy_title_model: Option<&str>,
+    legacy_image_model: Option<&str>,
+) -> EngineResult<AiModeSettings> {
+    let mut endpoint = load_endpoint(conn, kind)?;
+    if endpoint.model.trim().is_empty() {
+        endpoint.model = legacy_chat_model.unwrap_or_default().to_string();
     }
+    Ok(AiModeSettings {
+        endpoint,
+        title_model: get_optional_setting(conn, &endpoint_setting_key(kind, "title_model"))?
+            .or_else(|| legacy_title_model.map(str::to_string)),
+        image_model: get_optional_setting(conn, &endpoint_setting_key(kind, "image_model"))?
+            .or_else(|| legacy_image_model.map(str::to_string)),
+        chat_supports_tools: get_optional_bool_setting(
+            conn,
+            &endpoint_setting_key(kind, "chat_supports_tools"),
+        )?,
+        image_supports_vision: get_optional_bool_setting(
+            conn,
+            &endpoint_setting_key(kind, "image_supports_vision"),
+        )?,
+    })
+}
+
+fn validate_endpoint_config(endpoint: &AiEndpointConfig) -> EngineResult<()> {
+    validate_endpoint_access(endpoint)?;
     if endpoint.model.trim().is_empty() {
         return Err(EngineError::Validation(
             "endpoint model is required".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_endpoint_access(endpoint: &AiEndpointConfig) -> EngineResult<()> {
+    if endpoint.url.trim().is_empty() {
+        return Err(EngineError::Validation(
+            "endpoint url is required".to_string(),
         ));
     }
     if endpoint.kind == AiEndpointKind::Online
@@ -463,17 +588,23 @@ fn select_model(
     endpoint: &AiEndpointConfig,
     operation: &OneShotOperation,
 ) -> EngineResult<String> {
+    let active = settings.active();
     let selected = match operation {
-        OneShotOperation::AnalyzeImage => settings.image_model.as_ref(),
+        OneShotOperation::AnalyzeImage => {
+            if active.image_supports_vision == Some(false) {
+                return Err(EngineError::Validation(
+                    "AI unavailable - selected image model is not configured for vision"
+                        .to_string(),
+                ));
+            }
+            active.image_model.as_ref()
+        }
         OneShotOperation::AnalyzeTaxonomy
         | OneShotOperation::MapImportTaxonomy
         | OneShotOperation::AnalyzePost
         | OneShotOperation::DetectLanguage
         | OneShotOperation::TranslatePost { .. }
-        | OneShotOperation::TranslateMedia { .. } => settings
-            .title_model
-            .as_ref()
-            .or(settings.default_model.as_ref()),
+        | OneShotOperation::TranslateMedia { .. } => active.title_model.as_ref(),
     }
     .filter(|model| !model.trim().is_empty())
     .cloned()
@@ -746,6 +877,22 @@ fn set_optional_setting(
     set_setting(conn, key, value.unwrap_or(""), updated_at)
 }
 
+fn set_optional_bool_setting(
+    conn: &Connection,
+    key: &str,
+    value: Option<bool>,
+    updated_at: i64,
+) -> EngineResult<()> {
+    set_setting(
+        conn,
+        key,
+        value
+            .map(|value| if value { "true" } else { "false" })
+            .unwrap_or(""),
+        updated_at,
+    )
+}
+
 fn get_optional_setting(conn: &Connection, key: &str) -> EngineResult<Option<String>> {
     match setting::get_setting_by_key(conn, key) {
         Ok(setting) if setting.value.trim().is_empty() => Ok(None),
@@ -753,6 +900,10 @@ fn get_optional_setting(conn: &Connection, key: &str) -> EngineResult<Option<Str
         Err(diesel::result::Error::NotFound) => Ok(None),
         Err(error) => Err(EngineError::Db(error)),
     }
+}
+
+fn get_optional_bool_setting(conn: &Connection, key: &str) -> EngineResult<Option<bool>> {
+    Ok(get_optional_setting(conn, key)?.map(|value| value == "true"))
 }
 
 fn models_url(base_url: &str) -> String {
@@ -808,9 +959,9 @@ mod tests {
         let db = setup();
         let settings = load_ai_settings(db.conn(), false).unwrap();
         assert!(!settings.offline_mode);
-        assert!(settings.online_endpoint.url.is_empty());
-        assert!(settings.airplane_endpoint.url.is_empty());
-        assert!(settings.default_model.is_none());
+        assert!(settings.online.endpoint.url.is_empty());
+        assert!(settings.airplane.endpoint.url.is_empty());
+        assert!(settings.online.title_model.is_none());
     }
 
     #[test]
@@ -859,22 +1010,123 @@ mod tests {
         let server = spawn_test_server(
             |request| {
                 assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+                assert!(
+                    request.contains("authorization: Bearer dummy")
+                        || request.contains("Authorization: Bearer dummy")
+                );
                 http_ok(
-                    r#"{"data":[{"id":"gpt-4.1-mini","name":"GPT 4.1 mini","context_window":128000,"max_output_tokens":8192,"modalities":["text"]},{"id":"gpt-4.1","modalities":["text","vision"]}]}"#,
+                    r#"{"data":[{"id":"gpt-4.1-mini","name":"GPT 4.1 mini","context_window":128000,"max_output_tokens":8192,"supports_tools":true,"modalities":["text"]},{"id":"gpt-4.1","modalities":["text","vision"]}]}"#,
                 )
             },
             1,
         );
         let models = refresh_model_catalog(&AiEndpointConfig {
-            kind: AiEndpointKind::Airplane,
+            kind: AiEndpointKind::Online,
             url: server,
-            model: "gpt-4.1-mini".to_string(),
-            api_key: None,
+            model: String::new(),
+            api_key: Some("dummy".to_string()),
         })
         .unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].name, "GPT 4.1 mini");
+        assert!(models[0].supports_tools);
         assert!(models[1].supports_vision);
+    }
+
+    #[test]
+    fn model_preferences_are_independent_per_endpoint() {
+        let db = setup();
+        save_model_preferences(
+            db.conn(),
+            AiEndpointKind::Online,
+            Some("online-title"),
+            Some("online-image"),
+            Some(true),
+            Some(true),
+        )
+        .unwrap();
+        save_model_preferences(
+            db.conn(),
+            AiEndpointKind::Airplane,
+            Some("local-title"),
+            Some("local-image"),
+            Some(false),
+            Some(true),
+        )
+        .unwrap();
+
+        let settings = load_ai_settings(db.conn(), false).unwrap();
+        assert_eq!(settings.online.title_model.as_deref(), Some("online-title"));
+        assert_eq!(
+            settings.airplane.title_model.as_deref(),
+            Some("local-title")
+        );
+        assert_eq!(settings.online.chat_supports_tools, Some(true));
+        assert_eq!(settings.airplane.chat_supports_tools, Some(false));
+        assert_eq!(settings.online.image_supports_vision, Some(true));
+        assert_eq!(settings.airplane.image_supports_vision, Some(true));
+    }
+
+    #[test]
+    fn test_chat_sends_the_selected_model() {
+        let server = spawn_test_server(
+            |request| {
+                assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                assert!(request.contains(r#""model":"qwen-9b""#));
+                assert!(
+                    request.contains("authorization: Bearer dummy")
+                        || request.contains("Authorization: Bearer dummy")
+                );
+                http_ok(r#"{"choices":[{"message":{"content":"OK"}}]}"#)
+            },
+            1,
+        );
+
+        test_chat(
+            &AiEndpointConfig {
+                kind: AiEndpointKind::Airplane,
+                url: server,
+                model: String::new(),
+                api_key: Some("dummy".to_string()),
+            },
+            "qwen-9b",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn explicit_vision_override_blocks_image_requests() {
+        let db = setup();
+        save_endpoint(
+            db.conn(),
+            &AiEndpointConfig {
+                kind: AiEndpointKind::Airplane,
+                url: "http://localhost:11434/v1".to_string(),
+                model: "qwen".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+        save_model_preferences(
+            db.conn(),
+            AiEndpointKind::Airplane,
+            None,
+            Some("qwen-vl"),
+            Some(false),
+            Some(false),
+        )
+        .unwrap();
+
+        let error = run_one_shot(
+            db.conn(),
+            true,
+            &OneShotRequest {
+                operation: OneShotOperation::AnalyzeImage,
+                content: json!({"image_data_url": "data:image/jpeg;base64,abc123"}),
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not configured for vision"));
     }
 
     #[test]
@@ -909,7 +1161,15 @@ mod tests {
             },
         )
         .unwrap();
-        save_model_preferences(db.conn(), None, Some("gpt-4.1-mini"), None, "").unwrap();
+        save_model_preferences(
+            db.conn(),
+            AiEndpointKind::Online,
+            Some("gpt-4.1-mini"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let (response, usage) = run_one_shot(
             db.conn(),

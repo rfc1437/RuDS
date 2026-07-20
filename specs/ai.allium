@@ -12,8 +12,12 @@ use "./media.allium" as media
 entity AiEndpoint {
     kind: online | airplane
     url: String
-    api_key: String?                    -- encrypted via SecureKeyStore; null for local models
-    model: String
+    api_key: String?                    -- encrypted via SecureKeyStore; required online, optional locally
+    model: String                       -- chat model
+    title_model: String?
+    image_model: String?
+    chat_supports_tools: Boolean?       -- operator override of discovered capability
+    image_supports_vision: Boolean?     -- operator override of discovered capability
     -- online: cloud provider (OpenAI, Anthropic-via-proxy, etc.)
     -- airplane: local model (Ollama, LM Studio, etc.)
 }
@@ -81,6 +85,10 @@ surface AiEndpointSurface {
         endpoint.url
         endpoint.api_key when endpoint.api_key != null
         endpoint.model
+        endpoint.title_model when endpoint.title_model != null
+        endpoint.image_model when endpoint.image_model != null
+        endpoint.chat_supports_tools when endpoint.chat_supports_tools != null
+        endpoint.image_supports_vision when endpoint.image_supports_vision != null
 }
 
     surface AiModelSurface {
@@ -177,8 +185,10 @@ surface AiConfigurationSurface {
     facing _: AiOperator
 
     provides:
-        SetAiEndpointRequested(kind, url, api_key, model)
+        SetAiEndpointRequested(kind, url, api_key, model, title_model, image_model, chat_supports_tools, image_supports_vision)
         RemoveAiEndpointRequested(kind)
+        RefreshEndpointModelsRequested(kind, url, api_key)
+        TestEndpointModelsRequested(kind)
         RefreshModelCatalogRequested(source)
 }
 
@@ -221,13 +231,17 @@ config {
 }
 
 rule SetAiEndpoint {
-    when: SetAiEndpointRequested(kind, url, api_key, model)
+    when: SetAiEndpointRequested(kind, url, api_key, model, title_model, image_model, chat_supports_tools, image_supports_vision)
     ensures:
         let endpoint = AiEndpoint.created(
             kind: kind,
             url: url,
             api_key: api_key,
-            model: model
+            model: model,
+            title_model: title_model,
+            image_model: image_model,
+            chat_supports_tools: chat_supports_tools,
+            image_supports_vision: image_supports_vision
         )
         endpoint.kind = kind
 }
@@ -335,6 +349,22 @@ rule RefreshModelCatalog {
     ensures: ModelCatalogUpdated()
 }
 
+rule RefreshEndpointModels {
+    when: RefreshEndpointModelsRequested(kind, url, api_key)
+    requires: url != ""
+    requires: kind = airplane or api_key != null
+    -- Discovery calls GET /models and does not require a selected model.
+    ensures: EndpointModelsLoaded(kind)
+}
+
+rule TestEndpointModels {
+    when: TestEndpointModelsRequested(kind)
+    requires: exists endpoint in AiEndpoints where endpoint.kind = kind
+    -- Sends a minimal chat-completions request to each distinct configured
+    -- chat, title, and image model for this endpoint.
+    ensures: EndpointModelsResponded(kind)
+}
+
 invariant AirplaneModeGating {
     -- Endpoint routing based on airplane (offline) mode:
     --   airplane_mode = true  -> use airplane endpoint (local model)
@@ -347,8 +377,8 @@ invariant AirplaneModeGating {
 
 invariant AirplaneModeModelSwap {
     -- In airplane mode, cloud models are never contacted.
-    -- Chat uses the configured offline chat model when needed.
-    -- Image analysis uses the configured offline vision-capable model when needed.
+    -- Chat, title generation, and image analysis use the models and capability
+    -- overrides configured for the active endpoint profile.
     -- If no suitable offline model is configured, the operation fails with
     --   actionable guidance instead of silently falling back to the online endpoint.
 }
@@ -356,9 +386,11 @@ invariant AirplaneModeModelSwap {
 invariant TwoEndpointModel {
     -- Two configurable OpenAI-compatible endpoints:
     --   online: for cloud providers (requires API key)
-    --   airplane: for local models (no API key required)
+    --   airplane: for local models (API key optional)
     -- Both use the OpenAI Chat Completions wire format.
-    -- Endpoint selection is configurable rather than tied to hard-coded providers.
+    -- URL, credentials, chat/title/image models, and capability overrides are
+    -- independent. Endpoint selection is controlled only by the status-bar
+    -- airplane-mode switch, not by a duplicate Settings toggle.
 }
 
 invariant AdvisoryModelCatalog {
@@ -385,6 +417,12 @@ invariant VisionCapabilityGate {
     -- AnalyzeImage only runs against models that accept image input.
     -- Local/offline models must advertise or be configured with image capability
     -- before the runtime sends multimodal requests to them.
+}
+
+invariant OperatorCapabilityOverrides {
+    -- Discovered tool and vision capabilities prefill the profile controls.
+    -- Explicit operator overrides take precedence at runtime so models with
+    -- incomplete metadata can enable or disable tools and image input safely.
 }
 
 invariant ChatContextTruncation {

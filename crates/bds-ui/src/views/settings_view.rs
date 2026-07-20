@@ -2,6 +2,7 @@ use iced::widget::text::Shaping;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
 use iced::{Alignment, Color, Element, Length};
 
+use bds_core::engine::ai::AiEndpointKind;
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
@@ -12,6 +13,7 @@ use crate::i18n::{t, tw};
 pub struct AiModelOption {
     pub id: String,
     pub label: String,
+    pub supports_tools: bool,
     pub supports_vision: bool,
 }
 
@@ -19,6 +21,19 @@ impl std::fmt::Display for AiModelOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AiModeViewState {
+    pub endpoint_url: String,
+    pub chat_model: String,
+    pub title_model: String,
+    pub image_model: String,
+    pub api_key_input: String,
+    pub api_key_configured: bool,
+    pub model_options: Vec<AiModelOption>,
+    pub chat_supports_tools: bool,
+    pub image_supports_vision: bool,
 }
 
 /// Collapsible section identifiers per editor_settings.allium.
@@ -136,18 +151,8 @@ pub struct SettingsViewState {
     pub ssh_username: String,
     pub ssh_remote_path: String,
     // AI
-    pub offline_mode: bool,
-    pub online_endpoint_url: String,
-    pub online_endpoint_model: String,
-    pub online_api_key_input: String,
-    pub online_api_key_configured: bool,
-    pub online_model_options: Vec<AiModelOption>,
-    pub airplane_endpoint_url: String,
-    pub airplane_endpoint_model: String,
-    pub airplane_model_options: Vec<AiModelOption>,
-    pub default_model: String,
-    pub title_model: String,
-    pub image_model: String,
+    pub online_ai: AiModeViewState,
+    pub airplane_ai: AiModeViewState,
     pub system_prompt: text_editor::Content,
     // Technology
     pub semantic_similarity_enabled: bool,
@@ -195,18 +200,8 @@ impl Clone for SettingsViewState {
             ssh_host: self.ssh_host.clone(),
             ssh_username: self.ssh_username.clone(),
             ssh_remote_path: self.ssh_remote_path.clone(),
-            offline_mode: self.offline_mode,
-            online_endpoint_url: self.online_endpoint_url.clone(),
-            online_endpoint_model: self.online_endpoint_model.clone(),
-            online_api_key_input: self.online_api_key_input.clone(),
-            online_api_key_configured: self.online_api_key_configured,
-            online_model_options: self.online_model_options.clone(),
-            airplane_endpoint_url: self.airplane_endpoint_url.clone(),
-            airplane_endpoint_model: self.airplane_endpoint_model.clone(),
-            airplane_model_options: self.airplane_model_options.clone(),
-            default_model: self.default_model.clone(),
-            title_model: self.title_model.clone(),
-            image_model: self.image_model.clone(),
+            online_ai: self.online_ai.clone(),
+            airplane_ai: self.airplane_ai.clone(),
             system_prompt: text_editor::Content::with_text(&self.system_prompt.text()),
             semantic_similarity_enabled: self.semantic_similarity_enabled,
             mcp_enabled: self.mcp_enabled,
@@ -252,18 +247,8 @@ impl Default for SettingsViewState {
             ssh_host: String::new(),
             ssh_username: String::new(),
             ssh_remote_path: String::new(),
-            offline_mode: false,
-            online_endpoint_url: String::new(),
-            online_endpoint_model: String::new(),
-            online_api_key_input: String::new(),
-            online_api_key_configured: false,
-            online_model_options: Vec::new(),
-            airplane_endpoint_url: String::new(),
-            airplane_endpoint_model: String::new(),
-            airplane_model_options: Vec::new(),
-            default_model: String::new(),
-            title_model: String::new(),
-            image_model: String::new(),
+            online_ai: AiModeViewState::default(),
+            airplane_ai: AiModeViewState::default(),
             system_prompt: text_editor::Content::new(),
             semantic_similarity_enabled: false,
             mcp_enabled: false,
@@ -343,17 +328,15 @@ pub enum SettingsMsg {
     SavePublishing,
     ClearPublishing,
     // AI
-    OfflineModeChanged(bool),
-    OnlineEndpointUrlChanged(String),
-    OnlineEndpointModelChanged(String),
-    OnlineApiKeyChanged(String),
-    RefreshOnlineModels,
-    AirplaneEndpointUrlChanged(String),
-    AirplaneEndpointModelChanged(String),
-    RefreshAirplaneModels,
-    DefaultModelChanged(String),
-    TitleModelChanged(String),
-    ImageModelChanged(String),
+    AiEndpointUrlChanged(AiEndpointKind, String),
+    AiApiKeyChanged(AiEndpointKind, String),
+    AiChatModelChanged(AiEndpointKind, String),
+    AiTitleModelChanged(AiEndpointKind, String),
+    AiImageModelChanged(AiEndpointKind, String),
+    AiToolsChanged(AiEndpointKind, bool),
+    AiVisionChanged(AiEndpointKind, bool),
+    RefreshAiModels(AiEndpointKind),
+    TestAi(AiEndpointKind),
     SystemPromptAction(text_editor::Action),
     SaveAi,
     ResetSystemPrompt,
@@ -786,104 +769,17 @@ fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Elemen
 }
 
 fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
-    let active_model_options = if state.offline_mode {
-        &state.airplane_model_options
-    } else {
-        &state.online_model_options
-    };
-    let model_options = std::iter::once(AiModelOption {
-        id: String::new(),
-        label: t(locale, "tags.noTemplate"),
-        supports_vision: false,
-    })
-    .chain(active_model_options.iter().cloned())
-    .collect::<Vec<_>>();
-    let image_model_options = std::iter::once(AiModelOption {
-        id: String::new(),
-        label: t(locale, "tags.noTemplate"),
-        supports_vision: false,
-    })
-    .chain(
-        active_model_options
-            .iter()
-            .filter(|option| option.supports_vision)
-            .cloned(),
-    )
-    .collect::<Vec<_>>();
-
-    let offline = inputs::labeled_checkbox(
-        &t(locale, "settings.offlineMode"),
-        state.offline_mode,
-        |b| Message::Settings(SettingsMsg::OfflineModeChanged(b)),
-    );
-    let online_url = inputs::labeled_input(
-        &t(locale, "settings.onlineEndpointUrl"),
+    let online = ai_mode_block(
+        &state.online_ai,
+        AiEndpointKind::Online,
+        locale,
         "https://api.example.com/v1",
-        &state.online_endpoint_url,
-        |value| Message::Settings(SettingsMsg::OnlineEndpointUrlChanged(value)),
     );
-    let online_model = inputs::labeled_input(
-        &t(locale, "settings.onlineEndpointModel"),
-        "gpt-4.1-mini",
-        &state.online_endpoint_model,
-        |value| Message::Settings(SettingsMsg::OnlineEndpointModelChanged(value)),
-    );
-    let keychain_placeholder = t(locale, "settings.keychainConfigured");
-    let online_api_key = inputs::labeled_input(
-        &t(locale, "settings.onlineApiKey"),
-        if state.online_api_key_configured {
-            &keychain_placeholder
-        } else {
-            "sk-..."
-        },
-        &state.online_api_key_input,
-        |value| Message::Settings(SettingsMsg::OnlineApiKeyChanged(value)),
-    );
-    let online_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
-        .on_press(Message::Settings(SettingsMsg::RefreshOnlineModels))
-        .style(inputs::secondary_button)
-        .padding([6, 16]);
-
-    let airplane_url = inputs::labeled_input(
-        &t(locale, "settings.airplaneEndpointUrl"),
+    let airplane = ai_mode_block(
+        &state.airplane_ai,
+        AiEndpointKind::Airplane,
+        locale,
         "http://localhost:11434/v1",
-        &state.airplane_endpoint_url,
-        |value| Message::Settings(SettingsMsg::AirplaneEndpointUrlChanged(value)),
-    );
-    let airplane_model = inputs::labeled_input(
-        &t(locale, "settings.airplaneEndpointModel"),
-        "llama3.2",
-        &state.airplane_endpoint_model,
-        |value| Message::Settings(SettingsMsg::AirplaneEndpointModelChanged(value)),
-    );
-    let airplane_refresh = button(text(t(locale, "settings.refreshModels")).size(13))
-        .on_press(Message::Settings(SettingsMsg::RefreshAirplaneModels))
-        .style(inputs::secondary_button)
-        .padding([6, 16]);
-
-    let default_model = inputs::labeled_select(
-        &t(locale, "settings.defaultModel"),
-        &model_options,
-        model_options
-            .iter()
-            .find(|option| option.id == state.default_model),
-        |option| Message::Settings(SettingsMsg::DefaultModelChanged(option.id)),
-    );
-    let title_model = inputs::labeled_select(
-        &t(locale, "settings.titleModel"),
-        &model_options,
-        model_options
-            .iter()
-            .find(|option| option.id == state.title_model),
-        |option| Message::Settings(SettingsMsg::TitleModelChanged(option.id)),
-    );
-    let image_model = inputs::labeled_select(
-        &t(locale, "settings.imageAnalysisModel"),
-        &image_model_options,
-        image_model_options
-            .iter()
-            .find(|option| option.id == state.image_model),
-        |option| Message::Settings(SettingsMsg::ImageModelChanged(option.id)),
     );
     let prompt = column![
         text(t(locale, "settings.systemPrompt"))
@@ -909,27 +805,118 @@ fn section_ai<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a,
     ]
     .spacing(8);
 
-    column![
-        offline,
-        text(t(locale, "settings.onlineEndpointSection"))
-            .size(12)
-            .color(inputs::LABEL_COLOR),
-        online_url,
-        row![online_model, online_api_key].spacing(12),
-        online_refresh,
-        text(t(locale, "settings.airplaneEndpointSection"))
-            .size(12)
-            .color(inputs::LABEL_COLOR),
-        airplane_url,
-        row![airplane_model, airplane_refresh].spacing(12),
-        default_model,
-        title_model,
-        image_model,
-        prompt,
-        btns,
-    ]
-    .spacing(8)
-    .padding([0, 16])
+    column![online, airplane, prompt, btns,]
+        .spacing(8)
+        .padding([0, 16])
+        .into()
+}
+
+fn ai_mode_block<'a>(
+    state: &'a AiModeViewState,
+    kind: AiEndpointKind,
+    locale: UiLocale,
+    url_placeholder: &'a str,
+) -> Element<'a, Message> {
+    let mut options = state.model_options.clone();
+    for model in [&state.chat_model, &state.title_model, &state.image_model] {
+        if !model.is_empty() && !options.iter().any(|option| option.id == *model) {
+            options.push(AiModelOption {
+                id: model.clone(),
+                label: model.clone(),
+                supports_tools: false,
+                supports_vision: false,
+            });
+        }
+    }
+    options.sort_by(|left, right| left.label.cmp(&right.label));
+    options.insert(
+        0,
+        AiModelOption {
+            id: String::new(),
+            label: t(locale, "tags.noTemplate"),
+            supports_tools: false,
+            supports_vision: false,
+        },
+    );
+    let selected = |id: &str| options.iter().find(|option| option.id == id);
+    let section_key = match kind {
+        AiEndpointKind::Online => "settings.onlineEndpointSection",
+        AiEndpointKind::Airplane => "settings.airplaneEndpointSection",
+    };
+    let url_key = match kind {
+        AiEndpointKind::Online => "settings.onlineEndpointUrl",
+        AiEndpointKind::Airplane => "settings.airplaneEndpointUrl",
+    };
+    let api_key = match kind {
+        AiEndpointKind::Online => "settings.onlineApiKey",
+        AiEndpointKind::Airplane => "settings.airplaneApiKey",
+    };
+    let keychain_placeholder = t(locale, "settings.keychainConfigured");
+
+    inputs::card(
+        column![
+            text(t(locale, section_key)).size(15),
+            row![
+                inputs::labeled_input(
+                    &t(locale, url_key),
+                    url_placeholder,
+                    &state.endpoint_url,
+                    move |value| {
+                        Message::Settings(SettingsMsg::AiEndpointUrlChanged(kind, value))
+                    }
+                ),
+                button(text(t(locale, "settings.refreshModels")).size(13))
+                    .on_press(Message::Settings(SettingsMsg::RefreshAiModels(kind)))
+                    .style(inputs::secondary_button)
+                    .padding([6, 16]),
+            ]
+            .spacing(12)
+            .align_y(Alignment::End),
+            inputs::labeled_secure_input(
+                &t(locale, api_key),
+                if state.api_key_configured {
+                    &keychain_placeholder
+                } else {
+                    "sk-..."
+                },
+                &state.api_key_input,
+                move |value| Message::Settings(SettingsMsg::AiApiKeyChanged(kind, value)),
+            ),
+            inputs::labeled_select(
+                &t(locale, "settings.chatModel"),
+                &options,
+                selected(&state.chat_model),
+                move |option| Message::Settings(SettingsMsg::AiChatModelChanged(kind, option.id)),
+            ),
+            inputs::labeled_checkbox(
+                &t(locale, "settings.modelSupportsTools"),
+                state.chat_supports_tools,
+                move |value| Message::Settings(SettingsMsg::AiToolsChanged(kind, value)),
+            ),
+            inputs::labeled_select(
+                &t(locale, "settings.titleModel"),
+                &options,
+                selected(&state.title_model),
+                move |option| Message::Settings(SettingsMsg::AiTitleModelChanged(kind, option.id)),
+            ),
+            inputs::labeled_select(
+                &t(locale, "settings.imageAnalysisModel"),
+                &options,
+                selected(&state.image_model),
+                move |option| Message::Settings(SettingsMsg::AiImageModelChanged(kind, option.id)),
+            ),
+            inputs::labeled_checkbox(
+                &t(locale, "settings.modelSupportsVision"),
+                state.image_supports_vision,
+                move |value| Message::Settings(SettingsMsg::AiVisionChanged(kind, value)),
+            ),
+            button(text(t(locale, "settings.testChat")).size(13))
+                .on_press(Message::Settings(SettingsMsg::TestAi(kind)))
+                .style(inputs::secondary_button)
+                .padding([6, 16]),
+        ]
+        .spacing(8),
+    )
     .into()
 }
 

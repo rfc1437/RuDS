@@ -53,15 +53,19 @@ value SettingsCategoryRow {
 }
 
 value SettingsAISection {
-    anthropic_api_key: String?          -- masked + Change/Save
-    mistral_api_key: String?            -- masked + Change/Save
-    ollama_enabled: Boolean             -- toggle, shows model capabilities table (tools/vision)
-    lm_studio_enabled: Boolean          -- toggle, shows model capabilities table
-    offline_mode: Boolean               -- toggle, switches between online and airplane endpoint
-    default_model: String?              -- select from active endpoint models
-    title_model: String?                -- select
-    image_analysis_model: String?       -- select (vision-capable only)
+    online: SettingsAIEndpoint
+    airplane: SettingsAIEndpoint
     system_prompt: String               -- textarea (12 rows) + Save + Reset to Default
+}
+
+value SettingsAIEndpoint {
+    url: String
+    api_key: String?                    -- masked; optional for airplane endpoint
+    chat_model: String?
+    title_model: String?
+    image_model: String?
+    chat_supports_tools: Boolean
+    image_supports_vision: Boolean
 }
 
 value SettingsTechnologySection {
@@ -130,8 +134,9 @@ surface SettingsViewSurface {
         SettingsCategoryUpdated(category_row)
         SettingsCategoryRemoved(category_name)
         SettingsCategoriesResetToDefaults()
-        SettingsAIApiKeySaved(provider, key)
-        SettingsAIModelRefreshRequested(endpoint)
+        SettingsAIProfileSaved(kind, endpoint)
+        SettingsAIModelRefreshRequested(kind, url, api_key)
+        SettingsAIChatTestRequested(kind)
         SettingsAISystemPromptSaved(prompt)
         SettingsAISystemPromptReset()
         SettingsPublishingSaved(publishing_data)
@@ -179,23 +184,27 @@ surface SettingsViewSurface {
         -- "Reset to Defaults" restores default categories set.
 
     @guarantee AISection
-        -- Section 4: Anthropic API key, Mistral API key (both masked + Change/Save),
-        --   Ollama toggle (with model capabilities table: tools/vision),
-        --   LM Studio toggle (with capabilities table),
-        --   Offline mode toggle (with dedicated model selectors for chat/title/image),
-        --   Default model (with catalog info: max output, context window),
-        --   Title model, Image analysis model,
+        -- Section 4: independent Online and Airplane endpoint cards. Each has
+        --   URL, masked API key (optional locally), Refresh Models, chat/title/image
+        --   selectors, explicit tools/vision capability overrides, and Test Chat.
+        --   Settings has no airplane-mode toggle; the status-bar switch selects
+        --   the active profile and immediately swaps chat/model routing.
         --   System prompt (textarea config.settings_system_prompt_rows rows + Save + Reset).
 
     @guarantee AIApiKeyValidation
-        -- On Save: test API call to endpoint before persisting.
-        -- On failure: toast error message, key not saved.
-        -- On success: key encrypted via SecureKeyStore, masked display shown.
+        -- API keys are encrypted via SecureKeyStore and displayed masked.
+        -- Online profiles require a key; airplane profiles permit authenticated
+        -- or unauthenticated local OpenAI-compatible endpoints.
 
     @guarantee AIModelRefresh
         -- Refresh Models button per endpoint fetches model list from URL.
-        -- Model selector populated from fetched list.
-        -- Per-model info: max output tokens, context window (when available).
+        -- Discovery requires URL and online credentials but no preselected model.
+        -- All three role selectors are populated independently from the result;
+        -- advertised capability metadata prefills tools and vision overrides.
+
+    @guarantee AIChatTest
+        -- Test Chat sends a minimal request through every distinct model selected
+        -- for chat, title generation, or image analysis in the chosen profile.
 
     @guarantee TechnologySection
         -- Section 5: Semantic Similarity toggle
