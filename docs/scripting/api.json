@@ -1429,6 +1429,75 @@
       "returns": "boolean"
     },
     {
+      "description": "Return whether Git is available on the current machine.",
+      "name": "check_availability",
+      "namespace": "sync",
+      "params": [],
+      "returns": "boolean"
+    },
+    {
+      "description": "Return repository state for the active project using the GitRepositoryState shape.",
+      "name": "get_repo_state",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Return Git status for the active project using the GitStatusResult shape.",
+      "name": "get_status",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Return commit history for the active project using the GitHistoryResult shape.",
+      "name": "get_history",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Return the GitRepositoryState for the active project, matching the bDS2 remote-state alias.",
+      "name": "get_remote_state",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Fetch and prune remote Git refs for the active project, returning GitNetworkResult; unavailable in airplane mode.",
+      "name": "fetch",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Fast-forward pull the active project, reconcile its cache database, and return GitNetworkResult; unavailable in airplane mode.",
+      "name": "pull",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Push the active project to its configured remote and return GitNetworkResult; unavailable in airplane mode.",
+      "name": "push",
+      "namespace": "sync",
+      "params": [],
+      "returns": "table | nil"
+    },
+    {
+      "description": "Stage and commit every pending change in the active project, returning GitCommitResult.",
+      "name": "commit_all",
+      "namespace": "sync",
+      "params": [
+        {
+          "name": "message",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "returns": "table | nil"
+    },
+    {
       "description": "Upload the rendered site using the provided publishing credentials.",
       "name": "upload_site",
       "namespace": "publish",
@@ -1781,6 +1850,81 @@
         "tasks": "TaskData[]"
       },
       "name": "TaskStatus"
+    },
+    {
+      "description": "Git hosting provider classification used by bDS2 repository state.",
+      "fields": {
+        "kind": "string"
+      },
+      "name": "GitProviderData"
+    },
+    {
+      "description": "Repository state returned by bds.sync.get_repo_state and get_remote_state.",
+      "fields": {
+        "current_branch": "string | nil",
+        "has_lfs": "boolean",
+        "is_initialized": "boolean",
+        "provider": "GitProviderData | nil",
+        "remote_url": "string | nil"
+      },
+      "name": "GitRepositoryState"
+    },
+    {
+      "description": "One changed path in the active repository.",
+      "fields": {
+        "old_path": "string | nil",
+        "path": "string",
+        "status": "string"
+      },
+      "name": "GitFileStatus"
+    },
+    {
+      "description": "Repository working-tree status returned by bds.sync.get_status.",
+      "fields": {
+        "files": "GitFileStatus[]"
+      },
+      "name": "GitStatusResult"
+    },
+    {
+      "description": "Whether a commit exists locally, remotely, or in both histories.",
+      "fields": {
+        "kind": "string"
+      },
+      "name": "GitSyncStatus"
+    },
+    {
+      "description": "Commit entry returned in bds.sync history.",
+      "fields": {
+        "author": "string | nil",
+        "date": "ISO-8601 string | nil",
+        "hash": "string",
+        "subject": "string | nil",
+        "sync_status": "GitSyncStatus"
+      },
+      "name": "GitCommitData"
+    },
+    {
+      "description": "Commit history returned by bds.sync.get_history.",
+      "fields": {
+        "commits": "GitCommitData[]"
+      },
+      "name": "GitHistoryResult"
+    },
+    {
+      "description": "Result of a successful bds.sync network operation.",
+      "fields": {
+        "output": "string",
+        "updated": "boolean"
+      },
+      "name": "GitNetworkResult"
+    },
+    {
+      "description": "Result of successfully committing all pending repository changes.",
+      "fields": {
+        "message": "string",
+        "output": "string"
+      },
+      "name": "GitCommitResult"
     },
     {
       "description": "Template validation result.",

@@ -16,11 +16,10 @@ mod tests {
     use crate::db::Database;
     use crate::db::schema::{
         ai_catalog_meta, ai_endpoint_models, ai_model_modalities, ai_models, ai_providers,
-        chat_conversations,
-        chat_messages, db_notifications, dismissed_duplicate_pairs, embedding_keys,
-        generated_file_hashes, import_definitions, mcp_proposals, media, media_translations,
-        post_links, post_media, post_translations, posts, projects, scripts, settings, tags,
-        templates,
+        chat_conversations, chat_messages, db_notifications, dismissed_duplicate_pairs,
+        embedding_keys, generated_file_hashes, import_definitions, mcp_proposals, media,
+        media_translations, post_links, post_media, post_translations, posts, projects, scripts,
+        settings, tags, templates,
     };
     use diesel::prelude::*;
     use diesel_migrations::MigrationHarness;

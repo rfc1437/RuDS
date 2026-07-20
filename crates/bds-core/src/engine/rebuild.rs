@@ -29,6 +29,51 @@ pub struct FullRebuildReport {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct IncrementalRebuildReport {
+    pub differences_applied: usize,
+    pub orphans_imported: usize,
+    pub orphans_failed: usize,
+}
+
+/// Apply portable filesystem changes to one project's cache database.
+pub fn rebuild_incremental(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<IncrementalRebuildReport> {
+    let report = super::metadata_diff::compute_metadata_diff(conn, data_dir, project_id)?;
+    if !report.errors.is_empty() {
+        return Err(crate::engine::EngineError::Validation(
+            report.errors.join("; "),
+        ));
+    }
+    for item in &report.diffs {
+        super::metadata_diff::repair_metadata_diff_item(
+            conn,
+            data_dir,
+            project_id,
+            super::metadata_diff::RepairDirection::FileToDatabase,
+            item,
+        )?;
+    }
+    let mut result = IncrementalRebuildReport {
+        differences_applied: report.diffs.len(),
+        ..Default::default()
+    };
+    for orphan in report
+        .orphans
+        .iter()
+        .filter(|orphan| orphan.reason == "file_without_db_entry")
+    {
+        match super::metadata_diff::import_orphan_file(conn, data_dir, project_id, orphan) {
+            Ok(()) => result.orphans_imported += 1,
+            Err(_) => result.orphans_failed += 1,
+        }
+    }
+    Ok(result)
+}
+
 /// Progress callback: (percent 0.0..1.0, phase description).
 pub type ProgressFn = Arc<dyn Fn(f32, &str) + Send + Sync>;
 

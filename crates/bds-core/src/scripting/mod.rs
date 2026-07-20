@@ -463,6 +463,7 @@ mod tests {
                 "projects",
                 "publish",
                 "scripts",
+                "sync",
                 "tags",
                 "tasks",
                 "templates",
@@ -473,7 +474,7 @@ mod tests {
             r#"
                 function main()
                     return {
-                        sync = bds.sync,
+                        sync = type(bds.sync),
                         embeddings = type(bds.embeddings),
                         report_progress = type(bds.report_progress),
                         post_search = type(bds.posts.search),
@@ -494,6 +495,7 @@ mod tests {
                 "post_search": "function",
                 "app_toast": "function",
                 "embeddings": "table",
+                "sync": "table",
             })
         );
     }
@@ -515,6 +517,7 @@ mod tests {
                         bds.tags.get_all(),
                         bds.tasks.status_snapshot(),
                         bds.publish.upload_site({}),
+                        bds.sync.check_availability(),
                         bds.chat.detect_post_language("title", "body"),
                         bds.embeddings.get_progress(),
                     }
@@ -528,8 +531,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(execution.value.as_array().unwrap().len(), 12);
-        assert_eq!(host.0.lock().unwrap().len(), 12);
+        assert_eq!(execution.value.as_array().unwrap().len(), 13);
+        assert_eq!(host.0.lock().unwrap().len(), 13);
     }
 
     #[test]

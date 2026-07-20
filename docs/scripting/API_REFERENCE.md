@@ -39,6 +39,7 @@ Macro scripts expose `render(input, context)` and transform scripts expose `main
 - [`bds.projects`](#bdsprojects)
 - [`bds.publish`](#bdspublish)
 - [`bds.scripts`](#bdsscripts)
+- [`bds.sync`](#bdssync)
 - [`bds.tags`](#bdstags)
 - [`bds.tasks`](#bdstasks)
 - [`bds.templates`](#bdstemplates)
@@ -3985,6 +3986,280 @@ local result = bds.scripts.rebuild_from_files()
     updated_at = "2026-07-19T08:00:00Z",
   }
 }
+```
+
+## `bds.sync`
+
+### `bds.sync.check_availability`
+
+Return whether Git is available on the current machine.
+
+**Signature**
+
+```text
+bds.sync.check_availability() -> boolean
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`boolean`. `false` means the operation was rejected or failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.check_availability()
+```
+
+**Example response**
+
+```lua
+true
+```
+
+### `bds.sync.get_repo_state`
+
+Return repository state for the active project using the GitRepositoryState shape.
+
+**Signature**
+
+```text
+bds.sync.get_repo_state() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.get_repo_state()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.get_status`
+
+Return Git status for the active project using the GitStatusResult shape.
+
+**Signature**
+
+```text
+bds.sync.get_status() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.get_status()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.get_history`
+
+Return commit history for the active project using the GitHistoryResult shape.
+
+**Signature**
+
+```text
+bds.sync.get_history() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.get_history()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.get_remote_state`
+
+Return the GitRepositoryState for the active project, matching the bDS2 remote-state alias.
+
+**Signature**
+
+```text
+bds.sync.get_remote_state() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.get_remote_state()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.fetch`
+
+Fetch and prune remote Git refs for the active project, returning GitNetworkResult; unavailable in airplane mode.
+
+**Signature**
+
+```text
+bds.sync.fetch() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.fetch()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.pull`
+
+Fast-forward pull the active project, reconcile its cache database, and return GitNetworkResult; unavailable in airplane mode.
+
+**Signature**
+
+```text
+bds.sync.pull() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.pull()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.push`
+
+Push the active project to its configured remote and return GitNetworkResult; unavailable in airplane mode.
+
+**Signature**
+
+```text
+bds.sync.push() -> table | nil
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.push()
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
+```
+
+### `bds.sync.commit_all`
+
+Stage and commit every pending change in the active project, returning GitCommitResult.
+
+**Signature**
+
+```text
+bds.sync.commit_all(message: string) -> table | nil
+```
+
+**Parameters**
+
+| Name | Type | Required | Example |
+| --- | --- | --- | --- |
+| `message` | `string` | Yes | `"Working"` |
+
+**Returns**
+
+`table | nil`. `nil` means no value was available or the host operation failed.
+
+**Example call**
+
+```lua
+local result = bds.sync.commit_all("Working")
+```
+
+**Example response**
+
+```lua
+{ key = "value" }
 ```
 
 ## `bds.tags`

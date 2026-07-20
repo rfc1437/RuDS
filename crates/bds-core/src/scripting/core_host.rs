@@ -1239,6 +1239,64 @@ impl CoreHost {
         Ok(Value::Bool(true))
     }
 
+    fn sync(&self, method: &str, args: &[Value]) -> HostResult<Value> {
+        if method == "check_availability" {
+            return Ok(std::process::Command::new("git")
+                .arg("--version")
+                .output()
+                .is_ok()
+                .into());
+        }
+        if self.offline_mode && matches!(method, "fetch" | "pull" | "push") {
+            return Err(format!("Git {method} is unavailable in airplane mode").into());
+        }
+        let git = engine::git::GitEngine::new(&self.data_dir);
+        let cancelled = || {
+            self.task_manager
+                .as_ref()
+                .zip(self.task_id)
+                .is_some_and(|(manager, id)| manager.is_cancelled(id))
+        };
+        match method {
+            "get_repo_state" | "get_remote_state" => {
+                Ok(public_git_repository(git.repository().map_err(text)?))
+            }
+            "get_status" => Ok(json!({
+                "files": git.status().map_err(text)?.into_iter().map(public_git_status).collect::<Vec<_>>(),
+            })),
+            "get_history" => {
+                let repository = git.repository().map_err(text)?;
+                let commits = match repository.current_branch {
+                    Some(branch) => git.history(&branch).map_err(text)?,
+                    None => Vec::new(),
+                };
+                Ok(json!({
+                    "commits": commits.into_iter().map(public_git_commit).collect::<Vec<_>>(),
+                }))
+            }
+            "fetch" => {
+                let result = git.fetch(cancelled, |_| {}).map_err(text)?;
+                Ok(json!({"updated": true, "output": result.output}))
+            }
+            "pull" => {
+                let result = git.pull(cancelled, |_| {}).map_err(text)?;
+                let db = self.database()?;
+                engine::rebuild::rebuild_incremental(db.conn(), &self.data_dir, &self.project_id)?;
+                Ok(json!({"updated": true, "output": result.output}))
+            }
+            "push" => {
+                let result = git.push(cancelled, |_| {}).map_err(text)?;
+                Ok(json!({"updated": true, "output": result.output}))
+            }
+            "commit_all" => {
+                let message = string_arg(args, 0)?;
+                let result = git.commit_all(message).map_err(text)?;
+                Ok(json!({"message": message, "output": result.output}))
+            }
+            _ => Err(format!("unknown sync capability: {method}").into()),
+        }
+    }
+
     fn publish(&self, method: &str, args: &[Value]) -> HostResult<Value> {
         if method != "upload_site" {
             return Err(format!("unknown publish capability: {method}").into());
@@ -1492,6 +1550,7 @@ impl HostApi for CoreHost {
             "templates" => self.templates(method, &arguments),
             "tags" => self.tags(method, &arguments),
             "tasks" => self.tasks(method, &arguments),
+            "sync" => self.sync(method, &arguments),
             "publish" => self.publish(method, &arguments),
             "chat" => self.chat(method, &arguments),
             "embeddings" => self.embeddings(method, &arguments),
@@ -1585,6 +1644,54 @@ fn public_tasks(values: Vec<TaskSnapshot>) -> HostResult<Value> {
         .map(public_task)
         .collect::<Result<Vec<_>, _>>()
         .map(Value::Array)
+}
+
+fn public_git_repository(value: engine::git::GitRepository) -> Value {
+    json!({
+        "is_initialized": value.is_initialized,
+        "remote_url": value.remote_url,
+        "provider": value.provider.map(|provider| json!({"kind": match provider {
+            engine::git::GitProvider::GitHub => "github",
+            engine::git::GitProvider::GitLab => "gitlab",
+            engine::git::GitProvider::GiteaForgejo => "gitea_forgejo",
+        }})),
+        "current_branch": value.current_branch,
+        "has_lfs": value.has_lfs,
+    })
+}
+
+fn public_git_status(value: engine::git::GitFileStatus) -> Value {
+    let mut result = Map::new();
+    result.insert("path".into(), value.path.into());
+    if let Some(old_path) = value.old_path {
+        result.insert("old_path".into(), old_path.into());
+    }
+    result.insert(
+        "status".into(),
+        match value.kind {
+            engine::git::FileStatusKind::Added => "added",
+            engine::git::FileStatusKind::Modified => "modified",
+            engine::git::FileStatusKind::Deleted => "deleted",
+            engine::git::FileStatusKind::Renamed => "renamed",
+            engine::git::FileStatusKind::Untracked => "untracked",
+        }
+        .into(),
+    );
+    Value::Object(result)
+}
+
+fn public_git_commit(value: engine::git::GitCommit) -> Value {
+    json!({
+        "hash": value.hash,
+        "subject": value.subject,
+        "author": value.author,
+        "date": value.date,
+        "sync_status": {"kind": match value.sync_status {
+            engine::git::SyncStatus::LocalOnly => "local_only",
+            engine::git::SyncStatus::RemoteOnly => "remote_only",
+            engine::git::SyncStatus::Both => "both",
+        }},
+    })
 }
 
 fn public_metadata(data_dir: &Path) -> HostResult<Value> {
@@ -1862,6 +1969,255 @@ fn one_shot_json(value: engine::ai::OneShotResponse) -> HostResult<Value> {
 mod tests {
     use super::*;
     use crate::scripting::{ExecutionControl, ExecutionKind, execute_with_host};
+    use std::fs;
+    use std::process::Command;
+
+    struct SyncFixture {
+        _temp: tempfile::TempDir,
+        db_path: PathBuf,
+        data_dir: PathBuf,
+        remote_dir: PathBuf,
+        project_id: String,
+    }
+
+    impl SyncFixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let db_path = temp.path().join("ruds.db");
+            let data_dir = temp.path().join("project");
+            let remote_dir = temp.path().join("remote.git");
+            let upstream_dir = temp.path().join("upstream");
+            let db = Database::open(&db_path).unwrap();
+            db.migrate().unwrap();
+            crate::db::fts::ensure_fts_tables(db.conn()).unwrap();
+            let project = engine::project::create_project(
+                db.conn(),
+                "Active",
+                Some(data_dir.to_str().unwrap()),
+            )
+            .unwrap();
+            engine::project::set_active_project(db.conn(), &project.id).unwrap();
+            drop(db);
+
+            git(&data_dir, &["init", "-b", "master"]);
+            configure_git(&data_dir);
+            git(&data_dir, &["add", "-A"]);
+            git(&data_dir, &["commit", "-m", "Initial project"]);
+            git(
+                temp.path(),
+                &[
+                    "init",
+                    "--bare",
+                    "-b",
+                    "master",
+                    remote_dir.to_str().unwrap(),
+                ],
+            );
+            git(
+                &data_dir,
+                &["remote", "add", "origin", remote_dir.to_str().unwrap()],
+            );
+            git(&data_dir, &["push", "-u", "origin", "master"]);
+            git(
+                temp.path(),
+                &[
+                    "clone",
+                    remote_dir.to_str().unwrap(),
+                    upstream_dir.to_str().unwrap(),
+                ],
+            );
+            configure_git(&upstream_dir);
+            let mut metadata = engine::meta::read_project_json(&upstream_dir).unwrap();
+            metadata.name = "Pulled Name".into();
+            engine::meta::write_project_json(&upstream_dir, &metadata).unwrap();
+            git(&upstream_dir, &["add", "-A"]);
+            git(&upstream_dir, &["commit", "-m", "Update project name"]);
+            git(&upstream_dir, &["push", "origin", "master"]);
+            fs::write(data_dir.join("pending.txt"), "pending").unwrap();
+
+            Self {
+                _temp: temp,
+                db_path,
+                data_dir,
+                remote_dir,
+                project_id: project.id,
+            }
+        }
+
+        fn host(&self, offline: bool) -> CoreHost {
+            CoreHost::new(&self.db_path, &self.project_id, &self.data_dir)
+                .with_offline_mode(offline)
+        }
+    }
+
+    fn configure_git(dir: &Path) {
+        git(dir, &["config", "user.name", "Lua Test"]);
+        git(dir, &["config", "user.email", "lua@example.invalid"]);
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn sync_namespace_runs_every_bds2_method_and_reconciles_pull() {
+        let fixture = SyncFixture::new();
+        let result = execute_with_host(
+            r#"
+                function main()
+                    local status = bds.sync.get_status()
+                    local history = bds.sync.get_history()
+                    return {
+                        available = bds.sync.check_availability(),
+                        repo = bds.sync.get_repo_state(),
+                        remote = bds.sync.get_remote_state(),
+                        status = status,
+                        history = history,
+                        fetched = bds.sync.fetch(),
+                        pulled = bds.sync.pull(),
+                        committed = bds.sync.commit_all("Lua commit"),
+                        pushed = bds.sync.push(),
+                    }
+                end
+            "#,
+            "main",
+            &Value::Null,
+            ExecutionKind::Utility,
+            &ExecutionControl::default(),
+            Arc::new(fixture.host(false)),
+        )
+        .unwrap();
+
+        assert_eq!(result.value["available"], true);
+        assert_eq!(result.value["repo"]["is_initialized"], true);
+        assert_eq!(result.value["remote"], result.value["repo"]);
+        assert!(
+            result.value["status"]["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file == &json!({"path":"pending.txt","status":"untracked"}))
+        );
+        let commit = &result.value["history"]["commits"][0];
+        assert!(commit["date"].as_str().is_some_and(|date| date.len() == 10));
+        assert!(commit["sync_status"]["kind"].is_string());
+        assert_eq!(result.value["fetched"]["updated"], true);
+        assert_eq!(result.value["pulled"]["updated"], true);
+        assert_eq!(result.value["committed"]["message"], "Lua commit");
+        assert_eq!(result.value["pushed"]["updated"], true);
+
+        let db = Database::open(&fixture.db_path).unwrap();
+        assert_eq!(
+            project::get_project_by_id(db.conn(), &fixture.project_id)
+                .unwrap()
+                .name,
+            "Pulled Name"
+        );
+        assert_eq!(
+            git(&fixture.remote_dir, &["log", "-1", "--format=%s"]),
+            "Lua commit"
+        );
+    }
+
+    #[test]
+    fn sync_namespace_uses_nil_for_non_repository_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = temp.path().join("not-a-repository");
+        fs::create_dir(&data_dir).unwrap();
+        let result = execute_with_host(
+            r#"
+                function main()
+                    return {
+                        repo = bds.sync.get_repo_state(),
+                        remote = bds.sync.get_remote_state(),
+                        status = bds.sync.get_status(),
+                        history = bds.sync.get_history(),
+                        fetched = bds.sync.fetch(),
+                        pulled = bds.sync.pull(),
+                        pushed = bds.sync.push(),
+                        committed = bds.sync.commit_all("no repository"),
+                    }
+                end
+            "#,
+            "main",
+            &Value::Null,
+            ExecutionKind::Utility,
+            &ExecutionControl::default(),
+            Arc::new(CoreHost::new(
+                temp.path().join("missing.db"),
+                "p1",
+                &data_dir,
+            )),
+        )
+        .unwrap();
+
+        assert_eq!(result.value["repo"]["is_initialized"], false);
+        assert_eq!(result.value["remote"], result.value["repo"]);
+        assert_eq!(result.value["history"], json!({"commits": []}));
+        for key in ["status", "fetched", "pulled", "pushed", "committed"] {
+            assert!(result.value[key].is_null(), "{key} was not nil");
+        }
+    }
+
+    #[test]
+    fn sync_namespace_airplane_gate_prevents_network_commands_and_rejects_blank_commit() {
+        let fixture = SyncFixture::new();
+        git(&fixture.data_dir, &["add", "pending.txt"]);
+        git(&fixture.data_dir, &["commit", "-m", "Local only"]);
+        let local_head = git(&fixture.data_dir, &["rev-parse", "HEAD"]);
+        let tracking_head = git(
+            &fixture.data_dir,
+            &["rev-parse", "refs/remotes/origin/master"],
+        );
+        let remote_head = git(&fixture.remote_dir, &["rev-parse", "refs/heads/master"]);
+
+        let result = execute_with_host(
+            r#"
+                function main()
+                    return {
+                        fetched = bds.sync.fetch(),
+                        pulled = bds.sync.pull(),
+                        pushed = bds.sync.push(),
+                        committed = bds.sync.commit_all("   "),
+                    }
+                end
+            "#,
+            "main",
+            &Value::Null,
+            ExecutionKind::Utility,
+            &ExecutionControl::default(),
+            Arc::new(fixture.host(true)),
+        )
+        .unwrap();
+
+        for key in ["fetched", "pulled", "pushed", "committed"] {
+            assert!(result.value[key].is_null(), "{key} was not nil");
+        }
+        assert_eq!(git(&fixture.data_dir, &["rev-parse", "HEAD"]), local_head);
+        assert_eq!(
+            git(
+                &fixture.data_dir,
+                &["rev-parse", "refs/remotes/origin/master"],
+            ),
+            tracking_head
+        );
+        assert_eq!(
+            git(&fixture.remote_dir, &["rev-parse", "refs/heads/master"]),
+            remote_head
+        );
+    }
 
     #[test]
     fn project_host_round_trips_engines_and_enforces_scope_and_failure_values() {

@@ -335,47 +335,20 @@ fn active_project(db: &Database) -> Result<(Project, PathBuf)> {
 fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
     let (project, data_dir) = active_project(db)?;
     if incremental {
-        let (applied, imported, failed) = cli_sync::run_cli_mutation(db.conn(), || {
-            let report =
-                engine::metadata_diff::compute_metadata_diff(db.conn(), &data_dir, &project.id)?;
-            if !report.errors.is_empty() {
-                return Err(engine::EngineError::Validation(report.errors.join("; ")));
-            }
-            for item in &report.diffs {
-                engine::metadata_diff::repair_metadata_diff_item(
-                    db.conn(),
-                    &data_dir,
-                    &project.id,
-                    engine::metadata_diff::RepairDirection::FileToDatabase,
-                    item,
-                )?;
-            }
-            let filesystem_orphans = report
-                .orphans
-                .iter()
-                .filter(|orphan| orphan.reason == "file_without_db_entry")
-                .collect::<Vec<_>>();
-            let mut imported = 0;
-            let mut failed = 0;
-            for orphan in filesystem_orphans {
-                match engine::metadata_diff::import_orphan_file(
-                    db.conn(),
-                    &data_dir,
-                    &project.id,
-                    orphan,
-                ) {
-                    Ok(()) => imported += 1,
-                    Err(_) => failed += 1,
-                }
-            }
-            if !report.diffs.is_empty() || imported > 0 {
+        let report = cli_sync::run_cli_mutation(db.conn(), || {
+            let report = engine::rebuild::rebuild_incremental(db.conn(), &data_dir, &project.id)?;
+            if report.differences_applied > 0 || report.orphans_imported > 0 {
                 emit_bulk(&project.id);
             }
-            Ok((report.diffs.len(), imported, failed))
+            Ok(report)
         })?;
         return Ok(output(
             "Applied incremental filesystem changes",
-            json!({"differences_applied": applied, "orphans_imported": imported, "orphans_failed": failed}),
+            json!({
+                "differences_applied": report.differences_applied,
+                "orphans_imported": report.orphans_imported,
+                "orphans_failed": report.orphans_failed,
+            }),
         ));
     }
 

@@ -352,7 +352,9 @@ fn user_guide_path() -> PathBuf {
 }
 
 fn root_document_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(name)
 }
 
 pub fn parse_document(source: &str) -> ParsedDocument {

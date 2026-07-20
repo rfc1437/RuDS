@@ -135,6 +135,8 @@ surface ScriptRuntimeSurface {
         -- sync_from_posts.
         -- bds.tasks: get, status_snapshot, cancel, get_all, get_running,
         -- clear_completed.
+        -- bds.sync: check_availability, get_repo_state, get_status,
+        -- get_history, get_remote_state, fetch, pull, push, commit_all.
         -- bds.publish: upload_site.
         -- bds.chat: detect_post_language, analyze_post, translate_post,
         -- analyze_media_image, detect_media_language,
@@ -144,7 +146,6 @@ surface ScriptRuntimeSurface {
         -- host may retain bds.app.progress and bds.app.toast as additive APIs.
         -- bds.embeddings: compute_similarities, dismiss_pair, find_duplicates,
         -- find_similar, get_progress, index_unindexed_posts, suggest_tags.
-        -- bds.sync remains a future extension contract.
 
     @guarantee HostApiFailureValues
         -- Host failures do not expose implementation exceptions across the Lua

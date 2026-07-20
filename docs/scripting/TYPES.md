@@ -22,6 +22,15 @@ These are the public, JSON-compatible records returned by the Lua host API. They
 - [`TagData`](#tagdata)
 - [`TaskData`](#taskdata)
 - [`TaskStatus`](#taskstatus)
+- [`GitProviderData`](#gitproviderdata)
+- [`GitRepositoryState`](#gitrepositorystate)
+- [`GitFileStatus`](#gitfilestatus)
+- [`GitStatusResult`](#gitstatusresult)
+- [`GitSyncStatus`](#gitsyncstatus)
+- [`GitCommitData`](#gitcommitdata)
+- [`GitHistoryResult`](#githistoryresult)
+- [`GitNetworkResult`](#gitnetworkresult)
+- [`GitCommitResult`](#gitcommitresult)
 - [`ValidationResult`](#validationresult)
 
 ## `ProjectData`
@@ -185,7 +194,7 @@ Lua script record.
 | `enabled` | `boolean` | Yes | Whether the record is enabled. |
 | `entrypoint` | `string` | Yes | Lua function invoked by the runtime. |
 | `id` | `string` | Yes | Stable record identifier. |
-| `kind` | `string` | Yes | Script or template kind. |
+| `kind` | `string` | Yes | Public enum value. |
 | `project_id` | `string` | Yes | Identifier of the owning project. |
 | `slug` | `string` | Yes | URL-safe record identifier. |
 | `status` | `string` | Yes | Current lifecycle state. |
@@ -217,7 +226,7 @@ Template record for site rendering.
 | `created_at` | `ISO-8601 string` | Yes | Creation timestamp. |
 | `enabled` | `boolean` | Yes | Whether the record is enabled. |
 | `id` | `string` | Yes | Stable record identifier. |
-| `kind` | `string` | Yes | Script or template kind. |
+| `kind` | `string` | Yes | Public enum value. |
 | `project_id` | `string` | Yes | Identifier of the owning project. |
 | `slug` | `string` | Yes | URL-safe record identifier. |
 | `status` | `string` | Yes | Current lifecycle state. |
@@ -305,6 +314,194 @@ Aggregate task status snapshot.
 | `pending_count` | `integer` | Yes | Number of queued tasks. |
 | `running_count` | `integer` | Yes | Number of currently running tasks. |
 | `tasks` | `TaskData[]` | Yes | Tasks included in this status snapshot. |
+
+## `GitProviderData`
+
+Git hosting provider classification used by bDS2 repository state.
+
+**Lua shape**
+
+```lua
+{
+  kind = "utility",
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `kind` | `string` | Yes | Public enum value. |
+
+## `GitRepositoryState`
+
+Repository state returned by bds.sync.get_repo_state and get_remote_state.
+
+**Lua shape**
+
+```lua
+{
+  current_branch = "example",
+  has_lfs = true,
+  is_initialized = true,
+  provider = {
+  kind = "utility",
+},
+  remote_url = "example",
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `current_branch` | `string \| nil` | No | Checked-out branch name. |
+| `has_lfs` | `boolean` | Yes | Whether Git LFS tracking is configured. |
+| `is_initialized` | `boolean` | Yes | Whether the project folder is a Git repository. |
+| `provider` | `GitProviderData \| nil` | No | Hosting provider inferred from the remote URL. |
+| `remote_url` | `string \| nil` | No | Configured origin URL. |
+
+## `GitFileStatus`
+
+One changed path in the active repository.
+
+**Lua shape**
+
+```lua
+{
+  old_path = "example",
+  path = "example",
+  status = "draft",
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `old_path` | `string \| nil` | No | Previous repository-relative path for a rename. |
+| `path` | `string` | Yes | Current repository-relative path. |
+| `status` | `string` | Yes | Current lifecycle state. |
+
+## `GitStatusResult`
+
+Repository working-tree status returned by bds.sync.get_status.
+
+**Lua shape**
+
+```lua
+{
+  files = {
+  {
+    old_path = "example",
+    path = "example",
+    status = "draft",
+  }
+},
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `files` | `GitFileStatus[]` | Yes | Changed repository paths. |
+
+## `GitSyncStatus`
+
+Whether a commit exists locally, remotely, or in both histories.
+
+**Lua shape**
+
+```lua
+{
+  kind = "utility",
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `kind` | `string` | Yes | Public enum value. |
+
+## `GitCommitData`
+
+Commit entry returned in bds.sync history.
+
+**Lua shape**
+
+```lua
+{
+  author = "example",
+  date = "2026-07-19T08:00:00Z",
+  hash = "example",
+  subject = "example",
+  sync_status = {
+  kind = "utility",
+},
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `author` | `string \| nil` | No | Commit author. |
+| `date` | `ISO-8601 string \| nil` | No | ISO-8601 commit date. |
+| `hash` | `string` | Yes | Git object identifier. |
+| `subject` | `string \| nil` | No | Commit subject. |
+| `sync_status` | `GitSyncStatus` | Yes | Local/remote presence classification. |
+
+## `GitHistoryResult`
+
+Commit history returned by bds.sync.get_history.
+
+**Lua shape**
+
+```lua
+{
+  commits = {
+  {
+    author = "example",
+    date = "2026-07-19T08:00:00Z",
+    hash = "example",
+    subject = "example",
+    sync_status = {
+    kind = "utility",
+  },
+  }
+},
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `commits` | `GitCommitData[]` | Yes | Commit history entries. |
+
+## `GitNetworkResult`
+
+Result of a successful bds.sync network operation.
+
+**Lua shape**
+
+```lua
+{
+  output = "example",
+  updated = true,
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `output` | `string` | Yes | Git command output. |
+| `updated` | `boolean` | Yes | Whether the Git network command completed successfully. |
+
+## `GitCommitResult`
+
+Result of successfully committing all pending repository changes.
+
+**Lua shape**
+
+```lua
+{
+  message = "Working",
+  output = "example",
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `message` | `string` | Yes | Latest user-facing task message. |
+| `output` | `string` | Yes | Git command output. |
 
 ## `ValidationResult`
 

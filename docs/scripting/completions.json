@@ -1547,6 +1547,84 @@
     "returns": "boolean"
   },
   {
+    "description": "Return whether Git is available on the current machine.",
+    "detail": "bds.sync.check_availability() -> boolean",
+    "insert_text": "bds.sync.check_availability()",
+    "label": "bds.sync.check_availability",
+    "parameters": [],
+    "returns": "boolean"
+  },
+  {
+    "description": "Return repository state for the active project using the GitRepositoryState shape.",
+    "detail": "bds.sync.get_repo_state() -> table | nil",
+    "insert_text": "bds.sync.get_repo_state()",
+    "label": "bds.sync.get_repo_state",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Return Git status for the active project using the GitStatusResult shape.",
+    "detail": "bds.sync.get_status() -> table | nil",
+    "insert_text": "bds.sync.get_status()",
+    "label": "bds.sync.get_status",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Return commit history for the active project using the GitHistoryResult shape.",
+    "detail": "bds.sync.get_history() -> table | nil",
+    "insert_text": "bds.sync.get_history()",
+    "label": "bds.sync.get_history",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Return the GitRepositoryState for the active project, matching the bDS2 remote-state alias.",
+    "detail": "bds.sync.get_remote_state() -> table | nil",
+    "insert_text": "bds.sync.get_remote_state()",
+    "label": "bds.sync.get_remote_state",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Fetch and prune remote Git refs for the active project, returning GitNetworkResult; unavailable in airplane mode.",
+    "detail": "bds.sync.fetch() -> table | nil",
+    "insert_text": "bds.sync.fetch()",
+    "label": "bds.sync.fetch",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Fast-forward pull the active project, reconcile its cache database, and return GitNetworkResult; unavailable in airplane mode.",
+    "detail": "bds.sync.pull() -> table | nil",
+    "insert_text": "bds.sync.pull()",
+    "label": "bds.sync.pull",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Push the active project to its configured remote and return GitNetworkResult; unavailable in airplane mode.",
+    "detail": "bds.sync.push() -> table | nil",
+    "insert_text": "bds.sync.push()",
+    "label": "bds.sync.push",
+    "parameters": [],
+    "returns": "table | nil"
+  },
+  {
+    "description": "Stage and commit every pending change in the active project, returning GitCommitResult.",
+    "detail": "bds.sync.commit_all(message: string) -> table | nil",
+    "insert_text": "bds.sync.commit_all(\"Working\")",
+    "label": "bds.sync.commit_all",
+    "parameters": [
+      {
+        "name": "message",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "returns": "table | nil"
+  },
+  {
     "description": "Upload the rendered site using the provided publishing credentials.",
     "detail": "bds.publish.upload_site(credentials: table) -> TaskData | nil",
     "insert_text": "bds.publish.upload_site({ host = \"example.com\", username = \"author\" })",
