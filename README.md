@@ -59,6 +59,25 @@ Local macOS packages are ad-hoc signed without hardened runtime. A Developer ID 
 
 Contributor workflow and project invariants are documented in [AGENTS.md](AGENTS.md).
 
+## Development gates
+
+Install the dependency audit tools once:
+
+```sh
+cargo install cargo-machete cargo-outdated
+```
+
+Before committing, verify dependency usage and freshness, then build and test the complete workspace:
+
+```sh
+cargo machete --with-metadata
+cargo outdated --workspace --root-deps-only --exit-code 1
+cargo build --workspace
+cargo test --workspace
+```
+
+The full test suite starts loopback-only mock and preview servers, so localhost binding must be permitted.
+
 ## Headless server
 
 Run `bds-cli server` for a dedicated headless process, or set `BDS_MODE=server` when launching `bds-ui`. The SSH listener defaults to `127.0.0.1:2222`; use `--bind`/`BDS_SSH_BIND` and `--port`/`BDS_SSH_PORT` to opt into another address. Startup prints the private `authorized_keys` path. The desktop creates its own private `id_ed25519.pub`; add that public key to the server file, then use **File → Connect to Server…** and select a remote project. Host keys are recorded on first connection and verified thereafter. Run `bds-cli tui` or set `BDS_MODE=tui` for the local terminal workspace; an authenticated SSH shell opens the same workspace against server-side data and locale. Press `:` for its command list and `:?` for help.

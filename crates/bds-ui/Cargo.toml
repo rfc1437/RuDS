@@ -20,7 +20,7 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
-wry = "0.55"
+wry = "0.55.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -29,7 +29,7 @@ objc2-app-kit = "0.3"
 
 [dev-dependencies]
 fluent-syntax = { workspace = true }
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 
 [build-dependencies]
@@ -61,3 +61,6 @@ minimum-system-version = "26.0"
 
 [package.metadata.packager.nsis]
 installer-icon = "assets/app-icons/bds.ico"
+
+[package.metadata.cargo-machete]
+ignored = ["winresource"]
