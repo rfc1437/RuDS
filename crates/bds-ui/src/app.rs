@@ -51,6 +51,7 @@ use crate::views::{
         default_category_rows,
     },
     site_validation::SiteValidationState,
+    style_view::{StyleMsg, StyleViewState},
     tags_view::{self, TagsMsg, TagsSection, TagsViewState},
     template_editor::{TemplateEditorMsg, TemplateEditorState},
     workspace,
@@ -164,6 +165,7 @@ pub enum Message {
     },
     MainWindowLoaded(Option<window::Id>),
     EmbeddedPreviewReady(Result<(), String>),
+    EmbeddedStylePreviewReady(Result<(), String>),
 
     // Panel
     SetPanelTab(PanelTab),
@@ -327,6 +329,7 @@ pub enum Message {
     ScriptEditor(ScriptEditorMsg),
     Tags(TagsMsg),
     Settings(SettingsMsg),
+    Style(StyleMsg),
     ImportEditor(ImportEditorMsg),
     MenuEditor(MenuEditorMsg),
 
@@ -954,6 +957,7 @@ pub struct BdsApp {
     preview_session: Option<PreviewSession>,
     mcp_server: Option<engine::mcp::McpHttpServer>,
     embedded_preview: Option<EmbeddedPreviewState>,
+    embedded_style_preview: Option<EmbeddedPreviewState>,
     main_window_id: Option<window::Id>,
 
     // Editor states (keyed by entity id)
@@ -965,6 +969,7 @@ pub struct BdsApp {
     chat_editors: HashMap<String, ChatEditorState>,
     tags_view_state: Option<TagsViewState>,
     settings_state: Option<SettingsViewState>,
+    style_view_state: Option<StyleViewState>,
     dashboard_state: Option<DashboardState>,
     site_validation_state: SiteValidationState,
     duplicates_state: DuplicatesState,
@@ -1135,6 +1140,7 @@ impl BdsApp {
                 preview_session: None,
                 mcp_server,
                 embedded_preview: None,
+                embedded_style_preview: None,
                 main_window_id: None,
                 post_editors: HashMap::new(),
                 media_editors: HashMap::new(),
@@ -1144,6 +1150,7 @@ impl BdsApp {
                 chat_editors: HashMap::new(),
                 tags_view_state: None,
                 settings_state: None,
+                style_view_state: None,
                 dashboard_state: None,
                 site_validation_state: SiteValidationState::default(),
                 duplicates_state: DuplicatesState::default(),
@@ -1227,6 +1234,7 @@ impl BdsApp {
             preview_session: None,
             mcp_server: None,
             embedded_preview: None,
+            embedded_style_preview: None,
             main_window_id: None,
             post_editors: HashMap::new(),
             media_editors: HashMap::new(),
@@ -1236,6 +1244,7 @@ impl BdsApp {
             chat_editors: HashMap::new(),
             tags_view_state: None,
             settings_state: None,
+            style_view_state: None,
             dashboard_state: None,
             site_validation_state: SiteValidationState::default(),
             duplicates_state: DuplicatesState::default(),
@@ -1582,7 +1591,7 @@ impl BdsApp {
                 }
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
-                let mut tasks = vec![self.sync_embedded_preview_for_active_post()];
+                let mut tasks = vec![self.sync_embedded_previews()];
                 if let Some(post_id) = semantic_post_id {
                     tasks.push(Task::done(Message::LoadSemanticTagSuggestions(post_id)));
                 }
@@ -1600,7 +1609,7 @@ impl BdsApp {
                 self.git_diffs.remove(&id);
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
-                self.sync_embedded_preview_for_active_post()
+                self.sync_embedded_previews()
             }
             Message::SelectTab(id) => {
                 if self.tabs.iter().any(|t| t.id == id) {
@@ -1610,7 +1619,7 @@ impl BdsApp {
                     self.active_tab = Some(id);
                 }
                 self.enforce_panel_tab_fallback();
-                self.sync_embedded_preview_for_active_post()
+                self.sync_embedded_previews()
             }
             Message::PinTab(id) => {
                 tabs::pin_tab(&mut self.tabs, &id);
@@ -1622,6 +1631,7 @@ impl BdsApp {
                 self.active_tab = None;
                 self.git_diffs.clear();
                 self.hide_embedded_preview();
+                self.hide_embedded_style_preview();
                 Task::none()
             }
 
@@ -1692,6 +1702,8 @@ impl BdsApp {
                             self.preview_session = None;
                             self.duplicates_state = DuplicatesState::default();
                             self.hide_embedded_preview();
+                            self.hide_embedded_style_preview();
+                            self.style_view_state = None;
                             self.data_dir = self
                                 .active_project
                                 .as_ref()
@@ -1709,6 +1721,9 @@ impl BdsApp {
                                         self.blog_languages.insert(0, main_lang);
                                     }
                                 }
+                            }
+                            if self.tabs.iter().any(|tab| tab.tab_type == TabType::Style) {
+                                self.style_view_state = self.hydrate_style_state();
                             }
                             let name = self
                                 .active_project
@@ -1737,6 +1752,7 @@ impl BdsApp {
                     self.refresh_counts(),
                     self.refresh_git_if_visible(),
                     Task::done(Message::EmbeddingBackfill),
+                    self.sync_embedded_previews(),
                 ])
             }
             Message::ProjectSwitched(result) => {
@@ -1862,6 +1878,8 @@ impl BdsApp {
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
                             self.preview_session = None;
                             self.hide_embedded_preview();
+                            self.hide_embedded_style_preview();
+                            self.style_view_state = None;
                             self.notify(
                                 ToastLevel::Success,
                                 &tw(
@@ -2374,9 +2392,9 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            message @ (Message::MainWindowLoaded(_) | Message::EmbeddedPreviewReady(_)) => {
-                self.handle_preview_message(message)
-            }
+            message @ (Message::MainWindowLoaded(_)
+            | Message::EmbeddedPreviewReady(_)
+            | Message::EmbeddedStylePreviewReady(_)) => self.handle_preview_message(message),
 
             // ── Tasks ──
             Message::TaskTick => {
@@ -2481,6 +2499,8 @@ impl BdsApp {
                     self.data_dir = Some(data_dir.clone());
                     self.preview_session = None;
                     self.hide_embedded_preview();
+                    self.hide_embedded_style_preview();
+                    self.style_view_state = None;
                     if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
                         let main_language = meta.main_language.unwrap_or_else(|| "en".into());
                         self.content_language = main_language.clone();
@@ -3031,6 +3051,7 @@ impl BdsApp {
             Message::ScriptEditor(msg) => self.handle_script_editor_msg(msg),
             Message::Tags(msg) => self.handle_tags_msg(msg),
             Message::Settings(msg) => self.handle_settings_msg(msg),
+            Message::Style(msg) => self.handle_style_msg(msg),
             Message::ImportEditor(msg) => self.handle_import_editor_msg(msg),
             Message::MenuEditor(msg) => self.handle_menu_editor_msg(msg),
 
@@ -3380,6 +3401,13 @@ impl BdsApp {
         } else {
             None
         };
+        let style_preview_widget = if self.active_style_uses_embedded_preview() {
+            self.embedded_style_preview
+                .as_ref()
+                .map(|preview| webview::webview(&preview.controller).into())
+        } else {
+            None
+        };
 
         native_edit::native_edit(
             workspace::view(
@@ -3418,6 +3446,7 @@ impl BdsApp {
                 self.active_modal.clone(),
                 self.data_dir.as_deref(),
                 post_preview_widget,
+                style_preview_widget,
                 &self.post_editors,
                 &self.media_editors,
                 &self.template_editors,
@@ -3426,6 +3455,7 @@ impl BdsApp {
                 &self.chat_editors,
                 self.tags_view_state.as_ref(),
                 self.settings_state.as_ref(),
+                self.style_view_state.as_ref(),
                 self.dashboard_state.as_ref(),
                 &self.site_validation_state,
                 &self.duplicates_state,
@@ -3980,6 +4010,15 @@ impl BdsApp {
                         .as_ref()
                         .and_then(|project| project.data_path.as_deref())
                         .map(PathBuf::from);
+                }
+                if let Some(data_dir) = self.data_dir.as_deref()
+                    && let Ok(metadata) = engine::meta::read_project_json(data_dir)
+                {
+                    let applied = StyleViewState::new(metadata.pico_theme.as_deref());
+                    self.theme_badge = applied.applied_theme.clone();
+                    if let Some(state) = self.style_view_state.as_mut() {
+                        state.refresh_applied_theme(metadata.pico_theme.as_deref());
+                    }
                 }
                 previous_active.as_deref() == Some(project_id.as_str())
                     || self
@@ -5323,9 +5362,8 @@ impl BdsApp {
             // Read pico theme from project metadata for status bar badge
             if let Some(ref data_dir) = self.data_dir
                 && let Ok(meta) = engine::meta::read_project_json(data_dir)
-                && let Some(theme) = meta.pico_theme
             {
-                self.theme_badge = theme;
+                self.theme_badge = StyleViewState::new(meta.pico_theme.as_deref()).applied_theme;
             }
 
             self.dashboard_state = Some(self.hydrate_dashboard_state());
@@ -7104,6 +7142,64 @@ impl BdsApp {
         Task::none()
     }
 
+    fn hydrate_style_state(&self) -> Option<StyleViewState> {
+        self.active_project.as_ref()?;
+        let data_dir = self.data_dir.as_deref()?;
+        let metadata = engine::meta::read_project_json(data_dir).ok()?;
+        Some(StyleViewState::new(metadata.pico_theme.as_deref()))
+    }
+
+    fn handle_style_msg(&mut self, message: StyleMsg) -> Task<Message> {
+        match message {
+            StyleMsg::SelectTheme(theme) => {
+                if let Some(state) = self.style_view_state.as_mut() {
+                    state.select_theme(&theme);
+                }
+                self.sync_embedded_preview_for_style()
+            }
+            StyleMsg::PreviewModeChanged(mode) => {
+                if let Some(state) = self.style_view_state.as_mut() {
+                    state.set_preview_mode(mode);
+                }
+                self.sync_embedded_preview_for_style()
+            }
+            StyleMsg::Apply => {
+                let Some(theme) = self
+                    .style_view_state
+                    .as_ref()
+                    .filter(|state| state.can_apply())
+                    .map(|state| state.selected_theme.clone())
+                else {
+                    return Task::none();
+                };
+                let result = (|| {
+                    let db = self.db.as_ref().ok_or("database unavailable")?;
+                    let data_dir = self
+                        .data_dir
+                        .as_deref()
+                        .ok_or("project data directory unavailable")?;
+                    let project = self.active_project.as_ref().ok_or("project unavailable")?;
+                    let mut metadata = engine::meta::read_project_json(data_dir)
+                        .map_err(|error| error.to_string())?;
+                    metadata.pico_theme = Some(theme.clone());
+                    engine::meta::update_project_metadata(db.conn(), data_dir, project, &metadata)
+                        .map_err(|error| error.to_string())
+                })();
+                match result {
+                    Ok(_) => {
+                        if let Some(state) = self.style_view_state.as_mut() {
+                            state.mark_applied();
+                        }
+                        self.theme_badge = theme;
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "style.applied"));
+                    }
+                    Err(error) => self.notify_operation_failed("style.apply", error),
+                }
+                Task::none()
+            }
+        }
+    }
+
     fn handle_settings_msg(&mut self, msg: SettingsMsg) -> Task<Message> {
         // Ensure settings state exists
         if self.settings_state.is_none() {
@@ -7275,11 +7371,9 @@ impl BdsApp {
                         Some(state.data_path.clone())
                     };
                     project.updated_at = bds_core::util::now_unix_ms();
-                    let db_result =
-                        bds_core::db::queries::project::update_project(db.conn(), project);
-                    let file_result = engine::meta::write_project_json(data_dir, &meta);
-                    match (db_result, file_result) {
-                        (Ok(()), Ok(())) => {
+                    match engine::meta::update_project_metadata(db.conn(), data_dir, project, &meta)
+                    {
+                        Ok(_) => {
                             let semantic_should_backfill =
                                 state.semantic_similarity_enabled && !semantic_was_enabled;
                             if let Some(listing) =
@@ -7295,8 +7389,7 @@ impl BdsApp {
                                 return Task::done(Message::EmbeddingBackfill);
                             }
                         }
-                        (Err(e), _) => self.notify_operation_failed("common.save", e),
-                        (_, Err(e)) => self.notify_operation_failed("common.save", e),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -8166,6 +8259,9 @@ impl BdsApp {
             TabType::Settings if self.settings_state.is_none() => {
                 self.settings_state = Some(self.hydrate_settings_state());
             }
+            TabType::Style if self.style_view_state.is_none() => {
+                self.style_view_state = self.hydrate_style_state();
+            }
             _ => {}
         }
     }
@@ -8377,6 +8473,72 @@ impl BdsApp {
         if let Some(preview) = &self.embedded_preview {
             preview.controller.set_visible(false);
         }
+    }
+
+    fn active_style_uses_embedded_preview(&self) -> bool {
+        let active_is_style = self.active_tab.as_ref().is_some_and(|tab_id| {
+            self.tabs
+                .iter()
+                .any(|tab| tab.id == *tab_id && tab.tab_type == TabType::Style)
+        });
+        active_is_style && self.active_project.is_some() && self.style_view_state.is_some()
+    }
+
+    fn hide_embedded_style_preview(&self) {
+        if let Some(preview) = &self.embedded_style_preview {
+            preview.controller.set_visible(false);
+        }
+    }
+
+    fn sync_embedded_previews(&mut self) -> Task<Message> {
+        let post = self.sync_embedded_preview_for_active_post();
+        let style = self.sync_embedded_preview_for_style();
+        Task::batch([post, style])
+    }
+
+    fn sync_embedded_preview_for_style(&mut self) -> Task<Message> {
+        if !self.active_style_uses_embedded_preview() {
+            self.hide_embedded_style_preview();
+            return Task::none();
+        }
+        if let Err(error) = self.ensure_preview_server() {
+            self.notify(ToastLevel::Error, &error);
+            return Task::none();
+        }
+        let Some(url) = self
+            .style_view_state
+            .as_ref()
+            .map(StyleViewState::preview_url)
+        else {
+            return Task::none();
+        };
+
+        if let Some(preview) = &mut self.embedded_style_preview {
+            preview.current_url = Some(url.clone());
+            if preview.controller.is_active() {
+                preview.controller.navigate(&url);
+                preview.controller.set_visible(true);
+                return Task::none();
+            }
+        } else {
+            self.embedded_style_preview = Some(EmbeddedPreviewState {
+                controller: WebViewController::new(WebViewConfig::default().url(url.clone())),
+                current_url: Some(url.clone()),
+            });
+        }
+
+        let Some(window_id) = self.main_window_id else {
+            return window::get_oldest().map(Message::MainWindowLoaded);
+        };
+        if let Some(preview) = &mut self.embedded_style_preview
+            && !preview.controller.is_active()
+        {
+            preview.controller = WebViewController::new(WebViewConfig::default().url(url));
+            return preview
+                .controller
+                .create_task(window_id, Message::EmbeddedStylePreviewReady);
+        }
+        Task::none()
     }
 
     fn sync_embedded_preview_for_active_post(&mut self) -> Task<Message> {
@@ -9054,6 +9216,7 @@ mod tests {
     use crate::views::post_editor::{PostEditorMsg, PostEditorState};
     use crate::views::script_editor::{ScriptEditorMsg, ScriptEditorState};
     use crate::views::settings_view::{AiModeViewState, SettingsSection, SettingsViewState};
+    use crate::views::style_view::{PreviewMode, StyleMsg, StyleViewState};
     use crate::views::template_editor::TemplateEditorState;
     use bds_core::db::Database;
     use bds_core::db::fts::ensure_fts_tables;
@@ -10362,6 +10525,57 @@ mod tests {
         app.post_editors.insert(created.id.clone(), editor);
 
         assert!(app.active_post_uses_embedded_preview());
+    }
+
+    #[test]
+    fn style_selection_and_preview_mode_stay_local_until_apply() {
+        let mut state = StyleViewState::new(Some("blue"));
+
+        assert_eq!(state.selected_theme, "blue");
+        assert_eq!(state.applied_theme, "blue");
+        assert!(!state.can_apply());
+
+        state.select_theme("green");
+        state.set_preview_mode(PreviewMode::Dark);
+
+        assert_eq!(state.selected_theme, "green");
+        assert_eq!(state.applied_theme, "blue");
+        assert_eq!(state.preview_mode, PreviewMode::Dark);
+        assert!(state.can_apply());
+
+        state.mark_applied();
+        assert!(!state.can_apply());
+    }
+
+    #[test]
+    fn applying_style_persists_project_metadata_emits_event_and_updates_badge() {
+        let (db, project, tmp) = setup();
+        let events = bds_core::engine::domain_events::subscribe();
+        let mut app = make_app(db, project, &tmp);
+        app.style_view_state = Some(StyleViewState::new(None));
+
+        let _ = app.update(Message::Style(StyleMsg::SelectTheme("purple".to_string())));
+        let _ = app.update(Message::Style(StyleMsg::Apply));
+
+        let metadata = bds_core::engine::meta::read_project_json(tmp.path()).unwrap();
+        assert_eq!(metadata.pico_theme.as_deref(), Some("purple"));
+        let project_json = std::fs::read_to_string(tmp.path().join("meta/project.json")).unwrap();
+        assert!(project_json.contains("\"picoTheme\": \"purple\""));
+        assert!(!project_json.contains("previewMode"));
+        assert_eq!(app.theme_badge, "purple");
+        assert_eq!(
+            app.style_view_state.as_ref().unwrap().applied_theme,
+            "purple"
+        );
+        assert!(events.drain().iter().any(|event| matches!(
+            event,
+            DomainEvent::EntityChanged {
+                project_id,
+                entity: bds_core::model::DomainEntity::Project,
+                entity_id,
+                action: bds_core::model::NotificationAction::Updated,
+            } if project_id == "p1" && entity_id == "p1"
+        )));
     }
 
     #[test]

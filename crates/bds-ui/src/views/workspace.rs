@@ -31,7 +31,9 @@ use crate::views::{
     settings_view::{self, SettingsViewState},
     sidebar,
     site_validation::{self, SiteValidationState},
-    status_bar, tab_bar,
+    status_bar,
+    style_view::{self, StyleViewState},
+    tab_bar,
     tags_view::{self, TagsViewState},
     template_editor::{self, TemplateEditorState},
     toast,
@@ -120,6 +122,7 @@ pub fn view<'a>(
     // Data directory (for thumbnail paths)
     data_dir: Option<&'a Path>,
     post_preview_widget: Option<Element<'a, Message>>,
+    style_preview_widget: Option<Element<'a, Message>>,
     // Editor states
     post_editors: &'a HashMap<String, PostEditorState>,
     media_editors: &'a HashMap<String, MediaEditorState>,
@@ -129,6 +132,7 @@ pub fn view<'a>(
     chat_editors: &'a HashMap<String, ChatEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
+    style_view_state: Option<&'a StyleViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
     duplicates_state: &'a DuplicatesState,
@@ -157,6 +161,7 @@ pub fn view<'a>(
         offline_mode,
         data_dir,
         post_preview_widget,
+        style_preview_widget,
         post_editors,
         media_editors,
         template_editors,
@@ -165,6 +170,7 @@ pub fn view<'a>(
         chat_editors,
         tags_view_state,
         settings_state,
+        style_view_state,
         dashboard_state,
         site_validation_state,
         duplicates_state,
@@ -405,6 +411,7 @@ fn route_content_area<'a>(
     offline_mode: bool,
     data_dir: Option<&'a Path>,
     post_preview_widget: Option<Element<'a, Message>>,
+    style_preview_widget: Option<Element<'a, Message>>,
     post_editors: &'a HashMap<String, PostEditorState>,
     media_editors: &'a HashMap<String, MediaEditorState>,
     template_editors: &'a HashMap<String, TemplateEditorState>,
@@ -413,6 +420,7 @@ fn route_content_area<'a>(
     chat_editors: &'a HashMap<String, ChatEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
+    style_view_state: Option<&'a StyleViewState>,
     dashboard_state: Option<&'a DashboardState>,
     site_validation_state: &'a SiteValidationState,
     duplicates_state: &'a DuplicatesState,
@@ -435,6 +443,7 @@ fn route_content_area<'a>(
         import_editors,
         tags_view_state,
         settings_state,
+        style_view_state,
         dashboard_state,
         site_validation_state,
     ) {
@@ -509,6 +518,13 @@ fn route_content_area<'a>(
                 loading_view(locale)
             }
         }
+        ContentRoute::Style => {
+            if let Some(state) = style_view_state {
+                style_view::view(state, locale, style_preview_widget)
+            } else {
+                welcome::view(locale)
+            }
+        }
         ContentRoute::SiteValidation => site_validation::view(site_validation_state, locale),
         ContentRoute::FindDuplicates => duplicates::view(duplicates_state, locale),
         ContentRoute::Documentation => documentation::view(guide_documentation, locale),
@@ -533,7 +549,6 @@ fn route_content_area<'a>(
                 loading_view(locale)
             }
         }
-        ContentRoute::Placeholder(title) => welcome::tab_placeholder(locale, title, None),
     }
 }
 
@@ -550,6 +565,7 @@ enum ContentRoute<'a> {
     Chat(&'a str),
     Tags,
     Settings,
+    Style,
     SiteValidation,
     FindDuplicates,
     Documentation,
@@ -560,7 +576,6 @@ enum ContentRoute<'a> {
     MenuEditor,
     TranslationValidation,
     GitDiff(&'a str),
-    Placeholder(&'a str),
 }
 
 #[expect(
@@ -577,6 +592,7 @@ fn route_kind<'a>(
     import_editors: &'a HashMap<String, crate::views::import_editor::ImportEditorState>,
     tags_view_state: Option<&'a TagsViewState>,
     settings_state: Option<&'a SettingsViewState>,
+    style_view_state: Option<&'a StyleViewState>,
     dashboard_state: Option<&'a DashboardState>,
     _site_validation_state: &'a SiteValidationState,
 ) -> ContentRoute<'a> {
@@ -651,7 +667,13 @@ fn route_kind<'a>(
         TabType::CliDocumentation => ContentRoute::CliDocumentation,
         TabType::McpDocumentation => ContentRoute::McpDocumentation,
         TabType::MenuEditor => ContentRoute::MenuEditor,
-        TabType::Style => ContentRoute::Placeholder(&tab.title),
+        TabType::Style => {
+            if style_view_state.is_some() {
+                ContentRoute::Style
+            } else {
+                ContentRoute::Welcome
+            }
+        }
         TabType::TranslationValidation => ContentRoute::TranslationValidation,
     }
 }
@@ -701,35 +723,46 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_tool_tabs_do_not_fall_back_to_welcome_route() {
+    fn style_tab_routes_to_real_editor_only_with_project_state() {
         let empty_posts = HashMap::new();
         let empty_media = HashMap::new();
         let empty_templates = HashMap::new();
         let empty_scripts = HashMap::new();
         let empty_imports = HashMap::new();
         let site_validation_state = SiteValidationState::default();
-        let unsupported = [TabType::Style];
+        let style_state = StyleViewState::new(Some("blue"));
+        let tabs = vec![tab("style", TabType::Style, "Style")];
+        let route = route_kind(
+            &tabs,
+            Some("style"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            &empty_imports,
+            None,
+            None,
+            Some(&style_state),
+            None,
+            &site_validation_state,
+        );
+        assert!(matches!(route, ContentRoute::Style));
 
-        for tab_type in unsupported {
-            let tabs = vec![tab("tool", tab_type.clone(), "Tool")];
-            let route = route_kind(
-                &tabs,
-                Some("tool"),
-                &empty_posts,
-                &empty_media,
-                &empty_templates,
-                &empty_scripts,
-                &empty_imports,
-                None,
-                None,
-                None,
-                &site_validation_state,
-            );
-            match route {
-                ContentRoute::Placeholder(title) => assert_eq!(title, "Tool"),
-                _ => panic!("expected placeholder route for {tab_type:?}"),
-            }
-        }
+        let no_project_route = route_kind(
+            &tabs,
+            Some("style"),
+            &empty_posts,
+            &empty_media,
+            &empty_templates,
+            &empty_scripts,
+            &empty_imports,
+            None,
+            None,
+            None,
+            None,
+            &site_validation_state,
+        );
+        assert!(matches!(no_project_route, ContentRoute::Welcome));
     }
 
     #[test]
@@ -749,6 +782,7 @@ mod tests {
             &empty_templates,
             &empty_scripts,
             &empty_imports,
+            None,
             None,
             None,
             None,
@@ -778,6 +812,7 @@ mod tests {
                 &empty_templates,
                 &empty_scripts,
                 &empty_imports,
+                None,
                 None,
                 None,
                 None,
@@ -814,6 +849,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &site_validation,
         );
         assert!(matches!(route, ContentRoute::FindDuplicates));
@@ -839,6 +875,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &site_validation_state,
         );
         assert!(matches!(route, ContentRoute::GitDiff("git-diff:file.txt")));
@@ -861,6 +898,7 @@ mod tests {
             &empty_templates,
             &empty_scripts,
             &empty_imports,
+            None,
             None,
             None,
             None,
@@ -891,6 +929,7 @@ mod tests {
                 &empty_templates,
                 &empty_scripts,
                 &empty_imports,
+                None,
                 None,
                 None,
                 None,
@@ -928,6 +967,7 @@ mod tests {
             &empty_imports,
             None,
             None,
+            None,
             Some(&dashboard),
             &site_validation_state,
         );
@@ -959,6 +999,7 @@ mod tests {
             &empty_templates,
             &empty_scripts,
             &empty_imports,
+            None,
             None,
             None,
             None,

@@ -151,10 +151,9 @@ pub fn render_starter_single_post_page_with_media_map(
         language,
         language_prefix: language_prefix(language, main_language(metadata)),
         page_title: &post.title,
-        pico_stylesheet_href: metadata
-            .pico_theme
-            .as_ref()
-            .map(|_| "/assets/pico.min.css".to_string()),
+        pico_stylesheet_href: Some(crate::model::pico_stylesheet_href(
+            metadata.pico_theme.as_deref(),
+        )),
         html_theme_attribute: None,
         alternate_links: build_alternate_links(post, metadata, language),
         blog_languages: build_blog_languages(post, metadata, language),
@@ -226,10 +225,9 @@ pub fn render_starter_list_page_with_media_map(
         language: language.to_string(),
         language_prefix: language_prefix(language, main_language(metadata)),
         page_title: metadata.name.clone(),
-        pico_stylesheet_href: metadata
-            .pico_theme
-            .as_ref()
-            .map(|_| "/assets/pico.min.css".to_string()),
+        pico_stylesheet_href: Some(crate::model::pico_stylesheet_href(
+            metadata.pico_theme.as_deref(),
+        )),
         html_theme_attribute: None,
         alternate_links: vec![],
         blog_languages: build_blog_languages_for_index(metadata, language),
@@ -537,6 +535,21 @@ mod tests {
                 .contains("https://example.com/de/2024/03/09/hello")
         );
         assert!(rendered.html.contains("href=\"/2024/03/09/hello\""));
+    }
+
+    #[test]
+    fn starter_renderer_uses_the_selected_pico_theme_stylesheet() {
+        let post = make_post();
+        let mut metadata = make_metadata();
+        metadata.pico_theme = Some("amber".into());
+
+        let rendered = render_starter_single_post_page(&post, "Body", &metadata, "en").unwrap();
+
+        assert!(
+            rendered
+                .html
+                .contains("href=\"/assets/pico.amber.min.css\"")
+        );
     }
 
     #[test]

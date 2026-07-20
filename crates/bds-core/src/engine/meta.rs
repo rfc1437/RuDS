@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::db::DbConnection as Connection;
 use crate::engine::EngineResult;
-use crate::model::PublishingPreferences;
 use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
+use crate::model::{DomainEntity, NotificationAction, Project, PublishingPreferences};
 use crate::util::atomic_write_str;
 
 // ── project.json ────────────────────────────────────────────────────
@@ -24,6 +24,41 @@ pub fn write_project_json(data_dir: &Path, meta: &ProjectMetadata) -> EngineResu
     let json = serde_json::to_string_pretty(meta)?;
     atomic_write_str(&path, &json)?;
     Ok(())
+}
+
+/// Persist the shared project row and its filesystem metadata, then publish
+/// the normal project-updated domain event.
+pub fn update_project_metadata(
+    conn: &Connection,
+    data_dir: &Path,
+    project: &Project,
+    metadata: &ProjectMetadata,
+) -> EngineResult<ProjectMetadata> {
+    if project.id.is_empty() {
+        return Err(crate::engine::EngineError::Validation(
+            "project id is required".to_string(),
+        ));
+    }
+    metadata
+        .validate()
+        .map_err(crate::engine::EngineError::Validation)?;
+
+    let mut persisted_project = project.clone();
+    persisted_project.name = metadata.name.clone();
+    persisted_project.description = metadata.description.clone();
+    persisted_project.updated_at = crate::util::now_unix_ms();
+
+    let category_metadata = read_category_meta_json(data_dir)?;
+    write_project_json(data_dir, metadata)?;
+    write_category_meta_json(data_dir, &category_metadata)?;
+    crate::db::queries::project::update_project(conn, &persisted_project)?;
+    crate::engine::domain_events::entity_changed(
+        &project.id,
+        DomainEntity::Project,
+        &project.id,
+        NotificationAction::Updated,
+    );
+    Ok(metadata.clone())
 }
 
 /// Copy the project fields persisted in both representations from project.json

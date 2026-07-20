@@ -1598,10 +1598,9 @@ fn starter_partials() -> HashMap<String, String> {
 }
 
 fn pico_stylesheet_href(metadata: &ProjectMetadata) -> Option<String> {
-    metadata
-        .pico_theme
-        .as_ref()
-        .map(|_| "/assets/pico.min.css".to_string())
+    Some(crate::model::pico_stylesheet_href(
+        metadata.pico_theme.as_deref(),
+    ))
 }
 
 fn calendar_initial_parts(post: &Post) -> (i32, u32) {

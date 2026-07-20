@@ -35,36 +35,3 @@ pub fn view(locale: UiLocale) -> Element<'static, Message> {
     })
     .into()
 }
-
-pub fn tab_placeholder(
-    locale: UiLocale,
-    title: impl Into<String>,
-    subtitle: Option<String>,
-) -> Element<'static, Message> {
-    let title = title.into();
-    let subtitle = subtitle.unwrap_or_else(|| t(locale, "common.tabNotImplemented"));
-
-    container(
-        column![
-            text(title)
-                .size(24)
-                .shaping(Shaping::Advanced)
-                .color(Color::from_rgb(0.85, 0.85, 0.90)),
-            text(subtitle)
-                .size(14)
-                .shaping(Shaping::Advanced)
-                .color(Color::from_rgb(0.55, 0.55, 0.60)),
-        ]
-        .spacing(12)
-        .align_x(iced::Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.11, 0.11, 0.14))),
-        ..container::Style::default()
-    })
-    .into()
-}

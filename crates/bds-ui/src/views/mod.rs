@@ -18,6 +18,7 @@ pub mod settings_view;
 pub mod sidebar;
 pub mod site_validation;
 pub mod status_bar;
+pub mod style_view;
 pub mod tab_bar;
 pub mod tags_view;
 pub mod template_editor;

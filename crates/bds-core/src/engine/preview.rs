@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use crate::db::{Database, queries};
 use crate::engine::generation::PublishedPostSource;
 use crate::engine::{EngineError, EngineResult};
-use crate::model::{Post, PostStatus, ProjectMetadata};
+use crate::model::{Post, PostStatus, ProjectMetadata, pico_stylesheet_href};
 use crate::render::build_preview_response;
 use crate::util::frontmatter::{read_post_file, read_translation_file};
 
@@ -148,12 +148,31 @@ async fn handle_draft_preview(
     }
 }
 
-async fn handle_style_preview(Query(query): Query<StylePreviewQuery>) -> Response {
-    let theme = query.theme.unwrap_or_else(|| "default".to_string());
-    let mode = query.mode.unwrap_or_else(|| "auto".to_string());
+async fn handle_style_preview(
+    State(state): State<PreviewServerState>,
+    Query(query): Query<StylePreviewQuery>,
+) -> Response {
+    let metadata = match crate::engine::meta::read_project_json(&state.data_dir) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+        }
+    };
+    let theme = query.theme.as_deref().unwrap_or("default");
+    let stylesheet = pico_stylesheet_href(Some(theme));
+    let mode = match query.mode.as_deref().map(str::trim) {
+        Some("light") => Some("light"),
+        Some("dark") => Some("dark"),
+        _ => None,
+    };
+    let mode_attributes = mode
+        .map(|mode| format!(" data-theme=\"{mode}\" data-mode=\"{mode}\""))
+        .unwrap_or_default();
+    let project_name = escape_html(&metadata.name);
+    let language = escape_html(metadata.main_language.as_deref().unwrap_or("en"));
+    let description = escape_html(metadata.description.as_deref().unwrap_or(&metadata.name));
     let html = format!(
-        "<!doctype html><html lang=\"en\" data-theme=\"{}\" data-mode=\"{}\"><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>Style Preview</title><link rel=\"stylesheet\" href=\"/assets/pico.min.css\" /><link rel=\"stylesheet\" href=\"/assets/bds.css\" /></head><body><main><section class=\"style-preview\"><h1>Style Preview</h1><p>Theme: {}</p><p>Mode: {}</p></section></main></body></html>",
-        theme, mode, theme, mode,
+        "<!doctype html><html lang=\"{language}\"{mode_attributes}><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>{project_name}</title><link rel=\"stylesheet\" href=\"{stylesheet}\" /><link rel=\"stylesheet\" href=\"/assets/bds.css\" /></head><body><main class=\"container\"><nav><ul><li><strong>{project_name}</strong></li></ul></nav><article><header><h1>{project_name}</h1></header><p>{description}</p><progress value=\"70\" max=\"100\"></progress><input type=\"text\" value=\"{project_name}\" aria-label=\"{project_name}\" /><button type=\"button\">{project_name}</button></article></main></body></html>"
     );
     Html(html).into_response()
 }
@@ -200,48 +219,82 @@ fn apply_preview_style(html: String, style: Option<&StylePreviewQuery>) -> Strin
     let Some(style) = style else {
         return html;
     };
-    if style.theme.as_deref().unwrap_or("").is_empty()
-        && style.mode.as_deref().unwrap_or("").is_empty()
-    {
-        return html;
-    }
 
-    let Some(start) = html.find("<html") else {
-        return html;
-    };
-    let Some(end_rel) = html[start..].find('>') else {
-        return html;
-    };
-    let end = start + end_rel;
-
-    let mut attrs = String::new();
-    if let Some(theme) = style.theme.as_deref().filter(|value| !value.is_empty()) {
-        attrs.push_str(" data-theme=\"");
-        attrs.push_str(&escape_html_attr(theme));
-        attrs.push('"');
+    let mut styled = html;
+    if let Some(theme) = style.theme.as_deref().filter(|theme| !theme.is_empty()) {
+        styled = override_pico_stylesheet(&styled, &pico_stylesheet_href(Some(theme)));
     }
-    if let Some(mode) = style.mode.as_deref().filter(|value| !value.is_empty()) {
-        attrs.push_str(" data-mode=\"");
-        attrs.push_str(&escape_html_attr(mode));
-        attrs.push('"');
+    if let Some(mode) = style.mode.as_deref() {
+        let mode = match mode.trim() {
+            "light" => Some("light"),
+            "dark" => Some("dark"),
+            _ => None,
+        };
+        styled = override_html_attribute(&styled, "data-theme", mode);
+        styled = override_html_attribute(&styled, "data-mode", mode);
     }
-    if attrs.is_empty() {
-        return html;
-    }
-
-    let mut styled = String::with_capacity(html.len() + attrs.len());
-    styled.push_str(&html[..end]);
-    styled.push_str(&attrs);
-    styled.push_str(&html[end..]);
     styled
 }
 
-fn escape_html_attr(value: &str) -> String {
+fn override_pico_stylesheet(html: &str, href: &str) -> String {
+    let Some(start) = html.find("/assets/pico") else {
+        return html.to_string();
+    };
+    let Some(end_offset) = html[start..].find(".min.css") else {
+        return html.to_string();
+    };
+    let end = start + end_offset + ".min.css".len();
+    format!("{}{}{}", &html[..start], href, &html[end..])
+}
+
+fn override_html_attribute(html: &str, attribute: &str, value: Option<&str>) -> String {
+    let Some(html_start) = html.find("<html") else {
+        return html.to_string();
+    };
+    let Some(tag_end_offset) = html[html_start..].find('>') else {
+        return html.to_string();
+    };
+    let tag_end = html_start + tag_end_offset;
+    let attribute_start_pattern = format!(" {attribute}=\"");
+    let existing = html[html_start..tag_end]
+        .find(&attribute_start_pattern)
+        .and_then(|offset| {
+            let start = html_start + offset;
+            html[start + attribute_start_pattern.len()..tag_end]
+                .find('"')
+                .map(|end_offset| {
+                    (
+                        start,
+                        start + attribute_start_pattern.len() + end_offset + 1,
+                    )
+                })
+        });
+
+    match (existing, value) {
+        (Some((start, end)), Some(value)) => format!(
+            "{} {attribute}=\"{}\"{}",
+            &html[..start],
+            value,
+            &html[end..]
+        ),
+        (Some((start, end)), None) => format!("{}{}", &html[..start], &html[end..]),
+        (None, Some(value)) => format!(
+            "{} {attribute}=\"{}\"{}",
+            &html[..tag_end],
+            value,
+            &html[tag_end..]
+        ),
+        (None, None) => html.to_string(),
+    }
+}
+
+fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
-        .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn render_draft_preview(
@@ -384,6 +437,13 @@ fn serve_scoped_file(
     let scope_root = data_dir.join(scope_dir);
     let candidate = scope_root.join(relative);
     if !candidate.exists() || !candidate.is_file() {
+        let bundled_path = format!("{scope_dir}/{relative}");
+        if let Some(bytes) = crate::engine::site_assets::bundled_site_asset(&bundled_path) {
+            let mime = guess_content_type(Path::new(&bundled_path));
+            return Ok(Some(
+                (StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response(),
+            ));
+        }
         return Ok(Some(error_response(
             StatusCode::NOT_FOUND,
             "preview asset not found",
@@ -715,16 +775,28 @@ mod tests {
         let client = reqwest::blocking::Client::new();
         let response = client
             .get(format!(
-                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__style-preview?theme=nightfall&mode=dark"
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__style-preview?theme=amber&mode=dark"
             ))
             .send()
             .unwrap();
         let body = response.text().unwrap();
+        let stylesheet = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/assets/pico.amber.min.css"
+            ))
+            .send()
+            .unwrap();
+        assert!(stylesheet.status().is_success());
+        let stylesheet = stylesheet.text().unwrap();
         server.stop().unwrap();
 
-        assert!(body.contains("Style Preview"));
-        assert!(body.contains("nightfall"));
-        assert!(body.contains("dark"));
+        assert!(body.contains("<article>"));
+        assert!(body.contains("Blog"));
+        assert!(body.contains("href=\"/assets/pico.amber.min.css\""));
+        assert!(body.contains("data-theme=\"dark\""));
+        assert!(body.contains("data-mode=\"dark\""));
+        assert!(!body.contains("data-theme=\"amber\""));
+        assert!(stylesheet.contains("--pico-primary-background:#ffbf00"));
     }
 
     #[test]
@@ -742,15 +814,34 @@ mod tests {
         let client = reqwest::blocking::Client::new();
         let response = client
             .get(format!(
-                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/?theme=nightfall&mode=dark"
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/?theme=amber&mode=light"
             ))
             .send()
             .unwrap();
         let body = response.text().unwrap();
         server.stop().unwrap();
 
-        assert!(body.contains("data-theme=\"nightfall\""));
-        assert!(body.contains("data-mode=\"dark\""));
+        assert!(body.contains("href=\"/assets/pico.amber.min.css\""));
+        assert!(body.contains("data-theme=\"light\""));
+        assert!(body.contains("data-mode=\"light\""));
+        assert!(!body.contains("data-theme=\"amber\""));
+    }
+
+    #[test]
+    fn auto_preview_mode_removes_forced_color_scheme_and_invalid_theme_falls_back() {
+        let html = "<html data-theme=\"dark\" data-mode=\"dark\"><head><link rel=\"stylesheet\" href=\"/assets/pico.blue.min.css\"></head></html>".to_string();
+        let styled = apply_preview_style(
+            html,
+            Some(&StylePreviewQuery {
+                theme: Some("../../secret".into()),
+                mode: Some("auto".into()),
+            }),
+        );
+
+        assert!(styled.contains("href=\"/assets/pico.min.css\""));
+        assert!(!styled.contains("data-theme="));
+        assert!(!styled.contains("data-mode="));
+        assert!(!styled.contains("secret"));
     }
 
     #[test]

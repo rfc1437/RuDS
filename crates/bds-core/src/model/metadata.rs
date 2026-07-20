@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+pub const SUPPORTED_PICO_THEMES: [&str; 20] = [
+    "default", "amber", "blue", "cyan", "fuchsia", "green", "grey", "indigo", "jade", "lime",
+    "orange", "pink", "pumpkin", "purple", "red", "sand", "slate", "violet", "yellow", "zinc",
+];
+
+pub fn is_supported_pico_theme(theme: &str) -> bool {
+    SUPPORTED_PICO_THEMES.contains(&theme)
+}
+
+pub fn pico_stylesheet_href(theme: Option<&str>) -> String {
+    match theme.filter(|theme| is_supported_pico_theme(theme)) {
+        Some("default") | None => "/assets/pico.min.css".to_string(),
+        Some(theme) => format!("/assets/pico.{theme}.min.css"),
+    }
+}
+
 fn default_max_posts() -> i32 {
     50
 }
@@ -68,6 +84,11 @@ impl ProjectMetadata {
                 "imageImportConcurrency must be 1..8, got {}",
                 self.image_import_concurrency
             ));
+        }
+        if let Some(theme) = self.pico_theme.as_deref()
+            && !is_supported_pico_theme(theme)
+        {
+            return Err(format!("unsupported picoTheme: {theme}"));
         }
         Ok(())
     }
@@ -208,5 +229,15 @@ mod tests {
 
         meta.max_posts_per_page = 500;
         assert!(meta.validate().is_ok());
+    }
+
+    #[test]
+    fn pico_theme_validation_accepts_only_bundled_themes() {
+        let mut meta: ProjectMetadata = serde_json::from_str(r#"{"name":"Test"}"#).unwrap();
+        meta.pico_theme = Some("amber".into());
+        assert!(meta.validate().is_ok());
+
+        meta.pico_theme = Some("nightfall".into());
+        assert!(meta.validate().is_err());
     }
 }

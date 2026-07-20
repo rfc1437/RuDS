@@ -26,7 +26,10 @@ pub use import::{
 };
 pub use mcp::{McpProposal, ProposalKind, ProposalStatus};
 pub use media::{Media, MediaTranslation};
-pub use metadata::{CategorySettings, ProjectMetadata, TagEntry};
+pub use metadata::{
+    CategorySettings, ProjectMetadata, SUPPORTED_PICO_THEMES, TagEntry, is_supported_pico_theme,
+    pico_stylesheet_href,
+};
 pub use post::{Post, PostLink, PostMedia, PostStatus, PostTranslation};
 pub use project::{Project, Setting};
 pub use script::{Script, ScriptKind, ScriptStatus};

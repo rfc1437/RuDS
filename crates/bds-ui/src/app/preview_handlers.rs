@@ -5,17 +5,34 @@ impl BdsApp {
         match message {
             Message::MainWindowLoaded(window_id) => {
                 self.main_window_id = window_id;
-                if self.active_post_uses_embedded_preview() {
-                    self.sync_embedded_preview_for_active_post()
-                } else {
-                    Task::none()
-                }
+                Task::batch([
+                    self.sync_embedded_preview_for_active_post(),
+                    self.sync_embedded_preview_for_style(),
+                ])
             }
             Message::EmbeddedPreviewReady(result) => {
                 match result {
                     Ok(()) => {
                         let visible = self.active_post_uses_embedded_preview();
                         if let Some(preview) = &mut self.embedded_preview {
+                            preview.controller.take_staged();
+                            if let Some(url) = preview.current_url.as_deref() {
+                                preview.controller.navigate(url);
+                            }
+                            preview.controller.set_visible(visible);
+                        }
+                    }
+                    Err(error) => {
+                        self.notify(ToastLevel::Error, &error);
+                    }
+                }
+                Task::none()
+            }
+            Message::EmbeddedStylePreviewReady(result) => {
+                match result {
+                    Ok(()) => {
+                        let visible = self.active_style_uses_embedded_preview();
+                        if let Some(preview) = &mut self.embedded_style_preview {
                             preview.controller.take_staged();
                             if let Some(url) = preview.current_url.as_deref() {
                                 preview.controller.navigate(url);

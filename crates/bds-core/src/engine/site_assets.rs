@@ -231,6 +231,13 @@ const BUNDLED_SITE_ASSETS: &[BundledSiteAsset] = &[
     },
 ];
 
+pub(crate) fn bundled_site_asset(relative_path: &str) -> Option<&'static [u8]> {
+    BUNDLED_SITE_ASSETS
+        .iter()
+        .find(|asset| asset.relative_path == relative_path)
+        .map(|asset| asset.bytes)
+}
+
 pub(crate) fn copy_bundled_site_assets(project_dir: &Path) -> EngineResult<()> {
     for asset in BUNDLED_SITE_ASSETS {
         let target = project_dir.join(asset.relative_path);

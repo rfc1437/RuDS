@@ -278,25 +278,23 @@ pub fn section_header<'a, Message: 'a>(label: &str) -> Element<'a, Message> {
 /// Primary action button style.
 pub fn primary_button(theme: &Theme, status: button::Status) -> button::Style {
     let _ = theme;
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(PRIMARY_HOVER)),
-            text_color: Color::WHITE,
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..iced::Border::default()
-            },
-            ..button::Style::default()
+    let background = match status {
+        button::Status::Hovered => PRIMARY_HOVER,
+        button::Status::Disabled => PRIMARY_BG.scale_alpha(0.45),
+        _ => PRIMARY_BG,
+    };
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: if matches!(status, button::Status::Disabled) {
+            Color::WHITE.scale_alpha(0.55)
+        } else {
+            Color::WHITE
         },
-        _ => button::Style {
-            background: Some(Background::Color(PRIMARY_BG)),
-            text_color: Color::WHITE,
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..iced::Border::default()
-            },
-            ..button::Style::default()
+        border: iced::Border {
+            radius: 6.0.into(),
+            ..iced::Border::default()
         },
+        ..button::Style::default()
     }
 }
 
@@ -463,6 +461,10 @@ mod tests {
         assert_ne!(
             primary_button(&theme, button::Status::Active).background,
             primary_button(&theme, button::Status::Hovered).background
+        );
+        assert_ne!(
+            primary_button(&theme, button::Status::Active).background,
+            primary_button(&theme, button::Status::Disabled).background
         );
         assert_ne!(
             field_style(&theme, text_input::Status::Active).border.color,
