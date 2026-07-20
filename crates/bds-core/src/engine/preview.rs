@@ -1605,7 +1605,7 @@ mod tests {
         oldest.post.id = "post-1".into();
         oldest.post.slug = "alpha".into();
         oldest.post.title = "Alpha".into();
-        oldest.post.tags = vec!["Rust".into()];
+        oldest.post.tags = vec!["Über Öl".into()];
         oldest.post.published_at = Some(1_709_568_000_000);
         oldest.post.created_at = 1_709_568_000_000;
         oldest.body_markdown = "Alpha body".into();
@@ -1614,7 +1614,7 @@ mod tests {
         newest.post.id = "post-2".into();
         newest.post.slug = "beta".into();
         newest.post.title = "Beta".into();
-        newest.post.tags = vec!["Rust".into()];
+        newest.post.tags = vec!["Über Öl".into()];
         newest.post.published_at = Some(1_710_086_400_000);
         newest.post.created_at = 1_710_086_400_000;
         newest.body_markdown = "Beta body".into();
@@ -1640,7 +1640,7 @@ mod tests {
             "project-1",
             &metadata,
             &posts,
-            "/tag/rust",
+            "/tag/uber-ol",
         )
         .unwrap();
         assert_eq!(tag_first.status_code, 200);
@@ -1653,7 +1653,7 @@ mod tests {
             "project-1",
             &metadata,
             &posts,
-            "/tag/rust/page/2",
+            "/tag/uber-ol/page/2",
         )
         .unwrap();
         assert_eq!(tag_second.status_code, 200);

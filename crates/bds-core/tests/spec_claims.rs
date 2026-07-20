@@ -284,7 +284,7 @@ fn slug_generation_matches_spec() {
     assert_eq!(slugify("a --- b"), "a-b");
     assert_eq!(slugify("---hello---"), "hello");
     assert_eq!(slugify("café"), "cafe");
-    assert_eq!(slugify("über"), "ueber");
+    assert_eq!(slugify("über"), "uber");
     assert_eq!(slugify("Straße"), "strasse");
     assert_eq!(ensure_unique("test", |value| value == "test"), "test-2");
 }

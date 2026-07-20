@@ -592,7 +592,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(rendered, "ueber-die-bruecke");
+        assert_eq!(rendered, "uber-die-brucke");
     }
 
     #[test]

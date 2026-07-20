@@ -1,34 +1,21 @@
-use deunicode::deunicode;
+use unicode_normalization::UnicodeNormalization;
 
-/// Pre-process German characters to match TypeScript `transliteration` npm output.
-/// deunicode maps ä→a, ö→o, ü→u but TypeScript produces ä→ae, ö→oe, ü→ue.
-/// We replace these before deunicode so the slug output is compatible.
+/// Apply the one German replacement that canonical decomposition cannot provide.
 fn german_transliterate(input: &str) -> String {
-    let mut result = String::with_capacity(input.len() + 16);
-    for c in input.chars() {
-        match c {
-            'ä' => result.push_str("ae"),
-            'ö' => result.push_str("oe"),
-            'ü' => result.push_str("ue"),
-            'Ä' => result.push_str("Ae"),
-            'Ö' => result.push_str("Oe"),
-            'Ü' => result.push_str("Ue"),
-            _ => result.push(c),
-        }
-    }
-    result
+    input.replace('ß', "ss")
 }
 
 /// Generate a URL-safe slug from a title string.
 ///
-/// Transliterates Unicode to ASCII, lowercases, replaces non-alphanumeric
-/// chars with hyphens, and collapses/trims hyphens.
-///
-/// German umlauts (ä/ö/ü/Ä/Ö/Ü) are pre-processed to ae/oe/ue/Ae/Oe/Ue
-/// to match TypeScript `transliteration` npm output. ß→ss is handled by deunicode.
+/// Matches bDS2 exactly: replace ß with `ss`, canonically decompose Unicode,
+/// discard non-ASCII code points, lowercase, replace non-alphanumeric runs
+/// with hyphens, and trim leading/trailing hyphens.
 pub fn slugify(input: &str) -> String {
     let preprocessed = german_transliterate(input);
-    let ascii = deunicode(&preprocessed);
+    let ascii = preprocessed
+        .nfd()
+        .filter(char::is_ascii)
+        .collect::<String>();
     let lowered = ascii.to_lowercase();
     let mut slug = String::with_capacity(lowered.len());
     let mut prev_hyphen = true; // avoid leading hyphen
@@ -79,7 +66,7 @@ mod tests {
 
     #[test]
     fn unicode_slug() {
-        assert_eq!(slugify("Über die Brücke"), "ueber-die-bruecke");
+        assert_eq!(slugify("Über die Brücke"), "uber-die-brucke");
     }
 
     #[test]
@@ -122,24 +109,34 @@ mod tests {
         assert_eq!(slug, "hello-4");
     }
 
-    // German umlaut tests — spec: "only German and English letters are used.
-    // Verify deunicode handles ä/ö/ü/ß/ÄÖÜ correctly against transliteration npm."
-    // Pre-processing maps ä→ae, ö→oe, ü→ue to match TypeScript transliteration npm.
-    // ß→ss is handled correctly by deunicode without pre-processing.
+    // German corpus copied from the bDS2 golden-master tests.
+    #[test]
+    fn bds2_german_transliteration_corpus() {
+        assert_eq!(slugify("Straße"), "strasse");
+        assert_eq!(slugify("Öl"), "ol");
+        assert_eq!(slugify("Äpfel"), "apfel");
+        assert_eq!(slugify("Über"), "uber");
+        assert_eq!(slugify("ÄÖÜäöüß"), "aouaouss");
+    }
+
+    #[test]
+    fn bds2_nfd_discards_non_ascii_instead_of_transliterating_it() {
+        assert_eq!(slugify("Crème 東京 œ"), "creme");
+    }
 
     #[test]
     fn german_umlaut_ae() {
-        assert_eq!(slugify("Ärger"), "aerger");
+        assert_eq!(slugify("Ärger"), "arger");
     }
 
     #[test]
     fn german_umlaut_oe() {
-        assert_eq!(slugify("Öffnung"), "oeffnung");
+        assert_eq!(slugify("Öffnung"), "offnung");
     }
 
     #[test]
     fn german_umlaut_ue() {
-        assert_eq!(slugify("Über"), "ueber");
+        assert_eq!(slugify("Über"), "uber");
     }
 
     #[test]
@@ -149,12 +146,12 @@ mod tests {
 
     #[test]
     fn german_mixed_umlauts() {
-        assert_eq!(slugify("Größe über Maße"), "groesse-ueber-masse");
+        assert_eq!(slugify("Größe über Maße"), "grosse-uber-masse");
     }
 
     #[test]
     fn german_uppercase_umlauts() {
-        assert_eq!(slugify("ÄÖÜ Test"), "aeoeue-test");
+        assert_eq!(slugify("ÄÖÜ Test"), "aou-test");
     }
 
     // spec: CreatePost uses Slug.generate(title ?? "untitled")

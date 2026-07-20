@@ -1826,8 +1826,8 @@ mod menu_tests {
                     slug: None,
                     children: vec![MenuItem {
                         kind: MenuItemKind::CategoryArchive,
-                        label: "Long Form".into(),
-                        slug: Some("Long Form".into()),
+                        label: "Über Öl".into(),
+                        slug: Some("Über Öl".into()),
                         children: Vec::new(),
                     }],
                 },
@@ -1838,12 +1838,12 @@ mod menu_tests {
         let rendered = build_menu_items(dir.path(), "en", "en").unwrap();
         assert_eq!(rendered[0]["href"], "/");
         assert_eq!(rendered[1]["href"], "/about/");
-        assert_eq!(rendered[2]["children"][0]["href"], "/category/long-form/");
+        assert_eq!(rendered[2]["children"][0]["href"], "/category/uber-ol/");
         let translated = build_menu_items(dir.path(), "de", "en").unwrap();
         assert_eq!(translated[1]["href"], "/de/about/");
         assert_eq!(
             translated[2]["children"][0]["href"],
-            "/de/category/long-form/"
+            "/de/category/uber-ol/"
         );
     }
 }

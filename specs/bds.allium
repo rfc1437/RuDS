@@ -74,9 +74,9 @@ use "./metadata_diff.allium" as metadata_diff   -- DB/filesystem diff and rebuil
 
 -- Resolved questions:
 --
--- 1. Slug generation scope: only German and English letters are used.
---    Verify transliteration preserves the established bDS behaviour for
---    ä/ö/ü/ß/ÄÖÜ.
+-- 1. Slug generation is identical to bDS2: replace ß with "ss", normalize to
+--    Unicode NFD, discard non-ASCII code points, lowercase, hyphenate
+--    non-alphanumeric runs, and trim hyphens. Thus ä/ö/ü become a/o/u.
 --
 -- 2. Liquid subset: see template.allium for the exact subset.
 --    Only 5 tags, 4 standard filters, 2 custom filters, 5 operators.
