@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -111,6 +111,23 @@ pub enum Message {
     GalleryImportFinished {
         post_id: String,
         report: engine::gallery_import::GalleryImportReport,
+    },
+    FileDropped(PathBuf),
+    ImageDropImported {
+        task_id: TaskId,
+        post_id: String,
+        project_id: String,
+        data_dir: PathBuf,
+        source_language: String,
+        offline_mode: bool,
+        path: PathBuf,
+        result: Result<Media, String>,
+    },
+    ImageDropEnriched {
+        task_id: TaskId,
+        post_id: String,
+        path: PathBuf,
+        result: Result<String, String>,
     },
     MediaImportFinished {
         imported: Vec<Media>,
@@ -402,6 +419,16 @@ struct SiteGenerationWorkflow {
     render_task_ids: Vec<TaskId>,
     index_task_id: Option<TaskId>,
     report: engine::generation::GenerationReport,
+}
+
+#[derive(Debug, Clone)]
+struct ImageDropRequest {
+    post_id: String,
+    project_id: String,
+    data_dir: PathBuf,
+    source_language: String,
+    offline_mode: bool,
+    path: PathBuf,
 }
 
 enum PersistedPostState {
@@ -910,6 +937,8 @@ pub struct BdsApp {
     search_index_rebuild_running: bool,
     search_index_rebuild_task_id: Option<TaskId>,
     site_generation_workflows: HashMap<String, SiteGenerationWorkflow>,
+    pending_image_drops: VecDeque<ImageDropRequest>,
+    image_drop_import_running: bool,
 
     // Platform
     _menu_bar: Option<muda::Menu>,
@@ -1107,6 +1136,8 @@ impl BdsApp {
                 search_index_rebuild_running: false,
                 search_index_rebuild_task_id: None,
                 site_generation_workflows: HashMap::new(),
+                pending_image_drops: VecDeque::new(),
+                image_drop_import_running: false,
                 _menu_bar: Some(menu_bar),
                 menu_registry: registry,
                 native_edit_commands: native_edit::command_queue(),
@@ -1202,6 +1233,8 @@ impl BdsApp {
             search_index_rebuild_running: false,
             search_index_rebuild_task_id: None,
             site_generation_workflows: HashMap::new(),
+            pending_image_drops: VecDeque::new(),
+            image_drop_import_running: false,
             _menu_bar: None,
             menu_registry: MenuRegistry::empty(),
             native_edit_commands: native_edit::command_queue(),
@@ -1845,6 +1878,34 @@ impl BdsApp {
                 }
                 Task::none()
             }
+            Message::FileDropped(path) => self.enqueue_image_drop(path),
+            Message::ImageDropImported {
+                task_id,
+                post_id,
+                project_id,
+                data_dir,
+                source_language,
+                offline_mode,
+                path,
+                result,
+            } => self.finish_image_drop_import(
+                task_id,
+                ImageDropRequest {
+                    post_id,
+                    project_id,
+                    data_dir,
+                    source_language,
+                    offline_mode,
+                    path,
+                },
+                result,
+            ),
+            Message::ImageDropEnriched {
+                task_id,
+                post_id,
+                path,
+                result,
+            } => self.finish_image_drop_enrichment(task_id, &post_id, &path, result),
             Message::MediaFilesPicked(paths) => {
                 let (Some(paths), Some(project), Some(data_dir)) =
                     (paths, self.active_project.as_ref(), self.data_dir.as_ref())
@@ -3336,6 +3397,13 @@ impl BdsApp {
             Subscription::none()
         };
 
+        let file_drop_sub = iced::event::listen_with(|event, _status, _id| match event {
+            iced::Event::Window(window::Event::FileDropped(path)) => {
+                Some(Message::FileDropped(path))
+            }
+            _ => None,
+        });
+
         // Global mouse tracking for sidebar resize dragging.
         // The 4px drag handle mouse_area only fires on_press; move/release
         // are captured here so dragging works even when the cursor leaves
@@ -3388,6 +3456,7 @@ impl BdsApp {
             task_tick,
             domain_event_tick,
             toast_tick,
+            file_drop_sub,
             drag_sub,
             menu_interaction_sub,
             menu_expand_tick,
@@ -5543,6 +5612,257 @@ impl BdsApp {
         Task::none()
     }
 
+    fn enqueue_image_drop(&mut self, path: PathBuf) -> Task<Message> {
+        let Some(post_id) = dropped_image_target(self.active_tab.as_deref(), &self.tabs, &path)
+        else {
+            return Task::none();
+        };
+        let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+            return Task::none();
+        };
+        self.pending_image_drops.push_back(ImageDropRequest {
+            post_id,
+            project_id: project.id.clone(),
+            data_dir: data_dir.clone(),
+            source_language: self.content_language.clone(),
+            offline_mode: self.offline_mode,
+            path,
+        });
+        self.start_next_image_drop_import()
+    }
+
+    fn start_next_image_drop_import(&mut self) -> Task<Message> {
+        if self.image_drop_import_running {
+            return Task::none();
+        }
+        let Some(request) = self.pending_image_drops.pop_front() else {
+            return Task::none();
+        };
+        self.image_drop_import_running = true;
+        let name = request
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| request.path.display().to_string());
+        let label = tw(self.ui_locale, "editor.imageDropImport", &[("name", &name)]);
+        let task_id = self.task_manager.submit(&label);
+        self.refresh_task_snapshots();
+
+        let db_path = self.db_path.clone();
+        let task_manager = Arc::clone(&self.task_manager);
+        let locale = self.ui_locale;
+        let message_request = request.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    if !task_manager.wait_until_runnable(task_id) {
+                        return Err("cancelled".to_string());
+                    }
+                    task_manager.report_progress(
+                        task_id,
+                        Some(0.0),
+                        Some(tw(locale, "editor.imageDropProgress", &[("name", &name)])),
+                    );
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    let sort_order =
+                        engine::post_media::list_media_for_post(db.conn(), &request.post_id)
+                            .map(|items| items.len() as i32)
+                            .unwrap_or(0);
+                    engine::gallery_import::import_and_link_image(
+                        db.conn(),
+                        &request.data_dir,
+                        &request.project_id,
+                        &request.post_id,
+                        &request.path,
+                        &request.source_language,
+                        sort_order,
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()))
+            },
+            move |result| Message::ImageDropImported {
+                task_id,
+                post_id: message_request.post_id.clone(),
+                project_id: message_request.project_id.clone(),
+                data_dir: message_request.data_dir.clone(),
+                source_language: message_request.source_language.clone(),
+                offline_mode: message_request.offline_mode,
+                path: message_request.path.clone(),
+                result,
+            },
+        )
+    }
+
+    fn finish_image_drop_import(
+        &mut self,
+        task_id: TaskId,
+        request: ImageDropRequest,
+        result: Result<Media, String>,
+    ) -> Task<Message> {
+        self.image_drop_import_running = false;
+        let cancelled = self.task_manager.status(task_id) == Some(TaskStatus::Cancelled);
+        let mut tasks = vec![self.start_next_image_drop_import()];
+        match result {
+            Ok(media) => {
+                if !cancelled {
+                    self.task_manager.complete(task_id);
+                }
+                let inserted = self
+                    .post_editors
+                    .get_mut(&request.post_id)
+                    .map(|state| state.insert_dropped_image(&media.file_path))
+                    .is_some();
+                if inserted {
+                    if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == request.post_id) {
+                        tab.is_dirty = true;
+                    }
+                    if let Err(error) = self.persist_post_editor_state(&request.post_id) {
+                        self.notify_operation_failed("common.save", error);
+                    }
+                }
+                self.refresh_post_relationships(&request.post_id);
+                let name = request
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| request.path.display().to_string());
+                self.add_output(&tw(
+                    self.ui_locale,
+                    "editor.imageDropAdded",
+                    &[("name", &name)],
+                ));
+                tasks.push(self.start_image_drop_enrichment(&request, media));
+            }
+            Err(error) if !cancelled => {
+                self.task_manager.fail(task_id, error.clone());
+                let path = request
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| request.path.display().to_string());
+                self.add_output(&tw(
+                    self.ui_locale,
+                    "editor.imageDropFailed",
+                    &[("path", &path), ("error", &error)],
+                ));
+            }
+            Err(_) => {}
+        }
+        self.refresh_task_snapshots();
+        tasks.push(self.refresh_sidebar_media());
+        Task::batch(tasks)
+    }
+
+    fn start_image_drop_enrichment(
+        &mut self,
+        request: &ImageDropRequest,
+        media: Media,
+    ) -> Task<Message> {
+        let Some(db) = self.db.as_ref() else {
+            return Task::none();
+        };
+        if !engine::gallery_import::active_ai_endpoint_configured(db.conn(), request.offline_mode) {
+            let key = if request.offline_mode {
+                "editor.galleryAirplaneGated"
+            } else {
+                "chat.unavailable.guidance"
+            };
+            self.notify(ToastLevel::Warning, &t(self.ui_locale, key));
+            return Task::none();
+        }
+        let metadata = engine::meta::read_project_json(&request.data_dir).ok();
+        let translate = bds_core::db::queries::post::get_post_by_id(db.conn(), &request.post_id)
+            .is_ok_and(|post| !post.do_not_translate);
+        let targets = if translate {
+            engine::gallery_import::translation_targets(
+                metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.main_language.as_deref()),
+                metadata
+                    .as_ref()
+                    .map(|metadata| metadata.blog_languages.as_slice())
+                    .unwrap_or_default(),
+                &request.source_language,
+            )
+        } else {
+            Vec::new()
+        };
+        let name = request
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| request.path.display().to_string());
+        let label = tw(
+            self.ui_locale,
+            "editor.imageDropEnrichment",
+            &[("name", &name)],
+        );
+        let task_id = self.task_manager.submit(&label);
+        self.refresh_task_snapshots();
+        let db_path = self.db_path.clone();
+        let data_dir = request.data_dir.clone();
+        let offline_mode = request.offline_mode;
+        let post_id = request.post_id.clone();
+        let path = request.path.clone();
+        let task_manager = Arc::clone(&self.task_manager);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    if !task_manager.wait_until_runnable(task_id) {
+                        return Err("cancelled".to_string());
+                    }
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    engine::gallery_import::enrich_imported_image(
+                        db.conn(),
+                        &data_dir,
+                        &media,
+                        offline_mode,
+                        &targets,
+                    )
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()))
+            },
+            move |result| Message::ImageDropEnriched {
+                task_id,
+                post_id: post_id.clone(),
+                path: path.clone(),
+                result,
+            },
+        )
+    }
+
+    fn finish_image_drop_enrichment(
+        &mut self,
+        task_id: TaskId,
+        post_id: &str,
+        path: &Path,
+        result: Result<String, String>,
+    ) -> Task<Message> {
+        let cancelled = self.task_manager.status(task_id) == Some(TaskStatus::Cancelled);
+        match result {
+            Ok(_) if !cancelled => self.task_manager.complete(task_id),
+            Err(error) if !cancelled => {
+                self.task_manager.fail(task_id, error.clone());
+                let path = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.add_output(&tw(
+                    self.ui_locale,
+                    "editor.imageDropEnrichmentFailed",
+                    &[("path", &path), ("error", &error)],
+                ));
+            }
+            _ => {}
+        }
+        self.refresh_task_snapshots();
+        self.refresh_post_relationships(post_id);
+        self.refresh_sidebar_media()
+    }
+
     fn add_gallery_images(&mut self, post_id: &str) -> Task<Message> {
         let Some(db) = self.db.as_ref() else {
             self.add_output(&t(self.ui_locale, "common.databaseUnavailable"));
@@ -5551,8 +5871,10 @@ impl BdsApp {
         if self.offline_mode
             && !engine::gallery_import::active_ai_endpoint_configured(db.conn(), true)
         {
-            self.add_output(&t(self.ui_locale, "editor.galleryAirplaneGated"));
-            return Task::none();
+            self.notify(
+                ToastLevel::Warning,
+                &t(self.ui_locale, "editor.galleryAirplaneGated"),
+            );
         }
         crate::platform::dialog::pick_gallery_images(
             post_id.to_string(),
@@ -5945,7 +6267,7 @@ impl BdsApp {
         }
 
         let markdown = bds_core::engine::post::post_insert_media(
-            &media.id,
+            &media.file_path,
             media.mime_type.starts_with("image/"),
             &media.original_name,
         );
@@ -9007,6 +9329,16 @@ fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
 }
 
+fn dropped_image_target(active_tab: Option<&str>, tabs: &[Tab], path: &Path) -> Option<String> {
+    if !engine::media::is_supported_image_path(path) {
+        return None;
+    }
+    let active_tab = active_tab?;
+    tabs.iter()
+        .find(|tab| tab.id == active_tab && tab.tab_type == TabType::Post)
+        .map(|tab| tab.id.clone())
+}
+
 fn split_csv_values(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -9044,7 +9376,7 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, localize_chat_error, month_abbreviation,
+        PostStatus, SettingsMsg, dropped_image_target, localize_chat_error, month_abbreviation,
         persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
         persist_post_editor_state_impl, remote_error_closes_connection,
         save_editor_settings_state_impl, save_script_editor_state_impl,
@@ -9076,7 +9408,7 @@ mod tests {
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::thread;
     use tempfile::TempDir;
 
@@ -9485,7 +9817,150 @@ mod tests {
     }
 
     #[test]
-    fn gallery_action_is_gated_in_airplane_mode_without_local_endpoint() {
+    fn file_drop_routes_only_supported_images_to_the_active_post_tab() {
+        let tabs = vec![
+            Tab {
+                id: "post-1".to_string(),
+                tab_type: TabType::Post,
+                title: "Post".to_string(),
+                is_transient: false,
+                is_dirty: false,
+            },
+            Tab {
+                id: "settings".to_string(),
+                tab_type: TabType::Settings,
+                title: "Settings".to_string(),
+                is_transient: false,
+                is_dirty: false,
+            },
+        ];
+
+        assert_eq!(
+            dropped_image_target(Some("post-1"), &tabs, Path::new("photo.PNG")),
+            Some("post-1".to_string())
+        );
+        assert_eq!(
+            dropped_image_target(Some("post-1"), &tabs, Path::new("notes.txt")),
+            None
+        );
+        assert_eq!(
+            dropped_image_target(Some("settings"), &tabs, Path::new("photo.png")),
+            None
+        );
+        assert_eq!(
+            dropped_image_target(None, &tabs, Path::new("photo.png")),
+            None
+        );
+    }
+
+    #[test]
+    fn multiple_file_drop_events_queue_one_managed_import_at_a_time() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Drops",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &created);
+
+        let _ = app.update(Message::FileDropped(tmp.path().join("first.png")));
+        let _ = app.update(Message::FileDropped(tmp.path().join("second.png")));
+
+        assert!(app.image_drop_import_running);
+        assert_eq!(app.pending_image_drops.len(), 1);
+        assert_eq!(app.task_manager.snapshots().len(), 1);
+        assert!(app.task_manager.snapshots()[0].label.contains("first.png"));
+    }
+
+    #[test]
+    fn completed_drop_is_linked_persisted_and_skips_unavailable_airplane_ai() {
+        let (db, project, tmp) = setup();
+        let project_id = project.id.clone();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project_id,
+            "Drop",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let source = tmp.path().join("dropped.png");
+        std::fs::write(&source, tiny_png_bytes()).unwrap();
+        let imported = bds_core::engine::gallery_import::import_and_link_image(
+            db.conn(),
+            tmp.path(),
+            &project_id,
+            &created.id,
+            &source,
+            "en",
+            0,
+        )
+        .unwrap();
+        let expected_url = format!("/{}", imported.file_path);
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &created);
+        app.offline_mode = true;
+        app.post_editors[&created.id]
+            .editor_buffer
+            .borrow_mut()
+            .set_cursor(0, 2);
+        let task_id = app.task_manager.submit("drop");
+
+        let _ = app.update(Message::ImageDropImported {
+            task_id,
+            post_id: created.id.clone(),
+            project_id,
+            data_dir: tmp.path().to_path_buf(),
+            source_language: "en".to_string(),
+            offline_mode: true,
+            path: source,
+            result: Ok(imported.clone()),
+        });
+
+        let content = &app.post_editors[&created.id].content;
+        assert!(content.contains(&format!("![]({expected_url})")));
+        assert!(!content.contains("bds-media://"));
+        let saved = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert_eq!(saved.content.as_deref(), Some(content.as_str()));
+        assert_eq!(
+            bds_core::engine::post_media::list_media_for_post(
+                app.db.as_ref().unwrap().conn(),
+                &created.id,
+            )
+            .unwrap()[0]
+                .id,
+            imported.id
+        );
+        assert_eq!(
+            app.task_manager.status(task_id),
+            Some(TaskStatus::Completed)
+        );
+        assert!(app.toasts.iter().any(|toast| {
+            toast.level == ToastLevel::Warning
+                && toast.message == "Automatic AI actions stay gated by airplane mode."
+        }));
+    }
+
+    #[test]
+    fn gallery_action_warns_but_keeps_import_available_without_a_local_endpoint() {
         let (db, project, tmp) = setup();
         let created = post::create_post(
             db.conn(),
@@ -9511,10 +9986,10 @@ mod tests {
         let _ = app.handle_post_editor_msg(PostEditorMsg::AddGalleryImages);
 
         assert!(!app.post_editors[&created.id].quick_actions_open);
-        assert_eq!(
-            app.output_entries.last().unwrap().text,
-            "Automatic AI actions stay gated by airplane mode."
-        );
+        assert!(app.toasts.iter().any(|toast| {
+            toast.level == ToastLevel::Warning
+                && toast.message == "Automatic AI actions stay gated by airplane mode."
+        }));
     }
 
     #[test]

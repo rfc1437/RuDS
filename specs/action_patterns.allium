@@ -90,7 +90,7 @@ rule MediaMetadataTranslationCascade {
 --   1. importMedia(file) -> new media record + file copy + base sidecar
 --   2. generateThumbnails(media) -> async start (small/medium/large/ai)
 --   3. linkMediaToPost(media, post) -> update sidecar linkedPostIds
---   4. insertMarkdownImage(cursor) -> insert ![](bds-media://id) at cursor
+--   4. insertMarkdownImage(cursor) -> insert ![](/media/YYYY/MM/file) at cursor
 
 -- Background steps (non-blocking, results auto-applied):
 --   5. If AI available: aiImageAnalysis(media)

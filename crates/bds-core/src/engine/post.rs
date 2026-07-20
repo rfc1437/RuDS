@@ -1119,12 +1119,13 @@ pub fn post_insert_link(slug: &str) -> String {
 }
 
 /// Insert a media reference in the editor buffer.
-/// Returns the Markdown syntax: ![alt](bds-media://id) or [name](bds-media://id)
-pub fn post_insert_media(media_id: &str, is_image: bool, original_name: &str) -> String {
+/// Returns Markdown with a host-absolute media URL suitable for rendered HTML.
+pub fn post_insert_media(media_path: &str, is_image: bool, original_name: &str) -> String {
+    let url = format!("/{}", media_path.trim_start_matches('/'));
     if is_image {
-        format!("![](bds-media://{media_id})")
+        format!("![]({url})")
     } else {
-        format!("[{original_name}](bds-media://{media_id})")
+        format!("[{original_name}]({url})")
     }
 }
 
@@ -1175,6 +1176,18 @@ mod tests {
         let fetched = qp::get_post_by_id(db.conn(), &post.id).unwrap();
         assert_eq!(fetched.slug, "hello-world");
         assert_eq!(fetched.status, PostStatus::Draft);
+    }
+
+    #[test]
+    fn inserted_media_uses_host_absolute_renderable_paths() {
+        assert_eq!(
+            post_insert_media("media/2026/07/image.png", true, "image.png"),
+            "![](/media/2026/07/image.png)"
+        );
+        assert_eq!(
+            post_insert_media("/media/2026/07/file.pdf", false, "file.pdf"),
+            "[file.pdf](/media/2026/07/file.pdf)"
+        );
     }
 
     #[test]

@@ -218,6 +218,12 @@ impl PostEditorState {
         self.mark_dirty();
     }
 
+    pub fn insert_dropped_image(&mut self, media_path: &str) {
+        self.insert_markdown_at_cursor(&bds_core::engine::post::post_insert_media(
+            media_path, true, "",
+        ));
+    }
+
     pub fn set_editor_mode(&mut self, mode: &str) {
         self.editor_mode = normalize_editor_mode(mode);
     }
@@ -1215,6 +1221,17 @@ mod tests {
         state.insert_markdown_at_cursor("Rust");
 
         assert_eq!(state.content, "Hello Rust");
+        assert!(state.is_dirty);
+    }
+
+    #[test]
+    fn dropped_image_markdown_is_inserted_at_the_buffer_cursor() {
+        let mut state = sample_state();
+        state.editor_buffer.borrow_mut().set_cursor(0, 5);
+
+        state.insert_dropped_image("media/2026/07/media-1.png");
+
+        assert_eq!(state.content, "Hello![](/media/2026/07/media-1.png) world");
         assert!(state.is_dirty);
     }
 

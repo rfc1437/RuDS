@@ -290,8 +290,8 @@ rule PostInsertMedia {
     -- Opens InsertMediaModal (media search variant)
     -- Search input, grid of media items with bds-thumb:// thumbnails
     -- Click inserts markdown:
-    --   Images: ![alt](bds-media://id)
-    --   Non-images: [originalName](bds-media://id)
+    --   Images: ![alt](/media/YYYY/MM/file)
+    --   Non-images: [originalName](/media/YYYY/MM/file)
 }
 
 rule PostGalleryAction {
@@ -308,7 +308,7 @@ rule PostDragDropImage {
     -- 1. Import media file -> media record + file copy + sidecar
     -- 2. Generate thumbnails (async: small/medium/large/ai)
     -- 3. Link media to post (update sidecar linkedPostIds)
-    -- 4. Insert markdown image at cursor: ![](bds-media://id)
+    -- 4. Insert markdown image at cursor: ![](/media/YYYY/MM/file)
     -- 5. If AI available: AI image analysis (async, auto-applied, no modal)
     -- 6. If auto-translate enabled: cascade translate media metadata
     -- Steps 1-4 synchronous. Steps 5-6 background tasks.

@@ -152,32 +152,14 @@ fn import_gallery_image(
     offline_mode: bool,
     translation_targets: &[String],
 ) -> Result<ImportedGalleryImage, String> {
-    let original_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "image".to_string());
     let db = Database::open(db_path).map_err(|error| error.to_string())?;
-    let imported = media::import_media(
-        db.conn(),
-        data_dir,
-        project_id,
-        path,
-        &original_name,
-        None,
-        None,
-        None,
-        None,
-        Some(source_language),
-        Vec::new(),
-    )
-    .map_err(|error| error.to_string())?;
-
-    post_media::link_media_to_post(
+    let imported = import_and_link_image(
         db.conn(),
         data_dir,
         project_id,
         post_id,
-        &imported.id,
+        path,
+        source_language,
         sort_order,
     )
     .map_err(|error| error.to_string())?;
@@ -190,7 +172,7 @@ fn import_gallery_image(
             offline_mode,
             translation_targets,
         )
-        .unwrap_or_else(|| imported.original_name.clone())
+        .unwrap_or_else(|_| imported.original_name.clone())
     } else {
         imported.original_name.clone()
     };
@@ -201,6 +183,43 @@ fn import_gallery_image(
     })
 }
 
+pub fn import_and_link_image(
+    conn: &crate::db::DbConnection,
+    data_dir: &Path,
+    project_id: &str,
+    post_id: &str,
+    path: &Path,
+    source_language: &str,
+    sort_order: i32,
+) -> crate::engine::EngineResult<crate::model::Media> {
+    let original_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "image".to_string());
+    let imported = media::import_media(
+        conn,
+        data_dir,
+        project_id,
+        path,
+        &original_name,
+        None,
+        None,
+        None,
+        None,
+        Some(source_language),
+        Vec::new(),
+    )?;
+    post_media::link_media_to_post(
+        conn,
+        data_dir,
+        project_id,
+        post_id,
+        &imported.id,
+        sort_order,
+    )?;
+    Ok(imported)
+}
+
 /// Apply the shared gallery AI enrichment and translation pipeline to one
 /// already-imported image. Returns the generated title when AI was available.
 pub fn enrich_imported_image(
@@ -209,14 +228,13 @@ pub fn enrich_imported_image(
     imported: &crate::model::Media,
     offline_mode: bool,
     translation_targets: &[String],
-) -> Option<String> {
+) -> Result<String, String> {
     let image_data_url = build_ai_image_data_url(
         data_dir,
         &imported.id,
         &imported.file_path,
         &imported.mime_type,
-    )
-    .ok()?;
+    )?;
     let response = ai::run_one_shot(
         conn,
         offline_mode,
@@ -232,9 +250,9 @@ pub fn enrich_imported_image(
             }),
         },
     )
-    .ok()?;
+    .map_err(|error| error.to_string())?;
     let ai::OneShotResponse::ImageAnalysis(analysis) = response.0 else {
-        return None;
+        return Err("AI returned an unexpected response".to_string());
     };
     media::update_media(
         conn,
@@ -247,7 +265,7 @@ pub fn enrich_imported_image(
         None,
         None,
     )
-    .ok()?;
+    .map_err(|error| error.to_string())?;
 
     for target in translation_targets {
         let Ok((ai::OneShotResponse::MediaTranslation(translation), _)) = ai::run_one_shot(
@@ -277,7 +295,7 @@ pub fn enrich_imported_image(
         );
     }
 
-    Some(if analysis.title.is_empty() {
+    Ok(if analysis.title.is_empty() {
         imported.original_name.clone()
     } else {
         analysis.title

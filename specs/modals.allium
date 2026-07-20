@@ -97,8 +97,8 @@ value InsertMediaModal {
     -- Search input filtering by media title and original filename.
     -- Grid of media items: bds-thumb:// thumbnail (medium 400px), title below.
     -- Click item:
-    --   Images: inserts ![alt](bds-media://id) at cursor
-    --   Non-images: inserts [originalName](bds-media://id) at cursor
+    --   Images: inserts ![alt](/media/YYYY/MM/file) at cursor
+    --   Non-images: inserts [originalName](/media/YYYY/MM/file) at cursor
     -- Closes modal after insertion.
     search_query: String
     results: List<InsertMediaResult>

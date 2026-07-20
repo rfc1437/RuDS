@@ -150,12 +150,15 @@ The Media section is where you import, describe, and maintain assets used by pos
 
 When importing media, add metadata while context is still fresh. Alt text should describe meaning for accessibility. Captions should support reader understanding. Media tags should help later retrieval and reuse.
 
-From the post editor you can insert already-imported media at the cursor position, or use the Gallery workflow to import several images at once: RuDS imports them into the media library, links them to the current post, runs the optional AI enrichment for titles and alt text, and inserts the gallery block into the post.
+From the post editor you can insert already-imported media at the cursor position, drag supported image files onto an open post editor, or use the Gallery workflow to import several images at once. A dropped image is imported into the media library, linked to the current post, and inserted at the current cursor with a host-absolute `/media/...` URL that remains valid in rendered HTML. Multiple dropped files are processed in order with progress in the Tasks panel. Optional AI enrichment and media-metadata translation continue in the background; when the active AI endpoint is unavailable, the import still completes and RuDS reports that enrichment was skipped.
+
+The Gallery workflow imports its selected images into the media library, links them to the current post, runs the same optional AI enrichment for titles and alt text, and inserts the gallery block into the post.
 
 ### Key takeaways
 
 - Media management includes metadata quality, not only file import.
 - Add alt text and captions during import, not as a postponed task.
+- Drag images onto an open post editor for a direct import, link, and cursor insertion.
 - Commit content and related media in the same change when possible.
 
 [↑ Back to In this article](#in-this-article)

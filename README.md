@@ -8,7 +8,7 @@ The project is under active development. Core blogging workflows are broadly ava
 
 - Native Iced desktop workspace with localized menus, tabs, automatically paged post/media sidebars, dialogs, tasks, embedded Wry previews, and a live Pico CSS theme editor.
 - Post and translation authoring with draft/published lifecycle, metadata, tags, categories, links, media, and batch gallery-image import.
-- Media import, thumbnails, metadata translations, filters, validation, and post assignment.
+- Media import, thumbnails, metadata translations, filters, validation, post assignment, and sequential drag-and-drop insertion into post editors.
 - WordPress WXR migration with saved analyses, HTML-to-Markdown and shortcode conversion, conflict/taxonomy review, recoverable 500-item execution batches, media-parent linking, progress reporting, and optional AI-assisted taxonomy mapping.
 - Template and Lua script management with explicit syntax-check feedback, using a custom Ropey/Syntect/Cosmic Text editor and the documented, bDS2-signature-compatible project-scoped [`bds` host API](docs/scripting/API_REFERENCE.md) across utilities, rendered macros, and Blogmark transforms, including airplane-gated Git sync.
 - SQLite and filesystem persistence with frontmatter, sidecars, rebuild, metadata diff/repair, and FTS5 search.

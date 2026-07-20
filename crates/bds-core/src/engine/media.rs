@@ -156,6 +156,13 @@ const SUPPORTED_IMAGE_TYPES: &[&str] = &[
     "image/heif",
 ];
 
+pub fn is_supported_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(mime_from_extension)
+        .is_some_and(|mime_type| SUPPORTED_IMAGE_TYPES.contains(&mime_type))
+}
+
 /// Import a media file (image, etc.) into the project.
 #[expect(
     clippy::too_many_arguments,
@@ -217,7 +224,7 @@ pub(crate) fn import_media_at(
         .and_then(|e| e.to_str())
         .unwrap_or("bin");
     let mime_type = mime_from_extension(ext).to_string();
-    if !SUPPORTED_IMAGE_TYPES.contains(&mime_type.as_str()) {
+    if !is_supported_image_path(Path::new(original_name)) {
         return Err(EngineError::Validation(format!(
             "unsupported file type: {mime_type} (file: {original_name})"
         )));
