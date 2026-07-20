@@ -22,7 +22,7 @@ use crate::render::{
 };
 use crate::scripting::{CoreHost, HostApi, UnavailableHost};
 use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
-use crate::util::slugify;
+use crate::util::{slugify, year_month_from_unix_ms};
 
 const STARTER_SINGLE_POST_TEMPLATE: &str =
     include_str!("../../../../assets/starter-templates/single-post.liquid");
@@ -187,6 +187,7 @@ fn build_site_render_artifacts_with_mode(
         .map(|media| (media.id.clone(), media))
         .collect::<HashMap<_, _>>();
     let project_media = media_items.iter().map(media_context).collect::<Vec<_>>();
+    let canonical_media_map = canonical_media_paths(&media_items);
     let project_tags = build_published_tag_counts(published_posts, &tags);
 
     let mut artifacts = SiteRenderArtifacts::default();
@@ -238,6 +239,7 @@ fn build_site_render_artifacts_with_mode(
                     &category_settings,
                     &menu_items,
                     &post_data_json_by_id,
+                    &canonical_media_map,
                     &project_media,
                     &project_tags,
                     &bundle,
@@ -331,6 +333,7 @@ fn build_site_render_artifacts_with_mode(
                     &canonical_map,
                     &menu_items,
                     &post_data_json_by_id,
+                    &canonical_media_map,
                     &project_media,
                     &project_tags,
                     &bundle,
@@ -805,6 +808,7 @@ fn render_list_route(
     category_settings: &HashMap<String, CategorySettings>,
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
+    canonical_media_path_by_source_path: &HashMap<String, String>,
     project_media: &[Value],
     project_tags: &[Value],
     bundle: &TemplateBundle,
@@ -849,7 +853,7 @@ fn render_list_route(
         "total_items": route.total_items,
         "items_per_page": route.items_per_page,
         "canonical_post_path_by_slug": canonical_map,
-        "canonical_media_path_by_source_path": canonical_media_paths(posts),
+        "canonical_media_path_by_source_path": canonical_media_path_by_source_path,
         "post_data_json_by_id": post_data_json_by_id,
         "project": { "media": project_media },
         "Tags": project_tags,
@@ -883,6 +887,7 @@ fn render_post_route(
     canonical_post_path_by_slug: &HashMap<String, String>,
     menu_items: &[Value],
     post_data_json_by_id: &HashMap<String, Value>,
+    canonical_media_path_by_source_path: &HashMap<String, String>,
     project_media: &[Value],
     project_tags: &[Value],
     bundle: &TemplateBundle,
@@ -959,7 +964,7 @@ fn render_post_route(
         "tag_color_by_name": taxonomy_counts.2,
         "backlinks": backlinks,
         "canonical_post_path_by_slug": canonical_post_path_by_slug,
-        "canonical_media_path_by_source_path": canonical_media_paths(all_posts),
+        "canonical_media_path_by_source_path": canonical_media_path_by_source_path,
         "post_data_json_by_id": post_data_json_by_id,
         "project": { "media": project_media },
         "Tags": project_tags,
@@ -1229,29 +1234,20 @@ fn canonical_post_path_by_slug(
         .collect()
 }
 
-fn canonical_media_paths(posts: &[RenderPostRecord]) -> HashMap<String, String> {
+fn canonical_media_paths(media_items: &[Media]) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    for record in posts {
-        for media_reference in extract_media_refs(&record.body_markdown) {
-            map.entry(media_reference.clone())
-                .or_insert_with(|| media_reference.clone());
+    for media in media_items {
+        let target = canonical_media_path(media);
+        let (year, month) = year_month_from_unix_ms(media.created_at);
+        for source in [
+            format!("media/{year}/{month}/{}", media.original_name).to_lowercase(),
+            format!("bds-media://{}", media.id),
+            media.file_path.trim_start_matches('/').to_lowercase(),
+        ] {
+            map.entry(source).or_insert_with(|| target.clone());
         }
     }
     map
-}
-
-fn extract_media_refs(markdown: &str) -> Vec<String> {
-    let mut refs = Vec::new();
-    let mut remainder = markdown;
-    while let Some(index) = remainder.find("bds-media://") {
-        let rest = &remainder[index..];
-        let end = rest
-            .find(|ch: char| ch == ')' || ch == ']' || ch.is_whitespace())
-            .unwrap_or(rest.len());
-        refs.push(rest[..end].to_string());
-        remainder = &rest[end..];
-    }
-    refs
 }
 
 fn build_linked_media_by_post_id(

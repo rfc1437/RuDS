@@ -1219,6 +1219,105 @@ mod tests {
     }
 
     #[test]
+    fn preview_rewrites_media_aliases_and_serves_the_canonical_file() {
+        let _guard = preview_port_guard().lock().unwrap();
+        let (dir, db) = setup_preview_fixture();
+        std::fs::create_dir_all(dir.path().join("media/2022/11")).unwrap();
+        std::fs::write(
+            dir.path().join("media/2022/11/canonical-id.jpg"),
+            b"canonical image",
+        )
+        .unwrap();
+        queries::media::insert_media(
+            db.conn(),
+            &Media {
+                id: "canonical-id".into(),
+                project_id: "project-1".into(),
+                filename: "canonical-id.jpg".into(),
+                original_name: "20221111_0177.jpg".into(),
+                mime_type: "image/jpeg".into(),
+                size: 15,
+                width: Some(100),
+                height: Some(80),
+                title: None,
+                alt: None,
+                caption: None,
+                author: None,
+                language: None,
+                file_path: "media/2022/11/canonical-id.jpg".into(),
+                sidecar_path: "media/2022/11/canonical-id.jpg.meta".into(),
+                checksum: None,
+                tags: Vec::new(),
+                created_at: 1_668_124_800_000,
+                updated_at: 1_668_124_800_000,
+            },
+        )
+        .unwrap();
+        let markdown = "[Open image](/media/2022/11/20221111_0177.jpg?download=1#preview)\n\n![Embedded image](bds-media://canonical-id)";
+        let mut post = make_draft_post();
+        post.content = Some(markdown.into());
+        queries::post::insert_post(db.conn(), &post).unwrap();
+
+        let server = start_preview_server(
+            dir.path().join("bds.db"),
+            dir.path().to_path_buf(),
+            "project-1".into(),
+        )
+        .unwrap();
+        let client = reqwest::blocking::Client::new();
+        let preview_html = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__draft/post-1"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let image_response = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/2022/11/canonical-id.jpg?download=1"
+            ))
+            .send()
+            .unwrap();
+        let image_status = image_response.status();
+        let image_content_type = image_response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let image_body = image_response.bytes().unwrap();
+        server.stop().unwrap();
+
+        let mut published_post = post;
+        published_post.status = PostStatus::Published;
+        let generated = crate::render::build_site_render_artifacts(
+            db.conn(),
+            dir.path(),
+            "project-1",
+            &make_metadata(),
+            &[(published_post, markdown.into())],
+        )
+        .unwrap();
+        let generated_html = &generated
+            .pages
+            .iter()
+            .find(|page| page.url_path == "/2024/03/09/hello")
+            .unwrap()
+            .html;
+        let expected = "href=\"/media/2022/11/canonical-id.jpg?download=1#preview\"";
+
+        assert!(preview_html.contains(expected));
+        assert!(generated_html.contains(expected));
+        assert!(preview_html.contains("src=\"/media/2022/11/canonical-id.jpg\""));
+        assert!(generated_html.contains("src=\"/media/2022/11/canonical-id.jpg\""));
+        assert_eq!(image_status, StatusCode::OK);
+        assert_eq!(image_content_type, "image/jpeg");
+        assert_eq!(image_body.as_ref(), b"canonical image");
+    }
+
+    #[test]
     fn preview_server_serves_style_preview() {
         let _guard = preview_port_guard().lock().unwrap();
         let (dir, _db) = setup_preview_fixture();
