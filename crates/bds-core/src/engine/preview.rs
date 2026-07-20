@@ -592,16 +592,16 @@ fn serve_scoped_file(
     let Some(relative) = path.strip_prefix(prefix) else {
         return Ok(None);
     };
+    let bundled_path = format!("{scope_dir}/{relative}");
+    if let Some(bytes) = crate::engine::site_assets::bundled_site_asset(&bundled_path) {
+        let mime = guess_content_type(Path::new(&bundled_path));
+        return Ok(Some(
+            (StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response(),
+        ));
+    }
     let scope_root = data_dir.join(scope_dir);
     let candidate = scope_root.join(relative);
     if !candidate.exists() || !candidate.is_file() {
-        let bundled_path = format!("{scope_dir}/{relative}");
-        if let Some(bytes) = crate::engine::site_assets::bundled_site_asset(&bundled_path) {
-            let mime = guess_content_type(Path::new(&bundled_path));
-            return Ok(Some(
-                (StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response(),
-            ));
-        }
         return Ok(Some(error_response(
             StatusCode::NOT_FOUND,
             "preview asset not found",
@@ -1167,6 +1167,11 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("html/pagefind")).unwrap();
         std::fs::write(dir.path().join("media/ok.txt"), "ok").unwrap();
         std::fs::write(dir.path().join("assets/site.css"), "body { color: red; }").unwrap();
+        std::fs::write(
+            dir.path().join("assets/calendar-runtime.js"),
+            "window.staleCalendarRuntime = true;",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("images/custom.svg"), "<svg></svg>").unwrap();
         std::fs::write(
             dir.path().join("html/pagefind/pagefind-ui.js"),
@@ -1194,6 +1199,14 @@ mod tests {
             .unwrap();
         let media_body = media.text().unwrap();
         let asset_body = asset.text().unwrap();
+        let calendar_runtime_body = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/assets/calendar-runtime.js"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
         let image_body = client
             .get(format!(
                 "http://{PREVIEW_HOST}:{PREVIEW_PORT}/images/custom.svg"
@@ -1214,6 +1227,8 @@ mod tests {
 
         assert_eq!(media_body, "ok");
         assert!(asset_body.contains("color: red"));
+        assert!(calendar_runtime_body.contains("--blog-calendar-heat-strength"));
+        assert!(!calendar_runtime_body.contains("staleCalendarRuntime"));
         assert!(image_body.contains("<svg>"));
         assert!(pagefind_body.contains("window.pagefind"));
     }

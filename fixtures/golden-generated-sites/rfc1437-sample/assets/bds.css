@@ -49,14 +49,20 @@ main { display: grid; gap: 1rem; }
 [data-blog-calendar-root] [data-vc-week-day] { font-size: .68rem; line-height: .9rem; min-width: 1.45rem; }
 [data-blog-calendar-root] [data-vc-date] { padding-top: 0; padding-bottom: 0; }
 [data-blog-calendar-root] [data-vc-date-btn] { min-height: 1.45rem; min-width: 1.45rem; font-size: .68rem; line-height: .9rem; }
-[data-blog-calendar-has-posts='true'] [data-vc-date-btn] {
-  border-color: hsl(var(--blog-calendar-heat-hue, 210) 85% 42% / .95);
-  background-color: hsl(var(--blog-calendar-heat-hue, 210) 88% 52% / var(--blog-calendar-heat-alpha, 0));
+[data-blog-calendar-root] [data-vc-date]:not([data-blog-calendar-has-posts='true']) [data-vc-date-btn],
+[data-blog-calendar-root] [data-vc-months-month]:not([data-blog-calendar-has-posts='true']),
+[data-blog-calendar-root] [data-vc-years-year]:not([data-blog-calendar-has-posts='true']) {
+  background-color: transparent !important;
+  border-color: transparent !important;
+}
+[data-blog-calendar-root] [data-vc-date][data-blog-calendar-has-posts='true'] [data-vc-date-btn] {
+  background-color: color-mix(in srgb, var(--pico-primary, #0172ad) var(--blog-calendar-heat-strength, 0%), transparent) !important;
+  border-color: var(--pico-primary, #0172ad) !important;
 }
 [data-blog-calendar-root] [data-vc-months-month][data-blog-calendar-has-posts='true'],
 [data-blog-calendar-root] [data-vc-years-year][data-blog-calendar-has-posts='true'] {
-  background-color: hsl(var(--blog-calendar-heat-hue, 210) 88% 52% / var(--blog-calendar-heat-alpha, 0));
-  border-color: hsl(var(--blog-calendar-heat-hue, 210) 85% 42% / .95);
+  background-color: color-mix(in srgb, var(--pico-primary, #0172ad) var(--blog-calendar-heat-strength, 0%), transparent) !important;
+  border-color: var(--pico-primary, #0172ad) !important;
 }
 .post { border: 1px solid var(--pico-muted-border-color, var(--muted-border-color)); padding: 1rem; background: var(--pico-card-background-color, var(--card-background-color)); min-width: 0; }
 .post pre { position: relative; overflow-x: auto; max-width: 100%; border: 1px solid var(--pico-muted-border-color, var(--muted-border-color)); border-radius: .3rem; margin: .9rem 0; padding: .85rem .9rem; background: var(--pico-code-background-color, rgba(33, 38, 45, .82)); box-sizing: border-box; }

@@ -55,17 +55,14 @@
 
   function applyHeatStyle(target, count, maxCount) {
     if (!(target instanceof HTMLElement) || !Number.isFinite(count) || count <= 0 || !Number.isFinite(maxCount) || maxCount <= 0) {
-      target?.style?.setProperty('--blog-calendar-heat-alpha', '0');
-      target?.style?.setProperty('--blog-calendar-heat-hue', '210');
+      target?.style?.setProperty('--blog-calendar-heat-strength', '0%');
       return;
     }
 
     const normalized = Math.min(1, count / maxCount);
-    const hue = Math.round(210 - (210 * normalized));
-    const alpha = (0.30 + normalized * 0.65).toFixed(3);
+    const strength = Math.round(30 + normalized * 60);
 
-    target.style.setProperty('--blog-calendar-heat-hue', String(hue));
-    target.style.setProperty('--blog-calendar-heat-alpha', alpha);
+    target.style.setProperty('--blog-calendar-heat-strength', String(strength) + '%');
   }
 
   function navigateTo(pathname) {

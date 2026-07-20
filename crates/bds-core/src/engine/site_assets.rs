@@ -278,3 +278,30 @@ pub(crate) fn write_bundled_site_assets(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_site_asset;
+
+    fn bundled_text(path: &str) -> &'static str {
+        std::str::from_utf8(bundled_site_asset(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn calendar_heatmap_marks_only_populated_periods_with_one_accent() {
+        let runtime = bundled_text("assets/calendar-runtime.js");
+        let styles = bundled_text("assets/bds.css");
+
+        assert!(runtime.contains("--blog-calendar-heat-strength"));
+        assert!(!runtime.contains("--blog-calendar-heat-hue"));
+        assert!(styles.contains(
+            "[data-vc-date]:not([data-blog-calendar-has-posts='true']) [data-vc-date-btn]"
+        ));
+        assert!(styles.contains("background-color: transparent !important;"));
+        assert!(styles.contains("border-color: transparent !important;"));
+        assert!(styles.contains("color-mix(in srgb, var(--pico-primary"));
+        assert!(styles.contains("var(--blog-calendar-heat-strength"));
+        assert!(styles.contains("transparent) !important;"));
+        assert!(!styles.contains("hsl(var(--blog-calendar-heat-hue"));
+    }
+}

@@ -156,6 +156,12 @@ invariant CompleteStarterNavigation {
     -- calendar entry, and provides localized search empty-result text.
 }
 
+invariant CalendarActivityStyling {
+    -- Calendar days, months, and years with no posts are visually unmarked.
+    -- Populated periods use one theme-compatible accent whose intensity grows
+    -- with the relative post count; count differences never change its hue.
+}
+
 invariant LabelsUseContentLanguage {
     -- RenderLabels and the i18n filter resolve against the content/render
     -- language, consistent with i18n.allium's split-localization rule.
