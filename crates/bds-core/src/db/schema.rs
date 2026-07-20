@@ -8,6 +8,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    ai_endpoint_models (kind, model_id) {
+        kind -> Text,
+        model_id -> Text,
+        label -> Text,
+        context_window -> Nullable<Integer>,
+        max_output_tokens -> Nullable<Integer>,
+        supports_tools -> Integer,
+        supports_vision -> Integer,
+        updated_at -> BigInt,
+    }
+}
+
+diesel::table! {
     ai_model_modalities (rowid) {
         rowid -> Integer,
         provider -> Text,
@@ -64,9 +77,9 @@ diesel::table! {
         title -> Text,
         model -> Nullable<Text>,
         copilot_session_id -> Nullable<Text>,
-        surface_state -> Nullable<Text>,
         created_at -> BigInt,
         updated_at -> BigInt,
+        surface_state -> Nullable<Text>,
     }
 }
 
@@ -79,10 +92,10 @@ diesel::table! {
         tool_call_id -> Nullable<Text>,
         tool_calls -> Nullable<Text>,
         created_at -> BigInt,
-        cache_read_tokens -> Nullable<Integer>,
-        cache_write_tokens -> Nullable<Integer>,
         token_usage_input -> Nullable<Integer>,
         token_usage_output -> Nullable<Integer>,
+        cache_read_tokens -> Nullable<Integer>,
+        cache_write_tokens -> Nullable<Integer>,
     }
 }
 
@@ -351,6 +364,7 @@ diesel::joinable!(templates -> projects (project_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     ai_catalog_meta,
+    ai_endpoint_models,
     ai_model_modalities,
     ai_models,
     ai_providers,

@@ -65,6 +65,7 @@ pub struct AiModeSettings {
     pub image_model: Option<String>,
     pub chat_supports_tools: Option<bool>,
     pub image_supports_vision: Option<bool>,
+    pub models: Vec<AiModelInfo>,
 }
 
 impl AiSettings {
@@ -299,6 +300,78 @@ pub fn save_model_preferences(
     set_setting(conn, "ai.title_model", "", updated_at)?;
     set_setting(conn, "ai.image_model", "", updated_at)?;
     Ok(())
+}
+
+pub fn save_endpoint_models(
+    conn: &Connection,
+    kind: AiEndpointKind,
+    models: &[AiModelInfo],
+) -> EngineResult<()> {
+    use crate::db::schema::ai_endpoint_models::dsl;
+    use diesel::prelude::*;
+
+    let updated_at = now_unix_ms();
+    conn.with(|connection| {
+        connection.transaction(|connection| {
+            diesel::delete(dsl::ai_endpoint_models.filter(dsl::kind.eq(kind.as_str())))
+                .execute(connection)?;
+            for model in models {
+                diesel::insert_into(dsl::ai_endpoint_models)
+                    .values((
+                        dsl::kind.eq(kind.as_str()),
+                        dsl::model_id.eq(&model.id),
+                        dsl::label.eq(&model.name),
+                        dsl::context_window.eq(model.context_window.map(|value| value as i32)),
+                        dsl::max_output_tokens
+                            .eq(model.max_output_tokens.map(|value| value as i32)),
+                        dsl::supports_tools.eq(i32::from(model.supports_tools)),
+                        dsl::supports_vision.eq(i32::from(model.supports_vision)),
+                        dsl::updated_at.eq(updated_at),
+                    ))
+                    .execute(connection)?;
+            }
+            diesel::QueryResult::Ok(())
+        })
+    })?;
+    Ok(())
+}
+
+pub fn load_endpoint_models(
+    conn: &Connection,
+    kind: AiEndpointKind,
+) -> EngineResult<Vec<AiModelInfo>> {
+    use crate::db::schema::ai_endpoint_models::dsl;
+    use diesel::prelude::*;
+
+    let rows = conn.with(|connection| {
+        dsl::ai_endpoint_models
+            .filter(dsl::kind.eq(kind.as_str()))
+            .order(dsl::label.asc())
+            .select((
+                dsl::model_id,
+                dsl::label,
+                dsl::context_window,
+                dsl::max_output_tokens,
+                dsl::supports_tools,
+                dsl::supports_vision,
+            ))
+            .load::<(String, String, Option<i32>, Option<i32>, i32, i32)>(connection)
+    })?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, label, context_window, max_output_tokens, supports_tools, supports_vision)| {
+                AiModelInfo {
+                    id,
+                    name: label,
+                    context_window: context_window.map(|value| value.max(0) as u64),
+                    max_output_tokens: max_output_tokens.map(|value| value.max(0) as u64),
+                    supports_tools: supports_tools != 0,
+                    supports_vision: supports_vision != 0,
+                }
+            },
+        )
+        .collect())
 }
 
 pub fn save_system_prompt(conn: &Connection, system_prompt: &str) -> EngineResult<()> {
@@ -550,6 +623,7 @@ fn load_mode_settings(
             conn,
             &endpoint_setting_key(kind, "image_supports_vision"),
         )?,
+        models: load_endpoint_models(conn, kind)?,
     })
 }
 
@@ -1031,6 +1105,47 @@ mod tests {
         assert_eq!(models[0].name, "GPT 4.1 mini");
         assert!(models[0].supports_tools);
         assert!(models[1].supports_vision);
+    }
+
+    #[test]
+    fn endpoint_models_persist_per_endpoint_and_overwrite_on_refresh() {
+        let db = setup();
+        let online = vec![AiModelInfo {
+            id: "gpt-4.1".to_string(),
+            name: "GPT 4.1".to_string(),
+            context_window: Some(128_000),
+            max_output_tokens: Some(8_192),
+            supports_tools: true,
+            supports_vision: true,
+        }];
+        let airplane = vec![AiModelInfo {
+            id: "llama3.2".to_string(),
+            name: "Llama 3.2".to_string(),
+            context_window: None,
+            max_output_tokens: None,
+            supports_tools: false,
+            supports_vision: false,
+        }];
+        save_endpoint_models(db.conn(), AiEndpointKind::Online, &online).unwrap();
+        save_endpoint_models(db.conn(), AiEndpointKind::Airplane, &airplane).unwrap();
+
+        let settings = load_ai_settings(db.conn(), false).unwrap();
+        assert_eq!(settings.online.models, online);
+        assert_eq!(settings.airplane.models, airplane);
+
+        let refreshed = vec![AiModelInfo {
+            id: "gpt-5".to_string(),
+            name: "GPT 5".to_string(),
+            context_window: Some(256_000),
+            max_output_tokens: Some(16_384),
+            supports_tools: true,
+            supports_vision: false,
+        }];
+        save_endpoint_models(db.conn(), AiEndpointKind::Online, &refreshed).unwrap();
+
+        let settings = load_ai_settings(db.conn(), false).unwrap();
+        assert_eq!(settings.online.models, refreshed);
+        assert_eq!(settings.airplane.models, airplane);
     }
 
     #[test]

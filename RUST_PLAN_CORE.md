@@ -101,7 +101,7 @@ Available:
 
 - Independent online and airplane-mode OpenAI-compatible profiles, selected by the status-bar airplane switch.
 - Secure keychain credentials for both profiles, optional for local endpoints.
-- Model discovery without a preselected model; per-profile chat/title/image selections, explicit tool/vision overrides, and minimal chat tests.
+- Model discovery without a preselected model; discovered model lists persist per profile in the database and survive restart, overwritten only by the next refresh. Per-profile chat/title/image selections, explicit tool/vision overrides, and minimal chat tests.
 - Post translation, media translation, image alt text, post analysis, taxonomy analysis, WordPress-import taxonomy mapping, and language detection.
 - Explicit offline gating and user-visible errors.
 - Parsed input, output, cache-read, and cache-write token usage returned from every one-shot operation; persistent chat accounting is tracked in the extension plan.

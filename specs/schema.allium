@@ -299,6 +299,21 @@ entity AiCatalogMeta {
     value: String
 }
 
+entity AiEndpointModel {
+    -- Models discovered via GET /models on a configured endpoint.
+    -- Composite primary key: (kind, model_id).
+    -- Persisted per endpoint kind; replaced wholesale on the next
+    -- successful refresh for that kind, never cleared otherwise.
+    kind: String            -- "online" | "airplane"
+    model_id: String
+    label: String
+    context_window: Integer?
+    max_output_tokens: Integer?
+    supports_tools: Boolean
+    supports_vision: Boolean
+    updated_at: Timestamp
+}
+
 -- ============================================================================
 -- EMBEDDINGS TABLES
 -- ============================================================================
@@ -578,6 +593,20 @@ surface AiCatalogMetaRecordSurface {
     exposes:
         meta.key
         meta.value
+}
+
+surface AiEndpointModelRecordSurface {
+    context endpoint_model: AiEndpointModel
+
+    exposes:
+        endpoint_model.kind
+        endpoint_model.model_id
+        endpoint_model.label
+        endpoint_model.context_window when endpoint_model.context_window != null
+        endpoint_model.max_output_tokens when endpoint_model.max_output_tokens != null
+        endpoint_model.supports_tools
+        endpoint_model.supports_vision
+        endpoint_model.updated_at
 }
 
 surface EmbeddingKeyRecordSurface {

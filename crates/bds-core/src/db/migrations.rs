@@ -15,7 +15,8 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::schema::{
-        ai_catalog_meta, ai_model_modalities, ai_models, ai_providers, chat_conversations,
+        ai_catalog_meta, ai_endpoint_models, ai_model_modalities, ai_models, ai_providers,
+        chat_conversations,
         chat_messages, db_notifications, dismissed_duplicate_pairs, embedding_keys,
         generated_file_hashes, import_definitions, mcp_proposals, media, media_translations,
         post_links, post_media, post_translations, posts, projects, scripts, settings, tags,
@@ -36,7 +37,7 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 7);
+        assert_eq!(applied, 8);
     }
 
     #[test]
@@ -73,6 +74,7 @@ mod tests {
             ai_models::table,
             ai_model_modalities::table,
             ai_catalog_meta::table,
+            ai_endpoint_models::table,
             embedding_keys::table,
             dismissed_duplicate_pairs::table,
             import_definitions::table,

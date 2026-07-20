@@ -3563,34 +3563,27 @@ impl BdsApp {
     }
 
     fn chat_model_options(&self) -> Vec<ChatModelChoice> {
-        let mut models = self
-            .settings_state
-            .as_ref()
-            .map(|state| {
-                let mode = if self.offline_mode {
-                    &state.airplane_ai
-                } else {
-                    &state.online_ai
-                };
-                mode.model_options
-                    .iter()
-                    .map(|model| ChatModelChoice {
-                        id: model.id.clone(),
-                        label: model.label.clone(),
-                    })
-                    .collect::<Vec<_>>()
+        let Some(db) = &self.db else {
+            return Vec::new();
+        };
+        let Ok(settings) = ai::load_ai_settings(db.conn(), self.offline_mode) else {
+            return Vec::new();
+        };
+        let active = settings.active();
+        let mut models = active
+            .models
+            .iter()
+            .map(|model| ChatModelChoice {
+                id: model.id.clone(),
+                label: model.name.clone(),
             })
-            .unwrap_or_default();
-        if let Some(db) = &self.db
-            && let Ok(settings) = ai::load_ai_settings(db.conn(), self.offline_mode)
-        {
-            let model = settings.active().endpoint.model.clone();
-            if !model.trim().is_empty() && !models.iter().any(|choice| choice.id == model) {
-                models.push(ChatModelChoice {
-                    id: model.clone(),
-                    label: model,
-                });
-            }
+            .collect::<Vec<_>>();
+        let model = active.endpoint.model.clone();
+        if !model.trim().is_empty() && !models.iter().any(|choice| choice.id == model) {
+            models.push(ChatModelChoice {
+                id: model.clone(),
+                label: model,
+            });
         }
         models.sort_by(|left, right| left.label.cmp(&right.label));
         models.dedup_by(|left, right| left.id == right.id);
@@ -8150,12 +8143,13 @@ impl BdsApp {
     }
 
     fn refresh_ai_models(
-        _db: &Database,
+        db: &Database,
         state: &mut SettingsViewState,
         kind: AiEndpointKind,
     ) -> Result<(), String> {
         let endpoint = Self::compose_ai_endpoint(state, kind)?;
         let models = ai::refresh_model_catalog(&endpoint).map_err(|error| error.to_string())?;
+        ai::save_endpoint_models(db.conn(), kind, &models).map_err(|error| error.to_string())?;
         let options = models
             .into_iter()
             .map(|model| AiModelOption {
@@ -8273,6 +8267,16 @@ impl BdsApp {
             api_key_configured: settings.endpoint.api_key_configured,
             chat_supports_tools: settings.chat_supports_tools.unwrap_or(false),
             image_supports_vision: settings.image_supports_vision.unwrap_or(false),
+            model_options: settings
+                .models
+                .into_iter()
+                .map(|model| AiModelOption {
+                    id: model.id,
+                    label: model.name,
+                    supports_tools: model.supports_tools,
+                    supports_vision: model.supports_vision,
+                })
+                .collect(),
             ..Default::default()
         }
     }

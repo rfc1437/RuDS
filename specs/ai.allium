@@ -354,7 +354,18 @@ rule RefreshEndpointModels {
     requires: url != ""
     requires: kind = airplane or api_key != null
     -- Discovery calls GET /models and does not require a selected model.
+    -- On success the discovered list replaces the persisted models for
+    -- this endpoint kind.
     ensures: EndpointModelsLoaded(kind)
+    ensures: EndpointModelsPersisted(kind)
+}
+
+invariant EndpointModelPersistence {
+    -- Discovered endpoint models are persisted per endpoint kind
+    -- (online and airplane independently) and survive application
+    -- restart. Model dropdowns (settings and chat) are populated from
+    -- the persisted list; it is only overwritten by the next
+    -- successful RefreshEndpointModels for the same kind.
 }
 
 rule TestEndpointModels {
