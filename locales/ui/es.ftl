@@ -805,7 +805,5 @@ tui-settingRuntime = Motor de scripts
 tui-settingTransferMode = Modo de transferencia
 tui-settingDatabase = Base de datos
 tui-settingAutomaticRebuild = Reconstrucción automática
-tui-settingTheme = Tema
-tui-settingContentWidth = Ancho del contenido
 tui-categoryEditing = Edición de categorías
 tui-categoryEditingGuiOnly = La creación, edición y eliminación de categorías permanecen en la aplicación de escritorio

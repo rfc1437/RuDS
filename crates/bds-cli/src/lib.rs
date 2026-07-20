@@ -1310,6 +1310,15 @@ mod tests {
         assert_eq!(defaults.data["editor.default_mode"], "markdown");
         assert_eq!(defaults.data["editor.diff_view_style"], "inline");
         assert_eq!(defaults.data["ai.endpoint.online.api_key"], "<not set>");
+        let removed_prefix = ["style", "."].concat();
+        assert!(
+            defaults
+                .data
+                .as_object()
+                .unwrap()
+                .keys()
+                .all(|key| !key.starts_with(&removed_prefix))
+        );
         assert!(
             !defaults
                 .message

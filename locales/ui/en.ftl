@@ -805,7 +805,5 @@ tui-settingRuntime = Scripting Runtime
 tui-settingTransferMode = Transfer Mode
 tui-settingDatabase = Database
 tui-settingAutomaticRebuild = Automatic Rebuild
-tui-settingTheme = Theme
-tui-settingContentWidth = Content Width
 tui-categoryEditing = Category Editing
 tui-categoryEditingGuiOnly = Category add, edit, and removal remain in the desktop application

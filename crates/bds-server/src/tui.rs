@@ -174,11 +174,10 @@ enum SettingSection {
     Publishing,
     Data,
     Mcp,
-    Style,
 }
 
 impl SettingSection {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 8] = [
         Self::Project,
         Self::Editor,
         Self::Content,
@@ -187,7 +186,6 @@ impl SettingSection {
         Self::Publishing,
         Self::Data,
         Self::Mcp,
-        Self::Style,
     ];
     const fn key(self) -> &'static str {
         match self {
@@ -199,7 +197,6 @@ impl SettingSection {
             Self::Publishing => "settings.nav.publishing",
             Self::Data => "settings.nav.data",
             Self::Mcp => "settings.nav.mcp",
-            Self::Style => "settings.nav.style",
         }
     }
 }
@@ -2069,20 +2066,6 @@ impl TuiApp {
                     ),
                 ]
             }
-            SettingSection::Style => field_specs(&[
-                (
-                    "Theme",
-                    "style.theme",
-                    FieldKind::Enum(&["system", "light", "dark"]),
-                    "system",
-                ),
-                (
-                    "Content width",
-                    "style.content_width",
-                    FieldKind::Text,
-                    "72",
-                ),
-            ]),
         };
         specs
             .into_iter()
@@ -2553,8 +2536,6 @@ fn setting_field_label(locale: UiLocale, key: &str, fallback: &str) -> String {
         "data.automatic_rebuild" => "tui.settingAutomaticRebuild",
         "mcp.http.enabled" => "settings.mcpEnable",
         "mcp.proposals" => "settings.mcpProposals",
-        "style.theme" => "tui.settingTheme",
-        "style.content_width" => "tui.settingContentWidth",
         _ => return fallback.into(),
     };
     bds_core::i18n::translate(locale, translation_key)
@@ -4071,6 +4052,28 @@ mod tests {
     fn settings_are_typed_saved_and_server_locale_relocalizes_every_session() {
         let fixture = Fixture::new();
         let mut app = fixture.app(false);
+        assert_eq!(
+            SettingSection::ALL,
+            [
+                SettingSection::Project,
+                SettingSection::Editor,
+                SettingSection::Content,
+                SettingSection::Ai,
+                SettingSection::Technology,
+                SettingSection::Publishing,
+                SettingSection::Data,
+                SettingSection::Mcp,
+            ]
+        );
+        let removed_prefix = ["style", "."].concat();
+        for section in SettingSection::ALL {
+            assert!(
+                app.load_setting_fields(section)
+                    .unwrap()
+                    .iter()
+                    .all(|field| !field.key.starts_with(&removed_prefix))
+            );
+        }
         app.set_view(TuiView::Settings).unwrap();
         app.selected_index = 2;
         app.open_selected().unwrap();

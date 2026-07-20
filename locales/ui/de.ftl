@@ -805,7 +805,5 @@ tui-settingRuntime = Skript-Laufzeit
 tui-settingTransferMode = Übertragungsmodus
 tui-settingDatabase = Datenbank
 tui-settingAutomaticRebuild = Automatischer Neuaufbau
-tui-settingTheme = Erscheinungsbild
-tui-settingContentWidth = Inhaltsbreite
 tui-categoryEditing = Kategorien bearbeiten
 tui-categoryEditingGuiOnly = Kategorien können weiterhin in der Desktop-Anwendung hinzugefügt, bearbeitet und entfernt werden

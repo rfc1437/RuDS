@@ -130,9 +130,9 @@ rule SettingsPanel {
     when: TuiKeyPressed(code: "6")
     -- "6" opens the settings panel (issue #29), matching the GUI panel
     -- numbering: the sidebar lists the same preference sections as the
-    -- GUI settings editor (Project, Editor, Content, AI, Technology,
-    -- Publishing, Data, MCP, Style — from BDS.UI.Sidebar's settings
-    -- view). Enter on a section opens a section-specific editor in the
+    -- settings backends (Project, Editor, Content, AI, Technology,
+    -- Publishing, Data, MCP). The GUI-only Style tab is intentionally
+    -- absent. Enter on a section opens a section-specific editor in the
     -- main area: a generic typed-field form from BDS.UI.SettingsForm.
     -- Enter edits a text field in a status-line prompt, toggles a
     -- boolean, or cycles an enum through its options; read-only info

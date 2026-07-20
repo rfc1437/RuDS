@@ -35,8 +35,6 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("ai.system_prompt", ""),
     ("mcp.http.enabled", "false"),
     ("data.automatic_rebuild", "true"),
-    ("style.theme", "system"),
-    ("style.content_width", "72"),
 ];
 
 pub fn get(conn: &Connection, key: &str) -> EngineResult<Option<String>> {
@@ -112,4 +110,21 @@ pub fn set_at(conn: &Connection, key: &str, value: &str, updated_at: i64) -> Eng
 
 pub fn ui_language(conn: &Connection) -> EngineResult<Option<String>> {
     get(conn, UI_LANGUAGE_KEY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+
+    #[test]
+    fn effective_defaults_exclude_removed_style_settings() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+
+        let values = list_effective(db.conn()).unwrap();
+
+        let removed_prefix = ["style", "."].concat();
+        assert!(!values.keys().any(|key| key.starts_with(&removed_prefix)));
+    }
 }
