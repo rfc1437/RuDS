@@ -178,7 +178,7 @@ async fn handle_style_preview(
     let language = escape_html(metadata.main_language.as_deref().unwrap_or("en"));
     let description = escape_html(metadata.description.as_deref().unwrap_or(&metadata.name));
     let html = format!(
-        "<!doctype html><html lang=\"{language}\"{mode_attributes}><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>{project_name}</title><link rel=\"stylesheet\" href=\"{stylesheet}\" /><link rel=\"stylesheet\" href=\"/assets/bds.css\" /></head><body><main class=\"container\"><nav><ul><li><strong>{project_name}</strong></li></ul></nav><article><header><h1>{project_name}</h1></header><p>{description}</p><progress value=\"70\" max=\"100\"></progress><input type=\"text\" value=\"{project_name}\" aria-label=\"{project_name}\" /><button type=\"button\">{project_name}</button></article></main></body></html>"
+        "<!doctype html><html lang=\"{language}\"{mode_attributes}><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>{project_name}</title><link rel=\"stylesheet\" href=\"{stylesheet}\" /><link rel=\"stylesheet\" href=\"/assets/bds.css\" /></head><body><main class=\"container\"><nav><ul><li><strong>{project_name}</strong></li></ul><ul><li><button type=\"button\">{project_name}</button></li></ul></nav><article><p>{description}</p><progress value=\"70\" max=\"100\"></progress><input type=\"text\" value=\"{project_name}\" aria-label=\"{project_name}\" /></article></main></body></html>"
     );
     Html(html).into_response()
 }
@@ -1083,14 +1083,35 @@ mod tests {
             .unwrap();
         assert!(stylesheet.status().is_success());
         let stylesheet = stylesheet.text().unwrap();
+        let light_body = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__style-preview?theme=amber&mode=light"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let auto_body = client
+            .get(format!(
+                "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__style-preview?theme=amber&mode=auto"
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
         server.stop().unwrap();
 
         assert!(body.contains("<article>"));
         assert!(body.contains("Blog"));
+        assert!(body.find("<button").unwrap() < body.find("<article>").unwrap());
         assert!(body.contains("href=\"/assets/pico.amber.min.css\""));
         assert!(body.contains("data-theme=\"dark\""));
         assert!(body.contains("data-mode=\"dark\""));
         assert!(!body.contains("data-theme=\"amber\""));
+        assert!(light_body.contains("data-theme=\"light\""));
+        assert!(light_body.contains("data-mode=\"light\""));
+        assert!(!auto_body.contains("data-theme="));
+        assert!(!auto_body.contains("data-mode="));
         assert!(stylesheet.contains("--pico-primary-background:#ffbf00"));
     }
 

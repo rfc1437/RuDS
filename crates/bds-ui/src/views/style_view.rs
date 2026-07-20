@@ -1,6 +1,6 @@
 use iced::widget::text::Shaping;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::{Background, Border, Color, Element, Length, Radians, Theme, gradient};
 
 use bds_core::i18n::UiLocale;
 
@@ -194,11 +194,24 @@ fn theme_button_style(selected: bool, status: button::Status) -> button::Style {
     }
 }
 
-fn swatch(color: &'static str) -> Element<'static, Message> {
-    container(Space::new(Length::Fill, Length::Fixed(16.0)))
-        .width(Length::Fill)
+fn theme_accent_background(theme: &StyleTheme) -> Background {
+    gradient::Linear::new(Radians(3.0 * std::f32::consts::FRAC_PI_4))
+        .add_stop(0.0, parse_hex_color(theme.accent_color))
+        .add_stop(1.0, parse_hex_color(theme.dark_bg_color))
+        .into()
+}
+
+fn swatch(background: Background, width_portion: u16) -> Element<'static, Message> {
+    container(Space::new(Length::Fill, Length::Fill))
+        .width(Length::FillPortion(width_portion))
+        .height(Length::Fixed(30.0))
         .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(parse_hex_color(color))),
+            background: Some(background),
+            border: Border {
+                color: Color::from_rgba8(0xff, 0xff, 0xff, 0.08),
+                width: 1.0,
+                radius: 5.0.into(),
+            },
             ..container::Style::default()
         })
         .into()
@@ -210,11 +223,11 @@ fn theme_button<'a>(theme: &StyleTheme, selected_theme: &str) -> Element<'a, Mes
     button(
         column![
             row![
-                swatch(theme.accent_color),
-                swatch(theme.light_bg_color),
-                swatch(theme.dark_bg_color),
+                swatch(theme_accent_background(theme), 2),
+                swatch(Background::Color(parse_hex_color(theme.light_bg_color)), 1),
+                swatch(Background::Color(parse_hex_color(theme.dark_bg_color)), 1),
             ]
-            .spacing(2),
+            .spacing(4),
             text(display_theme_name(theme.name))
                 .size(12)
                 .shaping(Shaping::Advanced),
@@ -383,13 +396,40 @@ mod tests {
     }
 
     #[test]
+    fn theme_swatches_use_distinct_accent_gradients() {
+        let backgrounds = THEMES
+            .iter()
+            .map(theme_accent_background)
+            .collect::<Vec<_>>();
+
+        assert!(
+            backgrounds
+                .iter()
+                .all(|background| matches!(background, Background::Gradient(_)))
+        );
+        for (index, background) in backgrounds.iter().enumerate() {
+            assert!(!backgrounds[..index].contains(background));
+        }
+    }
+
+    #[test]
     fn preview_url_tracks_selection_and_local_mode() {
         let mut state = StyleViewState::new(Some("blue"));
         state.select_theme("pumpkin");
+
+        assert_eq!(
+            state.preview_url(),
+            "http://127.0.0.1:4123/__style-preview?theme=pumpkin&mode=auto"
+        );
         state.set_preview_mode(PreviewMode::Light);
         assert_eq!(
             state.preview_url(),
             "http://127.0.0.1:4123/__style-preview?theme=pumpkin&mode=light"
+        );
+        state.set_preview_mode(PreviewMode::Dark);
+        assert_eq!(
+            state.preview_url(),
+            "http://127.0.0.1:4123/__style-preview?theme=pumpkin&mode=dark"
         );
         assert_eq!(state.applied_theme, "blue");
     }

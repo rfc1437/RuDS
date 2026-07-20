@@ -637,6 +637,11 @@ struct PreviewSession {
 struct EmbeddedPreviewState {
     controller: WebViewController,
     current_url: Option<String>,
+    creation_pending: bool,
+}
+
+fn should_start_embedded_preview_creation(active: bool, pending: bool) -> bool {
+    !active && !pending
 }
 
 fn persist_media_editor_state_impl(
@@ -8712,6 +8717,7 @@ impl BdsApp {
             self.embedded_style_preview = Some(EmbeddedPreviewState {
                 controller: WebViewController::new(WebViewConfig::default().url(url.clone())),
                 current_url: Some(url.clone()),
+                creation_pending: false,
             });
         }
 
@@ -8719,9 +8725,13 @@ impl BdsApp {
             return window::get_oldest().map(Message::MainWindowLoaded);
         };
         if let Some(preview) = &mut self.embedded_style_preview
-            && !preview.controller.is_active()
+            && should_start_embedded_preview_creation(
+                preview.controller.is_active(),
+                preview.creation_pending,
+            )
         {
             preview.controller = WebViewController::new(WebViewConfig::default().url(url));
+            preview.creation_pending = true;
             return preview
                 .controller
                 .create_task(window_id, Message::EmbeddedStylePreviewReady);
@@ -8762,6 +8772,7 @@ impl BdsApp {
             self.embedded_preview = Some(EmbeddedPreviewState {
                 controller: WebViewController::new(WebViewConfig::default().url(url.clone())),
                 current_url: Some(url.clone()),
+                creation_pending: false,
             });
         }
 
@@ -8770,9 +8781,13 @@ impl BdsApp {
         };
 
         if let Some(preview) = &mut self.embedded_preview
-            && !preview.controller.is_active()
+            && should_start_embedded_preview_creation(
+                preview.controller.is_active(),
+                preview.creation_pending,
+            )
         {
             preview.controller = WebViewController::new(WebViewConfig::default().url(url));
+            preview.creation_pending = true;
             return preview
                 .controller
                 .create_task(window_id, Message::EmbeddedPreviewReady);
@@ -9426,6 +9441,7 @@ mod tests {
         persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
         remote_error_closes_connection, save_editor_settings_state_impl,
         save_script_editor_state_impl, save_template_editor_state_impl,
+        should_start_embedded_preview_creation,
     };
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
@@ -10952,6 +10968,13 @@ mod tests {
 
         state.mark_applied();
         assert!(!state.can_apply());
+    }
+
+    #[test]
+    fn embedded_preview_creation_starts_only_when_idle() {
+        assert!(should_start_embedded_preview_creation(false, false));
+        assert!(!should_start_embedded_preview_creation(false, true));
+        assert!(!should_start_embedded_preview_creation(true, false));
     }
 
     #[test]

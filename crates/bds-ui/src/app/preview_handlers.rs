@@ -11,6 +11,9 @@ impl BdsApp {
                 ])
             }
             Message::EmbeddedPreviewReady(result) => {
+                if let Some(preview) = &mut self.embedded_preview {
+                    preview.creation_pending = false;
+                }
                 match result {
                     Ok(()) => {
                         let visible = self.active_post_uses_embedded_preview();
@@ -29,6 +32,9 @@ impl BdsApp {
                 Task::none()
             }
             Message::EmbeddedStylePreviewReady(result) => {
+                if let Some(preview) = &mut self.embedded_style_preview {
+                    preview.creation_pending = false;
+                }
                 match result {
                     Ok(()) => {
                         let visible = self.active_style_uses_embedded_preview();
