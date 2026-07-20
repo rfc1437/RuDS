@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     for library in &std_libraries {
-        copy_runtime(&library, &staging)?;
+        copy_runtime(library, &staging)?;
     }
     #[cfg(target_os = "macos")]
     rewrite_macos_install_names(&release, &staging, &shared_libraries, &std_libraries)?;
@@ -102,13 +102,16 @@ fn copy_runtime(source: &Path, staging: &Path) -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| format!("runtime path has no filename: {}", source.display()))?;
     let destination = staging.join(name);
     fs::copy(source, &destination)?;
-    let mut permissions = fs::metadata(&destination)?.permissions();
-    permissions.set_readonly(false);
-    fs::set_permissions(&destination, permissions)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&destination, fs::Permissions::from_mode(0o755))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = fs::metadata(&destination)?.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&destination, permissions)?;
     }
     Ok(())
 }

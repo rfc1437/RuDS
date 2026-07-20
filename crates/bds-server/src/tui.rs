@@ -2363,7 +2363,7 @@ impl TuiApp {
         let db = self.database()?;
         let mut tags =
             bds_core::db::queries::tag::list_tags_by_project(db.conn(), self.project_id()?)?;
-        tags.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        tags.sort_by_key(|tag| tag.name.to_lowercase());
         Ok(tags)
     }
 
@@ -2406,10 +2406,9 @@ impl TuiApp {
     fn toggle_tag_mark(&mut self) {
         if let Ok(tags) = self.tags()
             && let Some(tag) = tags.get(self.panel_index)
+            && !self.marked_tags.remove(&tag.id)
         {
-            if !self.marked_tags.remove(&tag.id) {
-                self.marked_tags.insert(tag.id.clone());
-            }
+            self.marked_tags.insert(tag.id.clone());
         }
     }
 
@@ -3564,10 +3563,7 @@ impl InputDecoder {
     pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<TuiInput> {
         self.pending.extend_from_slice(bytes);
         let mut inputs = Vec::new();
-        loop {
-            let Some(first) = self.pending.first().copied() else {
-                break;
-            };
+        while let Some(first) = self.pending.first().copied() {
             if first == 0x1b {
                 if self.pending.len() == 1 {
                     break;
@@ -3697,6 +3693,56 @@ fn ansi_color(color: Color, background: bool) -> String {
         Color::Gray | Color::White => if background { "47" } else { "37" }.into(),
         _ => if background { "49" } else { "39" }.into(),
     }
+}
+
+fn editor(
+    entity: EditorEntity,
+    title: String,
+    syntax: &'static str,
+    post_language: Option<String>,
+    content: &str,
+) -> Editor {
+    let mut buffer = EditorBuffer::new(content);
+    buffer.set_soft_wrap(true);
+    Editor {
+        entity,
+        title,
+        syntax,
+        post_language,
+        buffer,
+        mode: EditorMode::Source,
+    }
+}
+
+enum PublishedKind {
+    Post,
+    Template,
+    Script,
+}
+
+fn read_published_body(root: &Path, relative: &str, kind: PublishedKind) -> Result<String> {
+    if relative.is_empty() {
+        return Ok(String::new());
+    }
+    let source = fs::read_to_string(root.join(relative))?;
+    let body = match kind {
+        PublishedKind::Post => {
+            bds_core::util::frontmatter::read_post_file(&source)
+                .map_err(|error| anyhow!(error))?
+                .1
+        }
+        PublishedKind::Template => {
+            bds_core::util::frontmatter::read_template_file(&source)
+                .map_err(|error| anyhow!(error))?
+                .1
+        }
+        PublishedKind::Script => {
+            bds_core::util::frontmatter::read_script_file(&source)
+                .map_err(|error| anyhow!(error))?
+                .1
+        }
+    };
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -3954,7 +4000,7 @@ mod tests {
         app.handle_input(TuiInput::plain(TuiKey::Enter)).unwrap();
         app.handle_input(TuiInput::plain(TuiKey::Char('2')))
             .unwrap();
-        assert!(app.filters.get(&TuiView::Media).is_none());
+        assert!(!app.filters.contains_key(&TuiView::Media));
         assert_eq!(
             app.filters.get(&TuiView::Posts).map(String::as_str),
             Some("Rust tag:rust category:dev")
@@ -4457,54 +4503,4 @@ mod tests {
             |item| matches!(item, SidebarItem::GitCommit(_, subject) if subject.contains("Commit from terminal"))
         ));
     }
-}
-
-fn editor(
-    entity: EditorEntity,
-    title: String,
-    syntax: &'static str,
-    post_language: Option<String>,
-    content: &str,
-) -> Editor {
-    let mut buffer = EditorBuffer::new(content);
-    buffer.set_soft_wrap(true);
-    Editor {
-        entity,
-        title,
-        syntax,
-        post_language,
-        buffer,
-        mode: EditorMode::Source,
-    }
-}
-
-enum PublishedKind {
-    Post,
-    Template,
-    Script,
-}
-
-fn read_published_body(root: &Path, relative: &str, kind: PublishedKind) -> Result<String> {
-    if relative.is_empty() {
-        return Ok(String::new());
-    }
-    let source = fs::read_to_string(root.join(relative))?;
-    let body = match kind {
-        PublishedKind::Post => {
-            bds_core::util::frontmatter::read_post_file(&source)
-                .map_err(|error| anyhow!(error))?
-                .1
-        }
-        PublishedKind::Template => {
-            bds_core::util::frontmatter::read_template_file(&source)
-                .map_err(|error| anyhow!(error))?
-                .1
-        }
-        PublishedKind::Script => {
-            bds_core::util::frontmatter::read_script_file(&source)
-                .map_err(|error| anyhow!(error))?
-                .1
-        }
-    };
-    Ok(body)
 }
