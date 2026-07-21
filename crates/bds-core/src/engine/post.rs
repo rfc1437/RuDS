@@ -134,6 +134,29 @@ pub fn update_post(
         )));
     }
 
+    let published_metadata_changed = post.status == PostStatus::Published
+        && (title.is_some_and(|value| post.title != value)
+            || excerpt.is_some_and(|value| post.excerpt.as_deref() != value)
+            || tags
+                .as_ref()
+                .is_some_and(|value| post.tags.as_slice() != value.as_slice())
+            || categories
+                .as_ref()
+                .is_some_and(|value| post.categories.as_slice() != value.as_slice())
+            || author.is_some_and(|value| post.author.as_deref() != value)
+            || language.is_some_and(|value| post.language.as_deref() != value)
+            || do_not_translate.is_some_and(|value| post.do_not_translate != value));
+    let published_body = if post.status == PostStatus::Published
+        && (published_metadata_changed || content.is_some())
+    {
+        resolve_post_fts_content(data_dir, &post)?
+    } else {
+        None
+    };
+    let reopen_published = published_metadata_changed
+        || (post.status == PostStatus::Published
+            && content.is_some_and(|value| published_body.as_deref() != Some(value)));
+
     if let Some(t) = title {
         post.title = t.to_string();
     }
@@ -143,7 +166,9 @@ pub fn update_post(
     if let Some(exc) = excerpt {
         post.excerpt = exc.map(|s| s.to_string());
     }
-    if let Some(c) = content {
+    if let Some(c) = content
+        && (post.status != PostStatus::Published || reopen_published)
+    {
         post.content = Some(c.to_string());
     }
     if let Some(t) = tags {
@@ -165,9 +190,12 @@ pub fn update_post(
         post.do_not_translate = dnt;
     }
 
-    // Auto-transition published or archived post back to draft on content/metadata change
-    if post.status == PostStatus::Published || post.status == PostStatus::Archived {
-        // Reload content from filesystem if content field is NULL (published state)
+    if reopen_published {
+        if post.content.is_none() {
+            post.content = published_body;
+        }
+        post.status = PostStatus::Draft;
+    } else if post.status == PostStatus::Archived {
         if post.content.is_none() && !post.file_path.is_empty() {
             let abs_path = data_dir.join(&post.file_path);
             if abs_path.exists()
@@ -1171,6 +1199,23 @@ mod tests {
         (db, dir)
     }
 
+    fn create_published_post(db: &Database, dir: &TempDir, title: &str, body: &str) -> Post {
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            title,
+            Some(body),
+            vec!["tag".into()],
+            vec!["category".into()],
+            Some("Alice"),
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap()
+    }
+
     #[test]
     fn create_post_generates_slug_and_draft() {
         let (db, dir) = setup();
@@ -1370,6 +1415,111 @@ mod tests {
         assert_eq!(updated.author.as_deref(), Some("Bob"));
         assert_eq!(updated.language.as_deref(), Some("de"));
         assert!(updated.do_not_translate);
+    }
+
+    #[test]
+    fn identical_published_update_stays_published() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published", "body");
+
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Published"),
+            None,
+            Some(None),
+            Some("body"),
+            Some(vec!["tag".into()]),
+            Some(vec!["category".into()]),
+            Some(Some("Alice")),
+            Some(Some("en")),
+            Some(None),
+            Some(false),
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Published);
+        assert_eq!(updated.content, None);
+    }
+
+    #[test]
+    fn published_title_change_reopens_draft_with_file_body() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published", "body");
+
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Changed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Draft);
+        assert_eq!(updated.content.as_deref(), Some("body"));
+    }
+
+    #[test]
+    fn published_template_slug_only_change_stays_published() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published", "body");
+
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Some("page")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Published);
+        assert_eq!(updated.template_slug.as_deref(), Some("page"));
+        assert_eq!(updated.content, None);
+    }
+
+    #[test]
+    fn published_content_change_reopens_draft_with_new_body() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published", "body");
+
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            None,
+            None,
+            None,
+            Some("changed body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Draft);
+        assert_eq!(updated.content.as_deref(), Some("changed body"));
     }
 
     #[test]
