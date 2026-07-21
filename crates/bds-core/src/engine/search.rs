@@ -1,5 +1,6 @@
 //! Full-text search reindexing engine functions.
 
+use std::fs;
 use std::path::Path;
 
 use crate::db::DbConnection as Connection;
@@ -9,7 +10,8 @@ use crate::db::queries::{
     media as media_q, media_translation, post as post_q, post_translation, project as project_q,
     setting,
 };
-use crate::engine::{EngineResult, domain_events};
+use crate::engine::{EngineError, EngineResult, domain_events};
+use crate::util::frontmatter::{read_post_file, read_translation_file};
 use crate::util::now_unix_ms;
 
 const REBUILD_REQUIRED_SETTING: &str = "app.search-index-rebuild-required";
@@ -201,8 +203,9 @@ fn index_project(
     current: &mut usize,
     on_item: Option<&ItemProgressFn>,
 ) -> EngineResult<ReindexReport> {
-    let main_language = data_path
-        .and_then(|path| crate::engine::meta::read_project_json(Path::new(path)).ok())
+    let data_dir = data_path.map(Path::new);
+    let main_language = data_dir
+        .and_then(|path| crate::engine::meta::read_project_json(path).ok())
         .and_then(|metadata| metadata.main_language)
         .unwrap_or_else(|| "en".to_string());
     let mut report = ReindexReport {
@@ -218,19 +221,30 @@ fn index_project(
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
         let translation_data = translations
             .iter()
-            .map(|translation| fts::PostTranslationFts {
-                title: translation.title.clone(),
-                excerpt: translation.excerpt.clone(),
-                content: translation.content.clone(),
-                language: translation.language.clone(),
+            .map(|translation| {
+                Ok(fts::PostTranslationFts {
+                    title: translation.title.clone(),
+                    excerpt: translation.excerpt.clone(),
+                    content: data_dir
+                        .map(|dir| resolve_translation_fts_content(dir, translation))
+                        .transpose()?
+                        .flatten()
+                        .or_else(|| translation.content.clone()),
+                    language: translation.language.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<EngineResult<Vec<_>>>()?;
+        let content = data_dir
+            .map(|dir| resolve_post_fts_content(dir, &post))
+            .transpose()?
+            .flatten()
+            .or_else(|| post.content.clone());
         fts::index_post(
             conn,
             &post.id,
             &post.title,
             post.excerpt.as_deref(),
-            post.content.as_deref(),
+            content.as_deref(),
             &post.tags,
             &post.categories,
             &translation_data,
@@ -271,11 +285,41 @@ fn index_project(
     Ok(report)
 }
 
+fn resolve_post_fts_content(
+    data_dir: &Path,
+    post: &crate::model::Post,
+) -> EngineResult<Option<String>> {
+    if post.content.is_some() {
+        return Ok(post.content.clone());
+    }
+    if post.file_path.is_empty() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(data_dir.join(&post.file_path))?;
+    let (_fm, body) = read_post_file(&raw).map_err(EngineError::Parse)?;
+    Ok(Some(body))
+}
+
+fn resolve_translation_fts_content(
+    data_dir: &Path,
+    translation: &crate::model::PostTranslation,
+) -> EngineResult<Option<String>> {
+    if translation.content.is_some() {
+        return Ok(translation.content.clone());
+    }
+    if translation.file_path.is_empty() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(data_dir.join(&translation.file_path))?;
+    let (_fm, body) = read_translation_file(&raw).map_err(EngineError::Parse)?;
+    Ok(Some(body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Database;
-    use crate::db::fts::ensure_fts_tables;
+    use crate::db::fts::{self, ensure_fts_tables};
     use crate::engine;
 
     fn setup() -> (Database, String) {
@@ -328,6 +372,57 @@ mod tests {
         // Verify searchable
         let results = crate::db::fts::search_posts(db.conn(), "test", "en").unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn rebuild_indexes_published_post_and_translation_bodies_from_files() {
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.migrate();
+        ensure_fts_tables(db.conn()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let project = engine::project::create_project(
+            db.conn(),
+            "Published Project",
+            Some(dir.path().to_str().unwrap()),
+        )
+        .unwrap();
+        let post = engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            &project.id,
+            "Published Rebuild",
+            Some("distinctive platypusnova body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        engine::post::upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Veröffentlichter Neuaufbau",
+            None,
+            Some("markantes schmetterlingskomet wort"),
+        )
+        .unwrap();
+        engine::post::publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        fts::remove_post_from_index(db.conn(), &post.id).unwrap();
+
+        let report = reindex_project(db.conn(), &project.id, None).unwrap();
+
+        assert_eq!(report.posts_indexed, 1);
+        assert_eq!(
+            fts::search_posts(db.conn(), "platypusnova", "en").unwrap(),
+            vec![post.id.clone()]
+        );
+        assert_eq!(
+            fts::search_posts(db.conn(), "schmetterlingskomet", "de").unwrap(),
+            vec![post.id]
+        );
     }
 
     #[test]
