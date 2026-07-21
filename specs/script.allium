@@ -230,6 +230,10 @@ rule UpdateScript {
             ensures: script.file_path = format("scripts/{slug}.lua", slug: script.slug)
             ensures: ScriptFileWritten(script)
             ensures: PreviousScriptFileDeleted(script)
+    if script.status = published and not script_changes_affect_published_output(changes):
+        ensures: script.status = published
+        ensures: ScriptFileWritten(script)
+            -- Keep published frontmatter synchronized for metadata-only and no-op content updates.
     ensures: script.updated_at = now
     ensures: script.version = script.version + 1
 }
@@ -237,7 +241,8 @@ rule UpdateScript {
 rule ReopenPublishedScript {
     when: UpdateScriptRequested(script, changes)
     requires: script.status = published
-    requires: script_changes_affect_published_output(changes)
+    requires: changes.content != null
+    requires: changes.content != effective_script_content(script)
     ensures: script.status = draft
 }
 

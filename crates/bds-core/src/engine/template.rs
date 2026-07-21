@@ -91,6 +91,15 @@ pub fn update_template(
     }
     let original_slug = tpl.slug.clone();
     let original_file_path = tpl.file_path.clone();
+    let was_published = tpl.status == TemplateStatus::Published;
+    let effective_content = tpl.content.clone().unwrap_or_else(|| {
+        if original_file_path.is_empty() {
+            String::new()
+        } else {
+            read_published_template_body(data_dir, &original_file_path)
+        }
+    });
+    let content_changed = content.is_some_and(|new_content| new_content != effective_content);
 
     if let Some(requested_slug) = slug {
         let slug = slugify(requested_slug);
@@ -118,23 +127,19 @@ pub fn update_template(
         tpl.content = Some(c.to_string());
     }
 
-    // If published, transition back to draft on edit
-    if tpl.status == TemplateStatus::Published {
-        // Reload content from file if needed
-        if tpl.content.is_none() && !tpl.file_path.is_empty() {
-            // Content will come from the file when we read for publish
-            // For update we need the new content from the caller
-        }
+    if was_published && content_changed {
         tpl.status = TemplateStatus::Draft;
     }
 
     let slug_changed = tpl.slug != original_slug;
-    let published_body = if slug_changed && !original_file_path.is_empty() {
-        Some(read_published_template_body(data_dir, &original_file_path))
+    let published_body = if !original_file_path.is_empty()
+        && (slug_changed || (was_published && !content_changed))
+    {
+        Some(effective_content)
     } else {
         None
     };
-    if published_body.is_some() {
+    if slug_changed && published_body.is_some() {
         tpl.file_path = template_file_path(&tpl.slug);
     }
     tpl.version += 1;
@@ -198,20 +203,32 @@ pub fn update_template(
 /// Save template content (editor save). Updates DB, bumps version.
 pub fn save_template(
     conn: &Connection,
+    data_dir: &Path,
     template_id: &str,
     content: &str,
 ) -> EngineResult<Template> {
     let mut tpl = qt::get_template_by_id(conn, template_id)?;
+    let was_published = tpl.status == TemplateStatus::Published;
+    let effective_content = tpl.content.clone().unwrap_or_else(|| {
+        if tpl.file_path.is_empty() {
+            String::new()
+        } else {
+            read_published_template_body(data_dir, &tpl.file_path)
+        }
+    });
+    let content_changed = content != effective_content;
     tpl.content = Some(content.to_string());
     tpl.version += 1;
     tpl.updated_at = now_unix_ms();
 
-    // If published, transition back to draft
-    if tpl.status == TemplateStatus::Published {
+    if was_published && content_changed {
         tpl.status = TemplateStatus::Draft;
     }
 
     qt::update_template(conn, &tpl)?;
+    if was_published && !content_changed && !tpl.file_path.is_empty() {
+        rewrite_renamed_template_file(data_dir, &tpl.file_path, &tpl, &effective_content)?;
+    }
     emit_template(&tpl, NotificationAction::Updated);
     Ok(tpl)
 }
@@ -809,6 +826,98 @@ mod tests {
         let (frontmatter, body) = crate::util::frontmatter::read_template_file(&new_file).unwrap();
         assert_eq!(frontmatter.slug, "renamed-template");
         assert_eq!(body, "<article>{{ title }}</article>");
+        assert_eq!(updated.status, TemplateStatus::Published);
+    }
+
+    #[test]
+    fn published_template_metadata_update_stays_published_and_rewrites_frontmatter() {
+        let (db, dir) = setup();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Published Template",
+            TemplateKind::Post,
+            "<article>{{ title }}</article>",
+        )
+        .unwrap();
+        let published = publish_template(db.conn(), dir.path(), &template.id).unwrap();
+
+        let updated = update_template(
+            db.conn(),
+            dir.path(),
+            &template.id,
+            "p1",
+            Some("Renamed title"),
+            None,
+            Some(TemplateKind::List),
+            Some(false),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, TemplateStatus::Published);
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_template_file(&file).unwrap();
+        assert_eq!(frontmatter.title, "Renamed title");
+        assert_eq!(frontmatter.kind, "list");
+        assert!(!frontmatter.enabled);
+        assert_eq!(frontmatter.version, updated.version);
+        assert_eq!(body, "<article>{{ title }}</article>");
+    }
+
+    #[test]
+    fn published_template_content_change_reopens_draft_and_preserves_published_file() {
+        let (db, dir) = setup();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Published Template",
+            TemplateKind::Post,
+            "old body",
+        )
+        .unwrap();
+        let published = publish_template(db.conn(), dir.path(), &template.id).unwrap();
+
+        let updated = update_template(
+            db.conn(),
+            dir.path(),
+            &template.id,
+            "p1",
+            None,
+            None,
+            None,
+            None,
+            Some("new body"),
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, TemplateStatus::Draft);
+        assert_eq!(updated.content.as_deref(), Some("new body"));
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (_, body) = crate::util::frontmatter::read_template_file(&file).unwrap();
+        assert_eq!(body, "old body");
+    }
+
+    #[test]
+    fn identical_published_template_save_stays_published() {
+        let (db, dir) = setup();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Published Template",
+            TemplateKind::Post,
+            "same",
+        )
+        .unwrap();
+        let published = publish_template(db.conn(), dir.path(), &template.id).unwrap();
+
+        let saved = save_template(db.conn(), dir.path(), &template.id, "same").unwrap();
+
+        assert_eq!(saved.status, TemplateStatus::Published);
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_template_file(&file).unwrap();
+        assert_eq!(frontmatter.version, saved.version);
+        assert_eq!(body, "same");
     }
 
     #[test]
@@ -956,9 +1065,9 @@ mod tests {
 
     #[test]
     fn save_template_updates_content() {
-        let (db, _dir) = setup();
+        let (db, dir) = setup();
         let tpl = create_template(db.conn(), "p1", "Tpl", TemplateKind::Post, "old").unwrap();
-        let saved = save_template(db.conn(), &tpl.id, "new content").unwrap();
+        let saved = save_template(db.conn(), dir.path(), &tpl.id, "new content").unwrap();
         assert_eq!(saved.content, Some("new content".to_string()));
         assert_eq!(saved.version, 2);
     }

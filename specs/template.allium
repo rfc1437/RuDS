@@ -135,6 +135,10 @@ rule UpdateTemplate {
             ensures: template.file_path = format("templates/{slug}.liquid", slug: template.slug)
             ensures: TemplateFileWritten(template)
             ensures: PreviousTemplateFileDeleted(template)
+    if template.status = published and not template_changes_affect_rendered_output(changes):
+        ensures: template.status = published
+        ensures: TemplateFileWritten(template)
+            -- Keep published frontmatter synchronized for metadata-only and no-op content updates.
     ensures: template.updated_at = now
     ensures: template.version = template.version + 1
 }
@@ -142,7 +146,8 @@ rule UpdateTemplate {
 rule ReopenPublishedTemplate {
     when: UpdateTemplateRequested(template, changes)
     requires: template.status = published
-    requires: template_changes_affect_rendered_output(changes)
+    requires: changes.content != null
+    requires: changes.content != effective_template_content(template)
     ensures: template.status = draft
 }
 

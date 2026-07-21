@@ -81,6 +81,15 @@ pub fn update_script(
     }
     let original_slug = script.slug.clone();
     let original_file_path = script.file_path.clone();
+    let was_published = script.status == ScriptStatus::Published;
+    let effective_content = script.content.clone().unwrap_or_else(|| {
+        if original_file_path.is_empty() {
+            String::new()
+        } else {
+            read_published_script_body(data_dir, &original_file_path)
+        }
+    });
+    let content_changed = content.is_some_and(|new_content| new_content != effective_content);
 
     if let Some(requested_slug) = slug {
         let slug = slugify(requested_slug);
@@ -112,17 +121,18 @@ pub fn update_script(
     }
 
     let slug_changed = script.slug != original_slug;
-    let published_body = if slug_changed && !original_file_path.is_empty() {
-        Some(read_published_script_body(data_dir, &original_file_path))
+    let published_body = if !original_file_path.is_empty()
+        && (slug_changed || (was_published && !content_changed))
+    {
+        Some(effective_content)
     } else {
         None
     };
-    if published_body.is_some() {
+    if slug_changed && published_body.is_some() {
         script.file_path = script_file_path(&script.slug);
     }
 
-    // If published, transition back to draft on edit
-    if script.status == ScriptStatus::Published {
+    if was_published && content_changed {
         script.status = ScriptStatus::Draft;
     }
 
@@ -137,17 +147,34 @@ pub fn update_script(
 }
 
 /// Save script content (editor save). Updates DB, bumps version.
-pub fn save_script(conn: &Connection, script_id: &str, content: &str) -> EngineResult<Script> {
+pub fn save_script(
+    conn: &Connection,
+    data_dir: &Path,
+    script_id: &str,
+    content: &str,
+) -> EngineResult<Script> {
     let mut script = qs::get_script_by_id(conn, script_id)?;
+    let was_published = script.status == ScriptStatus::Published;
+    let effective_content = script.content.clone().unwrap_or_else(|| {
+        if script.file_path.is_empty() {
+            String::new()
+        } else {
+            read_published_script_body(data_dir, &script.file_path)
+        }
+    });
+    let content_changed = content != effective_content;
     script.content = Some(content.to_string());
     script.version += 1;
     script.updated_at = now_unix_ms();
 
-    if script.status == ScriptStatus::Published {
+    if was_published && content_changed {
         script.status = ScriptStatus::Draft;
     }
 
     qs::update_script(conn, &script)?;
+    if was_published && !content_changed && !script.file_path.is_empty() {
+        rewrite_renamed_script_file(data_dir, &script.file_path, &script, &effective_content)?;
+    }
     emit_script(&script, NotificationAction::Updated);
     Ok(script)
 }
@@ -494,13 +521,114 @@ mod tests {
         let (frontmatter, body) = crate::util::frontmatter::read_script_file(&new_file).unwrap();
         assert_eq!(frontmatter.slug, "renamed-script");
         assert_eq!(body, "function main()\nend");
+        assert_eq!(updated.status, ScriptStatus::Published);
+    }
+
+    #[test]
+    fn published_script_metadata_update_stays_published_and_rewrites_frontmatter() {
+        let (db, dir) = setup();
+        let script = create_script(
+            db.conn(),
+            "p1",
+            "Published Script",
+            ScriptKind::Utility,
+            "function main()\nend",
+            None,
+        )
+        .unwrap();
+        let published = publish_script(db.conn(), dir.path(), &script.id).unwrap();
+
+        let updated = update_script(
+            db.conn(),
+            dir.path(),
+            &script.id,
+            "p1",
+            Some("Renamed title"),
+            None,
+            Some(ScriptKind::Transform),
+            Some("transform"),
+            Some(false),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, ScriptStatus::Published);
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_script_file(&file).unwrap();
+        assert_eq!(frontmatter.title, "Renamed title");
+        assert_eq!(frontmatter.kind, "transform");
+        assert_eq!(frontmatter.entrypoint, "transform");
+        assert!(!frontmatter.enabled);
+        assert_eq!(frontmatter.version, updated.version);
+        assert_eq!(body, "function main()\nend");
+    }
+
+    #[test]
+    fn published_script_content_change_reopens_draft_and_preserves_published_file() {
+        let (db, dir) = setup();
+        let script = create_script(
+            db.conn(),
+            "p1",
+            "Published Script",
+            ScriptKind::Utility,
+            "function main()\n  return 'old'\nend",
+            None,
+        )
+        .unwrap();
+        let published = publish_script(db.conn(), dir.path(), &script.id).unwrap();
+
+        let updated = update_script(
+            db.conn(),
+            dir.path(),
+            &script.id,
+            "p1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("function main()\n  return 'new'\nend"),
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, ScriptStatus::Draft);
+        assert_eq!(
+            updated.content.as_deref(),
+            Some("function main()\n  return 'new'\nend")
+        );
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (_, body) = crate::util::frontmatter::read_script_file(&file).unwrap();
+        assert_eq!(body, "function main()\n  return 'old'\nend");
+    }
+
+    #[test]
+    fn identical_published_script_save_stays_published() {
+        let (db, dir) = setup();
+        let script = create_script(
+            db.conn(),
+            "p1",
+            "Published Script",
+            ScriptKind::Utility,
+            "function main()\nend",
+            None,
+        )
+        .unwrap();
+        let published = publish_script(db.conn(), dir.path(), &script.id).unwrap();
+
+        let saved = save_script(db.conn(), dir.path(), &script.id, "function main()\nend").unwrap();
+
+        assert_eq!(saved.status, ScriptStatus::Published);
+        let file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_script_file(&file).unwrap();
+        assert_eq!(frontmatter.version, saved.version);
+        assert_eq!(body, "function main()\nend");
     }
 
     #[test]
     fn save_script_updates_content() {
-        let (db, _dir) = setup();
+        let (db, dir) = setup();
         let s = create_script(db.conn(), "p1", "S", ScriptKind::Macro, "old", None).unwrap();
-        let saved = save_script(db.conn(), &s.id, "new body").unwrap();
+        let saved = save_script(db.conn(), dir.path(), &s.id, "new body").unwrap();
         assert_eq!(saved.content, Some("new body".to_string()));
         assert_eq!(saved.version, 2);
     }
