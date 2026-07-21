@@ -57,7 +57,9 @@ rule UpdatePostSideEffects {
     -- If post is published and content/metadata changes:
     --   auto-transition status back to draft
     -- If slug changed and file exists: rename .md file
-    -- If templateSlug changed on published post: rewrite .md frontmatter
+    -- If templateSlug changed on published post: atomically rewrite .md
+    -- frontmatter while preserving the file body, publishedAt, and the
+    -- caller-supplied post checksum.
     ensures: FTSIndexUpdated(post)
     if changes.content:
         ensures: PostLinksUpdated(post)

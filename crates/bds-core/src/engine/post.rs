@@ -156,6 +156,10 @@ pub fn update_post(
     let reopen_published = published_metadata_changed
         || (post.status == PostStatus::Published
             && content.is_some_and(|value| published_body.as_deref() != Some(value)));
+    let rewrite_published_template = post.status == PostStatus::Published
+        && !reopen_published
+        && template_slug
+            .is_some_and(|value| value.is_some() && post.template_slug.as_deref() != value);
 
     if let Some(t) = title {
         post.title = t.to_string();
@@ -211,6 +215,10 @@ pub fn update_post(
     post.updated_at = now_unix_ms();
     qp::update_post(conn, &post)?;
 
+    if rewrite_published_template {
+        rewrite_published_post(conn, data_dir, &post.id)?;
+    }
+
     // Re-index FTS
     fts_index_post(conn, data_dir, &post)?;
 
@@ -218,6 +226,32 @@ pub fn update_post(
     crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
 
     Ok(post)
+}
+
+/// Rewrite a published post file from the current database frontmatter while
+/// retaining the body that lives in the file.
+pub fn rewrite_published_post(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+) -> EngineResult<()> {
+    let post = qp::get_post_by_id(conn, post_id)?;
+    if post.status == PostStatus::Published && !post.file_path.is_empty() {
+        rewrite_post_file_from_database(data_dir, &post)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn rewrite_post_file_from_database(data_dir: &Path, post: &Post) -> EngineResult<()> {
+    let path = data_dir.join(&post.file_path);
+    let body = post.content.clone().unwrap_or_else(|| {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| read_post_file(&content).ok().map(|(_, body)| body))
+            .unwrap_or_default()
+    });
+    atomic_write_str(&path, &write_post_file(post, &body))?;
+    Ok(())
 }
 
 /// Publish a post: write file, clear content, set published_at.
@@ -1472,7 +1506,11 @@ mod tests {
     #[test]
     fn published_template_slug_only_change_stays_published() {
         let (db, dir) = setup();
-        let post = create_published_post(&db, &dir, "Published", "body");
+        let mut post = create_published_post(&db, &dir, "Published", "body");
+        post.checksum = Some("caller-checksum".into());
+        qp::update_post(db.conn(), &post).unwrap();
+        let post_path = dir.path().join(&post.file_path);
+        let original_file = fs::read_to_string(&post_path).unwrap();
 
         let updated = update_post(
             db.conn(),
@@ -1494,6 +1532,15 @@ mod tests {
         assert_eq!(updated.status, PostStatus::Published);
         assert_eq!(updated.template_slug.as_deref(), Some("page"));
         assert_eq!(updated.content, None);
+        assert_eq!(updated.published_at, post.published_at);
+        assert_eq!(updated.checksum.as_deref(), Some("caller-checksum"));
+
+        let rewritten_file = fs::read_to_string(post_path).unwrap();
+        assert_ne!(rewritten_file, original_file);
+        let (frontmatter, body) = read_post_file(&rewritten_file).unwrap();
+        assert_eq!(frontmatter.template_slug.as_deref(), Some("page"));
+        assert_eq!(frontmatter.published_at, post.published_at);
+        assert_eq!(body, "body");
     }
 
     #[test]

@@ -17,8 +17,7 @@ use crate::engine::{EngineError, EngineResult};
 use crate::model::{Media, MediaTranslation, Post, PostTranslation, Script, Template};
 use crate::util::frontmatter::{
     ScriptFrontmatter, TemplateFrontmatter, read_post_file, read_script_file, read_template_file,
-    read_translation_file, write_post_file, write_script_file, write_template_file,
-    write_translation_file,
+    read_translation_file, write_script_file, write_template_file, write_translation_file,
 };
 use crate::util::sidecar::{
     MediaSidecar, MediaTranslationSidecar, read_sidecar, read_translation_sidecar,
@@ -388,13 +387,7 @@ fn rewrite_post_from_database(
     entity_id: &str,
 ) -> EngineResult<()> {
     let post = qp::get_post_by_id(conn, entity_id)?;
-    let path = data_dir.join(&post.file_path);
-    let body = fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| read_post_file(&content).ok().map(|(_, body)| body))
-        .unwrap_or_default();
-    atomic_write_str(&path, &write_post_file(&post, &body))?;
-    Ok(())
+    crate::engine::post::rewrite_post_file_from_database(data_dir, &post)
 }
 
 fn rewrite_post_translation_from_database(
