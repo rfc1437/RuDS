@@ -1035,7 +1035,7 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::db::queries::script::insert_script;
     use crate::db::queries::template::insert_template;
-    use crate::engine::post::{create_post, publish_post};
+    use crate::engine::post::{archive_post, create_post, publish_post};
     use crate::model::{
         Media, Post, PostStatus, ProjectMetadata, Script, ScriptKind, ScriptStatus, Template,
         TemplateKind, TemplateStatus,
@@ -1093,6 +1093,58 @@ mod tests {
             "expected no non-timestamp diffs, got: {non_time_diffs:?}"
         );
         assert!(report.orphans.is_empty(), "orphans: {:?}", report.orphans);
+    }
+
+    #[test]
+    fn archived_published_post_reports_only_bds2_frontmatter_drift() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Archived Post",
+            Some("body text"),
+            vec!["rust".into()],
+            vec!["tech".into()],
+            Some("Alice"),
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let path = dir.path().join(&published.file_path);
+        let original_file = fs::read(&path).unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), original_file);
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| !error.starts_with("post ")),
+            "post diff errors: {:?}",
+            report.errors
+        );
+        assert!(report.orphans.is_empty());
+        let diff = report
+            .diffs
+            .iter()
+            .find(|diff| diff.entity_type == "post" && diff.entity_id == post.id)
+            .expect("archived database status must differ from untouched published file");
+        assert!(diff.fields.iter().any(|field| {
+            field.field_name == "status"
+                && field.db_value == "archived"
+                && field.file_value == "published"
+        }));
+        assert!(
+            diff.fields
+                .iter()
+                .all(|field| matches!(field.field_name.as_str(), "status" | "updatedAt")),
+            "unexpected archived-post drift: {:?}",
+            diff.fields
+        );
     }
 
     #[test]

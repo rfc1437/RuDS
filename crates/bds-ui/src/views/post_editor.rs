@@ -377,6 +377,7 @@ pub enum PostEditorMsg {
     RemoveCategory(String),
     Save,
     Publish,
+    Archive,
     Unarchive,
     Discard,
     Delete,
@@ -440,44 +441,54 @@ pub fn view<'a>(
         .into()
     });
 
-    let quick_actions_menu: Element<'a, Message> = container(
-        column![
-            quick_actions_busy.unwrap_or_else(|| quick_action_item(
+    let mut quick_action_items = vec![
+        quick_actions_busy.unwrap_or_else(|| {
+            quick_action_item(
                 locale,
                 t(locale, "editor.aiAnalyze"),
                 PostEditorMsg::AnalyzeWithAi,
-                ai_enabled && state.ai_activity.is_none()
-            )),
-            quick_action_item(
-                locale,
-                t(locale, "editor.suggestTaxonomy"),
-                PostEditorMsg::AnalyzeTaxonomy,
-                ai_enabled && state.ai_activity.is_none()
-            ),
-            quick_action_item(
-                locale,
-                t(locale, "editor.translate"),
-                PostEditorMsg::Translate,
-                ai_enabled && state.ai_activity.is_none()
-            ),
-            quick_action_item(
-                locale,
-                t(locale, "editor.detectLanguage"),
-                PostEditorMsg::DetectLanguage,
-                ai_enabled && state.ai_activity.is_none()
-            ),
-            quick_action_item(
-                locale,
-                t(locale, "editor.addGalleryImages"),
-                PostEditorMsg::AddGalleryImages,
-                true
-            ),
-        ]
-        .spacing(4),
-    )
-    .padding(8)
-    .style(status_bar::dropdown_bg)
-    .into();
+                ai_enabled && state.ai_activity.is_none(),
+            )
+        }),
+        quick_action_item(
+            locale,
+            t(locale, "editor.suggestTaxonomy"),
+            PostEditorMsg::AnalyzeTaxonomy,
+            ai_enabled && state.ai_activity.is_none(),
+        ),
+        quick_action_item(
+            locale,
+            t(locale, "editor.translate"),
+            PostEditorMsg::Translate,
+            ai_enabled && state.ai_activity.is_none(),
+        ),
+        quick_action_item(
+            locale,
+            t(locale, "editor.detectLanguage"),
+            PostEditorMsg::DetectLanguage,
+            ai_enabled && state.ai_activity.is_none(),
+        ),
+        quick_action_item(
+            locale,
+            t(locale, "editor.addGalleryImages"),
+            PostEditorMsg::AddGalleryImages,
+            true,
+        ),
+    ];
+    if !on_translation {
+        let (label, message) = match state.status {
+            PostStatus::Archived => (t(locale, "editor.unarchive"), PostEditorMsg::Unarchive),
+            PostStatus::Draft | PostStatus::Published => {
+                (t(locale, "editor.archive"), PostEditorMsg::Archive)
+            }
+        };
+        quick_action_items.push(quick_action_item(locale, label, message, true));
+    }
+    let quick_actions_menu: Element<'a, Message> =
+        container(iced::widget::Column::with_children(quick_action_items).spacing(4))
+            .padding(8)
+            .style(status_bar::dropdown_bg)
+            .into();
     let quick_actions: Element<'a, Message> = popover::popover(
         quick_actions_button,
         quick_actions_menu,
@@ -508,19 +519,6 @@ pub fn view<'a>(
             )
             .on_press(Message::PostEditor(PostEditorMsg::Publish))
             .style(inputs::primary_button)
-            .padding([6, 16])
-            .into(),
-        );
-    }
-    if !on_translation && state.status == PostStatus::Archived {
-        header_action_items.push(
-            button(
-                text(t(locale, "editor.unarchive"))
-                    .size(13)
-                    .shaping(Shaping::Advanced),
-            )
-            .on_press(Message::PostEditor(PostEditorMsg::Unarchive))
-            .style(inputs::secondary_button)
             .padding([6, 16])
             .into(),
         );

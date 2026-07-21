@@ -2375,12 +2375,15 @@ mod tests {
             None,
         )
         .unwrap();
-        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let post_path = dir.path().join(&published.file_path);
+        let published_file = fs::read(&post_path).unwrap();
         archive_post(db.conn(), dir.path(), &post.id).unwrap();
 
         let from_db = qp::get_post_by_id(db.conn(), &post.id).unwrap();
         assert_eq!(from_db.status, PostStatus::Archived);
         assert_eq!(from_db.content, None);
+        assert_eq!(fs::read(post_path).unwrap(), published_file);
     }
 
     #[test]

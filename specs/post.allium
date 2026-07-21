@@ -237,6 +237,9 @@ rule ArchivePost {
     when: ArchivePostRequested(post)
     requires: post.status = draft or post.status = published
     ensures: post.status = archived
+    -- Archiving changes only status and updatedAt. A published post keeps its
+    -- body solely in the existing file: content remains null and the file is
+    -- not rewritten.
 }
 
 rule UnarchivePost {

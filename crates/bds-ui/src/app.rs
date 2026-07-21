@@ -6896,8 +6896,40 @@ impl BdsApp {
                     tab.is_dirty = false;
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.unarchived"));
+                return self.refresh_sidebar_posts();
             }
             Err(error) => self.notify_operation_failed("editor.unarchive", error),
+        }
+        Task::none()
+    }
+
+    fn archive_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        if let Err(error) = self.persist_post_editor_state(post_id) {
+            self.notify_operation_failed("editor.archive", error);
+            return Task::none();
+        }
+        let (Some(db), Some(data_dir)) = (self.db.as_ref(), self.data_dir.as_ref()) else {
+            return Task::none();
+        };
+        if let Err(error) = engine::post::archive_post(db.conn(), data_dir, post_id) {
+            self.notify_operation_failed("editor.archive", error);
+            return Task::none();
+        }
+        match bds_core::db::queries::post::get_post_by_id(db.conn(), post_id) {
+            Ok(post) => {
+                if let Some(editor) = self.post_editors.get_mut(post_id) {
+                    editor.status = post.status;
+                    editor.updated_at = post.updated_at;
+                    editor.is_dirty = false;
+                    editor.last_edit_at_ms = 0;
+                }
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
+                    tab.is_dirty = false;
+                }
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.archived"));
+                return self.refresh_sidebar_posts();
+            }
+            Err(error) => self.notify_operation_failed("editor.archive", error),
         }
         Task::none()
     }
@@ -10907,6 +10939,50 @@ mod tests {
         assert!(app.toasts.iter().any(|toast| {
             toast.level == ToastLevel::Success
                 && toast.message == t(UiLocale::En, "editor.unarchived")
+        }));
+    }
+
+    #[test]
+    fn post_editor_archive_action_keeps_published_body_file_only() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Published",
+            Some("File body"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let published = post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
+        let path = tmp.path().join(&published.file_path);
+        let original_file = std::fs::read(&path).unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &published);
+        app.post_editors
+            .get_mut(&created.id)
+            .unwrap()
+            .quick_actions_open = true;
+
+        let _ = app.handle_post_editor_msg(PostEditorMsg::Archive);
+
+        let from_db = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert_eq!(from_db.status, PostStatus::Archived);
+        assert_eq!(from_db.content, None);
+        assert_eq!(std::fs::read(path).unwrap(), original_file);
+        assert_eq!(app.post_editors[&created.id].status, PostStatus::Archived);
+        assert!(!app.post_editors[&created.id].quick_actions_open);
+        assert!(app.toasts.iter().any(|toast| {
+            toast.level == ToastLevel::Success
+                && toast.message == t(UiLocale::En, "editor.archived")
         }));
     }
 

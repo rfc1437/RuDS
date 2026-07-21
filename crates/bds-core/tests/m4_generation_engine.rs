@@ -127,6 +127,19 @@ fn reopened_draft_generation_uses_last_published_file() {
 }
 
 #[test]
+fn archived_post_with_published_file_is_not_a_generation_source() {
+    let (_db, dir) = setup();
+    let mut post = make_post("archived", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Published body");
+    post.status = PostStatus::Archived;
+    post.content = None;
+
+    let source = load_published_post_source(dir.path(), post).unwrap();
+
+    assert!(source.is_none());
+}
+
+#[test]
 fn validation_keeps_reopened_draft_published_snapshots() {
     let (db, dir) = setup();
     let mut post = make_post("reopened", 1_710_000_000_000);

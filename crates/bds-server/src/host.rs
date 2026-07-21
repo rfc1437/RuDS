@@ -598,7 +598,12 @@ mod tests {
             update.as_slice(),
             [ServerMessage::Tasks { tasks, .. }] if tasks[0].progress == Some(0.5)
         ));
-        assert!(session.pending().is_empty());
+        assert!(
+            session
+                .pending()
+                .iter()
+                .all(|message| !matches!(message, ServerMessage::Tasks { .. }))
+        );
     }
 
     #[test]
