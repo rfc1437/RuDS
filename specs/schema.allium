@@ -55,7 +55,7 @@ entity Post {
     updated_at: Timestamp
     published_at: Timestamp?
     file_path: String       -- Empty for never-published drafts
-    checksum: String?       -- SHA-256 of content
+    checksum: String?       -- Caller-supplied SHA-256 content change signal; nil after filesystem rebuild
     tags: Set<String>       -- JSON array stored as text
     categories: Set<String> -- JSON array stored as text
     template_slug: String?  -- User template override
@@ -83,7 +83,7 @@ entity PostTranslation {
     updated_at: Timestamp
     published_at: Timestamp?
     file_path: String
-    checksum: String?
+    checksum: String?       -- Caller-supplied content change signal; nil after filesystem rebuild
 }
 
 entity Media {
@@ -103,7 +103,7 @@ entity Media {
     sidecar_path: String    -- Path to .meta sidecar file
     created_at: Timestamp
     updated_at: Timestamp
-    checksum: String?
+    checksum: String?       -- Lower-hex MD5 of media bytes when known
     tags: Set<String>       -- JSON array stored as text
     language: String?       -- ISO 639-1 code
 }

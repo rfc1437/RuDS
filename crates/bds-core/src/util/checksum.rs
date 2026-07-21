@@ -25,6 +25,26 @@ pub fn file_hash(path: &Path) -> std::io::Result<String> {
     Ok(encode_hex(hasher.finalize()))
 }
 
+/// Compute the bDS2-compatible lower-hex MD5 change signal for media bytes.
+pub fn media_content_hash(content: &[u8]) -> String {
+    format!("{:x}", md5::compute(content))
+}
+
+/// Compute the bDS2-compatible lower-hex MD5 change signal for a media file.
+pub fn media_file_hash(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut context = md5::Context::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        context.consume(&buf[..n]);
+    }
+    Ok(format!("{:x}", context.finalize()))
+}
+
 fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
     bytes
         .as_ref()
@@ -53,6 +73,15 @@ mod tests {
         assert_eq!(
             hash,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn media_hash_matches_bds2_fixture() {
+        // Base.encode16(:crypto.hash(:md5, "hello"), case: :lower) in bDS2.
+        assert_eq!(
+            media_content_hash(b"hello"),
+            "5d41402abc4b2a76b9719d911017c592"
         );
     }
 }

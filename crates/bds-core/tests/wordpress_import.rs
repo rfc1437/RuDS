@@ -163,7 +163,7 @@ fn analysis_distinguishes_new_updates_conflicts_duplicates_and_missing_media() {
         .unwrap();
     let old_different = dir.path().join("old-different.png");
     DynamicImage::new_rgb8(2, 2).save(&old_different).unwrap();
-    bds_core::engine::media::import_media(
+    let same = bds_core::engine::media::import_media(
         db.conn(),
         dir.path(),
         &project.id,
@@ -177,7 +177,14 @@ fn analysis_distinguishes_new_updates_conflicts_duplicates_and_missing_media() {
         Vec::new(),
     )
     .unwrap();
-    bds_core::engine::media::import_media(
+    bds_core::engine::media::replace_media_file(
+        db.conn(),
+        dir.path(),
+        &same.id,
+        &uploads.join("same.png"),
+    )
+    .unwrap();
+    let different = bds_core::engine::media::import_media(
         db.conn(),
         dir.path(),
         &project.id,
@@ -189,6 +196,13 @@ fn analysis_distinguishes_new_updates_conflicts_duplicates_and_missing_media() {
         None,
         None,
         Vec::new(),
+    )
+    .unwrap();
+    bds_core::engine::media::replace_media_file(
+        db.conn(),
+        dir.path(),
+        &different.id,
+        &old_different,
     )
     .unwrap();
 

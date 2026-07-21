@@ -264,6 +264,8 @@ invariant WxrConversionParity {
 }
 
 invariant AnalysisClassification {
+    -- Post/page checksums are lower-hex SHA-256 of converted Markdown; media
+    -- checksums are lower-hex MD5 of source bytes, matching bDS2.
     -- Posts/pages: same slug and checksum => update; same slug with different
     -- content => conflict; checksum matching another post => content duplicate;
     -- otherwise new. Media applies the same rules by original filename and

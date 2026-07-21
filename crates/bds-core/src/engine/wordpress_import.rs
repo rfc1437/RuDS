@@ -25,8 +25,8 @@ use crate::model::{
     TaxonomyKind,
 };
 use crate::util::{
-    atomic_write_str, content_hash, file_hash, media_sidecar_path, media_translation_sidecar_path,
-    now_unix_ms, post_file_path, slugify,
+    atomic_write_str, content_hash, media_file_hash, media_sidecar_path,
+    media_translation_sidecar_path, now_unix_ms, post_file_path, slugify,
 };
 
 const TRANSACTION_BATCH_SIZE: usize = 500;
@@ -678,7 +678,7 @@ fn analyze_media(
     let checksum = source_path
         .as_ref()
         .filter(|path| path.is_file())
-        .and_then(|path| file_hash(path).ok());
+        .and_then(|path| media_file_hash(path).ok());
     let existing_by_name = media_by_name.get(&item.filename.to_lowercase()).copied();
     let existing_by_checksum = checksum
         .as_ref()
@@ -1369,7 +1369,6 @@ fn import_post_item(
         imported.published_at = item.published_at.or(Some(imported.created_at));
         imported.file_path = post_file_path(imported.created_at, &imported.slug);
         let serialized = crate::util::frontmatter::write_post_file(&imported, &body);
-        imported.checksum = Some(content_hash(serialized.as_bytes()));
         atomic_write_str(&data_dir.join(&imported.file_path), &serialized)?;
         if !previous_file_path.is_empty() && previous_file_path != imported.file_path {
             remove_file_if_present(&data_dir.join(previous_file_path))?;
@@ -1476,6 +1475,7 @@ fn execute_media_phase(
                         default_author,
                         None,
                         Vec::new(),
+                        item.checksum.as_deref(),
                         item.created_at.unwrap_or_else(now_unix_ms),
                     )?
                 };

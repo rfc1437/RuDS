@@ -51,6 +51,8 @@ entity PostTranslation {
     status: PostTranslationStatus
     file_path: String
     checksum: String?
+        -- Caller-supplied content change signal. Publish preserves it;
+        -- filesystem rebuild/sync clears it to match bDS2.
     created_at: Timestamp
     updated_at: Timestamp
     published_at: Timestamp?
@@ -143,6 +145,7 @@ rule PublishTranslation {
     ensures: TranslationFileWritten(translation)
     ensures: translation.content = null
         -- Content moves to filesystem
+    -- translation.checksum is preserved unchanged.
 }
 
 rule ReopenPublishedTranslation {

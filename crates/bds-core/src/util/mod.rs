@@ -10,7 +10,7 @@ pub mod timestamp;
 
 pub use app_paths::{application_data_dir, application_database_path, default_project_data_dir};
 pub use atomic_write::{atomic_write, atomic_write_str};
-pub use checksum::{content_hash, file_hash};
+pub use checksum::{content_hash, file_hash, media_content_hash, media_file_hash};
 pub use paths::*;
 pub use slug::{ensure_unique, slugify};
 pub use timestamp::{

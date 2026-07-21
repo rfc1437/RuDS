@@ -20,7 +20,7 @@ use crate::util::thumbnail::{
     mime_from_extension,
 };
 use crate::util::{
-    atomic_write_str, content_hash, media_dir_path, media_sidecar_path,
+    atomic_write_str, media_dir_path, media_file_hash, media_sidecar_path,
     media_translation_sidecar_path, now_unix_ms,
 };
 
@@ -193,6 +193,7 @@ pub fn import_media(
         author,
         language,
         tags,
+        None,
         now_unix_ms(),
     )
 }
@@ -216,6 +217,7 @@ pub(crate) fn import_media_at(
     author: Option<&str>,
     language: Option<&str>,
     tags: Vec<String>,
+    checksum: Option<&str>,
     created_at: i64,
 ) -> EngineResult<Media> {
     // Validate file type per spec
@@ -254,10 +256,6 @@ pub(crate) fn import_media_at(
     // Compute sidecar path
     let sidecar_rel = media_sidecar_path(&rel_file_path);
 
-    // Compute checksum of the copied file
-    let file_bytes = fs::read(&abs_file_path)?;
-    let checksum = content_hash(&file_bytes);
-
     // Generate thumbnails (silently ignore errors for non-image files)
     let thumbnails_dir = data_dir.join("thumbnails");
     let _ = generate_all_thumbnails(&abs_file_path, &thumbnails_dir, &id);
@@ -278,7 +276,7 @@ pub(crate) fn import_media_at(
         language: language.map(|s| s.to_string()),
         file_path: rel_file_path,
         sidecar_path: sidecar_rel.clone(),
-        checksum: Some(checksum),
+        checksum: checksum.map(str::to_owned),
         tags,
         created_at,
         updated_at: created_at,
@@ -373,7 +371,7 @@ pub fn replace_media_file(
         )));
     }
 
-    let replacement_checksum = crate::util::file_hash(new_source_path)?;
+    let replacement_checksum = media_file_hash(new_source_path)?;
     if media.checksum.as_deref() == Some(replacement_checksum.as_str()) {
         return Ok(None);
     }
@@ -994,7 +992,7 @@ mod tests {
         assert_eq!(from_db.mime_type, "image/png");
         assert_eq!(from_db.width, Some(100));
         assert_eq!(from_db.height, Some(80));
-        assert!(from_db.checksum.is_some());
+        assert_eq!(from_db.checksum, None);
         assert!(from_db.size > 0);
 
         // Verify binary file exists
@@ -1234,7 +1232,12 @@ mod tests {
         )
         .unwrap();
         let stored = dir.path().join(&media.file_path);
-        let updated_at = media.updated_at;
+        let duplicate = dir.path().join("duplicate.png");
+        fs::copy(&stored, &duplicate).unwrap();
+        let established = replace_media_file(db.conn(), dir.path(), &media.id, &duplicate)
+            .unwrap()
+            .unwrap();
+        let updated_at = established.updated_at;
 
         assert!(
             replace_media_file(db.conn(), dir.path(), &media.id, &stored)
@@ -1247,6 +1250,32 @@ mod tests {
                 .updated_at,
             updated_at
         );
+    }
+
+    #[test]
+    fn import_media_at_preserves_caller_supplied_bds2_checksum() {
+        let (db, dir) = setup();
+        let source = create_test_png(dir.path());
+        let checksum = crate::util::media_file_hash(&source).unwrap();
+
+        let media = import_media_at(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &source,
+            "photo.png",
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            Some(&checksum),
+            now_unix_ms(),
+        )
+        .unwrap();
+
+        assert_eq!(media.checksum.as_deref(), Some(checksum.as_str()));
     }
 
     #[test]

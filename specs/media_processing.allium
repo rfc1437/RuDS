@@ -254,7 +254,8 @@ invariant MediaTranslationFileLayout {
 rule ImportMedia {
     when: ImportMediaRequested(source_path, project, metadata)
     -- metadata is optional import context: title, alt, caption, author,
-    -- language, and tags may be supplied by the caller.
+    -- language, tags, and a checksum may be supplied by the caller. WXR
+    -- supplies a lower-hex MD5 checksum; interactive imports leave it nil.
     -- 1. Validate file type (must be supported image)
     -- 2. Generate UUID v4 filename
     -- 3. Copy to media/{YYYY}/{MM}/{uuid}.{ext}
@@ -276,7 +277,7 @@ rule ImportMedia {
         tags: metadata.tags,
         file_path: format("media/{yyyy}/{mm}/{uuid}.{ext}"),
         sidecar_path: format("media/{yyyy}/{mm}/{uuid}.{ext}.meta"),
-        checksum: sha256(source_path)
+        checksum: metadata.checksum
     )
     ensures: ThumbnailsGenerated(media_id)
     ensures: SearchIndexUpdated(media_id)

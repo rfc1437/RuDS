@@ -98,6 +98,8 @@ entity Post {
     template_slug: String?
     file_path: String
     checksum: String?
+        -- Caller-supplied SHA-256 content change signal. Publish preserves it;
+        -- filesystem rebuild/sync clears it to match bDS2.
     tags: List<String>
     categories: List<String>
     created_at: Timestamp
@@ -210,6 +212,7 @@ rule PublishPost {
         -- Writes frontmatter + markdown to posts/YYYY/MM/{slug}.md
     ensures: post.content = null
         -- Content cleared from DB; now lives in filesystem only
+    -- post.checksum is preserved unchanged.
     ensures: SearchIndexUpdated(post)
     ensures: PostLinksUpdated(post)
         -- Parse inter-post links, update link graph
@@ -242,6 +245,7 @@ rule SyncPostFromFile {
     -- record from it (the filesystem is treated as truth for that one post).
     -- Re-syncs the post's link graph. Errors out if the file is missing.
     ensures: PostFieldsUpdated(post, parse_post_file(post.file_path))
+    ensures: post.checksum = null
     ensures: PostLinksUpdated(post)
 }
 

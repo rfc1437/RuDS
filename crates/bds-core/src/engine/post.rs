@@ -15,8 +15,7 @@ use crate::util::frontmatter::{
     read_post_file, read_translation_file, write_post_file, write_translation_file,
 };
 use crate::util::{
-    atomic_write_str, content_hash, ensure_unique, now_unix_ms, post_file_path, slugify,
-    translation_file_path,
+    atomic_write_str, ensure_unique, now_unix_ms, post_file_path, slugify, translation_file_path,
 };
 
 /// Report returned by `rebuild_posts_from_filesystem`.
@@ -255,10 +254,6 @@ fn publish_post_in_savepoint(
     let file_content = write_post_file(&post, &body);
     atomic_write_str(&abs_path, &file_content)?;
 
-    // Compute checksum
-    let hash = content_hash(file_content.as_bytes());
-    post.checksum = Some(hash);
-
     // Set published snapshot fields
     let tags_json = serde_json::to_string(&post.tags).unwrap_or_else(|_| "[]".into());
     let cats_json = serde_json::to_string(&post.categories).unwrap_or_else(|_| "[]".into());
@@ -387,7 +382,7 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
                 fm.do_not_translate,
                 fm.tags,
                 fm.categories,
-                Some(content_hash(raw.as_bytes())),
+                None,
             )
         } else {
             (
@@ -887,8 +882,6 @@ fn publish_translation(
     let file_content = write_translation_file(t, &body);
     atomic_write_str(&abs_path, &file_content)?;
 
-    let hash = content_hash(file_content.as_bytes());
-    t.checksum = Some(hash);
     t.content = None;
 
     qt::update_post_translation(conn, t)?;
@@ -984,7 +977,6 @@ pub(crate) fn rebuild_canonical_post(
         .to_string_lossy()
         .to_string();
 
-    let hash = content_hash(content.as_bytes());
     let status = match fm.status.as_str() {
         "published" => PostStatus::Published,
         "archived" => PostStatus::Archived,
@@ -1010,7 +1002,7 @@ pub(crate) fn rebuild_canonical_post(
             post.do_not_translate = fm.do_not_translate;
             post.template_slug = fm.template_slug;
             post.file_path = rel_path;
-            post.checksum = Some(hash);
+            post.checksum = None;
             post.tags = fm.tags;
             post.categories = fm.categories;
             post.created_at = fm.created_at;
@@ -1038,7 +1030,7 @@ pub(crate) fn rebuild_canonical_post(
                 do_not_translate: fm.do_not_translate,
                 template_slug: fm.template_slug,
                 file_path: rel_path,
-                checksum: Some(hash),
+                checksum: None,
                 tags: fm.tags,
                 categories: fm.categories,
                 published_title: None,
@@ -1071,8 +1063,6 @@ pub(crate) fn rebuild_translation(
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
-
-    let hash = content_hash(content.as_bytes());
 
     // Check if parent post exists
     let parent = qp::get_post_by_id(conn, &fm.translation_for);
@@ -1110,7 +1100,7 @@ pub(crate) fn rebuild_translation(
             };
             t.status = status;
             t.file_path = rel_path;
-            t.checksum = Some(hash);
+            t.checksum = None;
             t.created_at = created_at;
             t.updated_at = updated_at;
             t.published_at = published_at;
@@ -1132,7 +1122,7 @@ pub(crate) fn rebuild_translation(
                 },
                 status,
                 file_path: rel_path,
-                checksum: Some(hash),
+                checksum: None,
                 created_at,
                 updated_at,
                 published_at,
@@ -1644,6 +1634,48 @@ mod tests {
     }
 
     #[test]
+    fn publish_preserves_caller_supplied_checksums() {
+        let (db, dir) = setup();
+        let mut post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Imported",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        post.checksum = Some("bds2-post-checksum".into());
+        qp::update_post(db.conn(), &post).unwrap();
+        let mut translation = upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Importiert",
+            None,
+            Some("Inhalt"),
+        )
+        .unwrap();
+        translation.checksum = Some("bds2-translation-checksum".into());
+        qt::update_post_translation(db.conn(), &translation).unwrap();
+
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let published_translation =
+            qt::get_post_translation_by_id(db.conn(), &translation.id).unwrap();
+
+        assert_eq!(published.checksum.as_deref(), Some("bds2-post-checksum"));
+        assert_eq!(
+            published_translation.checksum.as_deref(),
+            Some("bds2-translation-checksum")
+        );
+    }
+
+    #[test]
     fn delete_post_removes_everything() {
         let (db, dir) = setup();
         let post = create_post(
@@ -1873,12 +1905,14 @@ mod tests {
         assert_eq!(post.slug, "rebuilt-post");
         assert_eq!(post.tags, vec!["test"]);
         assert_eq!(post.updated_at, 1_705_320_000_000);
+        assert_eq!(post.checksum, None);
 
         // Verify translation in DB
         let trans =
             qt::get_post_translation_by_post_and_language(db.conn(), "rebuild-post-1", "de")
                 .unwrap();
         assert_eq!(trans.title, "Wiederhergestellter Beitrag");
+        assert_eq!(trans.checksum, None);
 
         // Run rebuild again - should update, not create
         let report2 = rebuild_posts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
