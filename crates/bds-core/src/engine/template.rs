@@ -12,6 +12,7 @@ use crate::model::{
     DomainEntity, NotificationAction, Post, Tag, Template, TemplateKind, TemplateStatus,
 };
 use crate::util::frontmatter::{TemplateFrontmatter, write_template_file};
+use crate::util::paths::template_file_path;
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 const ALLOWED_LIQUID_TAGS: &[&str] = &[
@@ -89,22 +90,23 @@ pub fn update_template(
         return Err(EngineError::NotFound(format!("template {template_id}")));
     }
     let original_slug = tpl.slug.clone();
+    let original_file_path = tpl.file_path.clone();
 
-    // Slug uniqueness check
-    if let Some(new_slug) = slug
-        && new_slug != tpl.slug
-        && qt::get_template_by_slug(conn, project_id, new_slug).is_ok()
-    {
-        return Err(EngineError::Conflict(format!(
-            "template slug '{new_slug}' already exists"
-        )));
+    if let Some(requested_slug) = slug {
+        let slug = slugify(requested_slug);
+        let slug = if slug.is_empty() {
+            "template".to_string()
+        } else {
+            slug
+        };
+        tpl.slug = ensure_unique(&slug, |candidate| {
+            qt::get_template_by_slug(conn, project_id, candidate)
+                .is_ok_and(|existing| existing.id != template_id)
+        });
     }
 
     if let Some(t) = title {
         tpl.title = t.to_string();
-    }
-    if let Some(s) = slug {
-        tpl.slug = s.to_string();
     }
     if let Some(k) = kind {
         tpl.kind = k;
@@ -127,6 +129,14 @@ pub fn update_template(
     }
 
     let slug_changed = tpl.slug != original_slug;
+    let published_body = if slug_changed && !original_file_path.is_empty() {
+        Some(read_published_template_body(data_dir, &original_file_path))
+    } else {
+        None
+    };
+    if published_body.is_some() {
+        tpl.file_path = template_file_path(&tpl.slug);
+    }
     tpl.version += 1;
     tpl.updated_at = now_unix_ms();
     conn.begin_savepoint()?;
@@ -155,6 +165,16 @@ pub fn update_template(
         }
     };
 
+    for post in &affected_posts {
+        crate::engine::post::rewrite_published_post(conn, data_dir, &post.id)?;
+    }
+    if slug_changed {
+        crate::engine::tag::rewrite_tags_json(conn, data_dir, &tpl.project_id)?;
+    }
+    if let Some(body) = published_body {
+        rewrite_renamed_template_file(data_dir, &original_file_path, &tpl, &body)?;
+    }
+
     emit_template(&tpl, NotificationAction::Updated);
     for post in &affected_posts {
         domain_events::entity_changed(
@@ -171,13 +191,6 @@ pub fn update_template(
             &tag.id,
             NotificationAction::Updated,
         );
-    }
-
-    for post in &affected_posts {
-        crate::engine::post::rewrite_published_post(conn, data_dir, &post.id)?;
-    }
-    if slug_changed {
-        crate::engine::tag::rewrite_tags_json(conn, data_dir, &tpl.project_id)?;
     }
     Ok(tpl)
 }
@@ -359,6 +372,45 @@ fn template_kind_to_frontmatter(kind: &TemplateKind) -> String {
         TemplateKind::NotFound => "not_found".to_string(),
         TemplateKind::Partial => "partial".to_string(),
     }
+}
+
+fn read_published_template_body(data_dir: &Path, file_path: &str) -> String {
+    fs::read_to_string(data_dir.join(file_path))
+        .ok()
+        .and_then(|file| crate::util::frontmatter::read_template_file(&file).ok())
+        .map(|(_, body)| body)
+        .unwrap_or_default()
+}
+
+fn rewrite_renamed_template_file(
+    data_dir: &Path,
+    original_file_path: &str,
+    template: &Template,
+    body: &str,
+) -> EngineResult<()> {
+    let frontmatter = TemplateFrontmatter {
+        id: template.id.clone(),
+        project_id: Some(template.project_id.clone()),
+        slug: template.slug.clone(),
+        title: template.title.clone(),
+        kind: template_kind_to_frontmatter(&template.kind),
+        enabled: template.enabled,
+        version: template.version,
+        created_at: template.created_at,
+        updated_at: template.updated_at,
+    };
+    atomic_write_str(
+        &data_dir.join(&template.file_path),
+        &write_template_file(&frontmatter, body),
+    )?;
+    if original_file_path != template.file_path {
+        match fs::remove_file(data_dir.join(original_file_path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn validate_liquid_subset(content: &str) -> Result<(), String> {
@@ -689,22 +741,74 @@ mod tests {
     }
 
     #[test]
-    fn update_template_slug_conflict() {
+    fn update_template_slug_normalizes_and_uniquifies() {
         let (db, dir) = setup();
         create_template(db.conn(), "p1", "Alpha", TemplateKind::Post, "").unwrap();
         let t2 = create_template(db.conn(), "p1", "Beta", TemplateKind::Post, "").unwrap();
-        let result = update_template(
+        let updated = update_template(
             db.conn(),
             dir.path(),
             &t2.id,
             "p1",
             None,
-            Some("alpha"),
+            Some(" Alpha! "),
             None,
             None,
             None,
-        );
-        assert!(result.is_err());
+        )
+        .unwrap();
+        assert_eq!(updated.slug, "alpha-2");
+        assert!(updated.file_path.is_empty());
+
+        let unchanged = update_template(
+            db.conn(),
+            dir.path(),
+            &t2.id,
+            "p1",
+            None,
+            Some(" Alpha 2 "),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(unchanged.slug, "alpha-2");
+    }
+
+    #[test]
+    fn update_published_template_slug_rewrites_and_renames_file() {
+        let (db, dir) = setup();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Published Template",
+            TemplateKind::Post,
+            "<article>{{ title }}</article>",
+        )
+        .unwrap();
+        let published = publish_template(db.conn(), dir.path(), &template.id).unwrap();
+        let old_path = dir.path().join(&published.file_path);
+
+        let updated = update_template(
+            db.conn(),
+            dir.path(),
+            &template.id,
+            "p1",
+            None,
+            Some(" Renamed Template! "),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.slug, "renamed-template");
+        assert_eq!(updated.file_path, "templates/renamed-template.liquid");
+        assert!(!old_path.exists());
+        let new_file = fs::read_to_string(dir.path().join(&updated.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_template_file(&new_file).unwrap();
+        assert_eq!(frontmatter.slug, "renamed-template");
+        assert_eq!(body, "<article>{{ title }}</article>");
     }
 
     #[test]

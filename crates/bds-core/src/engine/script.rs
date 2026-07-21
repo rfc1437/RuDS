@@ -8,6 +8,7 @@ use crate::db::queries::script as qs;
 use crate::engine::{EngineError, EngineResult, domain_events};
 use crate::model::{DomainEntity, NotificationAction, Script, ScriptKind, ScriptStatus};
 use crate::util::frontmatter::{ScriptFrontmatter, write_script_file};
+use crate::util::paths::script_file_path;
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
 /// Create a new draft script. Content stored in DB, no file written.
@@ -64,6 +65,7 @@ pub fn create_script(
 )]
 pub fn update_script(
     conn: &Connection,
+    data_dir: &Path,
     script_id: &str,
     project_id: &str,
     title: Option<&str>,
@@ -74,22 +76,27 @@ pub fn update_script(
     content: Option<&str>,
 ) -> EngineResult<Script> {
     let mut script = qs::get_script_by_id(conn, script_id)?;
+    if script.project_id != project_id {
+        return Err(EngineError::NotFound(format!("script {script_id}")));
+    }
+    let original_slug = script.slug.clone();
+    let original_file_path = script.file_path.clone();
 
-    // Slug uniqueness
-    if let Some(new_slug) = slug
-        && new_slug != script.slug
-        && qs::get_script_by_slug(conn, project_id, new_slug).is_ok()
-    {
-        return Err(EngineError::Conflict(format!(
-            "script slug '{new_slug}' already exists"
-        )));
+    if let Some(requested_slug) = slug {
+        let slug = slugify(requested_slug);
+        let slug = if slug.is_empty() {
+            "script".to_string()
+        } else {
+            slug
+        };
+        script.slug = ensure_unique(&slug, |candidate| {
+            qs::get_script_by_slug(conn, project_id, candidate)
+                .is_ok_and(|existing| existing.id != script_id)
+        });
     }
 
     if let Some(t) = title {
         script.title = t.to_string();
-    }
-    if let Some(s) = slug {
-        script.slug = s.to_string();
     }
     if let Some(k) = kind {
         script.kind = k;
@@ -104,6 +111,16 @@ pub fn update_script(
         script.content = Some(c.to_string());
     }
 
+    let slug_changed = script.slug != original_slug;
+    let published_body = if slug_changed && !original_file_path.is_empty() {
+        Some(read_published_script_body(data_dir, &original_file_path))
+    } else {
+        None
+    };
+    if published_body.is_some() {
+        script.file_path = script_file_path(&script.slug);
+    }
+
     // If published, transition back to draft on edit
     if script.status == ScriptStatus::Published {
         script.status = ScriptStatus::Draft;
@@ -112,6 +129,9 @@ pub fn update_script(
     script.version += 1;
     script.updated_at = now_unix_ms();
     qs::update_script(conn, &script)?;
+    if let Some(body) = published_body {
+        rewrite_renamed_script_file(data_dir, &original_file_path, &script, &body)?;
+    }
     emit_script(&script, NotificationAction::Updated);
     Ok(script)
 }
@@ -276,6 +296,46 @@ fn script_kind_to_frontmatter(kind: &ScriptKind) -> String {
     }
 }
 
+fn read_published_script_body(data_dir: &Path, file_path: &str) -> String {
+    fs::read_to_string(data_dir.join(file_path))
+        .ok()
+        .and_then(|file| crate::util::frontmatter::read_script_file(&file).ok())
+        .map(|(_, body)| body)
+        .unwrap_or_default()
+}
+
+fn rewrite_renamed_script_file(
+    data_dir: &Path,
+    original_file_path: &str,
+    script: &Script,
+    body: &str,
+) -> EngineResult<()> {
+    let frontmatter = ScriptFrontmatter {
+        id: script.id.clone(),
+        project_id: Some(script.project_id.clone()),
+        slug: script.slug.clone(),
+        title: script.title.clone(),
+        kind: script_kind_to_frontmatter(&script.kind),
+        entrypoint: script.entrypoint.clone(),
+        enabled: script.enabled,
+        version: script.version,
+        created_at: script.created_at,
+        updated_at: script.updated_at,
+    };
+    atomic_write_str(
+        &data_dir.join(&script.file_path),
+        &write_script_file(&frontmatter, body),
+    )?;
+    if original_file_path != script.file_path {
+        match fs::remove_file(data_dir.join(original_file_path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,10 +399,11 @@ mod tests {
 
     #[test]
     fn update_script_bumps_version() {
-        let (db, _dir) = setup();
+        let (db, dir) = setup();
         let s = create_script(db.conn(), "p1", "S", ScriptKind::Macro, "old", None).unwrap();
         let updated = update_script(
             db.conn(),
+            dir.path(),
             &s.id,
             "p1",
             Some("New"),
@@ -356,6 +417,83 @@ mod tests {
         assert_eq!(updated.title, "New");
         assert_eq!(updated.content, Some("new".to_string()));
         assert_eq!(updated.version, 2);
+    }
+
+    #[test]
+    fn update_script_slug_normalizes_and_uniquifies() {
+        let (db, dir) = setup();
+        create_script(db.conn(), "p1", "Alpha", ScriptKind::Utility, "", None).unwrap();
+        let script = create_script(db.conn(), "p1", "Beta", ScriptKind::Utility, "", None).unwrap();
+
+        let updated = update_script(
+            db.conn(),
+            dir.path(),
+            &script.id,
+            "p1",
+            None,
+            Some(" Alpha! "),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.slug, "alpha-2");
+        assert!(updated.file_path.is_empty());
+
+        let unchanged = update_script(
+            db.conn(),
+            dir.path(),
+            &script.id,
+            "p1",
+            None,
+            Some(" Alpha 2 "),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(unchanged.slug, "alpha-2");
+    }
+
+    #[test]
+    fn update_published_script_slug_rewrites_and_renames_file() {
+        let (db, dir) = setup();
+        let script = create_script(
+            db.conn(),
+            "p1",
+            "Published Script",
+            ScriptKind::Utility,
+            "function main()\nend",
+            None,
+        )
+        .unwrap();
+        let published = publish_script(db.conn(), dir.path(), &script.id).unwrap();
+        let old_path = dir.path().join(&published.file_path);
+
+        let updated = update_script(
+            db.conn(),
+            dir.path(),
+            &script.id,
+            "p1",
+            None,
+            Some(" Renamed Script! "),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.slug, "renamed-script");
+        assert_eq!(updated.file_path, "scripts/renamed-script.lua");
+        assert!(!old_path.exists());
+        let new_file = fs::read_to_string(dir.path().join(&updated.file_path)).unwrap();
+        let (frontmatter, body) = crate::util::frontmatter::read_script_file(&new_file).unwrap();
+        assert_eq!(frontmatter.slug, "renamed-script");
+        assert_eq!(body, "function main()\nend");
     }
 
     #[test]

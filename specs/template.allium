@@ -129,6 +129,12 @@ rule CreateAndPublishTemplate {
 rule UpdateTemplate {
     when: UpdateTemplateRequested(template, changes)
     ensures: TemplateFieldsUpdated(template, changes)
+    if changes.slug != null:
+        ensures: template.slug = unique_slug(slugify(changes.slug), excluding: template)
+        if template.file_path != "":
+            ensures: template.file_path = format("templates/{slug}.liquid", slug: template.slug)
+            ensures: TemplateFileWritten(template)
+            ensures: PreviousTemplateFileDeleted(template)
     ensures: template.updated_at = now
     ensures: template.version = template.version + 1
 }

@@ -894,6 +894,7 @@ impl CoreHost {
                 let data = object_arg(args, 1)?;
                 public_script(engine::script::update_script(
                     db.conn(),
+                    &self.data_dir,
                     id,
                     &self.project_id,
                     optional_string_field(data, "title"),

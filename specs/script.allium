@@ -224,6 +224,12 @@ rule CreateScript {
 rule UpdateScript {
     when: UpdateScriptRequested(script, changes)
     ensures: ScriptFieldsUpdated(script, changes)
+    if changes.slug != null:
+        ensures: script.slug = unique_slug(slugify(changes.slug), excluding: script)
+        if script.file_path != "":
+            ensures: script.file_path = format("scripts/{slug}.lua", slug: script.slug)
+            ensures: ScriptFileWritten(script)
+            ensures: PreviousScriptFileDeleted(script)
     ensures: script.updated_at = now
     ensures: script.version = script.version + 1
 }

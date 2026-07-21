@@ -818,12 +818,14 @@ fn save_template_editor_state_impl(
 
 fn save_script_editor_state_impl(
     db: &Database,
+    data_dir: &Path,
     project_id: &str,
     state: &ScriptEditorState,
 ) -> Result<Script, String> {
     engine::script::validate_script_syntax(&state.content)?;
     engine::script::update_script(
         db.conn(),
+        data_dir,
         &state.script_id,
         project_id,
         Some(&state.title),
@@ -6660,7 +6662,11 @@ impl BdsApp {
             return Task::none();
         };
 
-        match save_script_editor_state_impl(db, &project.id, state) {
+        let Some(ref data_dir) = self.data_dir else {
+            return Task::none();
+        };
+
+        match save_script_editor_state_impl(db, data_dir, &project.id, state) {
             Ok(script) => {
                 let s = self.script_editors.get_mut(script_id).unwrap();
                 s.is_dirty = false;
@@ -11342,15 +11348,18 @@ mod tests {
             bds_core::db::queries::template::get_template_by_id(db.conn(), &created.id).unwrap();
         let mut editor = TemplateEditorState::from_template(&template_record);
         editor.title = "Updated Template".to_string();
+        editor.slug = " Updated Template! ".to_string();
         editor.content = "<main>{{ title }}</main>".to_string();
 
         let saved_template =
             save_template_editor_state_impl(&db, tmp.path(), &project.id, &editor).unwrap();
         assert_eq!(saved_template.title, "Updated Template");
+        assert_eq!(saved_template.slug, "updated-template");
 
         let saved =
             bds_core::db::queries::template::get_template_by_id(db.conn(), &created.id).unwrap();
         assert_eq!(saved.title, "Updated Template");
+        assert_eq!(saved.slug, "updated-template");
         assert_eq!(saved.content.as_deref(), Some("<main>{{ title }}</main>"));
     }
 
@@ -11385,7 +11394,7 @@ mod tests {
 
     #[test]
     fn script_editor_save_flow_persists_changes() {
-        let (db, project, _tmp) = setup();
+        let (db, project, tmp) = setup();
         let created = script::create_script(
             db.conn(),
             &project.id,
@@ -11400,15 +11409,19 @@ mod tests {
             bds_core::db::queries::script::get_script_by_id(db.conn(), &created.id).unwrap();
         let mut editor = ScriptEditorState::from_script(&script_record);
         editor.title = "Updated Script".to_string();
+        editor.slug = " Updated Script! ".to_string();
         editor.content = "function main()\n  return 'lua'\nend".to_string();
         editor.entrypoint = "main".to_string();
 
-        let saved_script = save_script_editor_state_impl(&db, &project.id, &editor).unwrap();
+        let saved_script =
+            save_script_editor_state_impl(&db, tmp.path(), &project.id, &editor).unwrap();
         assert_eq!(saved_script.title, "Updated Script");
+        assert_eq!(saved_script.slug, "updated-script");
 
         let saved =
             bds_core::db::queries::script::get_script_by_id(db.conn(), &created.id).unwrap();
         assert_eq!(saved.title, "Updated Script");
+        assert_eq!(saved.slug, "updated-script");
         assert_eq!(
             saved.content.as_deref(),
             Some("function main()\n  return 'lua'\nend")
@@ -11417,7 +11430,7 @@ mod tests {
 
     #[test]
     fn script_editor_save_rejects_invalid_content() {
-        let (db, project, _tmp) = setup();
+        let (db, project, tmp) = setup();
         let created = script::create_script(
             db.conn(),
             &project.id,
@@ -11433,7 +11446,8 @@ mod tests {
         let mut editor = ScriptEditorState::from_script(&script_record);
         editor.content = "function main()\n  return 'oops'".to_string();
 
-        let error = save_script_editor_state_impl(&db, &project.id, &editor).unwrap_err();
+        let error =
+            save_script_editor_state_impl(&db, tmp.path(), &project.id, &editor).unwrap_err();
         assert!(error.contains("end") || error.contains("unclosed") || error.contains("missing"));
 
         let saved =
@@ -12775,6 +12789,7 @@ mod tests {
 
         script::update_script(
             app.db.as_ref().unwrap().conn(),
+            tmp.path(),
             &created.id,
             &project.id,
             Some("Remote title"),
