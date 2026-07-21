@@ -1061,6 +1061,9 @@ impl BdsApp {
             .and_then(|db| engine::settings::ui_language(db.conn()).ok().flatten())
             .map(|language| normalize_language(&language))
             .unwrap_or(os_locale);
+        let offline_mode = db
+            .as_ref()
+            .is_none_or(|db| engine::settings::airplane_mode(db.conn()).unwrap_or(true));
         let (menu_bar, registry) = menu::build_menu_bar(locale);
         let search_index_rebuild_required = db
             .as_ref()
@@ -1186,7 +1189,7 @@ impl BdsApp {
                 ui_locale: locale,
                 content_language: "en".to_string(),
                 blog_languages: Vec::new(),
-                offline_mode: false,
+                offline_mode,
                 locale_dropdown_open: false,
                 project_dropdown_open: false,
                 theme_badge: String::from("pico"),
@@ -1234,6 +1237,7 @@ impl BdsApp {
     #[cfg(test)]
     fn new_for_tests(db: Database, project: Project, data_dir: PathBuf) -> Self {
         let chat_conversations = engine::chat::list_conversations(db.conn()).unwrap_or_default();
+        let offline_mode = engine::settings::airplane_mode(db.conn()).unwrap_or(true);
         Self {
             db: Some(db),
             db_path: data_dir.join("bds.db"),
@@ -1287,7 +1291,7 @@ impl BdsApp {
             ui_locale: UiLocale::En,
             content_language: "en".to_string(),
             blog_languages: Vec::new(),
-            offline_mode: false,
+            offline_mode,
             locale_dropdown_open: false,
             project_dropdown_open: false,
             theme_badge: String::from("pico"),
@@ -2645,6 +2649,21 @@ impl BdsApp {
 
             // ── Settings ──
             Message::SetOfflineMode(mode) => {
+                if let Some(db) = &self.db
+                    && let Err(error) = engine::settings::set_airplane_mode(db.conn(), mode)
+                {
+                    let operation = t(self.ui_locale, "settings.offlineMode");
+                    let error = error.to_string();
+                    self.notify(
+                        ToastLevel::Error,
+                        &tw(
+                            self.ui_locale,
+                            "common.operationFailed",
+                            &[("operation", &operation), ("error", &error)],
+                        ),
+                    );
+                    return Task::none();
+                }
                 self.offline_mode = mode;
                 let models = self.chat_model_options();
                 let selected = self.db.as_ref().and_then(|db| {
@@ -10109,6 +10128,33 @@ mod tests {
 
     fn make_app(db: Database, project: Project, tmp: &TempDir) -> BdsApp {
         BdsApp::new_for_tests(db, project, tmp.path().to_path_buf())
+    }
+
+    #[test]
+    fn airplane_mode_is_restored_and_status_bar_changes_are_persisted() {
+        let (db, project, tmp) = setup();
+        bds_core::engine::settings::set(
+            db.conn(),
+            bds_core::engine::settings::AIRPLANE_MODE_KEY,
+            "true",
+        )
+        .unwrap();
+
+        let mut app = make_app(db, project, &tmp);
+        assert!(app.offline_mode);
+
+        let _ = app.update(Message::SetOfflineMode(false));
+
+        assert!(!app.offline_mode);
+        assert_eq!(
+            bds_core::engine::settings::get(
+                app.db.as_ref().unwrap().conn(),
+                bds_core::engine::settings::AIRPLANE_MODE_KEY
+            )
+            .unwrap()
+            .as_deref(),
+            Some("false")
+        );
     }
 
     #[test]

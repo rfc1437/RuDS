@@ -6,6 +6,7 @@ use crate::engine::{EngineError, EngineResult, domain_events};
 use crate::util::now_unix_ms;
 
 pub const UI_LANGUAGE_KEY: &str = "ui.language";
+pub const AIRPLANE_MODE_KEY: &str = "ai.airplane_mode_enabled";
 pub const ONLINE_API_KEY: &str = "ai.endpoint.online.api_key";
 pub const AIRPLANE_API_KEY: &str = "ai.endpoint.airplane.api_key";
 const ONLINE_API_KEY_CONFIGURED: &str = "ai.endpoint.online.api_key_configured";
@@ -112,6 +113,18 @@ pub fn ui_language(conn: &Connection) -> EngineResult<Option<String>> {
     get(conn, UI_LANGUAGE_KEY)
 }
 
+pub fn airplane_mode(conn: &Connection) -> EngineResult<bool> {
+    Ok(get(conn, AIRPLANE_MODE_KEY)?.as_deref() != Some("false"))
+}
+
+pub fn set_airplane_mode(conn: &Connection, enabled: bool) -> EngineResult<()> {
+    set(
+        conn,
+        AIRPLANE_MODE_KEY,
+        if enabled { "true" } else { "false" },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +139,27 @@ mod tests {
 
         let removed_prefix = ["style", "."].concat();
         assert!(!values.keys().any(|key| key.starts_with(&removed_prefix)));
+    }
+
+    #[test]
+    fn airplane_mode_defaults_to_safe_mode_and_persists_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bds.db");
+        let db = Database::open(&path).unwrap();
+        db.migrate().unwrap();
+
+        assert!(airplane_mode(db.conn()).unwrap());
+
+        set_airplane_mode(db.conn(), false).unwrap();
+        drop(db);
+
+        let db = Database::open(&path).unwrap();
+        assert!(!airplane_mode(db.conn()).unwrap());
+
+        set_airplane_mode(db.conn(), true).unwrap();
+        drop(db);
+
+        let db = Database::open(&path).unwrap();
+        assert!(airplane_mode(db.conn()).unwrap());
     }
 }
