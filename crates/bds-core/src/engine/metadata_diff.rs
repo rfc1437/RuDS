@@ -1243,12 +1243,38 @@ mod tests {
     #[test]
     fn repairs_one_post_diff_from_file_to_database() {
         let (db, dir) = setup();
+        let database_target = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Database Target",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let filesystem_target = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Filesystem Target",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let post = create_post(
             db.conn(),
             dir.path(),
             "p1",
             "Database Title",
-            Some("body"),
+            Some("[database](/2024/01/01/database-target)"),
             vec![],
             vec![],
             None,
@@ -1259,7 +1285,16 @@ mod tests {
         let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
         let path = dir.path().join(&published.file_path);
         let content = fs::read_to_string(&path).unwrap();
-        fs::write(&path, content.replace("Database Title", "Filesystem Title")).unwrap();
+        fs::write(
+            &path,
+            content
+                .replace("Database Title", "Filesystem Title")
+                .replace(
+                    "[database](/2024/01/01/database-target)",
+                    "[filesystem](/2024/01/01/filesystem-target)",
+                ),
+        )
+        .unwrap();
         let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
         let item = report
             .diffs
@@ -1280,6 +1315,11 @@ mod tests {
             qp::get_post_by_id(db.conn(), &post.id).unwrap().title,
             "Filesystem Title"
         );
+        let links =
+            crate::db::queries::post_link::list_links_by_source(db.conn(), &post.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_post_id, filesystem_target.id);
+        assert_ne!(links[0].target_post_id, database_target.id);
     }
 
     #[test]

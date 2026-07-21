@@ -10767,6 +10767,50 @@ mod tests {
     }
 
     #[test]
+    fn draft_editor_save_refreshes_live_outlinks_without_publishing() {
+        let (db, project, tmp) = setup();
+        let target = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Link Target",
+            Some("Target body"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let source = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Link Source",
+            Some("No links"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &source);
+        let editor = app.post_editors.get_mut(&source.id).unwrap();
+        editor.content = "[target](/2024/01/01/link-target)".to_string();
+        editor.is_dirty = true;
+
+        app.persist_post_editor_state(&source.id).unwrap();
+
+        let editor = &app.post_editors[&source.id];
+        assert_eq!(editor.status, PostStatus::Draft);
+        assert_eq!(editor.outlinks.len(), 1);
+        assert_eq!(editor.outlinks[0].post_id, target.id);
+        assert_eq!(editor.outlinks[0].title, "Link Target");
+    }
+
+    #[test]
     fn manual_translation_save_reopens_and_refreshes_published_canonical_editor() {
         let (db, project, tmp) = setup();
         let created = post::create_post(

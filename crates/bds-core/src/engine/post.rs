@@ -1,7 +1,10 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::db::DbConnection as Connection;
+use regex::Regex;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -156,6 +159,13 @@ pub fn update_post(
     let reopen_published = published_metadata_changed
         || (post.status == PostStatus::Published
             && content.is_some_and(|value| published_body.as_deref() != Some(value)));
+    let content_changed = content.is_some_and(|value| {
+        if post.status == PostStatus::Published {
+            published_body.as_deref() != Some(value)
+        } else {
+            post.content.as_deref() != Some(value)
+        }
+    });
     let rewrite_published_template = post.status == PostStatus::Published
         && !reopen_published
         && template_slug
@@ -203,6 +213,10 @@ pub fn update_post(
 
     post.updated_at = now_unix_ms();
     qp::update_post(conn, &post)?;
+
+    if content_changed {
+        sync_post_links(conn, &post, post.content.as_deref().unwrap_or_default())?;
+    }
 
     if rewrite_published_template {
         rewrite_published_post(conn, data_dir, &post.id)?;
@@ -343,26 +357,7 @@ fn publish_post_in_savepoint(
         publish_translation(conn, data_dir, &mut t, &post)?;
     }
 
-    // Parse inter-post links and update link graph
-    ql::delete_links_by_source(conn, &post_id)?;
-    let link_body = if let Some(ref pc) = post.published_content {
-        pc.as_str()
-    } else {
-        ""
-    };
-    let parsed_links = parse_post_links(link_body);
-    for (target_slug, link_text) in &parsed_links {
-        if let Ok(target) = qp::get_post_by_project_and_slug(conn, &post.project_id, target_slug) {
-            let link = PostLink {
-                id: Uuid::new_v4().to_string(),
-                source_post_id: post_id.clone(),
-                target_post_id: target.id.clone(),
-                link_text: Some(link_text.clone()),
-                created_at: now,
-            };
-            let _ = ql::insert_post_link(conn, &link);
-        }
-    }
+    sync_post_links(conn, &post, &body)?;
 
     // Re-index FTS
     fts_index_post(conn, data_dir, &post)?;
@@ -521,6 +516,8 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
     conn.begin_savepoint()?;
     match (|| {
         qp::update_post(conn, &post)?;
+        let body = resolve_post_fts_content(data_dir, &post)?.unwrap_or_default();
+        sync_post_links(conn, &post, &body)?;
         fts_index_post(conn, data_dir, &post)?;
         Ok(post)
     })() {
@@ -867,6 +864,10 @@ pub fn rebuild_posts_from_filesystem_with_progress(
         }
     }
 
+    // Resolve links after every canonical post exists so filesystem order cannot
+    // make links to later files disappear.
+    rebuild_all_links(conn, data_dir, project_id)?;
+
     // Re-index FTS for all posts in this project
     let posts = qp::list_posts_by_project(conn, project_id)?;
     for post in &posts {
@@ -876,58 +877,31 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     Ok(report)
 }
 
-/// Rebuild the inter-post link graph for all published posts in a project.
-/// Reads each published post's content from the filesystem, parses links,
-/// and recreates post_links records.
+/// Rebuild the inter-post link graph for every post in a project, resolving
+/// draft bodies from the database and published bodies from the filesystem.
 pub fn rebuild_all_links(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<usize> {
     let posts = qp::list_posts_by_project(conn, project_id)?;
-    let now = now_unix_ms();
     let mut link_count = 0;
 
     for post in &posts {
-        // Delete existing links from this post
-        ql::delete_links_by_source(conn, &post.id)?;
-
         // Get post content: from DB or filesystem
-        let content = if let Some(ref c) = post.content {
-            c.clone()
+        let content = if let Some(ref content) = post.content {
+            content.clone()
         } else if !post.file_path.is_empty() {
             let abs_path = data_dir.join(&post.file_path);
-            if abs_path.exists() {
-                if let Ok(raw) = fs::read_to_string(&abs_path) {
-                    if let Ok((_fm, body)) = read_post_file(&raw) {
-                        body
-                    } else {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-            } else {
-                continue;
-            }
+            fs::read_to_string(&abs_path)
+                .ok()
+                .and_then(|raw| read_post_file(&raw).ok().map(|(_, body)| body))
+                .unwrap_or_default()
         } else {
-            continue;
+            String::new()
         };
 
-        let parsed = parse_post_links(&content);
-        for (target_slug, link_text) in &parsed {
-            if let Ok(target) = qp::get_post_by_project_and_slug(conn, project_id, target_slug) {
-                let link = PostLink {
-                    id: Uuid::new_v4().to_string(),
-                    source_post_id: post.id.clone(),
-                    target_post_id: target.id.clone(),
-                    link_text: Some(link_text.clone()),
-                    created_at: now,
-                };
-                let _ = ql::insert_post_link(conn, &link);
-                link_count += 1;
-            }
-        }
+        link_count += sync_post_links(conn, post, &content)?;
     }
 
     Ok(link_count)
@@ -935,48 +909,125 @@ pub fn rebuild_all_links(
 
 // --- Internal helpers ---
 
-/// Parse inter-post links from markdown content.
-/// Looks for markdown links that reference canonical post URLs: [text](/YYYY/MM/DD/slug)
-fn parse_post_links(content: &str) -> Vec<(String, String)> {
-    let mut links = Vec::new();
-    // Match markdown links: [text](/YYYY/MM/DD/slug) or [text](/YYYY/MM/DD/slug/)
-    // Simple manual parsing since we don't have regex crate
-    // Look for patterns like [...](...) where the URL matches /YYYY/MM/DD/slug
-    for line in content.lines() {
-        let mut pos = 0;
-        while pos < line.len() {
-            if let Some(bracket_start) = line[pos..].find('[') {
-                let abs_start = pos + bracket_start;
-                if let Some(bracket_end) = line[abs_start..].find("](") {
-                    let text_end = abs_start + bracket_end;
-                    let link_text = &line[abs_start + 1..text_end];
-                    let url_start = text_end + 2;
-                    if let Some(paren_end) = line[url_start..].find(')') {
-                        let url = &line[url_start..url_start + paren_end];
-                        // Check if URL matches /YYYY/MM/DD/slug pattern
-                        let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
-                        if parts.len() == 5
-                            && parts[0].is_empty()
-                            && parts[1].len() == 4
-                            && parts[1].chars().all(|c| c.is_ascii_digit())
-                            && parts[2].len() == 2
-                            && parts[2].chars().all(|c| c.is_ascii_digit())
-                            && parts[3].len() == 2
-                            && parts[3].chars().all(|c| c.is_ascii_digit())
-                        {
-                            links.push((parts[4].to_string(), link_text.to_string()));
-                        }
-                        pos = url_start + paren_end + 1;
-                        continue;
-                    }
-                }
-                pos = abs_start + 1;
-            } else {
-                break;
+/// Replace one post's outgoing link graph from its resolved body.
+pub fn sync_post_links(conn: &Connection, post: &Post, body: &str) -> EngineResult<usize> {
+    conn.begin_savepoint()?;
+    let result = (|| {
+        ql::delete_links_by_source(conn, &post.id)?;
+        let now = now_unix_ms();
+        let mut inserted = HashSet::new();
+        let mut link_count = 0;
+        for (target_slug, link_text) in parse_post_links(body) {
+            let target =
+                match qp::get_post_by_project_and_slug(conn, &post.project_id, &target_slug) {
+                    Ok(target) => target,
+                    Err(diesel::result::Error::NotFound) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+            if !inserted.insert((target.id.clone(), link_text.clone())) {
+                continue;
             }
+            ql::insert_post_link(
+                conn,
+                &PostLink {
+                    id: Uuid::new_v4().to_string(),
+                    source_post_id: post.id.clone(),
+                    target_post_id: target.id,
+                    link_text,
+                    created_at: now,
+                },
+            )?;
+            link_count += 1;
+        }
+        Ok(link_count)
+    })();
+    match result {
+        Ok(link_count) => {
+            conn.release_savepoint()?;
+            Ok(link_count)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
         }
     }
-    links
+}
+
+/// Parse Markdown and HTML links into bDS2-compatible post slugs and labels.
+fn parse_post_links(content: &str) -> Vec<(String, Option<String>)> {
+    static MARKDOWN_LINK: OnceLock<Regex> = OnceLock::new();
+    static HTML_LINK: OnceLock<Regex> = OnceLock::new();
+    let markdown = MARKDOWN_LINK
+        .get_or_init(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").expect("valid Markdown link regex"));
+    let html = HTML_LINK.get_or_init(|| {
+        Regex::new(r#"(?is)<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>"#)
+            .expect("valid HTML link regex")
+    });
+    let markdown_links = markdown.captures_iter(content).filter_map(|captures| {
+        parsed_post_link(captures.get(2)?.as_str(), captures.get(1)?.as_str())
+    });
+    let html_links = html.captures_iter(content).filter_map(|captures| {
+        parsed_post_link(captures.get(1)?.as_str(), captures.get(2)?.as_str())
+    });
+    markdown_links.chain(html_links).collect()
+}
+
+fn parsed_post_link(href: &str, text: &str) -> Option<(String, Option<String>)> {
+    static HTML_TAG: OnceLock<Regex> = OnceLock::new();
+    let base = url::Url::parse("https://ruds.invalid/").expect("valid internal link base");
+    let url = base.join(href.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let slug = post_slug_from_path(url.path())?;
+    let plain_text = HTML_TAG
+        .get_or_init(|| Regex::new(r"<[^>]+>").expect("valid HTML tag regex"))
+        .replace_all(text, "");
+    let plain_text = plain_text.trim();
+    Some((
+        slug.to_string(),
+        (!plain_text.is_empty()).then(|| plain_text.to_string()),
+    ))
+}
+
+fn post_slug_from_path(path: &str) -> Option<&str> {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [year, month, day, slug]
+            if is_year(year) && is_month_or_day(month) && is_month_or_day(day) =>
+        {
+            Some(slug)
+        }
+        [language, year, month, day, slug]
+            if is_language(language)
+                && is_year(year)
+                && is_month_or_day(month)
+                && is_month_or_day(day) =>
+        {
+            Some(slug)
+        }
+        [slug] => Some(slug),
+        [language, slug] if is_language(language) => Some(slug),
+        _ => None,
+    }
+}
+
+fn is_year(value: &str) -> bool {
+    value.len() == 4 && value.chars().all(|character| character.is_ascii_digit())
+}
+
+fn is_month_or_day(value: &str) -> bool {
+    value.len() == 2 && value.chars().all(|character| character.is_ascii_digit())
+}
+
+fn is_language(value: &str) -> bool {
+    value.len() == 2
+        && value
+            .chars()
+            .all(|character| character.is_ascii_lowercase())
 }
 
 /// Publish a single translation: write file, clear content, set status.
@@ -1121,7 +1172,7 @@ pub(crate) fn rebuild_canonical_post(
             post.content = if status == PostStatus::Published {
                 None
             } else {
-                Some(body)
+                Some(body.clone())
             };
             post.status = status;
             post.author = fm.author;
@@ -1136,9 +1187,10 @@ pub(crate) fn rebuild_canonical_post(
             post.updated_at = fm.updated_at;
             post.published_at = fm.published_at;
             qp::update_post(conn, &post)?;
+            sync_post_links(conn, &post, &body)?;
             Ok(false)
         }
-        Err(_) => {
+        Err(diesel::result::Error::NotFound) => {
             // Insert new post
             let post = Post {
                 id: fm.id,
@@ -1149,7 +1201,7 @@ pub(crate) fn rebuild_canonical_post(
                 content: if status == PostStatus::Published {
                     None
                 } else {
-                    Some(body)
+                    Some(body.clone())
                 },
                 status,
                 author: fm.author,
@@ -1170,8 +1222,10 @@ pub(crate) fn rebuild_canonical_post(
                 published_at: fm.published_at,
             };
             qp::insert_post(conn, &post)?;
+            sync_post_links(conn, &post, &body)?;
             Ok(true)
         }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1517,6 +1571,91 @@ mod tests {
     }
 
     #[test]
+    fn draft_content_updates_replace_outgoing_post_links_without_publishing() {
+        let (db, dir) = setup();
+        let first = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "First Target",
+            Some("first"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let second = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Second Target",
+            Some("second"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let source = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Source",
+            Some("no links"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        update_post(
+            db.conn(),
+            dir.path(),
+            &source.id,
+            None,
+            None,
+            None,
+            Some("[first](/2024/01/01/first-target) [first](/2024/01/01/first-target) [second](/2024/01/01/second-target)"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let links = ql::list_links_by_source(db.conn(), &source.id).unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|link| link.target_post_id == first.id));
+        assert!(links.iter().any(|link| link.target_post_id == second.id));
+
+        update_post(
+            db.conn(),
+            dir.path(),
+            &source.id,
+            None,
+            None,
+            None,
+            Some("[second](/2024/01/01/second-target)"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let links = ql::list_links_by_source(db.conn(), &source.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_post_id, second.id);
+    }
+
+    #[test]
     fn identical_published_update_stays_published() {
         let (db, dir) = setup();
         let post = create_published_post(&db, &dir, "Published", "body");
@@ -1730,12 +1869,38 @@ mod tests {
     #[test]
     fn discard_post_draft_restores_published_state() {
         let (db, dir) = setup();
+        let published_target = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Published Target",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let draft_target = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Draft Target",
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let post = create_post(
             db.conn(),
             dir.path(),
             "p1",
             "Discard Me",
-            Some("published body"),
+            Some("[published](/2024/01/01/published-target)"),
             vec!["one".into()],
             vec!["cat".into()],
             Some("Alice"),
@@ -1752,7 +1917,7 @@ mod tests {
             Some("Changed Title"),
             None,
             Some(Some("changed excerpt")),
-            Some("draft body"),
+            Some("[draft](/2024/01/01/draft-target)"),
             Some(vec!["two".into()]),
             Some(vec!["other".into()]),
             Some(Some("Bob")),
@@ -1763,7 +1928,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(updated.status, PostStatus::Draft);
-        assert_eq!(updated.content.as_deref(), Some("draft body"));
+        assert_eq!(
+            updated.content.as_deref(),
+            Some("[draft](/2024/01/01/draft-target)")
+        );
+        let draft_links = ql::list_links_by_source(db.conn(), &post.id).unwrap();
+        assert_eq!(draft_links.len(), 1);
+        assert_eq!(draft_links[0].target_post_id, draft_target.id);
 
         let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
         assert_eq!(discarded.status, PostStatus::Published);
@@ -1773,6 +1944,9 @@ mod tests {
         assert_eq!(discarded.categories, vec!["cat"]);
         assert_eq!(discarded.content, None);
         assert_eq!(discarded.language.as_deref(), Some("en"));
+        let restored_links = ql::list_links_by_source(db.conn(), &post.id).unwrap();
+        assert_eq!(restored_links.len(), 1);
+        assert_eq!(restored_links[0].target_post_id, published_target.id);
         assert!(!discarded.do_not_translate);
     }
 
@@ -2514,11 +2688,15 @@ mod tests {
 
     #[test]
     fn parse_post_links_extracts_canonical_urls() {
-        let content = "See [my post](/2024/01/15/hello-world) and [another](/2024/02/01/test-post/) for more.";
+        let content = "See [dated](/2024/01/15/hello-world), [localized](/de/2024/02/01/test-post/), [short](/notes), [localized short](/fr/article), and <a class='post' href='/2025/03/04/html-post'><strong>HTML</strong> post</a>.";
         let links = parse_post_links(content);
-        assert_eq!(links.len(), 2);
+        assert_eq!(links.len(), 5);
         assert_eq!(links[0].0, "hello-world");
-        assert_eq!(links[0].1, "my post");
+        assert_eq!(links[0].1.as_deref(), Some("dated"));
         assert_eq!(links[1].0, "test-post");
+        assert_eq!(links[2].0, "notes");
+        assert_eq!(links[3].0, "article");
+        assert_eq!(links[4].0, "html-post");
+        assert_eq!(links[4].1.as_deref(), Some("HTML post"));
     }
 }
