@@ -61,6 +61,7 @@ pub struct MediaEditorState {
     pub post_picker_search: String,
     pub post_picker_results: Vec<LinkedPostItem>,
     pub quick_actions_open: bool,
+    pub ai_activity: Option<String>,
 }
 
 impl MediaEditorState {
@@ -114,6 +115,7 @@ impl MediaEditorState {
             post_picker_search: String::new(),
             post_picker_results: Vec::new(),
             quick_actions_open: false,
+            ai_activity: None,
         }
     }
 
@@ -236,7 +238,18 @@ pub fn view<'a>(
     ai_enabled: bool,
 ) -> Element<'a, Message> {
     let mut quick_action_items: Vec<Element<'a, Message>> = Vec::new();
-    if state.mime_type.starts_with("image/") {
+    if let Some(label) = &state.ai_activity {
+        quick_action_items.push(
+            container(
+                text(format!("⏳ {label}"))
+                    .size(12)
+                    .shaping(Shaping::Advanced),
+            )
+            .padding([6, 12])
+            .width(Length::Fixed(220.0))
+            .into(),
+        );
+    } else if state.mime_type.starts_with("image/") {
         quick_action_items.push(quick_action_item(
             t(locale, "editor.aiAnalyze"),
             MediaEditorMsg::AnalyzeWithAi,
@@ -246,12 +259,12 @@ pub fn view<'a>(
     quick_action_items.push(quick_action_item(
         t(locale, "editor.detectLanguage"),
         MediaEditorMsg::DetectLanguage,
-        ai_enabled,
+        ai_enabled && state.ai_activity.is_none(),
     ));
     quick_action_items.push(quick_action_item(
         t(locale, "editor.translate"),
         MediaEditorMsg::TranslateMetadata,
-        ai_enabled,
+        ai_enabled && state.ai_activity.is_none(),
     ));
     let quick_actions_menu: Element<'a, Message> = container(column(quick_action_items).spacing(4))
         .padding(8)

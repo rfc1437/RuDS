@@ -78,6 +78,7 @@ pub struct PostEditorState {
     pub categories_input: String,
     pub available_tags: Vec<String>,
     pub semantic_tag_suggestions: Vec<String>,
+    pub ai_activity: Option<String>,
     pub active_language: String,
     pub canonical_language: String,
     pub blog_languages: Vec<String>,
@@ -127,6 +128,7 @@ impl Clone for PostEditorState {
             categories_input: self.categories_input.clone(),
             available_tags: self.available_tags.clone(),
             semantic_tag_suggestions: self.semantic_tag_suggestions.clone(),
+            ai_activity: self.ai_activity.clone(),
             active_language: self.active_language.clone(),
             canonical_language: self.canonical_language.clone(),
             blog_languages: self.blog_languages.clone(),
@@ -194,6 +196,7 @@ impl PostEditorState {
             categories_input: String::new(),
             available_tags: Vec::new(),
             semantic_tag_suggestions: Vec::new(),
+            ai_activity: None,
             active_language: canonical_lang.clone(),
             canonical_language: canonical_lang,
             blog_languages: blog_languages.to_vec(),
@@ -220,6 +223,7 @@ impl PostEditorState {
         self.categories_input.clone_from(&previous.categories_input);
         self.semantic_tag_suggestions
             .clone_from(&previous.semantic_tag_suggestions);
+        self.ai_activity.clone_from(&previous.ai_activity);
         self.switch_language(&previous.active_language);
     }
 
@@ -424,31 +428,42 @@ pub fn view<'a>(
     .style(inputs::secondary_button)
     .into();
 
+    let quick_actions_busy = state.ai_activity.as_ref().map(|label| {
+        container(
+            text(format!("⏳ {label}"))
+                .size(12)
+                .shaping(Shaping::Advanced),
+        )
+        .padding([6, 12])
+        .width(Length::Fixed(220.0))
+        .into()
+    });
+
     let quick_actions_menu: Element<'a, Message> = container(
         column![
-            quick_action_item(
+            quick_actions_busy.unwrap_or_else(|| quick_action_item(
                 locale,
                 t(locale, "editor.aiAnalyze"),
                 PostEditorMsg::AnalyzeWithAi,
-                ai_enabled
-            ),
+                ai_enabled && state.ai_activity.is_none()
+            )),
             quick_action_item(
                 locale,
                 t(locale, "editor.suggestTaxonomy"),
                 PostEditorMsg::AnalyzeTaxonomy,
-                ai_enabled
+                ai_enabled && state.ai_activity.is_none()
             ),
             quick_action_item(
                 locale,
                 t(locale, "editor.translate"),
                 PostEditorMsg::Translate,
-                ai_enabled
+                ai_enabled && state.ai_activity.is_none()
             ),
             quick_action_item(
                 locale,
                 t(locale, "editor.detectLanguage"),
                 PostEditorMsg::DetectLanguage,
-                ai_enabled
+                ai_enabled && state.ai_activity.is_none()
             ),
             quick_action_item(
                 locale,
