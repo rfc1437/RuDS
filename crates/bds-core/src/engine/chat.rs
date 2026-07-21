@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
@@ -836,16 +837,39 @@ pub fn build_context(
     Ok(result)
 }
 
+fn chat_http_client(endpoint_url: &str) -> EngineResult<Client> {
+    let builder = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(300));
+    let builder = if should_bypass_proxy(endpoint_url) {
+        builder.no_proxy()
+    } else {
+        builder
+    };
+    Ok(builder.build()?)
+}
+
+fn should_bypass_proxy(endpoint_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false)
+}
+
 fn request_completion(
     endpoint: &AiEndpointConfig,
     payload: &Value,
     cancelled: &AtomicBool,
     mut on_content: impl FnMut(&str),
 ) -> EngineResult<AssembledResponse> {
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(300))
-        .build()?;
+    let client = chat_http_client(&endpoint.url)?;
     let mut request = client
         .post(chat_completions_url(&endpoint.url))
         .json(payload);

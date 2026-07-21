@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -427,7 +428,7 @@ pub fn load_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<Option<String
 
 pub fn refresh_model_catalog(endpoint: &AiEndpointConfig) -> EngineResult<Vec<AiModelInfo>> {
     validate_endpoint_access(endpoint)?;
-    let client = build_http_client()?;
+    let client = build_http_client_for_endpoint(&endpoint.url)?;
     let request = client.get(models_url(&endpoint.url));
     let response = with_auth(request, endpoint).send()?.error_for_status()?;
     let body: Value = response.json()?;
@@ -494,7 +495,7 @@ pub fn test_chat(endpoint: &AiEndpointConfig, model: &str) -> EngineResult<()> {
         "stream": false,
     });
     with_auth(
-        build_http_client()?
+        build_http_client_for_endpoint(&endpoint.url)?
             .post(chat_completions_url(&endpoint.url))
             .json(&payload),
         endpoint,
@@ -535,7 +536,7 @@ pub fn run_one_shot(
             }
         }
     });
-    let client = build_http_client()?;
+    let client = build_http_client_for_endpoint(&endpoint.url)?;
     let response = with_auth(
         client
             .post(chat_completions_url(&endpoint.url))
@@ -575,8 +576,28 @@ fn parse_token_usage(body: &Value) -> TokenUsage {
     }
 }
 
-fn build_http_client() -> EngineResult<Client> {
-    Ok(Client::builder().timeout(Duration::from_secs(5)).build()?)
+fn build_http_client_for_endpoint(endpoint_url: &str) -> EngineResult<Client> {
+    let builder = Client::builder().timeout(Duration::from_secs(5));
+    let builder = if should_bypass_proxy(endpoint_url) {
+        builder.no_proxy()
+    } else {
+        builder
+    };
+    Ok(builder.build()?)
+}
+
+fn should_bypass_proxy(endpoint_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false)
 }
 
 fn load_endpoint(conn: &Connection, kind: AiEndpointKind) -> EngineResult<StoredAiEndpointConfig> {
@@ -936,7 +957,7 @@ fn store_endpoint_api_key(kind: AiEndpointKind, api_key: &str) -> EngineResult<(
         TEST_API_KEYS
             .lock()
             .map_err(|error| EngineError::Validation(error.to_string()))?
-            .insert(kind.as_str().to_string(), api_key.to_string());
+            .insert(test_api_key_name(kind), api_key.to_string());
         return Ok(());
     }
     endpoint_keyring_entry(kind)?
@@ -950,7 +971,7 @@ fn read_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<Option<String>> {
             .lock()
             .map_err(|error| EngineError::Validation(error.to_string()))
             .map(|keys| {
-                keys.get(kind.as_str())
+                keys.get(&test_api_key_name(kind))
                     .cloned()
                     .filter(|key| !key.trim().is_empty())
             });
@@ -968,7 +989,7 @@ fn delete_endpoint_api_key(kind: AiEndpointKind) -> EngineResult<()> {
         TEST_API_KEYS
             .lock()
             .map_err(|error| EngineError::Validation(error.to_string()))?
-            .remove(kind.as_str());
+            .remove(&test_api_key_name(kind));
         return Ok(());
     }
     match endpoint_keyring_entry(kind)?.delete_credential() {
@@ -987,6 +1008,10 @@ fn cargo_test_process() -> bool {
                 .and_then(|parent| parent.file_name())
                 .is_some_and(|name| name == "deps")
         })
+}
+
+fn test_api_key_name(kind: AiEndpointKind) -> String {
+    format!("{:?}:{}", std::thread::current().id(), kind.as_str())
 }
 
 fn keyring_error(error: keyring::Error) -> EngineError {
