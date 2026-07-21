@@ -609,7 +609,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
         db.conn(),
         &make_list_template(
             "featured-list",
-            "FEATURED:{% for day_block in day_blocks %}{% for post in day_block.posts %}[{{ post.title }}|{{ post.show_title }}]{% endfor %}{% endfor %}",
+            "FEATURED:{% if archive_context %}{% if archive_context.kind == 'category' %}{{ archive_context.name }}{% endif %}{% endif %}:{% for day_block in day_blocks %}{% for post in day_block.posts %}[{{ post.title }}|{{ post.show_title }}]{% endfor %}{% endfor %}",
         ),
     )
     .unwrap();
@@ -629,7 +629,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
             (
                 "featured".to_string(),
                 CategorySettings {
-                    title: None,
+                    title: Some("Featured Archive".to_string()),
                     render_in_lists: true,
                     show_title: false,
                     post_template_slug: None,
@@ -692,7 +692,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
 
     let featured_html =
         std::fs::read_to_string(dir.path().join("category/featured/index.html")).unwrap();
-    assert!(featured_html.contains("FEATURED:[Featured Post|false]"));
+    assert!(featured_html.contains("FEATURED:Featured Archive:[Featured Post|false]"));
 
     let rss = std::fs::read_to_string(dir.path().join("rss.xml")).unwrap();
     assert!(rss.contains("hidden-post"));

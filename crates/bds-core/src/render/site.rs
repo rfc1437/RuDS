@@ -674,6 +674,12 @@ fn build_language_routes(
 
     for (category, records) in category_posts {
         let slug = slugify(&category);
+        let display_name = category_settings
+            .get(&category)
+            .and_then(|settings| settings.title.as_deref())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&category);
         routes.extend(paginated_route_specs(
             &records,
             per_page,
@@ -682,7 +688,7 @@ fn build_language_routes(
                 language_root_prefix(language, metadata)
             ),
             page_title.clone(),
-            Some(json!({"kind": "category", "name": category})),
+            Some(json!({"kind": "category", "name": display_name})),
             category_settings
                 .get(&category)
                 .and_then(|settings| settings.list_template_slug.clone()),

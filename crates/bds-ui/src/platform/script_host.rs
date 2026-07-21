@@ -60,7 +60,7 @@ fn preview_post_target() -> &'static Mutex<Option<String>> {
 
 #[cfg(target_os = "macos")]
 fn title_bar_metrics() -> Value {
-    json!({"macos_left_inset": 72})
+    serde_json::json!({"macos_left_inset": 72})
 }
 
 #[cfg(not(target_os = "macos"))]

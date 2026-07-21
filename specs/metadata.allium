@@ -28,6 +28,7 @@ surface PublishingPreferencesSurface {
 }
 
 value CategoryRenderSettings {
+    title: String?
     render_in_lists: Boolean
     show_title: Boolean
     post_template_slug: String?
