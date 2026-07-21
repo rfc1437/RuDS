@@ -28,7 +28,7 @@ Invariants and behaviours in the allium spec should be covered by unit tests of 
 
 ## Commits
 
-- our default branch is origin/master
+- our default branch is origin/main
 - commit messages are short - one sentence. do not write long articles.
 - pull requests are more verbose and especially give reasoning for changes
 
