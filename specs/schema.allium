@@ -62,7 +62,8 @@ entity Post {
     language: String?       -- ISO 639-1 code
     do_not_translate: Boolean
 
-    -- Published snapshot columns (written on publish for diff detection)
+    -- Legacy compatibility columns. bDS2 and RuDS leave them unchanged on
+    -- publish and do not use them to determine lifecycle behaviour.
     published_title: String?
     published_content: String?
     published_tags: String?

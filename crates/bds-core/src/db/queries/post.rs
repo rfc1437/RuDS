@@ -79,75 +79,6 @@ pub fn update_post_status(
     })
 }
 
-pub fn clear_post_content(conn: &DbConnection, id: &str, updated_at: i64) -> QueryResult<()> {
-    conn.with(|c| {
-        diesel::update(posts::table.filter(posts::id.eq(id)))
-            .set((
-                posts::content.eq(None::<String>),
-                posts::updated_at.eq(updated_at),
-            ))
-            .execute(c)
-            .map(|_| ())
-    })
-}
-
-pub fn set_post_file_path(
-    conn: &DbConnection,
-    id: &str,
-    file_path: &str,
-    updated_at: i64,
-) -> QueryResult<()> {
-    conn.with(|c| {
-        diesel::update(posts::table.filter(posts::id.eq(id)))
-            .set((
-                posts::file_path.eq(file_path),
-                posts::updated_at.eq(updated_at),
-            ))
-            .execute(c)
-            .map(|_| ())
-    })
-}
-
-pub fn set_post_checksum(conn: &DbConnection, id: &str, checksum: Option<&str>) -> QueryResult<()> {
-    conn.with(|c| {
-        diesel::update(posts::table.filter(posts::id.eq(id)))
-            .set(posts::checksum.eq(checksum))
-            .execute(c)
-            .map(|_| ())
-    })
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "arguments mirror the published snapshot columns"
-)]
-pub fn set_published_snapshot(
-    conn: &DbConnection,
-    id: &str,
-    title: &str,
-    content: &str,
-    tags: &str,
-    categories: &str,
-    excerpt: Option<&str>,
-    published_at: i64,
-    updated_at: i64,
-) -> QueryResult<()> {
-    conn.with(|c| {
-        diesel::update(posts::table.filter(posts::id.eq(id)))
-            .set((
-                posts::published_title.eq(title),
-                posts::published_content.eq(content),
-                posts::published_tags.eq(tags),
-                posts::published_categories.eq(categories),
-                posts::published_excerpt.eq(excerpt),
-                posts::published_at.eq(published_at),
-                posts::updated_at.eq(updated_at),
-            ))
-            .execute(c)
-            .map(|_| ())
-    })
-}
-
 pub fn delete_post(conn: &DbConnection, id: &str) -> QueryResult<()> {
     conn.with(|c| {
         diesel::delete(posts::table.filter(posts::id.eq(id)))
@@ -543,46 +474,6 @@ mod tests {
             })
             .unwrap();
         assert!(get_post_by_id(db.conn(), "x1").is_err());
-    }
-
-    #[test]
-    fn clear_content_sets_null() {
-        let db = setup();
-        insert_post(db.conn(), &make_post("x1", "hello")).unwrap();
-        clear_post_content(db.conn(), "x1", 5000).unwrap();
-        let fetched = get_post_by_id(db.conn(), "x1").unwrap();
-        assert!(fetched.content.is_none());
-    }
-
-    #[test]
-    fn set_file_path_updates() {
-        let db = setup();
-        insert_post(db.conn(), &make_post("x1", "hello")).unwrap();
-        set_post_file_path(db.conn(), "x1", "posts/2024/01/hello.md", 5000).unwrap();
-        let fetched = get_post_by_id(db.conn(), "x1").unwrap();
-        assert_eq!(fetched.file_path, "posts/2024/01/hello.md");
-    }
-
-    #[test]
-    fn published_snapshot() {
-        let db = setup();
-        insert_post(db.conn(), &make_post("x1", "hello")).unwrap();
-        set_published_snapshot(
-            db.conn(),
-            "x1",
-            "Pub Title",
-            "Pub Body",
-            "[\"rust\"]",
-            "[\"tech\"]",
-            Some("Pub Excerpt"),
-            3000,
-            3000,
-        )
-        .unwrap();
-        let fetched = get_post_by_id(db.conn(), "x1").unwrap();
-        assert_eq!(fetched.published_title.as_deref(), Some("Pub Title"));
-        assert_eq!(fetched.published_content.as_deref(), Some("Pub Body"));
-        assert_eq!(fetched.published_at, Some(3000));
     }
 
     #[test]

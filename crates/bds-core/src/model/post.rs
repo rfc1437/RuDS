@@ -96,7 +96,7 @@ pub struct Post {
         serialize_as = crate::db::types::DbStringList
     )]
     pub categories: Vec<String>,
-    // Published snapshot fields (used for diff detection)
+    // Legacy bDS2-compatible columns. Publishing and lifecycle logic leave them untouched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

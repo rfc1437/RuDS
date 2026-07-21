@@ -598,16 +598,13 @@ pub fn analyze_wxr(
 }
 
 fn existing_post_body(post: &Post, data_dir: &Path) -> Option<String> {
-    post.content
-        .clone()
-        .or_else(|| post.published_content.clone())
-        .or_else(|| {
-            (!post.file_path.is_empty())
-                .then(|| fs::read_to_string(data_dir.join(&post.file_path)).ok())
-                .flatten()
-                .and_then(|raw| crate::util::frontmatter::read_post_file(&raw).ok())
-                .map(|(_, body)| body)
-        })
+    post.content.clone().or_else(|| {
+        (!post.file_path.is_empty())
+            .then(|| fs::read_to_string(data_dir.join(&post.file_path)).ok())
+            .flatten()
+            .and_then(|raw| crate::util::frontmatter::read_post_file(&raw).ok())
+            .map(|(_, body)| body)
+    })
 }
 
 fn analyze_post(
@@ -1363,7 +1360,7 @@ fn import_post_item(
     qp::update_post(conn, &imported)?;
     if item.source_status.as_deref() == Some("publish") {
         imported = post::publish_post(conn, data_dir, &imported.id)?;
-        let body = imported.published_content.clone().unwrap_or_default();
+        let body = content.to_string();
         imported.created_at = item.created_at.unwrap_or(imported.created_at);
         imported.updated_at = item.updated_at.unwrap_or(imported.created_at);
         imported.published_at = item.published_at.or(Some(imported.created_at));

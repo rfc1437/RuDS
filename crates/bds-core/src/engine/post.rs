@@ -327,37 +327,9 @@ fn publish_post_in_savepoint(
         }
     }
 
-    // Set published snapshot fields
-    let tags_json = serde_json::to_string(&post.tags).unwrap_or_else(|_| "[]".into());
-    let cats_json = serde_json::to_string(&post.categories).unwrap_or_else(|_| "[]".into());
-    post.published_title = Some(post.title.clone());
-    post.published_content = Some(body.clone());
-    post.published_tags = Some(tags_json.clone());
-    post.published_categories = Some(cats_json.clone());
-    post.published_excerpt = post.excerpt.clone();
-
-    qp::set_published_snapshot(
-        conn,
-        &post_id,
-        &post.title,
-        &body,
-        &tags_json,
-        &cats_json,
-        post.excerpt.as_deref(),
-        published_at,
-        now,
-    )?;
-
-    // Set file_path and checksum in DB
-    qp::set_post_file_path(conn, &post_id, &post.file_path, now)?;
-    qp::set_post_checksum(conn, &post_id, post.checksum.as_deref())?;
-
-    // Clear content in DB
-    qp::clear_post_content(conn, &post_id, now)?;
+    // Persist the published record without touching the legacy published_* columns.
     post.content = None;
-
-    // Set status = Published
-    qp::update_post_status(conn, &post_id, &PostStatus::Published, now)?;
+    qp::update_post(conn, &post)?;
 
     // Publish all translations
     let translations = qt::list_post_translations_by_post(conn, &post_id)?;
@@ -1639,6 +1611,53 @@ mod tests {
     }
 
     #[test]
+    fn published_updates_ignore_legacy_snapshot_values() {
+        let (db, dir) = setup();
+        let mut post = create_published_post(&db, &dir, "Published", "canonical body");
+        post.published_title = Some("Different Legacy Title".into());
+        post.published_content = Some("replacement body".into());
+        post.published_tags = Some("[\"legacy\"]".into());
+        qp::update_post(db.conn(), &post).unwrap();
+
+        let identical = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Published"),
+            None,
+            None,
+            Some("canonical body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(identical.status, PostStatus::Published);
+
+        let changed = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            None,
+            None,
+            None,
+            Some("replacement body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(changed.status, PostStatus::Draft);
+        assert_eq!(changed.content.as_deref(), Some("replacement body"));
+    }
+
+    #[test]
     fn published_title_change_reopens_draft_with_file_body() {
         let (db, dir) = setup();
         let post = create_published_post(&db, &dir, "Published", "body");
@@ -1809,9 +1828,12 @@ mod tests {
         // published_at should be set
         assert!(from_db.published_at.is_some());
 
-        // Published snapshot fields should be set
-        assert_eq!(from_db.published_title.as_deref(), Some("Publish Me"));
-        assert!(from_db.published_content.is_some());
+        // Legacy published snapshot columns stay empty, matching bDS2.
+        assert!(from_db.published_title.is_none());
+        assert!(from_db.published_content.is_none());
+        assert!(from_db.published_tags.is_none());
+        assert!(from_db.published_categories.is_none());
+        assert!(from_db.published_excerpt.is_none());
 
         // File should exist on disk
         let abs_path = dir.path().join(&from_db.file_path);
@@ -1821,6 +1843,39 @@ mod tests {
         let file_content = fs::read_to_string(&abs_path).unwrap();
         assert!(file_content.contains("my body content"));
         assert!(file_content.contains("Publish Me"));
+    }
+
+    #[test]
+    fn publish_post_preserves_legacy_snapshot_values_without_using_them() {
+        let (db, dir) = setup();
+        let mut post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Publish Me",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        post.published_title = Some("Legacy Title".into());
+        post.published_content = Some("Legacy Body".into());
+        post.published_tags = Some("[\"legacy\"]".into());
+        post.published_categories = Some("[\"old\"]".into());
+        post.published_excerpt = Some("Legacy Excerpt".into());
+        qp::update_post(db.conn(), &post).unwrap();
+
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let published = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(published.published_title, post.published_title);
+        assert_eq!(published.published_content, post.published_content);
+        assert_eq!(published.published_tags, post.published_tags);
+        assert_eq!(published.published_categories, post.published_categories);
+        assert_eq!(published.published_excerpt, post.published_excerpt);
     }
 
     #[test]
@@ -1988,7 +2043,7 @@ mod tests {
         let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
         assert_eq!(discarded.status, PostStatus::Published);
         assert_eq!(discarded.title, published.title);
-        assert_eq!(discarded.excerpt, published.published_excerpt);
+        assert_eq!(discarded.excerpt, published.excerpt);
         assert_eq!(discarded.tags, vec!["one"]);
         assert_eq!(discarded.categories, vec!["cat"]);
         assert_eq!(discarded.content, None);

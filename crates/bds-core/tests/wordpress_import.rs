@@ -635,8 +635,12 @@ fn overwrite_resolution_preserves_existing_post_and_media_identity() {
         bds_core::db::queries::post::get_post_by_id(db.conn(), &existing_post.id).unwrap();
     assert_eq!(overwritten_post.id, existing_post.id);
     assert_eq!(overwritten_post.status, PostStatus::Published);
+    assert!(overwritten_post.published_content.is_none());
+    let (_, overwritten_body) =
+        read_post_file(&fs::read_to_string(dir.path().join(&overwritten_post.file_path)).unwrap())
+            .unwrap();
     assert_eq!(
-        overwritten_post.published_content.as_deref(),
+        Some(overwritten_body.as_str()),
         report.posts[0].content.as_deref()
     );
     let overwritten_media =
