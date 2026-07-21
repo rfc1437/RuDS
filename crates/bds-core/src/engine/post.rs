@@ -603,69 +603,124 @@ pub fn upsert_translation(
     excerpt: Option<&str>,
     content: Option<&str>,
 ) -> EngineResult<PostTranslation> {
-    let post = qp::get_post_by_id(conn, post_id)?;
+    upsert_translation_with_mode(
+        conn, data_dir, post_id, language, title, excerpt, content, true,
+    )
+}
+
+/// Upsert a translation produced by the automatic translation engine without
+/// reopening its published canonical source.
+pub(crate) fn upsert_automatic_translation(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+    language: &str,
+    title: &str,
+    excerpt: Option<&str>,
+    content: Option<&str>,
+) -> EngineResult<PostTranslation> {
+    upsert_translation_with_mode(
+        conn, data_dir, post_id, language, title, excerpt, content, false,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the final flag distinguishes manual and automatic translation sources"
+)]
+fn upsert_translation_with_mode(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+    language: &str,
+    title: &str,
+    excerpt: Option<&str>,
+    content: Option<&str>,
+    manual_edit: bool,
+) -> EngineResult<PostTranslation> {
+    let mut post = qp::get_post_by_id(conn, post_id)?;
     if post.do_not_translate {
         return Err(EngineError::Validation(
             "cannot create translation for a do-not-translate post".to_string(),
         ));
     }
     let now = now_unix_ms();
-
-    // Check if translation already exists
-    let existing = qt::get_post_translation_by_post_and_language(conn, post_id, language);
-    match existing {
-        Ok(mut t) => {
-            let published_body = if t.status == PostStatus::Published && !t.file_path.is_empty() {
-                let raw = fs::read_to_string(data_dir.join(&t.file_path))?;
-                let (_, body) = read_translation_file(&raw).map_err(EngineError::Parse)?;
-                Some(body)
-            } else {
-                t.content.clone()
+    conn.begin_savepoint()?;
+    let result = (|| {
+        let translation =
+            match qt::get_post_translation_by_post_and_language(conn, post_id, language) {
+                Ok(mut translation) => {
+                    let published_body = if translation.status == PostStatus::Published
+                        && !translation.file_path.is_empty()
+                    {
+                        let raw = fs::read_to_string(data_dir.join(&translation.file_path))?;
+                        let (_, body) = read_translation_file(&raw).map_err(EngineError::Parse)?;
+                        Some(body)
+                    } else {
+                        translation.content.clone()
+                    };
+                    let affects_published_content = translation.title != title
+                        || translation.excerpt.as_deref() != excerpt
+                        || content.is_some_and(|value| published_body.as_deref() != Some(value));
+                    if translation.status == PostStatus::Published && affects_published_content {
+                        translation.status = PostStatus::Draft;
+                        translation.content = published_body;
+                    }
+                    translation.title = title.to_string();
+                    translation.excerpt = excerpt.map(str::to_string);
+                    if let Some(content) = content {
+                        translation.content = Some(content.to_string());
+                    }
+                    translation.updated_at = now;
+                    qt::update_post_translation(conn, &translation)?;
+                    translation
+                }
+                Err(diesel::result::Error::NotFound) => {
+                    let translation = PostTranslation {
+                        id: Uuid::new_v4().to_string(),
+                        project_id: post.project_id.clone(),
+                        translation_for: post_id.to_string(),
+                        language: language.to_string(),
+                        title: title.to_string(),
+                        excerpt: excerpt.map(str::to_string),
+                        content: content.map(str::to_string),
+                        status: PostStatus::Draft,
+                        file_path: String::new(),
+                        checksum: None,
+                        created_at: now,
+                        updated_at: now,
+                        published_at: None,
+                    };
+                    qt::insert_post_translation(conn, &translation)?;
+                    translation
+                }
+                Err(error) => return Err(error.into()),
             };
-            let affects_published_content = t.title != title
-                || t.excerpt.as_deref() != excerpt
-                || content.is_some_and(|value| published_body.as_deref() != Some(value));
-            if t.status == PostStatus::Published && affects_published_content {
-                t.status = PostStatus::Draft;
-                t.content = published_body;
-            }
-            t.title = title.to_string();
-            t.excerpt = excerpt.map(|s| s.to_string());
-            if let Some(c) = content {
-                t.content = Some(c.to_string());
-            }
-            t.updated_at = now;
-            qt::update_post_translation(conn, &t)?;
 
-            // Re-index FTS for parent post
-            fts_index_post(conn, data_dir, &post)?;
-
-            Ok(t)
+        let source_reopened =
+            manual_edit && post.status == PostStatus::Published && !post.file_path.is_empty();
+        if source_reopened {
+            post.content = Some(restore_content_for_unarchive(data_dir, &post));
+            post.status = PostStatus::Draft;
+            post.updated_at = now;
+            qp::update_post(conn, &post)?;
         }
-        Err(_) => {
-            // Create new
-            let id = Uuid::new_v4().to_string();
-            let t = PostTranslation {
-                id,
-                project_id: post.project_id.clone(),
-                translation_for: post_id.to_string(),
-                language: language.to_string(),
-                title: title.to_string(),
-                excerpt: excerpt.map(|s| s.to_string()),
-                content: content.map(|s| s.to_string()),
-                status: PostStatus::Draft,
-                file_path: String::new(),
-                checksum: None,
-                created_at: now,
-                updated_at: now,
-                published_at: None,
-            };
-            qt::insert_post_translation(conn, &t)?;
+        fts_index_post(conn, data_dir, &post)?;
+        Ok((translation, source_reopened))
+    })();
 
-            // Re-index FTS for parent post
-            fts_index_post(conn, data_dir, &post)?;
-
-            Ok(t)
+    match result {
+        Ok((translation, source_reopened)) => {
+            conn.release_savepoint()?;
+            if source_reopened {
+                emit_post(&post, NotificationAction::Updated);
+                crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
+            }
+            Ok(translation)
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
         }
     }
 }
@@ -1980,7 +2035,7 @@ mod tests {
     }
 
     #[test]
-    fn editing_published_translation_reopens_draft() {
+    fn manual_translation_edit_reopens_translation_and_canonical_drafts() {
         let (db, dir) = setup();
         let post = create_post(
             db.conn(),
@@ -2007,6 +2062,7 @@ mod tests {
         .unwrap();
         publish_post(db.conn(), dir.path(), &post.id).unwrap();
 
+        let events = domain_events::subscribe();
         let edited = upsert_translation(
             db.conn(),
             dir.path(),
@@ -2020,6 +2076,18 @@ mod tests {
 
         assert_eq!(edited.status, PostStatus::Draft);
         assert_eq!(edited.content.as_deref(), Some("Neuer Inhalt"));
+        let reopened = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(reopened.status, PostStatus::Draft);
+        assert_eq!(reopened.content.as_deref(), Some("body"));
+        assert!(events.drain().iter().any(|event| matches!(
+            event,
+            crate::model::DomainEvent::EntityChanged {
+                entity: DomainEntity::Post,
+                entity_id,
+                action: NotificationAction::Updated,
+                ..
+            } if entity_id == &post.id
+        )));
     }
 
     #[test]

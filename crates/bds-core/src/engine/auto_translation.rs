@@ -276,7 +276,7 @@ fn translate_one_post(
     let mut input = post.clone();
     input.content = Some(body);
     let translated = post_translator(&input, language)?;
-    let translation = crate::engine::post::upsert_translation(
+    let translation = crate::engine::post::upsert_automatic_translation(
         conn,
         data_dir,
         &post.id,
@@ -442,6 +442,9 @@ mod tests {
 
         assert_eq!(requested, vec!["de", "fr"]);
         assert_eq!(report.translated_posts, 2);
+        let canonical = crate::db::queries::post::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(canonical.status, PostStatus::Published);
+        assert!(canonical.content.is_none());
         for language in ["de", "fr"] {
             let translation = post_translation::get_post_translation_by_post_and_language(
                 db.conn(),

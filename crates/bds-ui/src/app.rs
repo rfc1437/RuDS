@@ -10767,6 +10767,59 @@ mod tests {
     }
 
     #[test]
+    fn manual_translation_save_reopens_and_refreshes_published_canonical_editor() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Canonical",
+            Some("Canonical body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        post::upsert_translation(
+            db.conn(),
+            tmp.path(),
+            &created.id,
+            "de",
+            "Kanonisch",
+            None,
+            Some("Deutscher Inhalt"),
+        )
+        .unwrap();
+        let published = post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &published);
+        let editor = app.post_editors.get_mut(&created.id).unwrap();
+        editor.switch_language("de");
+        editor.title = "Neu formuliert".to_string();
+        editor.content = "Neuer Entwurf".to_string();
+        editor.is_dirty = true;
+
+        app.persist_post_editor_state(&created.id).unwrap();
+
+        let reopened = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert_eq!(reopened.status, PostStatus::Draft);
+        assert_eq!(reopened.content.as_deref(), Some("Canonical body"));
+
+        let _ = app.update(Message::DomainEventsTick);
+        let refreshed = &app.post_editors[&created.id];
+        assert_eq!(refreshed.status, PostStatus::Draft);
+        assert_eq!(refreshed.active_language, "de");
+        assert_eq!(refreshed.title, "Neu formuliert");
+        assert_eq!(refreshed.content, "Neuer Entwurf");
+    }
+
+    #[test]
     fn persist_post_editor_state_allows_published_posts_without_slug_conflict() {
         let (db, project, tmp) = setup();
         let created = post::create_post(
