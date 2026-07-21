@@ -123,8 +123,11 @@ mod tests {
     #[test]
     fn desktop_handler_queues_supported_menu_actions() {
         let queued = Arc::new(Mutex::new(Vec::new()));
-        handler(Arc::clone(&queued), String::new())("trigger_menu_action", &[serde_json::json!("new_post")])
-            .unwrap();
+        handler(Arc::clone(&queued), String::new())(
+            "trigger_menu_action",
+            &[serde_json::json!("new_post")],
+        )
+        .unwrap();
         assert_eq!(queued.lock().unwrap().as_slice(), &[MenuAction::NewPost]);
     }
 }

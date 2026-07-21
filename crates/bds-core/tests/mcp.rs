@@ -671,7 +671,10 @@ fn protocol_routes_every_family_and_http_enforces_loopback_origin_and_cors() {
     );
 
     let server = mcp::McpHttpServer::start(fixture.database_path.clone(), 0).unwrap();
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap();
     let response = client
         .post(server.endpoint())
         .header("accept", "application/json, text/event-stream")

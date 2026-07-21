@@ -664,6 +664,13 @@ mod tests {
         GUARD.get_or_init(|| Mutex::new(()))
     }
 
+    fn preview_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+    }
+
     fn setup_preview_fixture() -> (tempfile::TempDir, Database) {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
@@ -1112,7 +1119,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let mut body = None;
         for _ in 0..20 {
             if let Ok(response) = client
@@ -1229,7 +1236,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let response = client
             .get(format!(
                 "http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/../outside.txt"
@@ -1269,7 +1276,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let media = client
             .get(format!("http://{PREVIEW_HOST}:{PREVIEW_PORT}/media/ok.txt"))
             .send()
@@ -1362,7 +1369,7 @@ mod tests {
             "project-1".into(),
         )
         .unwrap();
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let preview_html = client
             .get(format!(
                 "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__draft/post-1"
@@ -1427,7 +1434,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let response = client
             .get(format!(
                 "http://{PREVIEW_HOST}:{PREVIEW_PORT}/__style-preview?theme=amber&mode=dark"
@@ -1487,7 +1494,7 @@ mod tests {
         )
         .unwrap();
 
-        let client = reqwest::blocking::Client::new();
+        let client = preview_client();
         let response = client
             .get(format!(
                 "http://{PREVIEW_HOST}:{PREVIEW_PORT}/?theme=amber&mode=light"
