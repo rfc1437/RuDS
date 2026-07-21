@@ -174,6 +174,7 @@ pub fn add_category(data_dir: &Path, category: &str) -> EngineResult<()> {
         meta.insert(
             category.to_string(),
             CategorySettings {
+                title: None,
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,
@@ -318,6 +319,7 @@ mod tests {
         meta.insert(
             "article".to_string(),
             CategorySettings {
+                title: None,
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,
@@ -328,6 +330,33 @@ mod tests {
         let read = read_category_meta_json(dir.path()).unwrap();
         assert!(read.contains_key("article"));
         assert!(read["article"].render_in_lists);
+    }
+
+    #[test]
+    fn category_meta_json_preserves_bds2_title() {
+        let dir = setup();
+        let mut meta = HashMap::new();
+        meta.insert(
+            "news".to_string(),
+            CategorySettings {
+                title: Some("News Archive".to_string()),
+                render_in_lists: false,
+                show_title: true,
+                post_template_slug: Some("article".to_string()),
+                list_template_slug: Some("listing".to_string()),
+            },
+        );
+
+        write_category_meta_json(dir.path(), &meta).unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("meta/category-meta.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["news"]["title"], "News Archive");
+        assert_eq!(json["news"]["renderInLists"], false);
+        assert_eq!(json["news"]["showTitle"], true);
+
+        let read = read_category_meta_json(dir.path()).unwrap();
+        assert_eq!(read["news"].title.as_deref(), Some("News Archive"));
     }
 
     // ── publishing.json ─────────────────────────────────────────────
@@ -407,6 +436,7 @@ mod tests {
         meta.insert(
             "article".to_string(),
             CategorySettings {
+                title: None,
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,

@@ -7110,7 +7110,9 @@ impl BdsApp {
                 .map(|name| {
                     let meta = category_meta.get(&name);
                     SettingsCategoryRow {
-                        title: name.clone(),
+                        title: meta
+                            .and_then(|value| value.title.clone())
+                            .unwrap_or_else(|| name.clone()),
                         render_in_lists: meta.map(|value| value.render_in_lists).unwrap_or(true),
                         show_title: meta.map(|value| value.show_title).unwrap_or(true),
                         post_template_slug: meta
@@ -7781,6 +7783,7 @@ impl BdsApp {
                     category_meta.insert(
                         row.name.clone(),
                         bds_core::model::metadata::CategorySettings {
+                            title: Some(row.title.clone()).filter(|title| !title.trim().is_empty()),
                             render_in_lists: row.render_in_lists,
                             show_title: row.show_title,
                             post_template_slug: (!row.post_template_slug.is_empty())
@@ -7822,6 +7825,8 @@ impl BdsApp {
                             (
                                 row.name,
                                 bds_core::model::metadata::CategorySettings {
+                                    title: Some(row.title.clone())
+                                        .filter(|title| !title.trim().is_empty()),
                                     render_in_lists: row.render_in_lists,
                                     show_title: row.show_title,
                                     post_template_slug: None,
