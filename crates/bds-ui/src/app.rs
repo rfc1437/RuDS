@@ -79,6 +79,7 @@ pub enum OneShotAiAction {
     MediaTranslation { target_language: String },
 }
 
+#[derive(Debug, Clone)]
 pub enum Message {
     // Menu
     MenuEvent(muda::MenuId),
@@ -9179,7 +9180,7 @@ impl BdsApp {
     }
 
     fn run_media_ai_analysis(&mut self, media_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
+        let Some(_db) = &self.db else {
             self.notify(
                 ToastLevel::Error,
                 &t(self.ui_locale, "common.databaseUnavailable"),
@@ -9230,7 +9231,7 @@ impl BdsApp {
     }
 
     fn detect_media_language(&mut self, media_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
+        let Some(_db) = &self.db else {
             self.notify(
                 ToastLevel::Error,
                 &t(self.ui_locale, "common.databaseUnavailable"),
@@ -9287,7 +9288,7 @@ impl BdsApp {
 
     fn translate_media_to(&mut self, media_id: &str, target_language: &str) -> Task<Message> {
         self.active_modal = None;
-        let Some(db) = &self.db else {
+        let Some(_db) = &self.db else {
             self.notify(
                 ToastLevel::Error,
                 &t(self.ui_locale, "common.databaseUnavailable"),
