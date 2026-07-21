@@ -15,6 +15,7 @@ use crate::util::now_unix_ms;
 
 const KEYRING_SERVICE: &str = "RuDS";
 const KEYRING_SETTING_PREFIX: &str = "ai.endpoint";
+const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
 static TEST_API_KEYS: LazyLock<Mutex<BTreeMap<String, String>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
@@ -514,7 +515,6 @@ pub fn run_one_shot(
     let endpoint = active_endpoint(conn, offline_mode)?;
     let model = select_model(&settings, &endpoint, &request.operation)?;
     let user_content = build_one_shot_user_content(request)?;
-    let schema = response_schema(&request.operation);
     let payload = json!({
         "model": model,
         "messages": [
@@ -527,14 +527,8 @@ pub fn run_one_shot(
                 "content": user_content,
             }
         ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema.0,
-                "schema": schema.1,
-                "strict": true
-            }
-        }
+        "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+        "stream": false,
     });
     let client = build_http_client_for_endpoint(&endpoint.url)?;
     let response = with_auth(
@@ -577,7 +571,9 @@ fn parse_token_usage(body: &Value) -> TokenUsage {
 }
 
 fn build_http_client_for_endpoint(endpoint_url: &str) -> EngineResult<Client> {
-    let builder = Client::builder().timeout(Duration::from_secs(5));
+    let builder = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(120));
     let builder = if should_bypass_proxy(endpoint_url) {
         builder.no_proxy()
     } else {
@@ -813,131 +809,71 @@ fn build_image_analysis_user_content(content: &Value) -> EngineResult<Value> {
     ]))
 }
 
-fn response_schema(operation: &OneShotOperation) -> (&'static str, Value) {
-    match operation {
-        OneShotOperation::AnalyzeTaxonomy => (
-            "taxonomy_suggestion",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "categories": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["tags", "categories"]
-            }),
-        ),
-        OneShotOperation::MapImportTaxonomy => (
-            "import_taxonomy_mapping",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "category_mappings": {
-                        "type": "object",
-                        "additionalProperties": { "type": "string" }
-                    },
-                    "tag_mappings": {
-                        "type": "object",
-                        "additionalProperties": { "type": "string" }
-                    }
-                },
-                "required": ["category_mappings", "tag_mappings"]
-            }),
-        ),
-        OneShotOperation::AnalyzePost => (
-            "post_analysis",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "title": { "type": "string" },
-                    "excerpt": { "type": "string" },
-                    "slug": { "type": "string" }
-                },
-                "required": ["title", "excerpt", "slug"]
-            }),
-        ),
-        OneShotOperation::DetectLanguage => (
-            "language_detection",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "language_code": { "type": "string" }
-                },
-                "required": ["language_code"]
-            }),
-        ),
-        OneShotOperation::TranslatePost { .. } => (
-            "post_translation",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "title": { "type": "string" },
-                    "excerpt": { "type": "string" },
-                    "content": { "type": "string" }
-                },
-                "required": ["title", "excerpt", "content"]
-            }),
-        ),
-        OneShotOperation::AnalyzeImage => (
-            "image_analysis",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "title": { "type": "string" },
-                    "alt": { "type": "string" },
-                    "caption": { "type": "string" }
-                },
-                "required": ["title", "alt", "caption"]
-            }),
-        ),
-        OneShotOperation::TranslateMedia { .. } => (
-            "media_translation",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "title": { "type": "string" },
-                    "alt": { "type": "string" },
-                    "caption": { "type": "string" }
-                },
-                "required": ["title", "alt", "caption"]
-            }),
-        ),
-    }
-}
-
 fn parse_one_shot_response(
     request: &OneShotRequest,
     content: &str,
 ) -> EngineResult<OneShotResponse> {
+    let content = decode_json_content(content)?;
     Ok(match request.operation {
         OneShotOperation::AnalyzeTaxonomy => {
-            OneShotResponse::Taxonomy(serde_json::from_str(content)?)
+            OneShotResponse::Taxonomy(serde_json::from_value(content)?)
         }
         OneShotOperation::MapImportTaxonomy => {
-            OneShotResponse::ImportTaxonomyMapping(serde_json::from_str(content)?)
+            OneShotResponse::ImportTaxonomyMapping(serde_json::from_value(content)?)
         }
         OneShotOperation::AnalyzePost => {
-            OneShotResponse::PostAnalysis(serde_json::from_str(content)?)
+            OneShotResponse::PostAnalysis(serde_json::from_value(content)?)
         }
         OneShotOperation::DetectLanguage => {
-            OneShotResponse::LanguageDetection(serde_json::from_str(content)?)
+            OneShotResponse::LanguageDetection(serde_json::from_value(content)?)
         }
         OneShotOperation::TranslatePost { .. } => {
-            OneShotResponse::Translation(serde_json::from_str(content)?)
+            OneShotResponse::Translation(serde_json::from_value(content)?)
         }
         OneShotOperation::AnalyzeImage => {
-            OneShotResponse::ImageAnalysis(serde_json::from_str(content)?)
+            OneShotResponse::ImageAnalysis(serde_json::from_value(content)?)
         }
         OneShotOperation::TranslateMedia { .. } => {
-            OneShotResponse::MediaTranslation(serde_json::from_str(content)?)
+            OneShotResponse::MediaTranslation(serde_json::from_value(content)?)
         }
     })
+}
+
+fn decode_json_content(content: &str) -> EngineResult<Value> {
+    if let Some(value) = parse_json_object(content) {
+        return Ok(value);
+    }
+    if let Some(fence_start) = content.find("```") {
+        let fenced = &content[fence_start + 3..];
+        if let Some(fence_end) = fenced.find("```") {
+            let fenced = fenced[..fence_end].trim();
+            let fenced = fenced
+                .get(..4)
+                .filter(|prefix| prefix.eq_ignore_ascii_case("json"))
+                .map_or(fenced, |_| fenced[4..].trim());
+            if let Some(value) = parse_json_object(fenced).or_else(|| parse_embedded_object(fenced))
+            {
+                return Ok(value);
+            }
+        }
+    }
+    parse_embedded_object(content).ok_or_else(|| {
+        EngineError::Parse("one-shot response did not contain a JSON object".to_string())
+    })
+}
+
+fn parse_json_object(content: &str) -> Option<Value> {
+    serde_json::from_str(content.trim())
+        .ok()
+        .filter(Value::is_object)
+}
+
+fn parse_embedded_object(content: &str) -> Option<Value> {
+    let start = content.find('{')?;
+    let end = content.rfind('}')?;
+    (end > start)
+        .then(|| &content[start..=end])
+        .and_then(parse_json_object)
 }
 
 fn endpoint_setting_key(kind: AiEndpointKind, suffix: &str) -> String {
@@ -1335,6 +1271,8 @@ mod tests {
                     request.contains("authorization: Bearer secret-token")
                         || request.contains("Authorization: Bearer secret-token")
                 );
+                assert!(!request.contains("\"response_format\""));
+                assert!(request.contains("\"max_tokens\":16384"));
                 http_ok(
                     r#"{"choices":[{"message":{"content":"{\"title\":\"Better title\",\"excerpt\":\"Short summary\",\"slug\":\"better-title\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
                 )
@@ -1408,6 +1346,19 @@ mod tests {
             parts[1]["image_url"]["url"],
             "data:image/jpeg;base64,abc123"
         );
+    }
+
+    #[test]
+    fn decodes_fenced_and_embedded_json_objects() {
+        assert_eq!(
+            decode_json_content("```JSON\n{\"language_code\":\"de\"}\n```").unwrap(),
+            json!({"language_code": "de"})
+        );
+        assert_eq!(
+            decode_json_content("Sure! {\"title\":\"Herbst\"} Hope this helps.").unwrap(),
+            json!({"title": "Herbst"})
+        );
+        assert!(decode_json_content("[1, 2, 3]").is_err());
     }
 
     #[test]
