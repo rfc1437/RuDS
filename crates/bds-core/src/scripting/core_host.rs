@@ -207,6 +207,7 @@ impl CoreHost {
         match method {
             "get_project_metadata" => public_metadata(&self.data_dir),
             "update_project_metadata" | "set_project_metadata" => {
+                let db = self.database()?;
                 let mut metadata = engine::meta::read_project_json(&self.data_dir)?;
                 let updates = object_arg(args, 0)?;
                 assign_string(updates, "name", &mut metadata.name);
@@ -218,15 +219,33 @@ impl CoreHost {
                     metadata.blog_languages = languages;
                 }
                 metadata.validate().map_err(text)?;
-                engine::meta::write_project_json(&self.data_dir, &metadata)?;
+                let project = project::get_project_by_id(db.conn(), &self.project_id)?;
+                engine::meta::update_project_metadata(
+                    db.conn(),
+                    &self.data_dir,
+                    &project,
+                    &metadata,
+                )?;
                 public_metadata(&self.data_dir)
             }
             "add_category" => {
-                engine::meta::add_category(&self.data_dir, string_arg(args, 0)?)?;
+                let db = self.database()?;
+                engine::meta::add_category(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                    string_arg(args, 0)?,
+                )?;
                 public_metadata(&self.data_dir)
             }
             "remove_category" => {
-                engine::meta::remove_category(&self.data_dir, string_arg(args, 0)?)?;
+                let db = self.database()?;
+                engine::meta::remove_category(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                    string_arg(args, 0)?,
+                )?;
                 public_metadata(&self.data_dir)
             }
             "add_tag" => self.meta_tag(string_arg(args, 0)?, true),
@@ -242,18 +261,36 @@ impl CoreHost {
                 json_value(engine::meta::read_publishing_json(&self.data_dir))
             }
             "set_publishing_preferences" => {
+                let db = self.database()?;
                 let prefs = serde_json::from_value(Value::Object(object_arg(args, 0)?.clone()))
                     .map_err(text)?;
-                engine::meta::write_publishing_json(&self.data_dir, &prefs)?;
+                engine::meta::set_publishing_preferences(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                    &prefs,
+                )?;
                 json_value(engine::meta::read_publishing_json(&self.data_dir))
             }
             "clear_publishing_preferences" => {
+                let db = self.database()?;
                 let prefs = Default::default();
-                engine::meta::write_publishing_json(&self.data_dir, &prefs)?;
+                engine::meta::set_publishing_preferences(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                    &prefs,
+                )?;
                 json_value(Ok::<_, EngineError>(prefs))
             }
             "sync_on_startup" => {
+                let db = self.database()?;
                 engine::meta::startup_sync(&self.data_dir)?;
+                engine::meta::initialize_metadata_snapshots(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                )?;
                 Ok(json!({
                     "metadata": public_metadata(&self.data_dir)?,
                     "categories": engine::meta::read_categories_json(&self.data_dir)?,

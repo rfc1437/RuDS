@@ -46,6 +46,12 @@ pub fn list_all_settings(conn: &DbConnection) -> QueryResult<Vec<Setting>> {
     })
 }
 
+pub fn delete_settings_by_prefix(conn: &DbConnection, prefix: &str) -> QueryResult<usize> {
+    conn.with(|c| {
+        diesel::delete(settings::table.filter(settings::key.like(format!("{prefix}%")))).execute(c)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +98,19 @@ mod tests {
     fn get_nonexistent_returns_error() {
         let db = setup();
         assert!(get_setting_by_key(db.conn(), "nope").is_err());
+    }
+
+    #[test]
+    fn delete_by_prefix_is_project_scoped() {
+        let db = setup();
+        set_setting_value(db.conn(), "project:p1:categories", "[]", 1).unwrap();
+        set_setting_value(db.conn(), "project:p2:categories", "[]", 1).unwrap();
+
+        assert_eq!(
+            delete_settings_by_prefix(db.conn(), "project:p1:").unwrap(),
+            1
+        );
+        assert!(get_setting_by_key(db.conn(), "project:p1:categories").is_err());
+        assert!(get_setting_by_key(db.conn(), "project:p2:categories").is_ok());
     }
 }

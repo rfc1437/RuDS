@@ -1095,7 +1095,9 @@ pub fn execute_import(
                 false
             } else {
                 match item.kind {
-                    TaxonomyKind::Category => meta::add_category(data_dir, &item.name)?,
+                    TaxonomyKind::Category => {
+                        meta::add_category(conn, data_dir, project_id, &item.name)?
+                    }
                     TaxonomyKind::Tag => {
                         tag::create_tag(conn, data_dir, project_id, &item.name, None)?;
                     }

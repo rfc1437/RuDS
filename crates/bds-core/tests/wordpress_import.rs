@@ -50,7 +50,7 @@ fn parser_rejects_malformed_or_channel_less_xml_and_ignores_unknown_elements() {
 #[test]
 fn analysis_converts_html_and_shortcodes_and_classifies_every_status() {
     let (db, dir, project) = setup();
-    meta::add_category(dir.path(), "GENERAL").unwrap();
+    meta::add_category(db.conn(), dir.path(), &project.id, "GENERAL").unwrap();
     tag::create_tag(db.conn(), dir.path(), &project.id, "nEWs", None).unwrap();
 
     let update = post::create_post(

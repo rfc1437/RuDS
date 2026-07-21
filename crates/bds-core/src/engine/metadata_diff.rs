@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -73,10 +73,23 @@ pub fn compute_metadata_diff(
     let mut report = DiffReport::default();
 
     if let Ok(project) = qproject::get_project_by_id(conn, project_id) {
-        match diff_project(data_dir, &project) {
+        match diff_project(conn, data_dir, &project) {
             Ok(Some(diff)) => report.diffs.push(diff),
             Ok(None) => {}
             Err(error) => report.errors.push(format!("project {project_id}: {error}")),
+        }
+        for result in [
+            diff_categories(conn, data_dir, project_id),
+            diff_category_meta(conn, data_dir, project_id),
+            diff_publishing(conn, data_dir, project_id),
+        ] {
+            match result {
+                Ok(Some(diff)) => report.diffs.push(diff),
+                Ok(None) => {}
+                Err(error) => report
+                    .errors
+                    .push(format!("project metadata {project_id}: {error}")),
+            }
         }
     }
 
@@ -220,7 +233,9 @@ pub fn repair_metadata_diff_item(
         RepairDirection::FileToDatabase => {
             let path = data_dir.join(&item.file_path);
             match item.entity_type.as_str() {
-                "project" => sync_project_from_file(conn, data_dir, project_id)?,
+                "project" | "categories" | "category_meta" | "publishing" => {
+                    crate::engine::meta::sync_metadata_from_filesystem(conn, data_dir, project_id)?
+                }
                 "post" => {
                     crate::engine::post::rebuild_canonical_post(conn, data_dir, project_id, &path)?;
                 }
@@ -256,7 +271,9 @@ pub fn repair_metadata_diff_item(
             }
         }
         RepairDirection::DatabaseToFile => match item.entity_type.as_str() {
-            "project" => rewrite_project_from_database(conn, data_dir, project_id)?,
+            "project" | "categories" | "category_meta" | "publishing" => {
+                crate::engine::meta::flush_metadata_to_filesystem(conn, data_dir, project_id)?
+            }
             "post" => rewrite_post_from_database(conn, data_dir, &item.entity_id)?,
             "post_translation" => {
                 rewrite_post_translation_from_database(conn, data_dir, &item.entity_id)?
@@ -335,18 +352,93 @@ pub fn import_orphan_file(
 }
 
 fn diff_project(
+    conn: &Connection,
     data_dir: &Path,
     project: &crate::model::Project,
 ) -> EngineResult<Option<EntityDiff>> {
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
     let mut fields = Vec::new();
-    compare_field(&mut fields, "name", &project.name, &metadata.name);
+    let snapshot = crate::engine::meta::read_project_metadata_snapshot(conn, &project.id)?;
+    let database = snapshot.as_ref();
+    compare_field(
+        &mut fields,
+        "name",
+        database.map_or(project.name.as_str(), |value| value.name.as_str()),
+        &metadata.name,
+    );
     compare_field(
         &mut fields,
         "description",
-        project.description.as_deref().unwrap_or(""),
+        database.map_or_else(
+            || project.description.as_deref().unwrap_or(""),
+            |value| value.description.as_deref().unwrap_or(""),
+        ),
         metadata.description.as_deref().unwrap_or(""),
     );
+    if let Some(database) = database {
+        compare_optional_field(
+            &mut fields,
+            "public_url",
+            &database.public_url,
+            &metadata.public_url,
+        );
+        compare_optional_field(
+            &mut fields,
+            "main_language",
+            &database.main_language,
+            &metadata.main_language,
+        );
+        compare_optional_field(
+            &mut fields,
+            "default_author",
+            &database.default_author,
+            &metadata.default_author,
+        );
+        compare_field(
+            &mut fields,
+            "max_posts_per_page",
+            &database.max_posts_per_page.to_string(),
+            &metadata.max_posts_per_page.to_string(),
+        );
+        compare_field(
+            &mut fields,
+            "image_import_concurrency",
+            &database.image_import_concurrency.to_string(),
+            &metadata.image_import_concurrency.to_string(),
+        );
+        compare_optional_field(
+            &mut fields,
+            "blogmark_category",
+            &database.blogmark_category,
+            &metadata.blogmark_category,
+        );
+        compare_optional_field(
+            &mut fields,
+            "pico_theme",
+            &database.pico_theme,
+            &metadata.pico_theme,
+        );
+        compare_field(
+            &mut fields,
+            "semantic_similarity_enabled",
+            if database.semantic_similarity_enabled {
+                "true"
+            } else {
+                "false"
+            },
+            if metadata.semantic_similarity_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        compare_field(
+            &mut fields,
+            "blog_languages",
+            &json_value(&database.blog_languages)?,
+            &json_value(&metadata.blog_languages)?,
+        );
+    }
     Ok((!fields.is_empty()).then_some(EntityDiff {
         entity_type: "project".into(),
         entity_id: project.id.clone(),
@@ -355,24 +447,96 @@ fn diff_project(
     }))
 }
 
-fn sync_project_from_file(
+fn diff_categories(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
-) -> EngineResult<()> {
-    crate::engine::meta::sync_project_from_file(conn, data_dir, project_id)
+) -> EngineResult<Option<EntityDiff>> {
+    let Some(database) = crate::engine::meta::read_categories_snapshot(conn, project_id)? else {
+        return Ok(None);
+    };
+    let filesystem = crate::engine::meta::read_categories_json(data_dir)?;
+    let mut fields = Vec::new();
+    compare_field(
+        &mut fields,
+        "categories",
+        &json_value(&database)?,
+        &json_value(&filesystem)?,
+    );
+    Ok((!fields.is_empty()).then_some(EntityDiff {
+        entity_type: "categories".into(),
+        entity_id: project_id.into(),
+        file_path: "meta/categories.json".into(),
+        fields,
+    }))
 }
 
-fn rewrite_project_from_database(
+fn diff_category_meta(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
-) -> EngineResult<()> {
-    let project = qproject::get_project_by_id(conn, project_id)?;
-    let mut metadata = crate::engine::meta::read_project_json(data_dir)?;
-    metadata.name = project.name;
-    metadata.description = project.description;
-    crate::engine::meta::write_project_json(data_dir, &metadata)
+) -> EngineResult<Option<EntityDiff>> {
+    let Some(database) = crate::engine::meta::read_category_meta_snapshot(conn, project_id)? else {
+        return Ok(None);
+    };
+    let filesystem = crate::engine::meta::read_category_meta_json(data_dir)?;
+    let database = database.into_iter().collect::<BTreeMap<_, _>>();
+    let filesystem = filesystem.into_iter().collect::<BTreeMap<_, _>>();
+    let mut fields = Vec::new();
+    compare_field(
+        &mut fields,
+        "category_settings",
+        &json_value(&database)?,
+        &json_value(&filesystem)?,
+    );
+    Ok((!fields.is_empty()).then_some(EntityDiff {
+        entity_type: "category_meta".into(),
+        entity_id: project_id.into(),
+        file_path: "meta/category-meta.json".into(),
+        fields,
+    }))
+}
+
+fn diff_publishing(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<Option<EntityDiff>> {
+    let Some(database) = crate::engine::meta::read_publishing_snapshot(conn, project_id)? else {
+        return Ok(None);
+    };
+    let filesystem = crate::engine::meta::read_publishing_json(data_dir)?;
+    let mut fields = Vec::new();
+    compare_optional_field(
+        &mut fields,
+        "ssh_host",
+        &database.ssh_host,
+        &filesystem.ssh_host,
+    );
+    compare_optional_field(
+        &mut fields,
+        "ssh_user",
+        &database.ssh_user,
+        &filesystem.ssh_user,
+    );
+    compare_optional_field(
+        &mut fields,
+        "ssh_remote_path",
+        &database.ssh_remote_path,
+        &filesystem.ssh_remote_path,
+    );
+    compare_field(
+        &mut fields,
+        "ssh_mode",
+        ssh_mode_name(&database.ssh_mode),
+        ssh_mode_name(&filesystem.ssh_mode),
+    );
+    Ok((!fields.is_empty()).then_some(EntityDiff {
+        entity_type: "publishing".into(),
+        entity_id: project_id.into(),
+        file_path: "meta/publishing.json".into(),
+        fields,
+    }))
 }
 
 fn unsupported_repair<T>(entity_type: &str) -> EngineResult<T> {
@@ -533,6 +697,31 @@ fn compare_field(fields: &mut Vec<DiffField>, name: &str, db_val: &str, file_val
             db_value: db_val.to_string(),
             file_value: file_val.to_string(),
         });
+    }
+}
+
+fn compare_optional_field(
+    fields: &mut Vec<DiffField>,
+    name: &str,
+    db_val: &Option<String>,
+    file_val: &Option<String>,
+) {
+    compare_field(
+        fields,
+        name,
+        db_val.as_deref().unwrap_or(""),
+        file_val.as_deref().unwrap_or(""),
+    );
+}
+
+fn json_value(value: &impl serde::Serialize) -> EngineResult<String> {
+    Ok(serde_json::to_string(value)?)
+}
+
+fn ssh_mode_name(mode: &crate::model::SshMode) -> &'static str {
+    match mode {
+        crate::model::SshMode::Scp => "scp",
+        crate::model::SshMode::Rsync => "rsync",
     }
 }
 
@@ -1037,8 +1226,8 @@ mod tests {
     use crate::db::queries::template::insert_template;
     use crate::engine::post::{archive_post, create_post, publish_post};
     use crate::model::{
-        Media, Post, PostStatus, ProjectMetadata, Script, ScriptKind, ScriptStatus, Template,
-        TemplateKind, TemplateStatus,
+        Media, Post, PostStatus, ProjectMetadata, PublishingPreferences, Script, ScriptKind,
+        ScriptStatus, SshMode, Template, TemplateKind, TemplateStatus,
     };
     use crate::util::frontmatter::{
         ScriptFrontmatter, TemplateFrontmatter, write_script_file, write_template_file,
@@ -1221,6 +1410,136 @@ mod tests {
                 && field.db_value == "A test project"
                 && field.file_value.is_empty()
         }));
+    }
+
+    fn seed_portable_metadata(db: &Database, dir: &TempDir) {
+        crate::engine::meta::startup_sync(dir.path()).unwrap();
+        crate::engine::meta::sync_metadata_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+        crate::engine::meta::set_categories(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &["article".into(), "news".into()],
+        )
+        .unwrap();
+        let mut category_meta = std::collections::HashMap::new();
+        category_meta.insert(
+            "news".to_string(),
+            crate::model::metadata::CategorySettings {
+                title: Some("News".into()),
+                render_in_lists: false,
+                show_title: true,
+                post_template_slug: Some("article".into()),
+                list_template_slug: None,
+            },
+        );
+        crate::engine::meta::set_category_meta(db.conn(), dir.path(), "p1", &category_meta)
+            .unwrap();
+        crate::engine::meta::set_publishing_preferences(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &PublishingPreferences {
+                ssh_host: Some("example.net".into()),
+                ssh_user: Some("deploy".into()),
+                ssh_remote_path: Some("/srv/blog".into()),
+                ssh_mode: SshMode::Rsync,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn detects_categories_category_meta_and_publishing_drift() {
+        let (db, dir) = setup();
+        seed_portable_metadata(&db, &dir);
+        crate::engine::meta::write_categories_json(dir.path(), &["article".into()]).unwrap();
+        crate::engine::meta::write_category_meta_json(dir.path(), &Default::default()).unwrap();
+        crate::engine::meta::write_publishing_json(dir.path(), &PublishingPreferences::default())
+            .unwrap();
+
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+
+        for entity_type in ["categories", "category_meta", "publishing"] {
+            assert!(
+                report
+                    .diffs
+                    .iter()
+                    .any(|item| item.entity_type == entity_type),
+                "missing {entity_type} diff: {:?}",
+                report.diffs
+            );
+        }
+    }
+
+    #[test]
+    fn repairs_portable_metadata_in_both_directions() {
+        let (db, dir) = setup();
+        seed_portable_metadata(&db, &dir);
+        crate::engine::meta::write_categories_json(dir.path(), &["filesystem".into()]).unwrap();
+        crate::engine::meta::write_category_meta_json(dir.path(), &Default::default()).unwrap();
+        crate::engine::meta::write_publishing_json(dir.path(), &PublishingPreferences::default())
+            .unwrap();
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+
+        let categories = report
+            .diffs
+            .iter()
+            .find(|item| item.entity_type == "categories")
+            .unwrap();
+        repair_metadata_diff_item(
+            db.conn(),
+            dir.path(),
+            "p1",
+            RepairDirection::DatabaseToFile,
+            categories,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::engine::meta::read_categories_json(dir.path()).unwrap(),
+            vec!["article", "news"]
+        );
+        assert!(
+            crate::engine::meta::read_category_meta_json(dir.path())
+                .unwrap()
+                .contains_key("news")
+        );
+        assert_eq!(
+            crate::engine::meta::read_publishing_json(dir.path())
+                .unwrap()
+                .ssh_host
+                .as_deref(),
+            Some("example.net")
+        );
+
+        crate::engine::meta::write_categories_json(dir.path(), &["filesystem".into()]).unwrap();
+        crate::engine::meta::write_category_meta_json(dir.path(), &Default::default()).unwrap();
+        crate::engine::meta::write_publishing_json(dir.path(), &PublishingPreferences::default())
+            .unwrap();
+        let report = compute_metadata_diff(db.conn(), dir.path(), "p1").unwrap();
+        let categories = report
+            .diffs
+            .iter()
+            .find(|item| item.entity_type == "categories")
+            .unwrap();
+        repair_metadata_diff_item(
+            db.conn(),
+            dir.path(),
+            "p1",
+            RepairDirection::FileToDatabase,
+            categories,
+        )
+        .unwrap();
+        assert!(
+            compute_metadata_diff(db.conn(), dir.path(), "p1")
+                .unwrap()
+                .diffs
+                .iter()
+                .all(|item| !matches!(
+                    item.entity_type.as_str(),
+                    "categories" | "category_meta" | "publishing"
+                ))
+        );
     }
 
     #[test]

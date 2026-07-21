@@ -82,6 +82,7 @@ pub fn list_effective(conn: &Connection) -> EngineResult<BTreeMap<String, String
     );
     for value in setting::list_all_settings(conn)? {
         if !value.key.starts_with("app.")
+            && !value.key.starts_with("project:")
             && value.key != ONLINE_API_KEY
             && value.key != ONLINE_API_KEY_CONFIGURED
             && value.key != AIRPLANE_API_KEY
@@ -161,5 +162,24 @@ mod tests {
 
         let db = Database::open(&path).unwrap();
         assert!(airplane_mode(db.conn()).unwrap());
+    }
+
+    #[test]
+    fn effective_settings_hide_internal_project_metadata_snapshots() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        setting::set_setting_value(
+            db.conn(),
+            "project:p1:categories",
+            r#"{"categories":["article"]}"#,
+            1,
+        )
+        .unwrap();
+
+        assert!(
+            !list_effective(db.conn())
+                .unwrap()
+                .contains_key("project:p1:categories")
+        );
     }
 }

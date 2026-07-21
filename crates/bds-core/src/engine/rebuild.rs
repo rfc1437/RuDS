@@ -127,7 +127,8 @@ fn rebuild_from_filesystem_inner(
     // 1. Load portable project metadata and clear all reconstructible rows.
     progress(0.0, "Loading project metadata...");
     fts::ensure_fts_tables(conn)?;
-    crate::engine::meta::sync_project_from_file(conn, data_dir, project_id)?;
+    crate::engine::meta::startup_sync(data_dir)?;
+    crate::engine::meta::sync_metadata_from_filesystem(conn, data_dir, project_id)?;
     clear_project_rows(conn, project_id)?;
 
     // 2. Rebuild posts  (0.00 .. 0.35)
@@ -628,6 +629,18 @@ function render() end
         let project = crate::db::queries::project::get_project_by_id(db.conn(), "p1").unwrap();
         assert_eq!(project.name, "Rebuilt Project");
         assert!(project.description.is_none());
+        assert_eq!(
+            crate::engine::meta::read_categories_snapshot(db.conn(), "p1")
+                .unwrap()
+                .unwrap(),
+            vec!["article", "aside", "page", "picture"]
+        );
+        assert_eq!(
+            crate::engine::meta::read_publishing_snapshot(db.conn(), "p1")
+                .unwrap()
+                .unwrap(),
+            crate::model::PublishingPreferences::default()
+        );
 
         let links =
             crate::db::queries::post_media::list_post_media_by_media(db.conn(), "test-media-1")

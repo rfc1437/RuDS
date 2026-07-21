@@ -25,8 +25,9 @@ value DiffField {
 }
 
 value DiffReport {
-    entity_type: String             -- post, post_translation, media,
-                                    --   media_translation, script, template, embedding
+    entity_type: String             -- project, categories, category_meta, publishing,
+                                    --   post, post_translation, media, media_translation,
+                                    --   script, template, embedding
     entity_id: String
     differences: List<DiffField>
 }
@@ -44,6 +45,20 @@ rule RunMetadataDiff {
     --   translations, media, Lua scripts, templates
     -- Detected fields: tags, categories, title, excerpt, author,
     --   language, status, templateSlug, dates
+    -- Portable project metadata has a project-scoped database snapshot in the
+    -- settings table. Compare its project, category list, per-category settings,
+    -- and publishing preferences against the matching meta/*.json files.
+    for metadata_type in {"project", "categories", "category_meta", "publishing"}:
+        let db_metadata = ProjectMetadataSetting(project.id, metadata_type)
+        let file_metadata = ReadProjectMetadataFile(project, metadata_type)
+        let metadata_diffs = compare_fields(db_metadata, file_metadata)
+        if metadata_diffs.count > 0:
+            ensures:
+                DiffReport.created(
+                    entity_type: metadata_type,
+                    entity_id: project.id,
+                    differences: metadata_diffs
+                )
     for post in project.posts:
         let file_data = parse_post_file(post.file_path)
         let diffs = compare_fields(post, file_data)
@@ -83,6 +98,7 @@ rule RebuildDatabase {
     -- project.json, posts, translations, media sidecars and links, tags,
     -- templates, and Lua scripts are imported. Python files in scripts/ are ignored.
     ensures: ProjectMetadataImported(project, "meta/project.json")
+    ensures: ProjectMetadataSettingsImported(project, "meta/*.json")
     ensures: post/RebuildPostsFromFiles(project)
     ensures: media/RebuildMediaFromFiles(project)
     ensures: script/RebuildScriptsFromFiles(project)

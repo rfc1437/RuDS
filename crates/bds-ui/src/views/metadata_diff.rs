@@ -155,3 +155,34 @@ fn message_card(value: String) -> Element<'static, Message> {
     )
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bds_core::engine::metadata_diff::{DiffField, EntityDiff};
+
+    #[test]
+    fn renders_all_portable_project_metadata_diff_cards() {
+        let state = MetadataDiffState {
+            report: Some(DiffReport {
+                diffs: ["categories", "category_meta", "publishing"]
+                    .into_iter()
+                    .map(|entity_type| EntityDiff {
+                        entity_type: entity_type.into(),
+                        entity_id: "p1".into(),
+                        file_path: format!("meta/{entity_type}.json"),
+                        fields: vec![DiffField {
+                            field_name: "value".into(),
+                            db_value: "database".into(),
+                            file_value: "filesystem".into(),
+                        }],
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let _: Element<'_, Message> = view(&state, UiLocale::En);
+    }
+}

@@ -57,6 +57,7 @@ pub fn create_project(
 
     // Write default meta files
     write_default_meta_files(&data_dir, name)?;
+    crate::engine::meta::sync_metadata_from_filesystem(conn, &data_dir, &project.id)?;
 
     emit_project(&project, NotificationAction::Created);
 
@@ -122,6 +123,8 @@ pub fn open_project(conn: &Connection, folder_path: &Path) -> EngineResult<Proje
         project.data_path = Some(resolved_path);
         project.updated_at = now_unix_ms();
         q::update_project(conn, &project)?;
+        crate::engine::meta::startup_sync(&folder_path)?;
+        crate::engine::meta::initialize_metadata_snapshots(conn, &folder_path, &project.id)?;
         emit_project(&project, NotificationAction::Updated);
         return Ok(project);
     }
@@ -141,6 +144,8 @@ pub fn open_project(conn: &Connection, folder_path: &Path) -> EngineResult<Proje
         updated_at: now,
     };
     q::insert_project(conn, &project)?;
+    crate::engine::meta::startup_sync(&folder_path)?;
+    crate::engine::meta::sync_metadata_from_filesystem(conn, &folder_path, &project.id)?;
     emit_project(&project, NotificationAction::Created);
     Ok(project)
 }
@@ -153,7 +158,13 @@ pub fn ensure_default_project(
     default_data_dir: Option<&Path>,
 ) -> EngineResult<Project> {
     match q::get_project_by_id(conn, DEFAULT_PROJECT_ID) {
-        Ok(p) => Ok(p),
+        Ok(p) => {
+            if let Some(data_dir) = default_data_dir {
+                crate::engine::meta::startup_sync(data_dir)?;
+                crate::engine::meta::initialize_metadata_snapshots(conn, data_dir, &p.id)?;
+            }
+            Ok(p)
+        }
         Err(diesel::result::Error::NotFound) => {
             let now = now_unix_ms();
             let project = Project {
@@ -174,6 +185,7 @@ pub fn ensure_default_project(
             };
             create_directory_structure(&data_dir)?;
             write_default_meta_files(&data_dir, "My Blog")?;
+            crate::engine::meta::sync_metadata_from_filesystem(conn, &data_dir, &project.id)?;
             emit_project(&project, NotificationAction::Created);
             Ok(project)
         }
@@ -237,7 +249,22 @@ pub fn delete_project(
         .map_err(|_| EngineError::NotFound(format!("project {project_id}")))?;
     let is_custom_path = project.data_path.is_some();
 
-    q::delete_project(conn, project_id)?;
+    conn.begin_savepoint()?;
+    let deleted = (|| {
+        q::delete_project(conn, project_id)?;
+        crate::db::queries::setting::delete_settings_by_prefix(
+            conn,
+            &format!("project:{project_id}:"),
+        )?;
+        Ok::<_, EngineError>(())
+    })();
+    match deleted {
+        Ok(()) => conn.release_savepoint()?,
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            return Err(error);
+        }
+    }
     crate::engine::embedding::EmbeddingService::forget_project(project_id);
 
     // Clean up internal filesystem only (not custom external paths per spec)
@@ -492,12 +519,26 @@ mod tests {
             updated_at: now,
         };
         crate::db::queries::project::insert_project(db.conn(), &project).unwrap();
+        crate::db::queries::setting::set_setting_value(
+            db.conn(),
+            &format!("project:{}:categories", project.id),
+            r#"{"categories":[]}"#,
+            now,
+        )
+        .unwrap();
         // Create the internal directory structure under the temp dir
         let internal_dir = dir.path().join("projects").join(&project.id);
         create_directory_structure(&internal_dir).unwrap();
         assert!(internal_dir.join("posts").is_dir());
         delete_project(db.conn(), &project.id, Some(&internal_dir)).unwrap();
         assert!(list_projects(db.conn()).unwrap().is_empty());
+        assert!(
+            crate::db::queries::setting::get_setting_by_key(
+                db.conn(),
+                &format!("project:{}:categories", project.id)
+            )
+            .is_err()
+        );
         assert!(
             !internal_dir.exists(),
             "internal directory should be cleaned up"

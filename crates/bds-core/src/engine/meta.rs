@@ -2,11 +2,97 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
 use crate::db::DbConnection as Connection;
-use crate::engine::EngineResult;
+use crate::engine::{EngineError, EngineResult};
 use crate::model::metadata::{CategorySettings, ProjectMetadata, TagEntry};
 use crate::model::{DomainEntity, NotificationAction, Project, PublishingPreferences};
 use crate::util::atomic_write_str;
+
+const PROJECT_SETTING_SUFFIX: &str = "project";
+const CATEGORIES_SETTING_SUFFIX: &str = "categories";
+const CATEGORY_META_SETTING_SUFFIX: &str = "category_meta";
+const PUBLISHING_SETTING_SUFFIX: &str = "publishing";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CategoriesSnapshot {
+    categories: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CategoryMetaSnapshot {
+    categories: HashMap<String, CategorySettings>,
+}
+
+fn metadata_setting_key(project_id: &str, suffix: &str) -> String {
+    format!("project:{project_id}:{suffix}")
+}
+
+fn persist_snapshot<T: Serialize>(
+    conn: &Connection,
+    project_id: &str,
+    suffix: &str,
+    value: &T,
+) -> EngineResult<()> {
+    crate::db::queries::setting::set_setting_value(
+        conn,
+        &metadata_setting_key(project_id, suffix),
+        &serde_json::to_string(value)?,
+        crate::util::now_unix_ms(),
+    )?;
+    Ok(())
+}
+
+fn load_snapshot<T: DeserializeOwned>(
+    conn: &Connection,
+    project_id: &str,
+    suffix: &str,
+) -> EngineResult<Option<T>> {
+    match crate::db::queries::setting::get_setting_by_key(
+        conn,
+        &metadata_setting_key(project_id, suffix),
+    ) {
+        Ok(setting) => Ok(Some(serde_json::from_str(&setting.value)?)),
+        Err(diesel::result::Error::NotFound) => Ok(None),
+        Err(error) => Err(EngineError::Db(error)),
+    }
+}
+
+pub fn read_project_metadata_snapshot(
+    conn: &Connection,
+    project_id: &str,
+) -> EngineResult<Option<ProjectMetadata>> {
+    load_snapshot(conn, project_id, PROJECT_SETTING_SUFFIX)
+}
+
+pub fn read_categories_snapshot(
+    conn: &Connection,
+    project_id: &str,
+) -> EngineResult<Option<Vec<String>>> {
+    Ok(
+        load_snapshot::<CategoriesSnapshot>(conn, project_id, CATEGORIES_SETTING_SUFFIX)?
+            .map(|snapshot| snapshot.categories),
+    )
+}
+
+pub fn read_category_meta_snapshot(
+    conn: &Connection,
+    project_id: &str,
+) -> EngineResult<Option<HashMap<String, CategorySettings>>> {
+    Ok(
+        load_snapshot::<CategoryMetaSnapshot>(conn, project_id, CATEGORY_META_SETTING_SUFFIX)?
+            .map(|snapshot| snapshot.categories),
+    )
+}
+
+pub fn read_publishing_snapshot(
+    conn: &Connection,
+    project_id: &str,
+) -> EngineResult<Option<PublishingPreferences>> {
+    load_snapshot(conn, project_id, PUBLISHING_SETTING_SUFFIX)
+}
 
 // ── project.json ────────────────────────────────────────────────────
 
@@ -49,6 +135,7 @@ pub fn update_project_metadata(
     persisted_project.updated_at = crate::util::now_unix_ms();
 
     let category_metadata = read_category_meta_json(data_dir)?;
+    persist_snapshot(conn, &project.id, PROJECT_SETTING_SUFFIX, metadata)?;
     write_project_json(data_dir, metadata)?;
     write_category_meta_json(data_dir, &category_metadata)?;
     crate::db::queries::project::update_project(conn, &persisted_project)?;
@@ -61,23 +148,117 @@ pub fn update_project_metadata(
     Ok(metadata.clone())
 }
 
-/// Copy the project fields persisted in both representations from project.json
-/// into the machine-local project row.
-pub fn sync_project_from_file(
+/// Replace all database metadata snapshots with the portable filesystem state.
+pub fn sync_metadata_from_filesystem(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<()> {
-    let metadata = read_project_json(data_dir)?;
-    metadata
-        .validate()
-        .map_err(crate::engine::EngineError::Validation)?;
-    let mut project = crate::db::queries::project::get_project_by_id(conn, project_id)?;
-    project.name = metadata.name;
-    project.description = metadata.description;
-    project.updated_at = crate::util::now_unix_ms();
-    crate::db::queries::project::update_project(conn, &project)?;
+    let project = read_project_json(data_dir)?;
+    project.validate().map_err(EngineError::Validation)?;
+    let categories = read_categories_json(data_dir)?;
+    let category_meta = read_category_meta_json(data_dir)?;
+    let publishing = read_publishing_json(data_dir)?;
+
+    conn.begin_savepoint()?;
+    let result = (|| {
+        let mut project_row = crate::db::queries::project::get_project_by_id(conn, project_id)?;
+        project_row.name = project.name.clone();
+        project_row.description = project.description.clone();
+        project_row.updated_at = crate::util::now_unix_ms();
+        crate::db::queries::project::update_project(conn, &project_row)?;
+        persist_snapshot(conn, project_id, PROJECT_SETTING_SUFFIX, &project)?;
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORIES_SETTING_SUFFIX,
+            &CategoriesSnapshot { categories },
+        )?;
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORY_META_SETTING_SUFFIX,
+            &CategoryMetaSnapshot {
+                categories: category_meta,
+            },
+        )?;
+        persist_snapshot(conn, project_id, PUBLISHING_SETTING_SUFFIX, &publishing)
+    })();
+    match result {
+        Ok(()) => conn.release_savepoint().map_err(Into::into),
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            Err(error)
+        }
+    }
+}
+
+/// Seed database snapshots for pre-snapshot projects without overwriting
+/// deliberate database/file divergence on later activations.
+pub fn initialize_metadata_snapshots(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    if read_project_metadata_snapshot(conn, project_id)?.is_none() {
+        let value = read_project_json(data_dir)?;
+        persist_snapshot(conn, project_id, PROJECT_SETTING_SUFFIX, &value)?;
+    }
+    if read_categories_snapshot(conn, project_id)?.is_none() {
+        let categories = read_categories_json(data_dir)?;
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORIES_SETTING_SUFFIX,
+            &CategoriesSnapshot { categories },
+        )?;
+    }
+    if read_category_meta_snapshot(conn, project_id)?.is_none() {
+        let categories = read_category_meta_json(data_dir)?;
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORY_META_SETTING_SUFFIX,
+            &CategoryMetaSnapshot { categories },
+        )?;
+    }
+    if read_publishing_snapshot(conn, project_id)?.is_none() {
+        let value = read_publishing_json(data_dir)?;
+        persist_snapshot(conn, project_id, PUBLISHING_SETTING_SUFFIX, &value)?;
+    }
     Ok(())
+}
+
+pub fn flush_metadata_to_filesystem(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+) -> EngineResult<()> {
+    let project = read_project_metadata_snapshot(conn, project_id)?.ok_or_else(|| {
+        EngineError::NotFound(format!(
+            "project metadata snapshot for project {project_id}"
+        ))
+    })?;
+    let categories = read_categories_snapshot(conn, project_id)?.ok_or_else(|| {
+        EngineError::NotFound(format!(
+            "categories metadata snapshot for project {project_id}"
+        ))
+    })?;
+    let category_meta = read_category_meta_snapshot(conn, project_id)?.ok_or_else(|| {
+        EngineError::NotFound(format!(
+            "category metadata snapshot for project {project_id}"
+        ))
+    })?;
+    let publishing = read_publishing_snapshot(conn, project_id)?.ok_or_else(|| {
+        EngineError::NotFound(format!(
+            "publishing metadata snapshot for project {project_id}"
+        ))
+    })?;
+
+    write_project_json(data_dir, &project)?;
+    write_categories_json(data_dir, &categories)?;
+    write_category_meta_json(data_dir, &category_meta)?;
+    write_publishing_json(data_dir, &publishing)
 }
 
 // ── categories.json ─────────────────────────────────────────────────
@@ -98,6 +279,25 @@ pub fn write_categories_json(data_dir: &Path, categories: &[String]) -> EngineRe
     let json = serde_json::to_string_pretty(&sorted)?;
     atomic_write_str(&path, &json)?;
     Ok(())
+}
+
+pub fn set_categories(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    categories: &[String],
+) -> EngineResult<()> {
+    let mut sorted = categories.to_vec();
+    sorted.sort_by_key(|category| category.to_lowercase());
+    persist_snapshot(
+        conn,
+        project_id,
+        CATEGORIES_SETTING_SUFFIX,
+        &CategoriesSnapshot {
+            categories: sorted.clone(),
+        },
+    )?;
+    write_categories_json(data_dir, &sorted)
 }
 
 // ── category-meta.json ──────────────────────────────────────────────
@@ -121,6 +321,62 @@ pub fn write_category_meta_json(
     Ok(())
 }
 
+pub fn set_category_meta(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    meta: &HashMap<String, CategorySettings>,
+) -> EngineResult<()> {
+    persist_snapshot(
+        conn,
+        project_id,
+        CATEGORY_META_SETTING_SUFFIX,
+        &CategoryMetaSnapshot {
+            categories: meta.clone(),
+        },
+    )?;
+    write_category_meta_json(data_dir, meta)
+}
+
+pub fn set_categories_and_meta(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    categories: &[String],
+    meta: &HashMap<String, CategorySettings>,
+) -> EngineResult<()> {
+    let mut sorted = categories.to_vec();
+    sorted.sort_by_key(|category| category.to_lowercase());
+    conn.begin_savepoint()?;
+    let result = (|| {
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORIES_SETTING_SUFFIX,
+            &CategoriesSnapshot {
+                categories: sorted.clone(),
+            },
+        )?;
+        persist_snapshot(
+            conn,
+            project_id,
+            CATEGORY_META_SETTING_SUFFIX,
+            &CategoryMetaSnapshot {
+                categories: meta.clone(),
+            },
+        )
+    })();
+    match result {
+        Ok(()) => conn.release_savepoint()?,
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            return Err(error);
+        }
+    }
+    write_categories_json(data_dir, &sorted)?;
+    write_category_meta_json(data_dir, meta)
+}
+
 // ── publishing.json ─────────────────────────────────────────────────
 
 /// Read meta/publishing.json.
@@ -137,6 +393,16 @@ pub fn write_publishing_json(data_dir: &Path, prefs: &PublishingPreferences) -> 
     let json = serde_json::to_string_pretty(prefs)?;
     atomic_write_str(&path, &json)?;
     Ok(())
+}
+
+pub fn set_publishing_preferences(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    prefs: &PublishingPreferences,
+) -> EngineResult<()> {
+    persist_snapshot(conn, project_id, PUBLISHING_SETTING_SUFFIX, prefs)?;
+    write_publishing_json(data_dir, prefs)
 }
 
 // ── tags.json ───────────────────────────────────────────────────────
@@ -162,11 +428,15 @@ pub fn write_tags_json(data_dir: &Path, tags: &[TagEntry]) -> EngineResult<()> {
 // ── category helpers ────────────────────────────────────────────────
 
 /// Add a category to categories.json and initialize it in category-meta.json.
-pub fn add_category(data_dir: &Path, category: &str) -> EngineResult<()> {
+pub fn add_category(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    category: &str,
+) -> EngineResult<()> {
     let mut cats = read_categories_json(data_dir)?;
     if !cats.iter().any(|c| c.eq_ignore_ascii_case(category)) {
         cats.push(category.to_string());
-        write_categories_json(data_dir, &cats)?;
     }
 
     let mut meta = read_category_meta_json(data_dir)?;
@@ -181,23 +451,22 @@ pub fn add_category(data_dir: &Path, category: &str) -> EngineResult<()> {
                 list_template_slug: None,
             },
         );
-        write_category_meta_json(data_dir, &meta)?;
     }
-
-    Ok(())
+    set_categories_and_meta(conn, data_dir, project_id, &cats, &meta)
 }
 
 /// Remove a category from both categories.json and category-meta.json.
-pub fn remove_category(data_dir: &Path, category: &str) -> EngineResult<()> {
+pub fn remove_category(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    category: &str,
+) -> EngineResult<()> {
     let mut cats = read_categories_json(data_dir)?;
     cats.retain(|c| !c.eq_ignore_ascii_case(category));
-    write_categories_json(data_dir, &cats)?;
-
     let mut meta = read_category_meta_json(data_dir)?;
     meta.remove(category);
-    write_category_meta_json(data_dir, &meta)?;
-
-    Ok(())
+    set_categories_and_meta(conn, data_dir, project_id, &cats, &meta)
 }
 
 // ── startup sync ────────────────────────────────────────────────────
@@ -404,11 +673,13 @@ mod tests {
     #[test]
     fn add_category_creates_entries() {
         let dir = setup();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
         // Seed files
         write_categories_json(dir.path(), &["article".into()]).unwrap();
         write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
 
-        add_category(dir.path(), "page").unwrap();
+        add_category(db.conn(), dir.path(), "p1", "page").unwrap();
 
         let cats = read_categories_json(dir.path()).unwrap();
         assert!(cats.contains(&"page".to_string()));
@@ -420,10 +691,12 @@ mod tests {
     #[test]
     fn add_category_idempotent() {
         let dir = setup();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
         write_categories_json(dir.path(), &["article".into()]).unwrap();
         write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
 
-        add_category(dir.path(), "article").unwrap();
+        add_category(db.conn(), dir.path(), "p1", "article").unwrap();
         let cats = read_categories_json(dir.path()).unwrap();
         assert_eq!(cats.iter().filter(|c| *c == "article").count(), 1);
     }
@@ -431,6 +704,8 @@ mod tests {
     #[test]
     fn remove_category_deletes_entries() {
         let dir = setup();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
         write_categories_json(dir.path(), &["article".into(), "page".into()]).unwrap();
         let mut meta = HashMap::new();
         meta.insert(
@@ -445,7 +720,7 @@ mod tests {
         );
         write_category_meta_json(dir.path(), &meta).unwrap();
 
-        remove_category(dir.path(), "article").unwrap();
+        remove_category(db.conn(), dir.path(), "p1", "article").unwrap();
 
         let cats = read_categories_json(dir.path()).unwrap();
         assert!(!cats.contains(&"article".to_string()));
@@ -453,5 +728,27 @@ mod tests {
 
         let meta = read_category_meta_json(dir.path()).unwrap();
         assert!(!meta.contains_key("article"));
+    }
+
+    #[test]
+    fn snapshot_initialization_does_not_hide_later_filesystem_drift() {
+        let dir = setup();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        crate::db::queries::project::insert_project(
+            db.conn(),
+            &crate::db::queries::project::make_test_project("p1", "blog"),
+        )
+        .unwrap();
+        startup_sync(dir.path()).unwrap();
+        initialize_metadata_snapshots(db.conn(), dir.path(), "p1").unwrap();
+
+        write_categories_json(dir.path(), &["filesystem-only".into()]).unwrap();
+        initialize_metadata_snapshots(db.conn(), dir.path(), "p1").unwrap();
+
+        assert_eq!(
+            read_categories_snapshot(db.conn(), "p1").unwrap().unwrap(),
+            vec!["article", "aside", "page", "picture"]
+        );
     }
 }

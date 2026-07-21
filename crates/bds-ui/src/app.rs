@@ -1704,6 +1704,17 @@ impl BdsApp {
                             self.operation_failed_text("common.metadataSync", e.to_string());
                         self.add_output(&message);
                     }
+                    if let (Some(db), Some(project)) = (&self.db, &self.active_project)
+                        && let Err(e) = engine::meta::initialize_metadata_snapshots(
+                            db.conn(),
+                            &data_dir,
+                            &project.id,
+                        )
+                    {
+                        let message =
+                            self.operation_failed_text("common.metadataSync", e.to_string());
+                        self.add_output(&message);
+                    }
                     // Extract content language from project metadata
                     if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
                         let main_lang = meta.main_language.unwrap_or_else(|| "en".to_string());
@@ -1745,6 +1756,20 @@ impl BdsApp {
                     }
                     match engine::project::set_active_project(db.conn(), &project_id) {
                         Ok(()) => {
+                            if let Some(project) = self
+                                .projects
+                                .iter()
+                                .find(|project| project.id == project_id)
+                                && let Some(data_dir) =
+                                    project.data_path.as_deref().map(PathBuf::from)
+                            {
+                                let _ = engine::meta::startup_sync(&data_dir);
+                                let _ = engine::meta::initialize_metadata_snapshots(
+                                    db.conn(),
+                                    &data_dir,
+                                    &project.id,
+                                );
+                            }
                             self.reset_git_for_project_change();
                             self.active_project =
                                 self.projects.iter().find(|p| p.id == project_id).cloned();
@@ -1760,7 +1785,6 @@ impl BdsApp {
                                 .map(PathBuf::from);
                             // Per metadata.allium StartupSync
                             if let Some(data_dir) = self.data_dir.clone() {
-                                let _ = engine::meta::startup_sync(&data_dir);
                                 if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
                                     let main_lang =
                                         meta.main_language.unwrap_or_else(|| "en".to_string());
@@ -4779,8 +4803,10 @@ impl BdsApp {
                         let previous = self.menu_editor_state.clone();
                         if let Ok((name, is_new)) = self.menu_editor_state.submit_category()
                             && is_new
+                            && let (Some(db), Some(project)) = (&self.db, &self.active_project)
                             && let Some(data_dir) = &self.data_dir
-                            && let Err(error) = engine::meta::add_category(data_dir, &name)
+                            && let Err(error) =
+                                engine::meta::add_category(db.conn(), data_dir, &project.id, &name)
                         {
                             self.menu_editor_state = previous;
                             self.notify(
@@ -7826,8 +7852,15 @@ impl BdsApp {
                     );
                     return Task::none();
                 }
-                if let Some(data_dir) = &self.data_dir {
-                    match engine::meta::add_category(data_dir, category_name) {
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
+                {
+                    match engine::meta::add_category(
+                        db.conn(),
+                        data_dir,
+                        &project.id,
+                        category_name,
+                    ) {
                         Ok(()) => {
                             self.settings_state = Some(self.hydrate_settings_state());
                             if let Some(state) = self.settings_state.as_mut() {
@@ -7866,7 +7899,8 @@ impl BdsApp {
                 }
             }
             SettingsMsg::SaveCategory(name) => {
-                if let Some(data_dir) = &self.data_dir
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
                     && let Some(row) = state.categories.iter().find(|row| row.name == name)
                 {
                     let mut category_meta =
@@ -7883,7 +7917,12 @@ impl BdsApp {
                                 .then(|| row.list_template_slug.clone()),
                         },
                     );
-                    match engine::meta::write_category_meta_json(data_dir, &category_meta) {
+                    match engine::meta::set_category_meta(
+                        db.conn(),
+                        data_dir,
+                        &project.id,
+                        &category_meta,
+                    ) {
                         Ok(()) => {
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
@@ -7893,8 +7932,10 @@ impl BdsApp {
                 }
             }
             SettingsMsg::RemoveCategory(name) => {
-                if let Some(data_dir) = &self.data_dir {
-                    match engine::meta::remove_category(data_dir, &name) {
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
+                {
+                    match engine::meta::remove_category(db.conn(), data_dir, &project.id, &name) {
                         Ok(()) => {
                             self.settings_state = Some(self.hydrate_settings_state());
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
@@ -7905,7 +7946,9 @@ impl BdsApp {
                 }
             }
             SettingsMsg::ResetCategoriesToDefaults => {
-                if let Some(data_dir) = &self.data_dir {
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
+                {
                     let default_names = default_category_rows()
                         .into_iter()
                         .map(|row| row.name)
@@ -7926,16 +7969,19 @@ impl BdsApp {
                             )
                         })
                         .collect::<HashMap<_, _>>();
-                    match (
-                        engine::meta::write_categories_json(data_dir, &default_names),
-                        engine::meta::write_category_meta_json(data_dir, &default_meta),
+                    match engine::meta::set_categories_and_meta(
+                        db.conn(),
+                        data_dir,
+                        &project.id,
+                        &default_names,
+                        &default_meta,
                     ) {
-                        (Ok(()), Ok(())) => {
+                        Ok(()) => {
                             self.settings_state = Some(self.hydrate_settings_state());
                             self.dashboard_state = Some(self.hydrate_dashboard_state());
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                         }
-                        (Err(e), _) | (_, Err(e)) => self.notify_operation_failed("common.save", e),
+                        Err(e) => self.notify_operation_failed("common.save", e),
                     }
                 }
             }
@@ -7952,7 +7998,9 @@ impl BdsApp {
                 state.ssh_remote_path = s;
             }
             SettingsMsg::SavePublishing => {
-                if let Some(data_dir) = &self.data_dir {
+                if let (Some(db), Some(data_dir), Some(project)) =
+                    (&self.db, &self.data_dir, &self.active_project)
+                {
                     let prefs = PublishingPreferences {
                         ssh_host: if state.ssh_host.trim().is_empty() {
                             None
@@ -7975,7 +8023,12 @@ impl BdsApp {
                             SshMode::Rsync
                         },
                     };
-                    match engine::meta::write_publishing_json(data_dir, &prefs) {
+                    match engine::meta::set_publishing_preferences(
+                        db.conn(),
+                        data_dir,
+                        &project.id,
+                        &prefs,
+                    ) {
                         Ok(()) => {
                             self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"))
                         }

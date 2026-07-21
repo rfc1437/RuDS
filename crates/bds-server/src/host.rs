@@ -352,6 +352,15 @@ impl ApplicationSession {
                         format!("project '{}' data is unavailable", value.name),
                     ));
                 }
+                bds_core::engine::meta::startup_sync(&data_dir)
+                    .and_then(|()| {
+                        bds_core::engine::meta::initialize_metadata_snapshots(
+                            db.conn(),
+                            &data_dir,
+                            &value.id,
+                        )
+                    })
+                    .map_err(ProtocolError::engine)?;
                 self.selected_project = Some(SelectedProject {
                     id: value.id.clone(),
                     data_dir,
@@ -437,8 +446,8 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let database_path = root.path().join("bds.db");
             let data_root = root.path().join("data");
-            let host = ApplicationHost::start(database_path.clone(), data_root.clone()).unwrap();
             let db = Database::open(&database_path).unwrap();
+            db.migrate().unwrap();
             let project_dir = root.path().join("blog");
             let value = project::create_project(
                 db.conn(),
@@ -447,6 +456,8 @@ mod tests {
             )
             .unwrap();
             settings::set(db.conn(), settings::UI_LANGUAGE_KEY, "de").unwrap();
+            drop(db);
+            let host = ApplicationHost::start(database_path, data_root).unwrap();
             Self {
                 _root: root,
                 host,
@@ -479,6 +490,12 @@ mod tests {
     #[test]
     fn session_negotiates_server_locale_and_selects_a_project() {
         let fixture = Fixture::new();
+        let db = fixture.host.database().unwrap();
+        bds_core::db::queries::setting::delete_settings_by_prefix(
+            db.conn(),
+            &format!("project:{}:", fixture.project_id),
+        )
+        .unwrap();
         let mut session = fixture.host.session().unwrap();
         assert_eq!(session.locale(), "de");
         assert!(matches!(
@@ -495,6 +512,11 @@ mod tests {
             },
         ));
         assert!(matches!(opened, ServerMessage::Response { .. }));
+        assert!(
+            bds_core::engine::meta::read_categories_snapshot(db.conn(), &fixture.project_id)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

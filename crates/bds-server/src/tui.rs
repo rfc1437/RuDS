@@ -377,6 +377,10 @@ impl TuiApp {
         let data_dir = project
             .as_ref()
             .map(|project| host.project_data_dir(project));
+        if let (Some(project), Some(data_dir)) = (&project, &data_dir) {
+            engine::meta::startup_sync(data_dir)?;
+            engine::meta::initialize_metadata_snapshots(db.conn(), data_dir, &project.id)?;
+        }
         let started_task_ids = host
             .tasks()
             .snapshots()
@@ -2218,8 +2222,12 @@ impl TuiApp {
                     .parse()
                     .map_err(|_| anyhow!(self.tr("tui.imageImportConcurrencyInvalid")))?;
                 metadata.validate().map_err(|error| anyhow!(error))?;
-                bds_core::db::queries::project::update_project(db.conn(), &project)?;
-                engine::meta::write_project_json(self.data_dir()?, &metadata)?;
+                engine::meta::update_project_metadata(
+                    db.conn(),
+                    self.data_dir()?,
+                    &project,
+                    &metadata,
+                )?;
                 self.project = Some(project);
                 if let Some(value) = self.setting_field(engine::settings::UI_LANGUAGE_KEY) {
                     engine::settings::set(db.conn(), value.key, &value.value)?;
@@ -2235,7 +2243,16 @@ impl TuiApp {
                 metadata.semantic_similarity_enabled = self
                     .setting_value("meta.semantic_similarity_enabled")
                     .eq_ignore_ascii_case("true");
-                engine::meta::write_project_json(self.data_dir()?, &metadata)?;
+                let project = self
+                    .project
+                    .as_ref()
+                    .ok_or_else(|| anyhow!(self.tr("tui.noActiveProject")))?;
+                engine::meta::update_project_metadata(
+                    db.conn(),
+                    self.data_dir()?,
+                    project,
+                    &metadata,
+                )?;
             }
             SettingSection::Publishing => {
                 let preferences = PublishingPreferences {
@@ -2250,7 +2267,12 @@ impl TuiApp {
                         SshMode::Scp
                     },
                 };
-                engine::meta::write_publishing_json(self.data_dir()?, &preferences)?;
+                engine::meta::set_publishing_preferences(
+                    db.conn(),
+                    self.data_dir()?,
+                    self.project_id()?,
+                    &preferences,
+                )?;
             }
             SettingSection::Mcp => {
                 engine::settings::set(
@@ -3940,6 +3962,25 @@ mod tests {
             app.handle_input(TuiInput::plain(TuiKey::Char(character)))
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn startup_initializes_legacy_project_metadata_snapshots() {
+        let fixture = Fixture::new();
+        let db = fixture.db();
+        bds_core::db::queries::setting::delete_settings_by_prefix(
+            db.conn(),
+            &format!("project:{}:", fixture.project.id),
+        )
+        .unwrap();
+
+        let _app = fixture.app(false);
+
+        assert!(
+            engine::meta::read_categories_snapshot(db.conn(), &fixture.project.id)
+                .unwrap()
+                .is_some()
+        );
     }
 
     fn wait_for(app: &mut TuiApp, predicate: impl Fn(&TuiApp) -> bool) {
