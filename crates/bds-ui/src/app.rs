@@ -69,6 +69,16 @@ mod tasks;
 // ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+pub enum OneShotAiAction {
+    PostAnalysis,
+    PostTaxonomy,
+    PostLanguage,
+    PostTranslation { target_language: String },
+    MediaAnalysis,
+    MediaLanguage,
+    MediaTranslation { target_language: String },
+}
+
 pub enum Message {
     // Menu
     MenuEvent(muda::MenuId),
@@ -229,6 +239,12 @@ pub enum Message {
     ReplaceAll,
     ToggleAiSuggestionField(usize, bool),
     ApplyAiSuggestions(modal::AiEntityTarget, Vec<modal::AiSuggestionField>),
+
+    OneShotAiFinished {
+        entity_id: String,
+        action: OneShotAiAction,
+        result: Result<ai::OneShotResponse, String>,
+    },
 
     // Blog actions (dispatched to engine)
     RebuildDatabase,
@@ -3063,6 +3079,11 @@ impl BdsApp {
                 self.active_modal = None;
                 self.apply_ai_suggestions(target, &fields)
             }
+            Message::OneShotAiFinished {
+                entity_id,
+                action,
+                result,
+            } => self.finish_one_shot_ai(&entity_id, action, result),
 
             // ── Editor view messages ──
             Message::PostEditor(msg) => self.handle_post_editor_msg(msg),
@@ -8972,14 +8993,34 @@ impl BdsApp {
         Task::none()
     }
 
+    fn start_one_shot_ai(
+        &self,
+        entity_id: String,
+        action: OneShotAiAction,
+        request: ai::OneShotRequest,
+    ) -> Task<Message> {
+        let db_path = self.db_path.clone();
+        let offline_mode = self.offline_mode;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    ai::run_one_shot(db.conn(), offline_mode, &request)
+                        .map(|(response, _usage)| response)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+            },
+            move |result| Message::OneShotAiFinished {
+                entity_id: entity_id.clone(),
+                action: action.clone(),
+                result,
+            },
+        )
+    }
+
     fn run_post_ai_analysis(&mut self, post_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            self.notify(
-                ToastLevel::Error,
-                &t(self.ui_locale, "common.databaseUnavailable"),
-            );
-            return Task::none();
-        };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
             return Task::none();
         };
@@ -8991,52 +9032,13 @@ impl BdsApp {
                 "content": content_sample(&state.content, 2000),
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::PostAnalysis(result), _usage)) => {
-                self.active_modal = Some(modal::ModalState::AISuggestions {
-                    target: modal::AiEntityTarget::Post(post_id.to_string()),
-                    fields: vec![
-                        modal::AiSuggestionField {
-                            key: "title".to_string(),
-                            label: t(self.ui_locale, "editor.title"),
-                            current_value: state.title,
-                            suggested_value: result.title,
-                            accepted: true,
-                            locked: false,
-                        },
-                        modal::AiSuggestionField {
-                            key: "excerpt".to_string(),
-                            label: t(self.ui_locale, "editor.excerpt"),
-                            current_value: state.excerpt,
-                            suggested_value: result.excerpt,
-                            accepted: true,
-                            locked: false,
-                        },
-                        modal::AiSuggestionField {
-                            key: "slug".to_string(),
-                            label: t(self.ui_locale, "editor.slug"),
-                            current_value: state.slug,
-                            suggested_value: result.slug,
-                            accepted: state.published_at.is_none(),
-                            locked: state.published_at.is_some(),
-                        },
-                    ],
-                });
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.post_editors.get_mut(post_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.aiAnalyze"));
         }
-        Task::none()
+        self.start_one_shot_ai(post_id.to_string(), OneShotAiAction::PostAnalysis, request)
     }
 
     fn run_post_taxonomy_analysis(&mut self, post_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            self.notify(
-                ToastLevel::Error,
-                &t(self.ui_locale, "common.databaseUnavailable"),
-            );
-            return Task::none();
-        };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
             return Task::none();
         };
@@ -9050,44 +9052,13 @@ impl BdsApp {
                 "categories": state.categories,
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::Taxonomy(result), _usage)) => {
-                self.active_modal = Some(modal::ModalState::AISuggestions {
-                    target: modal::AiEntityTarget::Post(post_id.to_string()),
-                    fields: vec![
-                        modal::AiSuggestionField {
-                            key: "tags".to_string(),
-                            label: t(self.ui_locale, "sidebar.filter.tags"),
-                            current_value: state.tags.join(", "),
-                            suggested_value: result.tags.join(", "),
-                            accepted: true,
-                            locked: false,
-                        },
-                        modal::AiSuggestionField {
-                            key: "categories".to_string(),
-                            label: t(self.ui_locale, "sidebar.filter.categories"),
-                            current_value: state.categories.join(", "),
-                            suggested_value: result.categories.join(", "),
-                            accepted: true,
-                            locked: false,
-                        },
-                    ],
-                });
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.post_editors.get_mut(post_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.suggestTaxonomy"));
         }
-        Task::none()
+        self.start_one_shot_ai(post_id.to_string(), OneShotAiAction::PostTaxonomy, request)
     }
 
     fn detect_post_language(&mut self, post_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            self.notify(
-                ToastLevel::Error,
-                &t(self.ui_locale, "common.databaseUnavailable"),
-            );
-            return Task::none();
-        };
         let Some(state) = self.post_editors.get(post_id).cloned() else {
             return Task::none();
         };
@@ -9097,22 +9068,10 @@ impl BdsApp {
                 "text": format!("{}\n\n{}\n\n{}", state.title, state.excerpt, content_sample(&state.content, 2000)),
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
-                if let Some(editor) = self.post_editors.get_mut(post_id) {
-                    editor.language = result.language_code;
-                    editor.mark_dirty();
-                }
-                if let Err(error) = self.persist_post_editor_state(post_id) {
-                    self.notify(ToastLevel::Error, &error);
-                } else {
-                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-                }
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.post_editors.get_mut(post_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.detectLanguage"));
         }
-        Task::none()
+        self.start_one_shot_ai(post_id.to_string(), OneShotAiAction::PostLanguage, request)
     }
 
     fn open_post_translation_modal(&mut self, post_id: &str) -> Task<Message> {
@@ -9207,27 +9166,16 @@ impl BdsApp {
                 "content": state.content,
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::Translation(result), _usage)) => {
-                if let Some(editor) = self.post_editors.get_mut(post_id) {
-                    editor.switch_language(target_language);
-                    editor.title = result.title.clone();
-                    editor.excerpt = result.excerpt.clone();
-                    editor.content = result.content.clone();
-                    editor.editor_buffer =
-                        std::cell::RefCell::new(bds_editor::EditorBuffer::new(&result.content));
-                    editor.mark_dirty();
-                }
-                if let Err(error) = self.persist_post_editor_state(post_id) {
-                    self.notify(ToastLevel::Error, &error);
-                } else {
-                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-                }
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.post_editors.get_mut(post_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
         }
-        Task::none()
+        self.start_one_shot_ai(
+            post_id.to_string(),
+            OneShotAiAction::PostTranslation {
+                target_language: target_language.to_string(),
+            },
+            request,
+        )
     }
 
     fn run_media_ai_analysis(&mut self, media_id: &str) -> Task<Message> {
@@ -9271,42 +9219,14 @@ impl BdsApp {
                 "image_data_url": image_data_url,
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::ImageAnalysis(result), _usage)) => {
-                self.active_modal = Some(modal::ModalState::AISuggestions {
-                    target: modal::AiEntityTarget::Media(media_id.to_string()),
-                    fields: vec![
-                        modal::AiSuggestionField {
-                            key: "title".to_string(),
-                            label: t(self.ui_locale, "editor.title"),
-                            current_value: state.title,
-                            suggested_value: result.title,
-                            accepted: true,
-                            locked: false,
-                        },
-                        modal::AiSuggestionField {
-                            key: "alt".to_string(),
-                            label: t(self.ui_locale, "editor.alt"),
-                            current_value: state.alt,
-                            suggested_value: result.alt,
-                            accepted: true,
-                            locked: false,
-                        },
-                        modal::AiSuggestionField {
-                            key: "caption".to_string(),
-                            label: t(self.ui_locale, "editor.caption"),
-                            current_value: state.caption,
-                            suggested_value: result.caption,
-                            accepted: true,
-                            locked: false,
-                        },
-                    ],
-                });
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.media_editors.get_mut(media_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.aiAnalyze"));
         }
-        Task::none()
+        self.start_one_shot_ai(
+            media_id.to_string(),
+            OneShotAiAction::MediaAnalysis,
+            request,
+        )
     }
 
     fn detect_media_language(&mut self, media_id: &str) -> Task<Message> {
@@ -9326,22 +9246,14 @@ impl BdsApp {
                 "text": format!("{}\n{}\n{}", state.title, state.alt, state.caption),
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
-                if let Some(editor) = self.media_editors.get_mut(media_id) {
-                    editor.language = result.language_code;
-                    editor.is_dirty = true;
-                }
-                if let Err(error) = self.persist_media_editor_state(media_id) {
-                    self.notify(ToastLevel::Error, &error);
-                } else {
-                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-                }
-            }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+        if let Some(editor) = self.media_editors.get_mut(media_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.detectLanguage"));
         }
-        Task::none()
+        self.start_one_shot_ai(
+            media_id.to_string(),
+            OneShotAiAction::MediaLanguage,
+            request,
+        )
     }
 
     fn open_media_translation_modal(&mut self, media_id: &str) -> Task<Message> {
@@ -9385,31 +9297,10 @@ impl BdsApp {
         let Some(state) = self.media_editors.get(media_id).cloned() else {
             return Task::none();
         };
-        let source_language = if state.language.is_empty() {
-            match ai::run_one_shot(
-                db.conn(),
-                self.offline_mode,
-                &ai::OneShotRequest {
-                    operation: ai::OneShotOperation::DetectLanguage,
-                    content: json!({ "text": format!("{}\n{}\n{}", state.title, state.alt, state.caption) }),
-                },
-            ) {
-                Ok((ai::OneShotResponse::LanguageDetection(result), _usage)) => {
-                    result.language_code
-                }
-                Ok(_) => String::new(),
-                Err(error) => {
-                    self.notify(ToastLevel::Error, &error.to_string());
-                    return Task::none();
-                }
-            }
-        } else {
-            state.language.clone()
-        };
         if let Some(editor) = self.media_editors.get_mut(media_id)
             && editor.language.is_empty()
         {
-            editor.language = source_language;
+            editor.language = state.canonical_language.clone();
         }
         let request = ai::OneShotRequest {
             operation: ai::OneShotOperation::TranslateMedia {
@@ -9421,23 +9312,197 @@ impl BdsApp {
                 "caption": state.caption,
             }),
         };
-        match ai::run_one_shot(db.conn(), self.offline_mode, &request) {
-            Ok((ai::OneShotResponse::MediaTranslation(result), _usage)) => {
-                if let Some(editor) = self.media_editors.get_mut(media_id) {
-                    editor.switch_language(target_language);
-                    editor.title = result.title.clone();
-                    editor.alt = result.alt.clone();
-                    editor.caption = result.caption.clone();
-                    editor.is_dirty = true;
+        if let Some(editor) = self.media_editors.get_mut(media_id) {
+            editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
+        }
+        self.start_one_shot_ai(
+            media_id.to_string(),
+            OneShotAiAction::MediaTranslation {
+                target_language: target_language.to_string(),
+            },
+            request,
+        )
+    }
+
+    fn finish_one_shot_ai(
+        &mut self,
+        entity_id: &str,
+        action: OneShotAiAction,
+        result: Result<ai::OneShotResponse, String>,
+    ) -> Task<Message> {
+        if matches!(
+            action,
+            OneShotAiAction::PostAnalysis
+                | OneShotAiAction::PostTaxonomy
+                | OneShotAiAction::PostLanguage
+                | OneShotAiAction::PostTranslation { .. }
+        ) {
+            if let Some(editor) = self.post_editors.get_mut(entity_id) {
+                editor.ai_activity = None;
+            }
+        } else if let Some(editor) = self.media_editors.get_mut(entity_id) {
+            editor.ai_activity = None;
+        }
+
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error);
+                return Task::none();
+            }
+        };
+
+        match (action, response) {
+            (OneShotAiAction::PostAnalysis, ai::OneShotResponse::PostAnalysis(result)) => {
+                if let Some(state) = self.post_editors.get(entity_id).cloned() {
+                    self.active_modal = Some(modal::ModalState::AISuggestions {
+                        target: modal::AiEntityTarget::Post(entity_id.to_string()),
+                        fields: vec![
+                            modal::AiSuggestionField {
+                                key: "title".to_string(),
+                                label: t(self.ui_locale, "editor.title"),
+                                current_value: state.title,
+                                suggested_value: result.title,
+                                accepted: true,
+                                locked: false,
+                            },
+                            modal::AiSuggestionField {
+                                key: "excerpt".to_string(),
+                                label: t(self.ui_locale, "editor.excerpt"),
+                                current_value: state.excerpt,
+                                suggested_value: result.excerpt,
+                                accepted: true,
+                                locked: false,
+                            },
+                            modal::AiSuggestionField {
+                                key: "slug".to_string(),
+                                label: t(self.ui_locale, "editor.slug"),
+                                current_value: state.slug,
+                                suggested_value: result.slug,
+                                accepted: state.published_at.is_none(),
+                                locked: state.published_at.is_some(),
+                            },
+                        ],
+                    });
                 }
-                if let Err(error) = self.persist_media_editor_state(media_id) {
+            }
+            (OneShotAiAction::PostTaxonomy, ai::OneShotResponse::Taxonomy(result)) => {
+                if let Some(state) = self.post_editors.get(entity_id).cloned() {
+                    self.active_modal = Some(modal::ModalState::AISuggestions {
+                        target: modal::AiEntityTarget::Post(entity_id.to_string()),
+                        fields: vec![
+                            modal::AiSuggestionField {
+                                key: "tags".to_string(),
+                                label: t(self.ui_locale, "sidebar.filter.tags"),
+                                current_value: state.tags.join(", "),
+                                suggested_value: result.tags.join(", "),
+                                accepted: true,
+                                locked: false,
+                            },
+                            modal::AiSuggestionField {
+                                key: "categories".to_string(),
+                                label: t(self.ui_locale, "sidebar.filter.categories"),
+                                current_value: state.categories.join(", "),
+                                suggested_value: result.categories.join(", "),
+                                accepted: true,
+                                locked: false,
+                            },
+                        ],
+                    });
+                }
+            }
+            (OneShotAiAction::PostLanguage, ai::OneShotResponse::LanguageDetection(result)) => {
+                if let Some(editor) = self.post_editors.get_mut(entity_id) {
+                    editor.language = result.language_code;
+                    editor.mark_dirty();
+                }
+                if let Err(error) = self.persist_post_editor_state(entity_id) {
                     self.notify(ToastLevel::Error, &error);
                 } else {
                     self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
                 }
             }
-            Ok(_) => {}
-            Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
+            (
+                OneShotAiAction::PostTranslation { target_language },
+                ai::OneShotResponse::Translation(result),
+            ) => {
+                if let Some(editor) = self.post_editors.get_mut(entity_id) {
+                    editor.switch_language(&target_language);
+                    editor.title = result.title.clone();
+                    editor.excerpt = result.excerpt.clone();
+                    editor.content = result.content.clone();
+                    editor.editor_buffer =
+                        std::cell::RefCell::new(bds_editor::EditorBuffer::new(&result.content));
+                    editor.mark_dirty();
+                }
+                if let Err(error) = self.persist_post_editor_state(entity_id) {
+                    self.notify(ToastLevel::Error, &error);
+                } else {
+                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                }
+            }
+            (OneShotAiAction::MediaAnalysis, ai::OneShotResponse::ImageAnalysis(result)) => {
+                if let Some(state) = self.media_editors.get(entity_id).cloned() {
+                    self.active_modal = Some(modal::ModalState::AISuggestions {
+                        target: modal::AiEntityTarget::Media(entity_id.to_string()),
+                        fields: vec![
+                            modal::AiSuggestionField {
+                                key: "title".to_string(),
+                                label: t(self.ui_locale, "editor.title"),
+                                current_value: state.title,
+                                suggested_value: result.title,
+                                accepted: true,
+                                locked: false,
+                            },
+                            modal::AiSuggestionField {
+                                key: "alt".to_string(),
+                                label: t(self.ui_locale, "editor.alt"),
+                                current_value: state.alt,
+                                suggested_value: result.alt,
+                                accepted: true,
+                                locked: false,
+                            },
+                            modal::AiSuggestionField {
+                                key: "caption".to_string(),
+                                label: t(self.ui_locale, "editor.caption"),
+                                current_value: state.caption,
+                                suggested_value: result.caption,
+                                accepted: true,
+                                locked: false,
+                            },
+                        ],
+                    });
+                }
+            }
+            (OneShotAiAction::MediaLanguage, ai::OneShotResponse::LanguageDetection(result)) => {
+                if let Some(editor) = self.media_editors.get_mut(entity_id) {
+                    editor.language = result.language_code;
+                    editor.is_dirty = true;
+                }
+                if let Err(error) = self.persist_media_editor_state(entity_id) {
+                    self.notify(ToastLevel::Error, &error);
+                } else {
+                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                }
+            }
+            (
+                OneShotAiAction::MediaTranslation { target_language },
+                ai::OneShotResponse::MediaTranslation(result),
+            ) => {
+                if let Some(editor) = self.media_editors.get_mut(entity_id) {
+                    editor.switch_language(&target_language);
+                    editor.title = result.title.clone();
+                    editor.alt = result.alt.clone();
+                    editor.caption = result.caption.clone();
+                    editor.is_dirty = true;
+                }
+                if let Err(error) = self.persist_media_editor_state(entity_id) {
+                    self.notify(ToastLevel::Error, &error);
+                } else {
+                    self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                }
+            }
+            _ => {}
         }
         Task::none()
     }
