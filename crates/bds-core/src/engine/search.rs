@@ -203,8 +203,9 @@ fn index_project(
     current: &mut usize,
     on_item: Option<&ItemProgressFn>,
 ) -> EngineResult<ReindexReport> {
-    let main_language = data_path
-        .and_then(|path| crate::engine::meta::read_project_json(Path::new(path)).ok())
+    let data_dir = data_path.map(Path::new);
+    let main_language = data_dir
+        .and_then(|path| crate::engine::meta::read_project_json(path).ok())
         .and_then(|metadata| metadata.main_language)
         .unwrap_or_else(|| "en".to_string());
     let mut report = ReindexReport {

@@ -915,7 +915,7 @@ fn terminate_child(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-fn prepend_tool_paths(command: &mut Command) {
+fn prepend_tool_paths(_command: &mut Command) {
     #[cfg(target_os = "macos")]
     {
         let mut paths = vec![

@@ -73,6 +73,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn sign_app_for_dmg(workspace: &Path) -> Result<(), Box<dyn Error>> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = workspace;
     #[cfg(target_os = "macos")]
     if env::var_os("CARGO_PACKAGER_FORMAT").as_deref() == Some(OsStr::new("dmg")) {
         let target = env::var_os("CARGO_TARGET_DIR")
