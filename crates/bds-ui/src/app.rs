@@ -10864,6 +10864,44 @@ mod tests {
     }
 
     #[test]
+    fn post_editor_publish_removes_a_divergent_old_post_file() {
+        let (db, project, tmp) = setup();
+        let mut created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Moved Through Editor",
+            Some("Body"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        created.file_path = "posts/legacy/editor-old.md".to_string();
+        bds_core::db::queries::post::update_post(db.conn(), &created).unwrap();
+        let old_path = tmp.path().join(&created.file_path);
+        std::fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        std::fs::write(&old_path, "old file").unwrap();
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &created);
+
+        let _ = app.publish_post_editor(&created.id);
+
+        let published = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert_eq!(published.status, PostStatus::Published);
+        assert_ne!(published.file_path, created.file_path);
+        assert!(!old_path.exists());
+        assert!(tmp.path().join(&published.file_path).is_file());
+        assert_eq!(app.post_editors[&created.id].status, PostStatus::Published);
+    }
+
+    #[test]
     fn persist_post_editor_state_allows_published_posts_without_slug_conflict() {
         let (db, project, tmp) = setup();
         let created = post::create_post(

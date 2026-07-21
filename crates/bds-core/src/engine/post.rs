@@ -292,6 +292,7 @@ fn publish_post_in_savepoint(
     mut post: Post,
 ) -> EngineResult<Post> {
     let post_id = post.id.clone();
+    let old_rel_path = post.file_path.clone();
 
     // Compute file_path from created_at + slug.
     let rel_path = post_file_path(post.created_at, &post.slug);
@@ -318,6 +319,13 @@ fn publish_post_in_savepoint(
 
     let file_content = write_post_file(&post, &body);
     atomic_write_str(&abs_path, &file_content)?;
+    if !old_rel_path.is_empty() && old_rel_path != rel_path {
+        match fs::remove_file(data_dir.join(&old_rel_path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
 
     // Set published snapshot fields
     let tags_json = serde_json::to_string(&post.tags).unwrap_or_else(|_| "[]".into());
@@ -1864,6 +1872,98 @@ mod tests {
         let file_content = fs::read_to_string(&abs_path).unwrap();
         assert!(file_content.contains("my body content"));
         assert!(file_content.contains("Publish Me"));
+    }
+
+    #[test]
+    fn publish_replaces_divergent_post_path_and_ignores_missing_old_file() {
+        let (db, dir) = setup();
+        let mut post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Moved Post",
+            Some("current body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        post.file_path = "posts/legacy/moved-post.md".to_string();
+        qp::update_post(db.conn(), &post).unwrap();
+        let old_path = dir.path().join(&post.file_path);
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::write(&old_path, "stale legacy file").unwrap();
+
+        let published = publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_ne!(published.file_path, post.file_path);
+        assert!(!old_path.exists());
+        assert!(dir.path().join(&published.file_path).is_file());
+        assert_eq!(
+            qp::get_post_by_id(db.conn(), &post.id).unwrap().file_path,
+            published.file_path
+        );
+
+        let mut missing = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Missing Legacy Post",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        missing.file_path = "posts/legacy/already-gone.md".to_string();
+        qp::update_post(db.conn(), &missing).unwrap();
+
+        let published_missing = publish_post(db.conn(), dir.path(), &missing.id).unwrap();
+        assert!(dir.path().join(&published_missing.file_path).is_file());
+    }
+
+    #[test]
+    fn translation_publish_retains_divergent_old_file_like_bds2() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Translated Move",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut translation = upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Verschoben",
+            None,
+            Some("Inhalt"),
+        )
+        .unwrap();
+        translation.file_path = "posts/legacy/translated-move.de.md".to_string();
+        qt::update_post_translation(db.conn(), &translation).unwrap();
+        let old_path = dir.path().join(&translation.file_path);
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::write(&old_path, "legacy translation").unwrap();
+
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let published = qt::get_post_translation_by_id(db.conn(), &translation.id).unwrap();
+        assert_ne!(published.file_path, translation.file_path);
+        assert!(old_path.is_file());
+        assert!(dir.path().join(&published.file_path).is_file());
     }
 
     #[test]
