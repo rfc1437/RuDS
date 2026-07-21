@@ -338,12 +338,7 @@ pub fn update_media(
     media.updated_at = now_unix_ms();
     qm::update_media(conn, &media)?;
 
-    // Rewrite sidecar (need linked_post_ids from post_media table)
-    let linked = qpm::list_post_media_by_media(conn, media_id).unwrap_or_default();
-    let linked_post_ids: Vec<String> = linked.iter().map(|pm| pm.post_id.clone()).collect();
-    let sidecar = MediaSidecar::from_media(&media, &linked_post_ids);
-    let abs_sidecar = data_dir.join(&media.sidecar_path);
-    atomic_write_str(&abs_sidecar, &sidecar.to_string())?;
+    sync_media_sidecar(conn, data_dir, media_id)?;
 
     // Re-index FTS
     fts_index_media(conn, &media)?;
@@ -351,6 +346,21 @@ pub fn update_media(
     emit_media(&media, NotificationAction::Updated);
 
     Ok(media)
+}
+
+/// Rewrite a media item's canonical sidecar from its current database state.
+pub fn sync_media_sidecar(conn: &Connection, data_dir: &Path, media_id: &str) -> EngineResult<()> {
+    let media = qm::get_media_by_id(conn, media_id).map_err(|error| match error {
+        diesel::result::Error::NotFound => EngineError::NotFound(format!("media {media_id}")),
+        error => EngineError::Db(error),
+    })?;
+    let linked_post_ids = qpm::list_post_media_by_media(conn, media_id)?
+        .into_iter()
+        .map(|link| link.post_id)
+        .collect::<Vec<_>>();
+    let sidecar = MediaSidecar::from_media(&media, &linked_post_ids);
+    atomic_write_str(&data_dir.join(&media.sidecar_path), &sidecar.to_string())?;
+    Ok(())
 }
 
 /// Replace a media item's binary while preserving its identity, public path,
@@ -432,10 +442,7 @@ pub fn replace_media_file(
     let apply_result = (|| -> EngineResult<()> {
         conn.begin_savepoint()?;
         qm::update_media(conn, &media)?;
-        let linked = qpm::list_post_media_by_media(conn, media_id).unwrap_or_default();
-        let linked_post_ids: Vec<String> = linked.iter().map(|item| item.post_id.clone()).collect();
-        let sidecar = MediaSidecar::from_media(&media, &linked_post_ids);
-        atomic_write_str(&data_dir.join(&media.sidecar_path), &sidecar.to_string())?;
+        sync_media_sidecar(conn, data_dir, media_id)?;
         fts_index_media(conn, &media)?;
 
         for staged in &staged_paths {

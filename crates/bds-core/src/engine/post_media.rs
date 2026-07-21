@@ -8,8 +8,7 @@ use crate::db::queries::post as qp;
 use crate::db::queries::post_media as qpm;
 use crate::engine::EngineResult;
 use crate::model::{Media, Post, PostMedia};
-use crate::util::sidecar::MediaSidecar;
-use crate::util::{atomic_write_str, now_unix_ms};
+use crate::util::now_unix_ms;
 
 /// Link a media item to a post and sync the media sidecar.
 pub fn link_media_to_post(
@@ -31,7 +30,7 @@ pub fn link_media_to_post(
         created_at: now,
     };
     qpm::link_media(conn, &pm)?;
-    sync_sidecar_linked_post_ids(conn, data_dir, media_id)?;
+    crate::engine::media::sync_media_sidecar(conn, data_dir, media_id)?;
     Ok(pm)
 }
 
@@ -43,7 +42,7 @@ pub fn unlink_media_from_post(
     media_id: &str,
 ) -> EngineResult<()> {
     qpm::unlink_media(conn, post_id, media_id)?;
-    sync_sidecar_linked_post_ids(conn, data_dir, media_id)?;
+    crate::engine::media::sync_media_sidecar(conn, data_dir, media_id)?;
     Ok(())
 }
 
@@ -84,22 +83,6 @@ pub fn list_posts_for_media(conn: &Connection, media_id: &str) -> EngineResult<V
     Ok(posts)
 }
 
-/// Rebuild the media sidecar file so that `linkedPostIds` reflects the current
-/// set of posts linked to this media item.
-fn sync_sidecar_linked_post_ids(
-    conn: &Connection,
-    data_dir: &Path,
-    media_id: &str,
-) -> EngineResult<()> {
-    let links = qpm::list_post_media_by_media(conn, media_id)?;
-    let post_ids: Vec<String> = links.iter().map(|pm| pm.post_id.clone()).collect();
-    let media = qm::get_media_by_id(conn, media_id)?;
-    let sidecar = MediaSidecar::from_media(&media, &post_ids);
-    let abs_path = data_dir.join(&media.sidecar_path);
-    atomic_write_str(&abs_path, &sidecar.to_string())?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +95,7 @@ mod tests {
     use crate::db::queries::post::{insert_post, make_test_post};
     use crate::db::queries::post_media::list_post_media_by_post;
     use crate::db::queries::project::{insert_project, make_test_project};
+    use crate::util::sidecar::MediaSidecar;
     use crate::util::sidecar::read_sidecar;
 
     fn setup() -> (Database, TempDir) {

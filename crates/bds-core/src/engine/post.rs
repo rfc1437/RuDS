@@ -545,6 +545,10 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
 /// Delete a post and all related data.
 pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<()> {
     let post = qp::get_post_by_id(conn, post_id)?;
+    let linked_media_ids = crate::db::queries::post_media::list_post_media_by_post(conn, post_id)?
+        .into_iter()
+        .map(|link| link.media_id)
+        .collect::<Vec<_>>();
 
     // Delete .md file if exists
     if !post.file_path.is_empty() {
@@ -580,6 +584,13 @@ pub fn delete_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineR
 
     // Delete post from DB
     qp::delete_post(conn, post_id)?;
+
+    for media_id in linked_media_ids {
+        match crate::engine::media::sync_media_sidecar(conn, data_dir, &media_id) {
+            Ok(()) | Err(EngineError::NotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
 
     crate::engine::embedding::remove_post_best_effort(conn, data_dir, &post.project_id, post_id);
 
@@ -2260,6 +2271,94 @@ mod tests {
 
         // Post file should be gone
         assert!(!post_file.exists());
+    }
+
+    #[test]
+    fn delete_post_removes_post_from_linked_media_sidecars() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Delete Linked Post",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let surviving_post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Keep Linked Post",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let insert_media = |id: &str| {
+            let mut media = crate::db::queries::media::make_test_media(id, "p1");
+            media.file_path = format!("media/{id}.jpg");
+            media.sidecar_path = format!("media/{id}.jpg.meta");
+            crate::db::queries::media::insert_media(db.conn(), &media).unwrap();
+            let sidecar_path = dir.path().join(&media.sidecar_path);
+            fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+            fs::write(
+                &sidecar_path,
+                crate::util::sidecar::MediaSidecar::from_media(&media, &[]).to_string(),
+            )
+            .unwrap();
+            (media, sidecar_path)
+        };
+        let (first_media, first_sidecar_path) = insert_media("media1");
+        let (second_media, second_sidecar_path) = insert_media("media2");
+
+        crate::engine::post_media::link_media_to_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &post.id,
+            &first_media.id,
+            0,
+        )
+        .unwrap();
+        crate::engine::post_media::link_media_to_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &surviving_post.id,
+            &first_media.id,
+            0,
+        )
+        .unwrap();
+        crate::engine::post_media::link_media_to_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &post.id,
+            &second_media.id,
+            1,
+        )
+        .unwrap();
+
+        delete_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let first_sidecar =
+            crate::util::sidecar::read_sidecar(&fs::read_to_string(&first_sidecar_path).unwrap())
+                .unwrap();
+        assert_eq!(first_sidecar.linked_post_ids, vec![surviving_post.id]);
+        let second_sidecar =
+            crate::util::sidecar::read_sidecar(&fs::read_to_string(&second_sidecar_path).unwrap())
+                .unwrap();
+        assert!(second_sidecar.linked_post_ids.is_empty());
     }
 
     #[test]

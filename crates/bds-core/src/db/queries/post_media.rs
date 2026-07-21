@@ -37,7 +37,7 @@ pub fn list_post_media_by_post(conn: &DbConnection, post_id: &str) -> QueryResul
     conn.with(|c| {
         post_media::table
             .filter(post_media::post_id.eq(post_id))
-            .order(post_media::sort_order)
+            .order((post_media::sort_order.asc(), post_media::media_id.asc()))
             .select(PostMedia::as_select())
             .load(c)
     })
