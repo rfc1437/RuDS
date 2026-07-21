@@ -244,6 +244,7 @@ fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {
         "project",
         "Tags",
         "macro_scripts",
+        "macro_templates",
         "language",
         "language_prefix",
         "main_language",

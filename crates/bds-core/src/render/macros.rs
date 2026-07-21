@@ -6,6 +6,17 @@ use serde_json::{Map, Value as JsonValue};
 
 use crate::i18n::translate_render;
 
+const GALLERY_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/macros/gallery.liquid");
+const YOUTUBE_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/macros/youtube.liquid");
+const VIMEO_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/macros/vimeo.liquid");
+const PHOTO_ARCHIVE_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/macros/photo-archive.liquid");
+const TAG_CLOUD_TEMPLATE: &str =
+    include_str!("../../../../assets/starter-templates/macros/tag-cloud.liquid");
+
 #[derive(Clone)]
 pub(crate) struct MacroRenderContext {
     pub roots: Map<String, JsonValue>,
@@ -202,80 +213,48 @@ fn render_gallery(args: &HashMap<String, JsonValue>, context: &MacroRenderContex
         .filter(is_image)
         .collect::<Vec<_>>();
     images.sort_by(media_newest_first);
-
-    if images.is_empty() {
-        return empty_block(
-            &format!("macro-gallery gallery-cols-{columns}"),
-            "gallery-empty",
-            &render_translation(context, "render.gallery.empty"),
-        );
-    }
-
     let gallery_id = format!("gallery-{}", context.post_id.as_deref().unwrap_or_default());
-    let mut html = format!(
-        "<section class=\"macro-gallery gallery-cols-{columns}\" data-post-id=\"{}\" data-columns=\"{columns}\" data-lightbox=\"true\"><div class=\"gallery-container gallery-lightbox\">",
-        escape_html_attr(context.post_id.as_deref().unwrap_or_default()),
-    );
-    for image in images {
-        let Some(path) = image_path(&image) else {
-            continue;
-        };
-        let title = image_title(&image);
-        let alt = image_alt(&image);
-        html.push_str(&format!(
-            "<a class=\"gallery-item\" href=\"{}\" data-lightbox=\"{}\"{}><img src=\"{}\" alt=\"{}\" loading=\"lazy\" /></a>",
-            escape_html_attr(&path),
-            escape_html_attr(&gallery_id),
-            title
-                .as_deref()
-                .map(|value| format!(" data-title=\"{}\"", escape_html_attr(value)))
-                .unwrap_or_default(),
-            escape_html_attr(&path),
-            escape_html_attr(&alt),
-        ));
-    }
-    html.push_str("</div>");
-    if let Some(caption) = args
-        .get("caption")
-        .map(stringify_scalar)
-        .filter(|caption| !caption.is_empty())
-    {
-        html.push_str(&format!(
-            "<figcaption class=\"gallery-caption\">{}</figcaption>",
-            escape_html(&caption)
-        ));
-    }
-    html.push_str("</section>");
-    html
+    let items = images
+        .into_iter()
+        .filter_map(|image| {
+            Some(serde_json::json!({
+                "media_path": ensure_leading_slash(&image_path(&image)?),
+                "title": image_title(&image).unwrap_or_default(),
+                "alt": image_alt(&image),
+                "group_name": gallery_id,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    render_macro_template(
+        macro_template(context, "gallery", GALLERY_TEMPLATE),
+        serde_json::json!({
+            "columns": columns,
+            "post_id": context.post_id.as_deref().unwrap_or_default(),
+            "items": items,
+            "caption": args.get("caption").map(stringify_scalar),
+            "no_items_label": render_translation(context, "render.gallery.empty"),
+        }),
+    )
 }
 
 fn render_youtube(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
-    let video_id = args.get("id").map(stringify_scalar).unwrap_or_default();
-    if video_id.is_empty() {
-        return empty_block(
-            "macro-youtube",
-            "gallery-empty",
-            "Missing YouTube video id.",
-        );
-    }
-    let title = macro_title(args, context, "render.video.youtubeTitle");
-    format!(
-        "<section class=\"macro-youtube\"><iframe src=\"https://www.youtube.com/embed/{}?rel=0\" title=\"{}\" loading=\"lazy\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen></iframe></section>",
-        escape_html_attr(&video_id),
-        escape_html_attr(&title),
+    render_macro_template(
+        macro_template(context, "youtube", YOUTUBE_TEMPLATE),
+        serde_json::json!({
+            "id": args.get("id").map(stringify_scalar).unwrap_or_default(),
+            "title": macro_title(args, context, "render.video.youtubeTitle"),
+        }),
     )
 }
 
 fn render_vimeo(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
-    let video_id = args.get("id").map(stringify_scalar).unwrap_or_default();
-    if video_id.is_empty() {
-        return empty_block("macro-vimeo", "gallery-empty", "Missing Vimeo video id.");
-    }
-    let title = macro_title(args, context, "render.video.vimeoTitle");
-    format!(
-        "<section class=\"macro-vimeo\"><iframe src=\"https://player.vimeo.com/video/{}\" title=\"{}\" loading=\"lazy\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen></iframe></section>",
-        escape_html_attr(&video_id),
-        escape_html_attr(&title),
+    render_macro_template(
+        macro_template(context, "vimeo", VIMEO_TEMPLATE),
+        serde_json::json!({
+            "id": args.get("id").map(stringify_scalar).unwrap_or_default(),
+            "title": macro_title(args, context, "render.video.vimeoTitle"),
+        }),
     )
 }
 
@@ -305,72 +284,48 @@ fn render_photo_archive(args: &HashMap<String, JsonValue>, context: &MacroRender
         media.truncate(200);
     }
 
-    if media.is_empty() {
-        return empty_block(
-            "macro-photo-archive",
-            "photo-archive-empty",
-            &render_translation(context, "render.photoArchive.empty"),
-        );
-    }
-
     let mut grouped = BTreeMap::<(i32, u32), Vec<JsonValue>>::new();
     for item in media {
         if let Some(bucket) = media_archive_month(&item) {
             grouped.entry(bucket).or_default().push(item);
         }
     }
-    if grouped.is_empty() {
-        return empty_block(
-            "macro-photo-archive",
-            "photo-archive-empty",
-            &render_translation(context, "render.photoArchive.empty"),
-        );
-    }
-
-    let single_month = grouped.len() == 1;
-    let mut html = format!(
-        "<section class=\"macro-photo-archive{}\"><div class=\"photo-archive-container\">",
-        if single_month {
-            " photo-archive-single-month"
-        } else {
-            ""
-        }
-    );
     let month_limit = if year.is_none() { 10 } else { usize::MAX };
-    for ((year, month), items) in grouped.into_iter().rev().take(month_limit) {
-        let label = format!(
-            "{} {year}",
-            render_translation(context, &format!("render.month.{month}"))
-        );
-        html.push_str(
-            "<section class=\"photo-archive-month-wrapper\"><div class=\"photo-archive-month\">",
-        );
-        html.push_str(&format!(
-            "<header class=\"photo-archive-month-label\"><span>{}</span></header>",
-            escape_html(&label),
-        ));
-        html.push_str("<div class=\"photo-archive-gallery\">");
-        for item in items {
-            let Some(path) = image_path(&item) else {
-                continue;
-            };
-            let title = image_archive_title(&item);
-            let alt = image_alt(&item);
-            html.push_str(&format!(
-                "<a class=\"photo-archive-item\" href=\"{}\" data-lightbox=\"{year}-{month}\"{}><img src=\"{}\" alt=\"{}\" loading=\"lazy\" /></a>",
-                escape_html_attr(&path),
-                title
-                    .as_deref()
-                    .map(|value| format!(" data-title=\"{}\"", escape_html_attr(value)))
-                    .unwrap_or_default(),
-                escape_html_attr(&path),
-                escape_html_attr(&alt),
-            ));
-        }
-        html.push_str("</div></div></section>");
-    }
-    html.push_str("</div></section>");
-    html
+    let months = grouped
+        .into_iter()
+        .rev()
+        .take(month_limit)
+        .map(|((year, month), items)| {
+            let items = items
+                .into_iter()
+                .filter_map(|item| {
+                    Some(serde_json::json!({
+                        "media_path": ensure_leading_slash(&image_path(&item)?),
+                        "title": image_archive_title(&item).unwrap_or_default(),
+                        "alt": image_alt(&item),
+                        "group_name": format!("{year}-{month}"),
+                    }))
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "label": format!(
+                    "{} {year}",
+                    render_translation(context, &format!("render.month.{month}"))
+                ),
+                "items": items,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    render_macro_template(
+        macro_template(context, "photo-archive", PHOTO_ARCHIVE_TEMPLATE),
+        serde_json::json!({
+            "root_classes": "macro-photo-archive",
+            "data_attrs": [],
+            "months": months,
+            "no_items_label": render_translation(context, "render.photoArchive.empty"),
+        }),
+    )
 }
 
 fn render_tag_cloud(args: &HashMap<String, JsonValue>, context: &MacroRenderContext) -> String {
@@ -380,38 +335,26 @@ fn render_tag_cloud(args: &HashMap<String, JsonValue>, context: &MacroRenderCont
         .cloned()
         .or_else(|| tag_items(context));
 
-    let Some(tags) = tags else {
-        return empty_block(
-            "macro-tag-cloud",
-            "tag-cloud-empty",
-            &render_translation(context, "render.tagCloud.empty"),
-        );
-    };
-    if tags.is_empty() {
-        return empty_block(
-            "macro-tag-cloud",
-            "tag-cloud-empty",
-            &render_translation(context, "render.tagCloud.empty"),
-        );
-    }
-
-    let words = build_tag_cloud_words(&tags, context);
-    if words.is_empty() {
-        return empty_block(
-            "macro-tag-cloud",
-            "tag-cloud-empty",
-            &render_translation(context, "render.tagCloud.empty"),
-        );
-    }
-
     let orientation = normalize_tag_cloud_orientation(args.get("orientation"));
     let width = tag_cloud_dimension(args.get("width"), 320, 1600, 900);
     let height = tag_cloud_dimension(args.get("height"), 180, 900, 420);
-    let words_json = serde_json::to_string(&words).unwrap_or_else(|_| "[]".to_string());
-    format!(
-        "<section class=\"macro-tag-cloud\" data-tag-cloud=\"true\" data-color-distribution=\"quantile\" data-color-theme=\"pico\" data-color-easing=\"0.7\" data-width=\"{width}\" data-height=\"{height}\" data-orientation=\"{orientation}\" data-tag-cloud-words=\"{}\"><svg class=\"tag-cloud-canvas\" viewBox=\"0 0 {width} {height}\" preserveAspectRatio=\"xMidYMid meet\" aria-label=\"{}\"></svg></section>",
-        escape_html_attr(&words_json),
-        escape_html_attr(&render_translation(context, "render.tagCloud.ariaLabel")),
+    let words_json = tags
+        .as_deref()
+        .map(|tags| build_tag_cloud_words(tags, context))
+        .filter(|words| !words.is_empty())
+        .and_then(|words| serde_json::to_string(&words).ok())
+        .map(|words| escape_html_attr(&words));
+
+    render_macro_template(
+        macro_template(context, "tag-cloud", TAG_CLOUD_TEMPLATE),
+        serde_json::json!({
+            "orientation": orientation,
+            "words_json": words_json,
+            "width": width,
+            "height": height,
+            "aria_label": render_translation(context, "render.tagCloud.ariaLabel"),
+            "no_items_label": render_translation(context, "render.tagCloud.empty"),
+        }),
     )
 }
 
@@ -431,11 +374,7 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
         .iter()
         .filter_map(|tag| {
             let name = tag.get("name").and_then(JsonValue::as_str)?;
-            let slug = tag
-                .get("slug")
-                .and_then(JsonValue::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+            let encoded_name = encode_path_segment(name);
             let count = tag.get("post_count").and_then(value_as_u64).unwrap_or(1);
             let size = if max_count == min_count {
                 35.0
@@ -458,7 +397,10 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
             let mut word = Map::from_iter([
                 ("text".into(), JsonValue::String(name.into())),
                 ("count".into(), JsonValue::from(count)),
-                ("url".into(), JsonValue::String(format!("/tag/{slug}/"))),
+                (
+                    "url".into(),
+                    JsonValue::String(format!("/tag/{encoded_name}/")),
+                ),
                 ("size".into(), JsonValue::from(size.round() as u64)),
             ]);
             if let Some(color) = color.filter(|color| !color.is_empty()) {
@@ -480,6 +422,43 @@ fn build_tag_cloud_words(tags: &[JsonValue], context: &MacroRenderContext) -> Ve
             })
     });
     words
+}
+
+fn render_macro_template(template: &str, assigns: JsonValue) -> String {
+    crate::render::render_liquid_template(template, &HashMap::new(), &assigns).unwrap_or_default()
+}
+
+fn macro_template<'a>(context: &'a MacroRenderContext, name: &str, bundled: &'a str) -> &'a str {
+    context
+        .roots
+        .get("macro_templates")
+        .and_then(JsonValue::as_object)
+        .and_then(|templates| templates.get(name))
+        .and_then(JsonValue::as_str)
+        .unwrap_or(bundled)
+}
+
+pub(super) fn bundled_macro_templates() -> HashMap<String, String> {
+    HashMap::from([
+        ("gallery".into(), GALLERY_TEMPLATE.into()),
+        ("youtube".into(), YOUTUBE_TEMPLATE.into()),
+        ("vimeo".into(), VIMEO_TEMPLATE.into()),
+        ("photo-archive".into(), PHOTO_ARCHIVE_TEMPLATE.into()),
+        ("tag-cloud".into(), TAG_CLOUD_TEMPLATE.into()),
+    ])
+}
+
+fn encode_path_segment(value: &str) -> String {
+    use std::fmt::Write;
+
+    value.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").expect("writing to a String cannot fail");
+        }
+        encoded
+    })
 }
 
 fn linked_media(context: &MacroRenderContext) -> Option<Vec<JsonValue>> {
@@ -588,6 +567,14 @@ fn image_path(image: &JsonValue) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn ensure_leading_slash(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    }
+}
+
 fn image_title(image: &JsonValue) -> Option<String> {
     image
         .get("caption")
@@ -679,31 +666,57 @@ fn month_bucket(path: &str) -> Option<(i32, u32)> {
     }
 }
 
-fn empty_block(wrapper_class: &str, message_class: &str, message: &str) -> String {
-    format!(
-        "<section class=\"{}\"><p class=\"{}\">{}</p></section>",
-        wrapper_class,
-        message_class,
-        escape_html(message),
-    )
-}
-
-fn escape_html(value: &str) -> String {
+fn escape_html_attr(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-fn escape_html_attr(value: &str) -> String {
-    escape_html(value)
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MacroRenderContext, expand_builtin_macros};
+    use super::{
+        GALLERY_TEMPLATE, MacroRenderContext, PHOTO_ARCHIVE_TEMPLATE, TAG_CLOUD_TEMPLATE,
+        VIMEO_TEMPLATE, YOUTUBE_TEMPLATE, expand_builtin_macros, render_macro_template,
+    };
+
+    fn compact_html(html: &str) -> String {
+        html.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace("> <", "><")
+    }
+
+    #[test]
+    fn bundled_macro_templates_use_supported_liquid_syntax() {
+        for (name, template) in [
+            ("gallery", GALLERY_TEMPLATE),
+            ("youtube", YOUTUBE_TEMPLATE),
+            ("vimeo", VIMEO_TEMPLATE),
+            ("photo-archive", PHOTO_ARCHIVE_TEMPLATE),
+            ("tag-cloud", TAG_CLOUD_TEMPLATE),
+        ] {
+            let result = crate::render::page_renderer::validate_liquid_template_syntax(template);
+            assert!(
+                result.is_ok(),
+                "{name} macro template must parse: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn macro_template_assignments_do_not_escape_the_isolated_scope() {
+        let assigns = serde_json::json!({"visible": "outside"});
+        let rendered = render_macro_template(
+            "{{ visible }}|{% assign visible = 'inside' %}{{ visible }}",
+            assigns.clone(),
+        );
+
+        assert_eq!(rendered, "outside|inside");
+        assert_eq!(assigns["visible"], "outside");
+    }
 
     #[test]
     fn expands_gallery_and_tag_cloud_macros() {
@@ -742,6 +755,179 @@ mod tests {
         assert!(html.contains("data-lightbox=\"gallery-post-1\""));
         assert!(html.contains("macro-tag-cloud"));
         assert!(html.contains("data-tag-cloud=\"true\""));
+    }
+
+    #[test]
+    fn built_in_macros_match_the_bds2_template_markup() {
+        let mut roots = serde_json::Map::new();
+        roots.insert("language".into(), serde_json::json!("en"));
+        roots.insert(
+            "post".into(),
+            serde_json::json!({
+                "linked_media": [{
+                    "id": "image-1",
+                    "file_path": "/media/2026/04/one.jpg",
+                    "mime_type": "image/jpeg",
+                    "title": "One & only",
+                    "alt": "Alt <one>"
+                }]
+            }),
+        );
+        roots.insert(
+            "project".into(),
+            serde_json::json!({
+                "media": [{
+                    "id": "image-1",
+                    "file_path": "/media/2026/04/one.jpg",
+                    "mime_type": "image/jpeg",
+                    "title": "One & only",
+                    "alt": "Alt <one>"
+                }]
+            }),
+        );
+        roots.insert(
+            "post_tags".into(),
+            serde_json::json!([
+                {"name": "Rust & SQLite", "slug": "ignored", "post_count": 4, "color": "#ff6600"},
+                {"name": "Iced", "slug": "also-ignored", "post_count": 2}
+            ]),
+        );
+        let context = MacroRenderContext {
+            roots,
+            post_id: Some("post-1".into()),
+            ..MacroRenderContext::default()
+        };
+
+        let youtube = compact_html(&expand_builtin_macros("[[youtube id=abc123]]", &context));
+        assert_eq!(
+            youtube,
+            compact_html(
+                "<div class=\"macro-youtube\"> <iframe src=\"https://www.youtube.com/embed/abc123?rel=0\" title=\"YouTube video\" frameborder=\"0\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture\" allowfullscreen ></iframe> </div>"
+            )
+        );
+
+        let vimeo = compact_html(&expand_builtin_macros("[[vimeo id=98765]]", &context));
+        assert_eq!(
+            vimeo,
+            compact_html(
+                "<div class=\"macro-vimeo\"> <iframe src=\"https://player.vimeo.com/video/98765\" title=\"Vimeo video\" frameborder=\"0\" allow=\"autoplay; fullscreen; picture-in-picture\" allowfullscreen ></iframe> </div>"
+            )
+        );
+
+        let gallery = compact_html(&expand_builtin_macros(
+            "[[gallery columns=2 caption='A caption']]",
+            &context,
+        ));
+        assert_eq!(
+            gallery,
+            compact_html(
+                "<div class=\"macro-gallery gallery-cols-2\" data-post-id=\"post-1\" data-columns=\"2\" data-lightbox=\"true\" > <div class=\"gallery-container gallery-lightbox\"><a class=\"gallery-item\" href=\"/media/2026/04/one.jpg\" data-lightbox=\"gallery-post-1\" data-title=\"One &amp; only\" > <img src=\"/media/2026/04/one.jpg\" alt=\"Alt &lt;one&gt;\" loading=\"lazy\" /> </a></div><figcaption class=\"gallery-caption\">A caption</figcaption></div>"
+            )
+        );
+
+        let archive = compact_html(&expand_builtin_macros("[[photo_archive]]", &context));
+        assert_eq!(
+            archive,
+            compact_html(
+                "<div class=\"macro-photo-archive\"> <div class=\"photo-archive-container\"><div class=\"photo-archive-month-wrapper\"> <div class=\"photo-archive-month\"> <div class=\"photo-archive-month-label\"> <span>April 2026</span> </div> <div class=\"photo-archive-gallery\"><a class=\"photo-archive-item\" href=\"/media/2026/04/one.jpg\" data-lightbox=\"2026-4\" data-title=\"One &amp; only\" > <img src=\"/media/2026/04/one.jpg\" alt=\"Alt &lt;one&gt;\" loading=\"lazy\" /> </a></div> </div> </div></div> </div>"
+            )
+        );
+
+        let tag_cloud = compact_html(&expand_builtin_macros(
+            "[[tag_cloud orientation=diagonal width=640 height=300]]",
+            &context,
+        ));
+        assert!(tag_cloud.starts_with(
+            "<div class=\"macro-tag-cloud\" data-tag-cloud=\"true\" data-orientation=\"mixed-diagonal\" data-color-distribution=\"quantile\" data-color-easing=\"0.7\" data-color-theme=\"pico\" data-tag-cloud-words=\""
+        ), "{tag_cloud}");
+        assert!(tag_cloud.contains("&quot;url&quot;:&quot;/tag/Rust%20%26%20SQLite/&quot;"));
+        assert!(tag_cloud.contains("data-width=\"640\" data-height=\"300\""));
+        assert!(tag_cloud.ends_with(
+            &compact_html("> <svg class=\"tag-cloud-canvas\" viewBox=\"0 0 640 300\" preserveAspectRatio=\"xMidYMid meet\" aria-label=\"Tag cloud\" ></svg></div>")
+        ));
+    }
+
+    #[test]
+    fn video_macros_with_missing_ids_still_use_the_localized_templates() {
+        let rendered =
+            expand_builtin_macros("[[youtube]] [[vimeo]]", &MacroRenderContext::default());
+
+        assert!(rendered.contains("https://www.youtube.com/embed/?rel=0"));
+        assert!(rendered.contains("https://player.vimeo.com/video/"));
+        assert!(rendered.contains("title=\"YouTube video\""));
+        assert!(rendered.contains("title=\"Vimeo video\""));
+        assert!(!rendered.contains("Missing"));
+    }
+
+    #[test]
+    fn empty_macro_states_use_render_domain_translations() {
+        let mut roots = serde_json::Map::new();
+        roots.insert("language".into(), serde_json::json!("de"));
+        let context = MacroRenderContext {
+            roots,
+            ..MacroRenderContext::default()
+        };
+
+        let rendered =
+            expand_builtin_macros("[[gallery]] [[photo_archive]] [[tag_cloud]]", &context);
+
+        assert!(rendered.contains("Keine verknüpften Bilder gefunden."));
+        assert!(rendered.contains("Keine Fotos für dieses Archiv gefunden."));
+        assert!(rendered.contains("Keine Tags gefunden."));
+    }
+
+    #[test]
+    fn project_macro_templates_override_the_bundled_defaults() {
+        let mut roots = serde_json::Map::new();
+        roots.insert(
+            "macro_templates".into(),
+            serde_json::json!({
+                "gallery": "<aside data-columns=\"{{ columns }}\">custom gallery</aside>"
+            }),
+        );
+
+        let rendered = expand_builtin_macros(
+            "[[gallery columns=4]]",
+            &MacroRenderContext {
+                roots,
+                ..MacroRenderContext::default()
+            },
+        );
+
+        assert_eq!(rendered, "<aside data-columns=\"4\">custom gallery</aside>");
+    }
+
+    #[test]
+    fn template_rendering_preserves_macro_clamps_aliases_and_archive_filters() {
+        let mut roots = serde_json::Map::new();
+        roots.insert(
+            "project".into(),
+            serde_json::json!({
+                "media": [
+                    {"file_path": "/media/2026/04/new.jpg", "mime_type": "image/jpeg"},
+                    {"file_path": "/media/2025/03/old.jpg", "mime_type": "image/jpeg"}
+                ]
+            }),
+        );
+        roots.insert(
+            "post_tags".into(),
+            serde_json::json!([{"name": "Rust", "post_count": 1}]),
+        );
+        let context = MacroRenderContext {
+            roots,
+            ..MacroRenderContext::default()
+        };
+
+        let rendered = expand_builtin_macros(
+            "[[gallery columns=99]] [[tag_cloud orientation=hv width=99999 height=1]] [[photo_archive year=2025 month=3]]",
+            &context,
+        );
+
+        assert!(rendered.contains("gallery-cols-6"));
+        assert!(rendered.contains("data-orientation=\"mixed-hv\""));
+        assert!(rendered.contains("data-width=\"900\" data-height=\"420\""));
+        assert!(rendered.contains("/media/2025/03/old.jpg"));
+        assert!(!rendered.contains("/media/2026/04/new.jpg"));
     }
 
     #[test]

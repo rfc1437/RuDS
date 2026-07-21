@@ -92,6 +92,26 @@ fn markdown_filter_expands_builtin_macros_from_runtime_context() {
 }
 
 #[test]
+fn markdown_filter_uses_project_macro_template_overrides() {
+    let template = "{{ body | markdown: nil, nil, canonical_post_path_by_slug, canonical_media_path_by_source_path, language, language_prefix }}";
+    let context = serde_json::json!({
+        "body": "[[youtube id=custom-id]]",
+        "macro_templates": {
+            "youtube": "<figure data-video=\"{{ id | escape }}\">custom</figure>"
+        },
+        "canonical_post_path_by_slug": {},
+        "canonical_media_path_by_source_path": {},
+        "language": "en",
+        "language_prefix": ""
+    });
+
+    let rendered = render_liquid_template(template, &HashMap::new(), &context).unwrap();
+
+    assert!(rendered.contains("<figure data-video=\"custom-id\">custom</figure>"));
+    assert!(!rendered.contains("macro-youtube"));
+}
+
+#[test]
 fn markdown_filter_leaves_unknown_macros_verbatim() {
     let template = "{{ body | markdown: nil, nil, canonical_post_path_by_slug, canonical_media_path_by_source_path, language, language_prefix }}";
     let partials = HashMap::new();

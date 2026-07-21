@@ -77,6 +77,7 @@ struct TemplateBundle {
     default_list_template: String,
     not_found_template: String,
     partials: HashMap<String, String>,
+    macro_templates: HashMap<String, String>,
     macro_scripts: HashMap<String, Value>,
     host: Arc<dyn HostApi>,
 }
@@ -411,6 +412,7 @@ fn load_template_bundle(
     let mut post_templates = Vec::new();
     let mut list_template_sources = HashMap::new();
     let mut partials = starter_partials();
+    let mut macro_templates = crate::render::macros::bundled_macro_templates();
     let mut default_list_template = STARTER_POST_LIST_TEMPLATE.to_string();
     let mut not_found_template = STARTER_NOT_FOUND_TEMPLATE.to_string();
     let mut macro_scripts = HashMap::new();
@@ -472,10 +474,14 @@ fn load_template_bundle(
                 }
             }
             TemplateKind::Partial => {
-                let key = normalize_partial_slug(&template.slug);
-                partials.insert(key.clone(), source.clone());
-                if !key.starts_with("partials/") {
-                    partials.insert(format!("partials/{key}"), source);
+                if let Some(name) = normalize_macro_template_slug(&template.slug) {
+                    macro_templates.insert(name.to_string(), source);
+                } else {
+                    let key = normalize_partial_slug(&template.slug);
+                    partials.insert(key.clone(), source.clone());
+                    if !key.starts_with("partials/") {
+                        partials.insert(format!("partials/{key}"), source);
+                    }
                 }
             }
         }
@@ -517,6 +523,7 @@ fn load_template_bundle(
         default_list_template,
         not_found_template,
         partials,
+        macro_templates,
         macro_scripts,
         host,
     })
@@ -836,6 +843,7 @@ fn render_list_route(
         "main_language": main_language,
         "is_preview": is_preview,
         "macro_scripts": bundle.macro_scripts,
+        "macro_templates": bundle.macro_templates,
         "html_theme_attribute": serde_json::Value::Null,
         "page_title": route.page_title,
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
@@ -958,6 +966,7 @@ fn render_post_route(
         "main_language": main_language,
         "is_preview": is_preview,
         "macro_scripts": bundle.macro_scripts,
+        "macro_templates": bundle.macro_templates,
         "page_title": record.post.title,
         "pico_stylesheet_href": pico_stylesheet_href(metadata),
         "html_theme_attribute": serde_json::Value::Null,
@@ -1731,6 +1740,20 @@ fn normalize_partial_slug(slug: &str) -> String {
     }
 }
 
+fn normalize_macro_template_slug(slug: &str) -> Option<&'static str> {
+    let normalized = slug.trim().trim_matches('/');
+    let normalized = normalized.strip_prefix("partials/").unwrap_or(normalized);
+    let normalized = normalized.strip_suffix(".liquid").unwrap_or(normalized);
+    match normalized {
+        "macros/gallery" => Some("gallery"),
+        "macros/youtube" => Some("youtube"),
+        "macros/vimeo" => Some("vimeo"),
+        "macros/photo-archive" | "macros/photo_archive" => Some("photo-archive"),
+        "macros/tag-cloud" | "macros/tag_cloud" => Some("tag-cloud"),
+        _ => None,
+    }
+}
+
 fn starter_partials() -> HashMap<String, String> {
     HashMap::from([
         (
@@ -1799,6 +1822,28 @@ mod menu_tests {
                 .unwrap()
                 .contains("data-search-no-results")
         );
+    }
+
+    #[test]
+    fn macro_partial_slugs_select_customizable_bundled_templates() {
+        let templates = crate::render::macros::bundled_macro_templates();
+        assert_eq!(templates.len(), 5);
+        assert!(templates.contains_key("photo-archive"));
+        assert!(templates.contains_key("tag-cloud"));
+
+        assert_eq!(
+            normalize_macro_template_slug("macros/gallery"),
+            Some("gallery")
+        );
+        assert_eq!(
+            normalize_macro_template_slug("partials/macros/photo-archive.liquid"),
+            Some("photo-archive")
+        );
+        assert_eq!(
+            normalize_macro_template_slug("macros/tag_cloud"),
+            Some("tag-cloud")
+        );
+        assert_eq!(normalize_macro_template_slug("partials/card"), None);
     }
 
     #[test]

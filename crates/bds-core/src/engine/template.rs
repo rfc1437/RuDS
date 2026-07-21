@@ -761,6 +761,26 @@ mod tests {
                 "menu",
                 include_str!("../../../../assets/starter-templates/partials/menu.liquid"),
             ),
+            (
+                "macro-gallery",
+                include_str!("../../../../assets/starter-templates/macros/gallery.liquid"),
+            ),
+            (
+                "macro-youtube",
+                include_str!("../../../../assets/starter-templates/macros/youtube.liquid"),
+            ),
+            (
+                "macro-vimeo",
+                include_str!("../../../../assets/starter-templates/macros/vimeo.liquid"),
+            ),
+            (
+                "macro-photo-archive",
+                include_str!("../../../../assets/starter-templates/macros/photo-archive.liquid"),
+            ),
+            (
+                "macro-tag-cloud",
+                include_str!("../../../../assets/starter-templates/macros/tag-cloud.liquid"),
+            ),
         ] {
             let result = validate_template(content);
             assert!(result.is_ok(), "starter template {name}: {result:?}");
