@@ -619,6 +619,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
             (
                 "hidden".to_string(),
                 CategorySettings {
+                    title: None,
                     render_in_lists: false,
                     show_title: true,
                     post_template_slug: None,
@@ -628,6 +629,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
             (
                 "featured".to_string(),
                 CategorySettings {
+                    title: None,
                     render_in_lists: true,
                     show_title: false,
                     post_template_slug: None,

@@ -97,6 +97,8 @@ impl ProjectMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CategorySettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default = "default_true")]
     pub render_in_lists: bool,
     #[serde(default = "default_true")]
@@ -167,12 +169,14 @@ mod tests {
     #[test]
     fn category_settings_camel_case() {
         let settings = CategorySettings {
+            title: Some("Article".into()),
             render_in_lists: false,
             show_title: true,
             post_template_slug: Some("article-tpl".into()),
             list_template_slug: None,
         };
         let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("title"));
         assert!(json.contains("renderInLists"));
         assert!(json.contains("showTitle"));
         assert!(json.contains("postTemplateSlug"));
