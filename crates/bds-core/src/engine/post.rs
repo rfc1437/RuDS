@@ -422,109 +422,43 @@ fn restore_content_for_unarchive(data_dir: &Path, post: &Post) -> String {
     })
 }
 
-/// Discard unpublished draft changes and restore the published version.
+/// Discard database changes and restore the canonical file version.
 pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
     let mut post = qp::get_post_by_id(conn, post_id)?;
-    if post.published_at.is_none() {
-        return Err(EngineError::Conflict(
-            "cannot discard changes for a post that was never published".to_string(),
-        ));
+    if post.file_path.is_empty() {
+        return Err(EngineError::NotFound(format!(
+            "canonical file for post {post_id}"
+        )));
     }
 
-    let (
-        title,
-        slug,
-        excerpt,
-        author,
-        language,
-        template_slug,
-        do_not_translate,
-        tags,
-        categories,
-        checksum,
-    ) = if !post.file_path.is_empty() {
-        let abs_path = data_dir.join(&post.file_path);
-        if abs_path.exists() {
-            let raw = fs::read_to_string(&abs_path)?;
-            let (fm, _body) = read_post_file(&raw).map_err(EngineError::Parse)?;
-            (
-                fm.title,
-                fm.slug,
-                fm.excerpt,
-                fm.author,
-                fm.language,
-                fm.template_slug,
-                fm.do_not_translate,
-                fm.tags,
-                fm.categories,
-                None,
-            )
+    let abs_path = data_dir.join(&post.file_path);
+    let raw = fs::read_to_string(&abs_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            EngineError::NotFound(format!("canonical file for post {post_id}"))
         } else {
-            (
-                post.published_title
-                    .clone()
-                    .unwrap_or_else(|| post.title.clone()),
-                post.slug.clone(),
-                post.published_excerpt
-                    .clone()
-                    .or_else(|| post.excerpt.clone()),
-                post.author.clone(),
-                post.language.clone(),
-                post.template_slug.clone(),
-                post.do_not_translate,
-                post.published_tags
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                    .unwrap_or_else(|| post.tags.clone()),
-                post.published_categories
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                    .unwrap_or_else(|| post.categories.clone()),
-                post.checksum.clone(),
-            )
+            EngineError::Io(error)
         }
-    } else {
-        (
-            post.published_title
-                .clone()
-                .unwrap_or_else(|| post.title.clone()),
-            post.slug.clone(),
-            post.published_excerpt
-                .clone()
-                .or_else(|| post.excerpt.clone()),
-            post.author.clone(),
-            post.language.clone(),
-            post.template_slug.clone(),
-            post.do_not_translate,
-            post.published_tags
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                .unwrap_or_else(|| post.tags.clone()),
-            post.published_categories
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                .unwrap_or_else(|| post.categories.clone()),
-            post.checksum.clone(),
-        )
-    };
+    })?;
+    let (frontmatter, body) = read_post_file(&raw).map_err(EngineError::Parse)?;
 
-    post.title = title;
-    post.slug = slug;
-    post.excerpt = excerpt;
-    post.author = author;
-    post.language = language;
-    post.template_slug = template_slug;
-    post.do_not_translate = do_not_translate;
-    post.tags = tags;
-    post.categories = categories;
+    post.title = frontmatter.title;
+    post.slug = frontmatter.slug;
+    post.excerpt = frontmatter.excerpt;
+    post.author = frontmatter.author;
+    post.language = frontmatter.language;
+    post.template_slug = frontmatter.template_slug;
+    post.do_not_translate = frontmatter.do_not_translate;
+    post.tags = frontmatter.tags;
+    post.categories = frontmatter.categories;
     post.content = None;
-    post.status = PostStatus::Published;
-    post.checksum = checksum;
-    post.updated_at = now_unix_ms();
+    post.status = post_status_from_frontmatter(&frontmatter.status);
+    post.checksum = None;
+    post.created_at = frontmatter.created_at;
+    post.updated_at = frontmatter.updated_at;
+    post.published_at = frontmatter.published_at;
     conn.begin_savepoint()?;
     match (|| {
         qp::update_post(conn, &post)?;
-        let body = resolve_post_fts_content(data_dir, &post)?.unwrap_or_default();
         sync_post_links(conn, &post, &body)?;
         fts_index_post(conn, data_dir, &post)?;
         Ok(post)
@@ -539,6 +473,14 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
             let _ = conn.rollback_savepoint();
             Err(error)
         }
+    }
+}
+
+fn post_status_from_frontmatter(status: &str) -> PostStatus {
+    match status {
+        "published" => PostStatus::Published,
+        "archived" => PostStatus::Archived,
+        _ => PostStatus::Draft,
     }
 }
 
@@ -1174,11 +1116,7 @@ pub(crate) fn rebuild_canonical_post(
         .to_string_lossy()
         .to_string();
 
-    let status = match fm.status.as_str() {
-        "published" => PostStatus::Published,
-        "archived" => PostStatus::Archived,
-        _ => PostStatus::Draft,
-    };
+    let status = post_status_from_frontmatter(&fm.status);
 
     // Check if post exists in DB by id
     let existing = qp::get_post_by_id(conn, &fm.id);
@@ -2059,6 +1997,102 @@ mod tests {
         assert_eq!(restored_links.len(), 1);
         assert_eq!(restored_links[0].target_post_id, published_target.id);
         assert!(!discarded.do_not_translate);
+    }
+
+    #[test]
+    fn discard_post_draft_requires_the_canonical_file() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published Title", "published body");
+        let draft = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Draft Title"),
+            None,
+            None,
+            Some("draft body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        fs::remove_file(dir.path().join(&draft.file_path)).unwrap();
+
+        let result = discard_post_draft(db.conn(), dir.path(), &post.id);
+
+        assert!(matches!(result, Err(EngineError::NotFound(_))));
+        let unchanged = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(unchanged.title, "Draft Title");
+        assert_eq!(unchanged.content.as_deref(), Some("draft body"));
+        assert_eq!(unchanged.status, PostStatus::Draft);
+    }
+
+    #[test]
+    fn discard_post_draft_uses_the_file_instead_of_published_at_as_guard() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published Title", "published body");
+        let mut draft = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Draft Title"),
+            None,
+            None,
+            Some("draft body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        draft.published_at = None;
+        qp::update_post(db.conn(), &draft).unwrap();
+
+        let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_eq!(discarded.title, "Published Title");
+        assert_eq!(discarded.content, None);
+        assert_eq!(discarded.status, PostStatus::Published);
+        assert_eq!(discarded.published_at, post.published_at);
+    }
+
+    #[test]
+    fn discard_post_draft_restores_status_from_frontmatter() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published Title", "published body");
+        update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Draft Title"),
+            None,
+            None,
+            Some("draft body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let post_path = dir.path().join(&post.file_path);
+        let file = fs::read_to_string(&post_path).unwrap();
+        fs::write(
+            &post_path,
+            file.replacen("status: published", "status: archived", 1),
+        )
+        .unwrap();
+
+        let discarded = discard_post_draft(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_eq!(discarded.status, PostStatus::Archived);
+        assert_eq!(discarded.content, None);
     }
 
     #[test]
