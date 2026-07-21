@@ -56,15 +56,29 @@ pub(crate) fn render_liquid_template_with_host<T: Serialize>(
         compiled_partials.add(format!("{name}.liquid"), content.clone());
     }
 
-    let parser = ParserBuilder::with_stdlib()
-        .filter(I18n)
-        .filter(Markdown { host })
-        .filter(Slugify)
+    let parser = liquid_parser_builder(host)
         .partials(compiled_partials)
         .build()?;
     let template = parser.parse(template_source)?;
     let globals = liquid::to_object(context)?;
     Ok(template.render(&globals)?)
+}
+
+pub(crate) fn validate_liquid_template_syntax(template_source: &str) -> Result<(), String> {
+    let parser = liquid_parser_builder(Arc::new(UnavailableHost))
+        .build()
+        .map_err(|error| error.to_string())?;
+    parser
+        .parse(template_source)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn liquid_parser_builder(host: Arc<dyn HostApi>) -> ParserBuilder {
+    ParserBuilder::with_stdlib()
+        .filter(I18n)
+        .filter(Markdown { host })
+        .filter(Slugify)
 }
 
 #[derive(Clone, ParseFilter, FilterReflection)]

@@ -2278,6 +2278,7 @@ mod tests {
                         post = bds.posts.get(post.id).title,
                         script = script.kind,
                         template = template.kind,
+                        template_validation = bds.templates.validate("{{ title | upcase }}"),
                         tag = tag.name,
                         media = media.title,
                         category = metadata.categories[1],
@@ -2304,6 +2305,11 @@ mod tests {
         assert_eq!(result.value["post"], "Lua post");
         assert_eq!(result.value["script"], "utility");
         assert_eq!(result.value["template"], "post");
+        assert_eq!(result.value["template_validation"]["valid"], false);
+        assert_eq!(
+            result.value["template_validation"]["errors"][0],
+            "unsupported filter: upcase"
+        );
         assert_eq!(result.value["tag"], "lua");
         assert_eq!(result.value["media"], "Close");
         assert!(result.value["foreign"].is_null());

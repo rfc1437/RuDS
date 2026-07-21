@@ -11,8 +11,8 @@ pub use generation::{
     write_generated_bytes, write_generated_file,
 };
 pub use markdown::render_markdown_to_html;
-pub(crate) use page_renderer::render_liquid_template_with_host;
 pub use page_renderer::{RenderError, render_liquid_template};
+pub(crate) use page_renderer::{render_liquid_template_with_host, validate_liquid_template_syntax};
 pub(crate) use routes::{PostLanguageVariant, blog_page_title, select_post_language_variant};
 pub use routes::{
     RenderedPage, build_canonical_post_path, render_starter_list_page,

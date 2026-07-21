@@ -12,6 +12,19 @@ use crate::model::{DomainEntity, NotificationAction, Template, TemplateKind, Tem
 use crate::util::frontmatter::{TemplateFrontmatter, write_template_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
+const ALLOWED_LIQUID_TAGS: &[&str] = &[
+    "if", "elsif", "else", "endif", "for", "endfor", "assign", "render",
+];
+const ALLOWED_LIQUID_FILTERS: &[&str] = &[
+    "escape",
+    "url_encode",
+    "default",
+    "append",
+    "i18n",
+    "markdown",
+    "slugify",
+];
+
 /// Create a new draft template. Content stored in DB, no file written.
 pub fn create_template(
     conn: &Connection,
@@ -136,11 +149,8 @@ pub fn save_template(
 
 /// Validate Liquid template syntax. Returns Ok(()) or a parse error message.
 pub fn validate_template(content: &str) -> Result<(), String> {
-    // Check for basic Liquid syntax correctness:
-    // Matching {% %} tags, matching {{ }}
-    validate_liquid_brackets(content)?;
-    validate_liquid_blocks(content)?;
-    Ok(())
+    validate_liquid_subset(content)?;
+    crate::render::validate_liquid_template_syntax(content)
 }
 
 /// Publish a template: write frontmatter+body to file, clear content in DB.
@@ -295,110 +305,169 @@ fn template_kind_to_frontmatter(kind: &TemplateKind) -> String {
     }
 }
 
-fn validate_liquid_brackets(content: &str) -> Result<(), String> {
-    // Check balanced {{ }} and {% %}
-    let mut in_output = false;
-    let mut in_tag = false;
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
+fn validate_liquid_subset(content: &str) -> Result<(), String> {
+    let mut cursor = 0;
+    while let Some((offset, is_tag)) = next_liquid_markup(&content[cursor..]) {
+        let markup_start = cursor + offset + 2;
+        let close = if is_tag { "%}" } else { "}}" };
+        let Some(close_offset) = find_unquoted(&content[markup_start..], close) else {
+            break;
+        };
+        let markup_end = markup_start + close_offset;
+        let markup = content[markup_start..markup_end]
+            .trim()
+            .trim_start_matches('-')
+            .trim_end_matches('-')
+            .trim();
 
-    while i < len {
-        if i + 1 < len {
-            let pair = (chars[i], chars[i + 1]);
-            match pair {
-                ('{', '{') if !in_output && !in_tag => {
-                    in_output = true;
-                    i += 2;
-                    continue;
-                }
-                ('}', '}') if in_output => {
-                    in_output = false;
-                    i += 2;
-                    continue;
-                }
-                ('{', '%') if !in_output && !in_tag => {
-                    in_tag = true;
-                    i += 2;
-                    continue;
-                }
-                ('%', '}') if in_tag => {
-                    in_tag = false;
-                    i += 2;
-                    continue;
-                }
-                _ => {}
-            }
+        let tag = is_tag.then(|| identifier_at_start(markup)).flatten();
+        if let Some(tag) = tag
+            && !ALLOWED_LIQUID_TAGS.contains(&tag)
+        {
+            return Err(format!("unsupported tag: {tag}"));
         }
-        i += 1;
-    }
 
-    if in_output {
-        return Err("unclosed {{ output tag".to_string());
-    }
-    if in_tag {
-        return Err("unclosed {% tag".to_string());
+        validate_liquid_filters(markup)?;
+        if let Some(tag @ ("if" | "elsif")) = tag {
+            validate_liquid_operators(markup[tag.len()..].trim_start())?;
+        }
+        cursor = markup_end + close.len();
     }
     Ok(())
 }
 
-fn validate_liquid_blocks(content: &str) -> Result<(), String> {
-    // Check that block tags are balanced (if/endif, for/endfor)
-    let mut if_depth: i32 = 0;
-    let mut for_depth: i32 = 0;
+fn next_liquid_markup(content: &str) -> Option<(usize, bool)> {
+    match (content.find("{%"), content.find("{{")) {
+        (Some(tag), Some(output)) if tag <= output => Some((tag, true)),
+        (Some(_), Some(output)) => Some((output, false)),
+        (Some(tag), None) => Some((tag, true)),
+        (None, Some(output)) => Some((output, false)),
+        (None, None) => None,
+    }
+}
 
-    // Simple regex-free scanner for {% tag %} blocks
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        if i + 1 < len && chars[i] == '{' && chars[i + 1] == '%' {
-            // Find closing %}
-            let start = i + 2;
-            if let Some(end_offset) = content[start..].find("%}") {
-                let tag_content = content[start..start + end_offset].trim();
-                let tag_content = tag_content
-                    .trim_start_matches('-')
-                    .trim_end_matches('-')
-                    .trim();
-                let first_word = tag_content.split_whitespace().next().unwrap_or("");
-
-                match first_word {
-                    "if" => if_depth += 1,
-                    "endif" => {
-                        if_depth -= 1;
-                        if if_depth < 0 {
-                            return Err(
-                                "unexpected {% endif %} without matching {% if %}".to_string()
-                            );
-                        }
-                    }
-                    "for" => for_depth += 1,
-                    "endfor" => {
-                        for_depth -= 1;
-                        if for_depth < 0 {
-                            return Err(
-                                "unexpected {% endfor %} without matching {% for %}".to_string()
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-                i = start + end_offset + 2;
-                continue;
+fn find_unquoted(content: &str, needle: &str) -> Option<usize> {
+    let bytes = content.as_bytes();
+    let needle = needle.as_bytes();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index + needle.len() <= bytes.len() {
+        let byte = bytes[index];
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active_quote {
+                quote = None;
             }
+        } else if matches!(byte, b'\'' | b'"') {
+            quote = Some(byte);
+        } else if &bytes[index..index + needle.len()] == needle {
+            return Some(index);
         }
-        i += 1;
+        index += 1;
     }
+    None
+}
 
-    if if_depth > 0 {
-        return Err(format!("{if_depth} unclosed {{% if %}} block(s)"));
-    }
-    if for_depth > 0 {
-        return Err(format!("{for_depth} unclosed {{% for %}} block(s)"));
+fn identifier_at_start(content: &str) -> Option<&str> {
+    let end = content
+        .find(|character: char| !is_liquid_identifier(character))
+        .unwrap_or(content.len());
+    (end > 0).then(|| &content[..end])
+}
+
+fn is_liquid_identifier(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+}
+
+fn validate_liquid_filters(markup: &str) -> Result<(), String> {
+    for pipe in unquoted_byte_positions(markup, b'|') {
+        let after_pipe = markup[pipe + 1..].trim_start();
+        if let Some(filter) = identifier_at_start(after_pipe)
+            && !ALLOWED_LIQUID_FILTERS.contains(&filter)
+        {
+            return Err(format!("unsupported filter: {filter}"));
+        }
     }
     Ok(())
+}
+
+fn validate_liquid_operators(markup: &str) -> Result<(), String> {
+    let bytes = markup.as_bytes();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active_quote {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b'\'' | b'"') {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+
+        let operator = match (byte, bytes.get(index + 1).copied()) {
+            (b'!', Some(b'=')) => Some("!="),
+            (b'>', Some(b'=')) => Some(">="),
+            (b'<', Some(b'=')) => Some("<="),
+            (b'<', _) => Some("<"),
+            _ => None,
+        };
+        if let Some(operator) = operator {
+            return Err(format!("unsupported operator: {operator}"));
+        }
+
+        if bytes[index..].starts_with(b"contains")
+            && is_word_boundary(bytes.get(index.wrapping_sub(1)).copied())
+            && is_word_boundary(bytes.get(index + "contains".len()).copied())
+            && !markup[..index].trim_end().is_empty()
+            && !markup[index + "contains".len()..].trim_start().is_empty()
+            && !markup[..index].trim_end().ends_with('.')
+        {
+            return Err("unsupported operator: contains".to_string());
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn is_word_boundary(byte: Option<u8>) -> bool {
+    byte.is_none_or(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-'))
+}
+
+fn unquoted_byte_positions(content: &str, target: u8) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in content.bytes().enumerate() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active_quote {
+                quote = None;
+            }
+        } else if matches!(byte, b'\'' | b'"') {
+            quote = Some(byte);
+        } else if byte == target {
+            positions.push(index);
+        }
+    }
+    positions
 }
 
 fn count_posts_using_template(conn: &Connection, slug: &str) -> EngineResult<usize> {
@@ -582,6 +651,141 @@ mod tests {
         assert!(validate_template("<div>{{ title }}</div>").is_ok());
         assert!(validate_template("{% if x %}<p>y</p>{% endif %}").is_ok());
         assert!(validate_template("{% for p in posts %}{{ p.title }}{% endfor %}").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_liquid_tags() {
+        for tag in [
+            "unless",
+            "case",
+            "capture",
+            "tablerow",
+            "cycle",
+            "increment",
+        ] {
+            let content = format!("{{% {tag} foo %}}bar{{% end{tag} %}}");
+            assert_eq!(
+                validate_template(&content),
+                Err(format!("unsupported tag: {tag}"))
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_liquid_filters() {
+        for filter in ["upcase", "downcase", "date", "truncate", "split", "reverse"] {
+            let content = format!("{{{{ title | {filter} }}}}");
+            assert_eq!(
+                validate_template(&content),
+                Err(format!("unsupported filter: {filter}"))
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_liquid_operators() {
+        for operator in ["!=", "<", ">=", "<=", "contains"] {
+            let content = format!("{{% if title {operator} other %}}yes{{% endif %}}");
+            assert_eq!(
+                validate_template(&content),
+                Err(format!("unsupported operator: {operator}"))
+            );
+        }
+    }
+
+    #[test]
+    fn validate_allows_the_complete_liquid_subset() {
+        for filter in [
+            "escape",
+            "url_encode",
+            "default: fallback",
+            "append: suffix",
+            "i18n: language",
+            "markdown: post.id, posts, post_paths, media_paths, language, prefix",
+            "slugify",
+        ] {
+            let result = validate_template(&format!("{{{{ title | {filter} }}}}"));
+            assert!(
+                result.is_ok(),
+                "supported filter {filter} was rejected: {result:?}"
+            );
+        }
+        for content in [
+            "{% if title == other %}yes{% elsif total > 0 %}more{% else %}no{% endif %}",
+            "{% if published %}yes{% endif %}",
+            "{% if a == b and c > d %}yes{% endif %}",
+            "{% if a == b or c == blank %}yes{% endif %}",
+            "{% assign href = '/posts/' | append: post.slug %}",
+            "{% render 'partials/card', post: post %}",
+            "{%- for post in posts -%}{{- post.title | escape -}}{%- endfor -%}",
+            "{% if values.size > 0 and map[key] %}yes{% endif %}",
+        ] {
+            let result = validate_template(content);
+            assert!(
+                result.is_ok(),
+                "supported syntax was rejected: {content}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_starter_templates_conform_to_the_published_liquid_subset() {
+        for (name, content) in [
+            (
+                "single-post",
+                include_str!("../../../../assets/starter-templates/single-post.liquid"),
+            ),
+            (
+                "post-list",
+                include_str!("../../../../assets/starter-templates/post-list.liquid"),
+            ),
+            (
+                "not-found",
+                include_str!("../../../../assets/starter-templates/not-found.liquid"),
+            ),
+            (
+                "head",
+                include_str!("../../../../assets/starter-templates/partials/head.liquid"),
+            ),
+            (
+                "language-switcher",
+                include_str!(
+                    "../../../../assets/starter-templates/partials/language-switcher.liquid"
+                ),
+            ),
+            (
+                "menu-items",
+                include_str!("../../../../assets/starter-templates/partials/menu-items.liquid"),
+            ),
+            (
+                "menu",
+                include_str!("../../../../assets/starter-templates/partials/menu.liquid"),
+            ),
+        ] {
+            let result = validate_template(content);
+            assert!(result.is_ok(), "starter template {name}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn publish_rejects_unsupported_filter_and_leaves_template_draft() {
+        let (db, dir) = setup();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Strict",
+            TemplateKind::Post,
+            "{{ title | upcase }}",
+        )
+        .unwrap();
+
+        let error = publish_template(db.conn(), dir.path(), &template.id).unwrap_err();
+
+        assert!(error.to_string().contains("unsupported filter: upcase"));
+        let reloaded = qt::get_template_by_id(db.conn(), &template.id).unwrap();
+        assert_eq!(reloaded.status, TemplateStatus::Draft);
+        assert_eq!(reloaded.content.as_deref(), Some("{{ title | upcase }}"));
+        assert!(!dir.path().join("templates/strict.liquid").exists());
     }
 
     #[test]

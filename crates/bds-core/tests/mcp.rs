@@ -490,6 +490,31 @@ fn every_write_tool_is_inert_then_approves_or_rejects_through_shared_engines() {
 }
 
 #[test]
+fn propose_template_rejects_unsupported_liquid_without_creating_a_proposal() {
+    let fixture = Fixture::new();
+    let context = fixture.context();
+
+    let error = context
+        .call_tool(
+            "propose_template",
+            json!({
+                "title": "Unsafe template",
+                "kind": "partial",
+                "content": "{{ title | upcase }}"
+            }),
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("unsupported filter: upcase"));
+    let db = fixture.database();
+    assert!(
+        mcp::list_proposals(db.conn(), &fixture.project_id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn expiry_invalid_ids_unavailable_projects_and_concurrent_acceptance_are_safe() {
     let fixture = Fixture::new();
     let db = fixture.database();
