@@ -88,7 +88,7 @@ pub fn create_post(
     qp::insert_post(conn, &post)?;
 
     // Index for FTS
-    fts_index_post(conn, &post)?;
+    fts_index_post(conn, data_dir, &post)?;
 
     emit_post(&post, NotificationAction::Created);
     crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
@@ -185,7 +185,7 @@ pub fn update_post(
     qp::update_post(conn, &post)?;
 
     // Re-index FTS
-    fts_index_post(conn, &post)?;
+    fts_index_post(conn, data_dir, &post)?;
 
     emit_post(&post, NotificationAction::Updated);
     crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
@@ -319,7 +319,7 @@ fn publish_post_in_savepoint(
     }
 
     // Re-index FTS
-    fts_index_post(conn, &post)?;
+    fts_index_post(conn, data_dir, &post)?;
 
     Ok(post)
 }
@@ -454,7 +454,7 @@ pub fn discard_post_draft(conn: &Connection, data_dir: &Path, post_id: &str) -> 
     conn.begin_savepoint()?;
     match (|| {
         qp::update_post(conn, &post)?;
-        fts_index_post(conn, &post)?;
+        fts_index_post(conn, data_dir, &post)?;
         Ok(post)
     })() {
         Ok(post) => {
@@ -571,7 +571,7 @@ pub fn upsert_translation(
             qt::update_post_translation(conn, &t)?;
 
             // Re-index FTS for parent post
-            fts_index_post(conn, &post)?;
+            fts_index_post(conn, data_dir, &post)?;
 
             Ok(t)
         }
@@ -596,7 +596,7 @@ pub fn upsert_translation(
             qt::insert_post_translation(conn, &t)?;
 
             // Re-index FTS for parent post
-            fts_index_post(conn, &post)?;
+            fts_index_post(conn, data_dir, &post)?;
 
             Ok(t)
         }
@@ -623,7 +623,7 @@ pub fn delete_translation(
 
     // Re-index FTS for parent post
     if let Ok(post) = qp::get_post_by_id(conn, &t.translation_for) {
-        fts_index_post(conn, &post)?;
+        fts_index_post(conn, data_dir, &post)?;
     }
 
     Ok(())
@@ -643,6 +643,7 @@ pub fn publish_post_translation(
     conn.begin_savepoint()?;
     match publish_translation(conn, data_dir, &mut translation, &post) {
         Ok(()) => {
+            fts_index_post(conn, data_dir, &post)?;
             conn.release_savepoint()?;
             Ok(translation)
         }
@@ -747,7 +748,7 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     // Re-index FTS for all posts in this project
     let posts = qp::list_posts_by_project(conn, project_id)?;
     for post in &posts {
-        fts_index_post(conn, post)?;
+        fts_index_post(conn, data_dir, post)?;
     }
 
     Ok(report)
@@ -895,31 +896,65 @@ fn publish_translation(
 }
 
 /// Index a post in FTS, gathering translation texts.
-fn fts_index_post(conn: &Connection, post: &Post) -> EngineResult<()> {
+fn fts_index_post(conn: &Connection, data_dir: &Path, post: &Post) -> EngineResult<()> {
     let translations = qt::list_post_translations_by_post(conn, &post.id).unwrap_or_default();
     let translation_data: Vec<fts::PostTranslationFts> = translations
         .iter()
-        .map(|t| fts::PostTranslationFts {
-            title: t.title.clone(),
-            excerpt: t.excerpt.clone(),
-            content: t.content.clone(),
-            language: t.language.clone(),
+        .map(|t| {
+            Ok(fts::PostTranslationFts {
+                title: t.title.clone(),
+                excerpt: t.excerpt.clone(),
+                content: resolve_translation_fts_content(data_dir, t)?,
+                language: t.language.clone(),
+            })
         })
-        .collect();
+        .collect::<EngineResult<_>>()?;
 
-    let lang = post.language.as_deref().unwrap_or("en");
+    let main_language = crate::engine::meta::read_project_json(data_dir)
+        .ok()
+        .and_then(|metadata| metadata.main_language)
+        .unwrap_or_else(|| "en".to_string());
+    let content = resolve_post_fts_content(data_dir, post)?;
+    let lang = post.language.as_deref().unwrap_or(&main_language);
     fts::index_post(
         conn,
         &post.id,
         &post.title,
         post.excerpt.as_deref(),
-        post.content.as_deref(),
+        content.as_deref(),
         &post.tags,
         &post.categories,
         &translation_data,
         lang,
     )?;
     Ok(())
+}
+
+fn resolve_post_fts_content(data_dir: &Path, post: &Post) -> EngineResult<Option<String>> {
+    if post.content.is_some() {
+        return Ok(post.content.clone());
+    }
+    if post.file_path.is_empty() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(data_dir.join(&post.file_path))?;
+    let (_fm, body) = read_post_file(&raw).map_err(EngineError::Parse)?;
+    Ok(Some(body))
+}
+
+fn resolve_translation_fts_content(
+    data_dir: &Path,
+    translation: &PostTranslation,
+) -> EngineResult<Option<String>> {
+    if translation.content.is_some() {
+        return Ok(translation.content.clone());
+    }
+    if translation.file_path.is_empty() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(data_dir.join(&translation.file_path))?;
+    let (_fm, body) = read_translation_file(&raw).map_err(EngineError::Parse)?;
+    Ok(Some(body))
 }
 
 /// Check if a file stem looks like a translation filename: `{slug}.{lang}`
@@ -1187,6 +1222,64 @@ mod tests {
         assert_eq!(
             post_insert_media("/media/2026/07/file.pdf", false, "file.pdf"),
             "[file.pdf](/media/2026/07/file.pdf)"
+        );
+    }
+
+    #[test]
+    fn publish_indexes_post_body_from_file_when_db_content_is_cleared() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Published Search",
+            Some("distinctive quokkafire body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        let stored = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert!(stored.content.is_none());
+        assert_eq!(
+            crate::db::fts::search_posts(db.conn(), "quokkafire", "en").unwrap(),
+            vec![post.id]
+        );
+    }
+
+    #[test]
+    fn publish_indexes_translation_body_from_file_when_db_content_is_cleared() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Translated Search",
+            Some("canonical body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Übersetzte Suche",
+            None,
+            Some("markantes drachenfalter wort"),
+        )
+        .unwrap();
+        publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        assert_eq!(
+            crate::db::fts::search_posts(db.conn(), "drachenfalter", "de").unwrap(),
+            vec![post.id]
         );
     }
 
