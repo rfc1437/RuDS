@@ -56,6 +56,7 @@ surface PostControlSurface {
         PublishPostRequested(post)
         DeletePostRequested(post)
         ArchivePostRequested(post)
+        UnarchivePostRequested(post)
         DiscardPostChangesRequested(post)
         SyncPostFromFileRequested(post)
         ImportOrphanPostFileRequested(project, relative_path)
@@ -236,6 +237,15 @@ rule ArchivePost {
     when: ArchivePostRequested(post)
     requires: post.status = draft or post.status = published
     ensures: post.status = archived
+}
+
+rule UnarchivePost {
+    when: UnarchivePostRequested(post)
+    requires: post.status = archived
+    ensures: post.status = draft
+    ensures: post.content = archived_database_content(post) ?? file_body(post.file_path) ?? ""
+    ensures: SearchIndexUpdated(post)
+    ensures: EmbeddingUpdated(post)
 }
 
 rule SyncPostFromFile {

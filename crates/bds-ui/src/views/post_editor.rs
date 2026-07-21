@@ -377,6 +377,7 @@ pub enum PostEditorMsg {
     RemoveCategory(String),
     Save,
     Publish,
+    Unarchive,
     Discard,
     Delete,
     InsertLink,
@@ -486,7 +487,7 @@ pub fn view<'a>(
     .into();
 
     let mut header_action_items: Vec<Element<'a, Message>> = vec![
-        status_badge(&state.status),
+        status_badge(locale, &state.status),
         quick_actions,
         button(
             text(t(locale, "common.save"))
@@ -507,6 +508,19 @@ pub fn view<'a>(
             )
             .on_press(Message::PostEditor(PostEditorMsg::Publish))
             .style(inputs::primary_button)
+            .padding([6, 16])
+            .into(),
+        );
+    }
+    if !on_translation && state.status == PostStatus::Archived {
+        header_action_items.push(
+            button(
+                text(t(locale, "editor.unarchive"))
+                    .size(13)
+                    .shaping(Shaping::Advanced),
+            )
+            .on_press(Message::PostEditor(PostEditorMsg::Unarchive))
+            .style(inputs::secondary_button)
             .padding([6, 16])
             .into(),
         );
@@ -1235,11 +1249,20 @@ fn content_actions_visible(mode: &str) -> bool {
     mode == "markdown"
 }
 
-fn status_badge<'a>(status: &PostStatus) -> Element<'a, Message> {
+fn status_badge<'a>(locale: UiLocale, status: &PostStatus) -> Element<'a, Message> {
     let (label, color) = match status {
-        PostStatus::Draft => ("Draft", Color::from_rgb(0.8, 0.7, 0.2)),
-        PostStatus::Published => ("Published", Color::from_rgb(0.2, 0.7, 0.3)),
-        PostStatus::Archived => ("Archived", Color::from_rgb(0.5, 0.5, 0.5)),
+        PostStatus::Draft => (
+            t(locale, "editor.statusDraft"),
+            Color::from_rgb(0.8, 0.7, 0.2),
+        ),
+        PostStatus::Published => (
+            t(locale, "editor.statusPublished"),
+            Color::from_rgb(0.2, 0.7, 0.3),
+        ),
+        PostStatus::Archived => (
+            t(locale, "editor.statusArchived"),
+            Color::from_rgb(0.5, 0.5, 0.5),
+        ),
     };
     container(
         text(label)

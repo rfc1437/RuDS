@@ -628,7 +628,7 @@ fn persist_post_editor_preview_state_impl(
             Some(state.template_slug.clone())
         };
         post.do_not_translate = state.do_not_translate;
-        if matches!(post.status, PostStatus::Published | PostStatus::Archived) {
+        if post.status == PostStatus::Published {
             post.status = PostStatus::Draft;
         }
         post.updated_at = bds_core::util::now_unix_ms();
@@ -6875,6 +6875,33 @@ impl BdsApp {
         Task::none()
     }
 
+    fn unarchive_post_editor(&mut self, post_id: &str) -> Task<Message> {
+        if let Err(error) = self.persist_post_editor_state(post_id) {
+            self.notify_operation_failed("editor.unarchive", error);
+            return Task::none();
+        }
+        let (Some(db), Some(data_dir)) = (self.db.as_ref(), self.data_dir.as_ref()) else {
+            return Task::none();
+        };
+        match engine::post::unarchive_post(db.conn(), data_dir, post_id) {
+            Ok(post) => {
+                if let Some(editor) = self.post_editors.get_mut(post_id) {
+                    editor.content = post.content.clone().unwrap_or_default();
+                    editor.status = post.status;
+                    editor.updated_at = post.updated_at;
+                    editor.is_dirty = false;
+                    editor.last_edit_at_ms = 0;
+                }
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == post_id) {
+                    tab.is_dirty = false;
+                }
+                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.unarchived"));
+            }
+            Err(error) => self.notify_operation_failed("editor.unarchive", error),
+        }
+        Task::none()
+    }
+
     fn delete_media_editor(&mut self, media_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
             return Task::none();
@@ -10801,6 +10828,86 @@ mod tests {
             }
             PersistedPostState::Translation(_) => panic!("expected canonical post save"),
         }
+    }
+
+    #[test]
+    fn preview_persist_keeps_archived_canonical_post_archived() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Archived",
+            Some("Body"),
+            Vec::new(),
+            vec!["article".to_string()],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        post::archive_post(db.conn(), tmp.path(), &created.id).unwrap();
+        let archived = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        let mut editor = PostEditorState::from_post(
+            &archived,
+            "preview",
+            &["en".to_string()],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        editor.title = "Changed while archived".to_string();
+
+        let result = persist_post_editor_preview_state_impl(&db, &editor).unwrap();
+
+        match result {
+            PersistedPostState::Canonical(post) => {
+                assert_eq!(post.status, PostStatus::Archived);
+                assert_eq!(post.title, "Changed while archived");
+            }
+            PersistedPostState::Translation(_) => panic!("expected canonical post save"),
+        }
+    }
+
+    #[test]
+    fn post_editor_unarchive_action_restores_draft_and_body() {
+        let (db, project, tmp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            tmp.path(),
+            &project.id,
+            "Archived",
+            Some("File body"),
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        post::publish_post(db.conn(), tmp.path(), &created.id).unwrap();
+        post::archive_post(db.conn(), tmp.path(), &created.id).unwrap();
+        let archived = bds_core::db::queries::post::get_post_by_id(db.conn(), &created.id).unwrap();
+        assert_eq!(archived.content, None);
+
+        let mut app = make_app(db, project, &tmp);
+        open_post_editor(&mut app, &archived);
+        let _ = app.handle_post_editor_msg(PostEditorMsg::Unarchive);
+
+        let from_db = bds_core::db::queries::post::get_post_by_id(
+            app.db.as_ref().unwrap().conn(),
+            &created.id,
+        )
+        .unwrap();
+        assert_eq!(from_db.status, PostStatus::Draft);
+        assert_eq!(from_db.content.as_deref(), Some("File body"));
+        assert_eq!(app.post_editors[&created.id].status, PostStatus::Draft);
+        assert_eq!(app.post_editors[&created.id].content, "File body");
+        assert!(app.toasts.iter().any(|toast| {
+            toast.level == ToastLevel::Success
+                && toast.message == t(UiLocale::En, "editor.unarchived")
+        }));
     }
 
     #[test]

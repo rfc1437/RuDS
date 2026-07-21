@@ -199,17 +199,6 @@ pub fn update_post(
             post.content = published_body;
         }
         post.status = PostStatus::Draft;
-    } else if post.status == PostStatus::Archived {
-        if post.content.is_none() && !post.file_path.is_empty() {
-            let abs_path = data_dir.join(&post.file_path);
-            if abs_path.exists()
-                && let Ok(file_content) = fs::read_to_string(&abs_path)
-                && let Ok((_fm, body)) = read_post_file(&file_content)
-            {
-                post.content = Some(body);
-            }
-        }
-        post.status = PostStatus::Draft;
     }
 
     post.updated_at = now_unix_ms();
@@ -389,24 +378,45 @@ pub fn archive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> Engine
             "post is already archived".to_string(),
         ));
     }
-    // Reload content from filesystem if transitioning from published (content is NULL)
-    if post.status == PostStatus::Published && post.content.is_none() && !post.file_path.is_empty()
-    {
-        let abs_path = data_dir.join(&post.file_path);
-        if abs_path.exists()
-            && let Ok(file_content) = fs::read_to_string(&abs_path)
-            && let Ok((_fm, body)) = read_post_file(&file_content)
-        {
-            post.content = Some(body);
-            qp::update_post(conn, &post)?;
-        }
-    }
     let now = now_unix_ms();
-    qp::update_post_status(conn, post_id, &PostStatus::Archived, now)?;
     post.status = PostStatus::Archived;
+    post.updated_at = now;
+    qp::update_post(conn, &post)?;
+    fts_index_post(conn, data_dir, &post)?;
     emit_post(&post, NotificationAction::Updated);
     crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
     Ok(())
+}
+
+/// Restore an archived post to an editable draft.
+pub fn unarchive_post(conn: &Connection, data_dir: &Path, post_id: &str) -> EngineResult<Post> {
+    let mut post = qp::get_post_by_id(conn, post_id)?;
+    if post.status != PostStatus::Archived {
+        return Err(EngineError::Conflict(
+            "cannot unarchive a post that is not archived".to_string(),
+        ));
+    }
+
+    post.content = Some(restore_content_for_unarchive(data_dir, &post));
+    post.status = PostStatus::Draft;
+    post.updated_at = now_unix_ms();
+    qp::update_post(conn, &post)?;
+    fts_index_post(conn, data_dir, &post)?;
+    emit_post(&post, NotificationAction::Updated);
+    crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
+    Ok(post)
+}
+
+fn restore_content_for_unarchive(data_dir: &Path, post: &Post) -> String {
+    post.content.clone().unwrap_or_else(|| {
+        if post.file_path.is_empty() {
+            return String::new();
+        }
+        fs::read_to_string(data_dir.join(&post.file_path))
+            .ok()
+            .and_then(|raw| read_post_file(&raw).ok().map(|(_, body)| body))
+            .unwrap_or_default()
+    })
 }
 
 /// Discard unpublished draft changes and restore the published version.
@@ -2370,6 +2380,65 @@ mod tests {
 
         let from_db = qp::get_post_by_id(db.conn(), &post.id).unwrap();
         assert_eq!(from_db.status, PostStatus::Archived);
+        assert_eq!(from_db.content, None);
+    }
+
+    #[test]
+    fn update_archived_post_keeps_archived_status() {
+        let (db, dir) = setup();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Archived",
+            Some("draft body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        let updated = update_post(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            Some("Changed while archived"),
+            None,
+            None,
+            Some("changed body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(updated.status, PostStatus::Archived);
+        assert_eq!(updated.title, "Changed while archived");
+        assert_eq!(updated.content.as_deref(), Some("changed body"));
+    }
+
+    #[test]
+    fn unarchive_published_post_restores_body_from_file() {
+        let (db, dir) = setup();
+        let post = create_published_post(&db, &dir, "Published", "file body");
+        archive_post(db.conn(), dir.path(), &post.id).unwrap();
+        let archived = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(archived.content, None);
+
+        let unarchived = unarchive_post(db.conn(), dir.path(), &post.id).unwrap();
+
+        assert_eq!(unarchived.status, PostStatus::Draft);
+        assert_eq!(unarchived.content.as_deref(), Some("file body"));
+        assert!(unarchived.updated_at >= archived.updated_at);
+        let from_db = qp::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(from_db.status, PostStatus::Draft);
+        assert_eq!(from_db.content.as_deref(), Some("file body"));
     }
 
     #[test]

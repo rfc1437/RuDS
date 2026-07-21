@@ -21,6 +21,7 @@ impl BdsApp {
             },
             Save(String),
             Publish(String),
+            Unarchive(String),
             Discard(String),
             ShowDelete {
                 tab_id: String,
@@ -208,6 +209,9 @@ impl BdsApp {
                 PostEditorMsg::Publish => {
                     deferred = DeferredPostAction::Publish(tab_id.clone());
                 }
+                PostEditorMsg::Unarchive => {
+                    deferred = DeferredPostAction::Unarchive(tab_id.clone());
+                }
                 PostEditorMsg::Discard => {
                     deferred = DeferredPostAction::Discard(tab_id.clone());
                 }
@@ -323,6 +327,7 @@ impl BdsApp {
             } => self.translate_post_to(&post_id, &target_language),
             DeferredPostAction::Save(tab_id) => self.save_post_editor(&tab_id, true),
             DeferredPostAction::Publish(tab_id) => self.publish_post_editor(&tab_id),
+            DeferredPostAction::Unarchive(tab_id) => self.unarchive_post_editor(&tab_id),
             DeferredPostAction::Discard(tab_id) => self.discard_post_editor(&tab_id),
             DeferredPostAction::ShowDelete { tab_id, name } => {
                 Task::done(Message::ShowModal(modal::ModalState::ConfirmDelete {

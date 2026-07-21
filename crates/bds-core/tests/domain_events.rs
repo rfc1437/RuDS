@@ -335,6 +335,20 @@ fn representative_shared_mutations_emit_exactly_one_typed_event_each() {
         &post.id,
         NotificationAction::Updated,
     );
+    bds_core::engine::post::archive_post(db.conn(), dir.path(), &post.id).unwrap();
+    assert_one_entity_event(
+        &subscription,
+        DomainEntity::Post,
+        &post.id,
+        NotificationAction::Updated,
+    );
+    bds_core::engine::post::unarchive_post(db.conn(), dir.path(), &post.id).unwrap();
+    assert_one_entity_event(
+        &subscription,
+        DomainEntity::Post,
+        &post.id,
+        NotificationAction::Updated,
+    );
 
     bds_core::engine::media::update_media(
         db.conn(),
