@@ -976,6 +976,7 @@ impl CoreHost {
                 let data = object_arg(args, 1)?;
                 public_template(engine::template::update_template(
                     db.conn(),
+                    &self.data_dir,
                     id,
                     &self.project_id,
                     optional_string_field(data, "title"),

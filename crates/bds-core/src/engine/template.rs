@@ -8,7 +8,9 @@ use uuid::Uuid;
 
 use crate::db::queries::template as qt;
 use crate::engine::{EngineError, EngineResult, domain_events};
-use crate::model::{DomainEntity, NotificationAction, Template, TemplateKind, TemplateStatus};
+use crate::model::{
+    DomainEntity, NotificationAction, Post, Tag, Template, TemplateKind, TemplateStatus,
+};
 use crate::util::frontmatter::{TemplateFrontmatter, write_template_file};
 use crate::util::{atomic_write_str, ensure_unique, now_unix_ms, slugify};
 
@@ -73,6 +75,7 @@ pub fn create_template(
 )]
 pub fn update_template(
     conn: &Connection,
+    data_dir: &Path,
     template_id: &str,
     project_id: &str,
     title: Option<&str>,
@@ -82,6 +85,10 @@ pub fn update_template(
     content: Option<&str>,
 ) -> EngineResult<Template> {
     let mut tpl = qt::get_template_by_id(conn, template_id)?;
+    if tpl.project_id != project_id {
+        return Err(EngineError::NotFound(format!("template {template_id}")));
+    }
+    let original_slug = tpl.slug.clone();
 
     // Slug uniqueness check
     if let Some(new_slug) = slug
@@ -119,10 +126,59 @@ pub fn update_template(
         tpl.status = TemplateStatus::Draft;
     }
 
+    let slug_changed = tpl.slug != original_slug;
     tpl.version += 1;
     tpl.updated_at = now_unix_ms();
-    qt::update_template(conn, &tpl)?;
+    conn.begin_savepoint()?;
+    let cascaded = (|| {
+        qt::update_template(conn, &tpl)?;
+        if slug_changed {
+            cascade_template_slug_change(
+                conn,
+                &tpl.project_id,
+                &original_slug,
+                &tpl.slug,
+                tpl.updated_at,
+            )
+        } else {
+            Ok((Vec::new(), Vec::new()))
+        }
+    })();
+    let (affected_posts, affected_tags) = match cascaded {
+        Ok(affected) => {
+            conn.release_savepoint()?;
+            affected
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            return Err(error);
+        }
+    };
+
     emit_template(&tpl, NotificationAction::Updated);
+    for post in &affected_posts {
+        domain_events::entity_changed(
+            &post.project_id,
+            DomainEntity::Post,
+            &post.id,
+            NotificationAction::Updated,
+        );
+    }
+    for tag in &affected_tags {
+        domain_events::entity_changed(
+            &tag.project_id,
+            DomainEntity::Tag,
+            &tag.id,
+            NotificationAction::Updated,
+        );
+    }
+
+    for post in &affected_posts {
+        crate::engine::post::rewrite_published_post(conn, data_dir, &post.id)?;
+    }
+    if slug_changed {
+        crate::engine::tag::rewrite_tags_json(conn, data_dir, &tpl.project_id)?;
+    }
     Ok(tpl)
 }
 
@@ -490,6 +546,64 @@ fn count_tags_using_template(conn: &Connection, slug: &str) -> EngineResult<usiz
     Ok(count as usize)
 }
 
+fn cascade_template_slug_change(
+    conn: &Connection,
+    project_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+    updated_at: i64,
+) -> EngineResult<(Vec<Post>, Vec<Tag>)> {
+    let mut affected_posts = conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .filter(posts::template_slug.eq(old_slug))
+            .select(Post::as_select())
+            .load(c)
+    })?;
+    let mut affected_tags = conn.with(|c| {
+        tags::table
+            .filter(tags::project_id.eq(project_id))
+            .filter(tags::post_template_slug.eq(old_slug))
+            .select(Tag::as_select())
+            .load(c)
+    })?;
+
+    conn.with(|c| {
+        diesel::update(
+            posts::table
+                .filter(posts::project_id.eq(project_id))
+                .filter(posts::template_slug.eq(old_slug)),
+        )
+        .set((
+            posts::template_slug.eq(new_slug),
+            posts::updated_at.eq(updated_at),
+        ))
+        .execute(c)
+    })?;
+    conn.with(|c| {
+        diesel::update(
+            tags::table
+                .filter(tags::project_id.eq(project_id))
+                .filter(tags::post_template_slug.eq(old_slug)),
+        )
+        .set((
+            tags::post_template_slug.eq(new_slug),
+            tags::updated_at.eq(updated_at),
+        ))
+        .execute(c)
+    })?;
+
+    for post in &mut affected_posts {
+        post.template_slug = Some(new_slug.to_string());
+        post.updated_at = updated_at;
+    }
+    for tag in &mut affected_tags {
+        tag.post_template_slug = Some(new_slug.to_string());
+        tag.updated_at = updated_at;
+    }
+    Ok((affected_posts, affected_tags))
+}
+
 fn null_template_slug_on_posts(conn: &Connection, slug: &str) -> EngineResult<()> {
     conn.with(|c| {
         diesel::update(posts::table.filter(posts::template_slug.eq(slug)))
@@ -555,10 +669,11 @@ mod tests {
 
     #[test]
     fn update_template_bumps_version() {
-        let (db, _dir) = setup();
+        let (db, dir) = setup();
         let tpl = create_template(db.conn(), "p1", "Tpl", TemplateKind::Post, "old").unwrap();
         let updated = update_template(
             db.conn(),
+            dir.path(),
             &tpl.id,
             "p1",
             Some("New Title"),
@@ -575,11 +690,12 @@ mod tests {
 
     #[test]
     fn update_template_slug_conflict() {
-        let (db, _dir) = setup();
+        let (db, dir) = setup();
         create_template(db.conn(), "p1", "Alpha", TemplateKind::Post, "").unwrap();
         let t2 = create_template(db.conn(), "p1", "Beta", TemplateKind::Post, "").unwrap();
         let result = update_template(
             db.conn(),
+            dir.path(),
             &t2.id,
             "p1",
             None,
@@ -589,6 +705,149 @@ mod tests {
             None,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_template_slug_cascades_references_files_metadata_and_events() {
+        let (db, dir) = setup();
+        crate::db::fts::ensure_fts_tables(db.conn()).unwrap();
+        let template = create_template(
+            db.conn(),
+            "p1",
+            "Article",
+            TemplateKind::Post,
+            "{{ title }}",
+        )
+        .unwrap();
+        let post = crate::engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Referenced Post",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            None,
+            Some(&template.slug),
+        )
+        .unwrap();
+        let mut published =
+            crate::engine::post::publish_post(db.conn(), dir.path(), &post.id).unwrap();
+        published.updated_at = 1;
+        crate::db::queries::post::update_post(db.conn(), &published).unwrap();
+        let mut tag =
+            crate::engine::tag::create_tag(db.conn(), dir.path(), "p1", "featured", None).unwrap();
+        crate::engine::tag::update_tag(
+            db.conn(),
+            dir.path(),
+            &tag.id,
+            None,
+            None,
+            Some(&template.slug),
+        )
+        .unwrap();
+        tag = crate::db::queries::tag::get_tag_by_id(db.conn(), &tag.id).unwrap();
+        tag.updated_at = 1;
+        crate::db::queries::tag::update_tag(db.conn(), &tag).unwrap();
+        let events = domain_events::subscribe();
+
+        update_template(
+            db.conn(),
+            dir.path(),
+            &template.id,
+            "p1",
+            None,
+            Some("renamed-article"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let cascaded_post = crate::db::queries::post::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(
+            cascaded_post.template_slug.as_deref(),
+            Some("renamed-article")
+        );
+        assert!(cascaded_post.updated_at > 1);
+        let cascaded_tag = crate::db::queries::tag::get_tag_by_id(db.conn(), &tag.id).unwrap();
+        assert_eq!(
+            cascaded_tag.post_template_slug.as_deref(),
+            Some("renamed-article")
+        );
+        assert!(cascaded_tag.updated_at > 1);
+
+        let post_file = fs::read_to_string(dir.path().join(&published.file_path)).unwrap();
+        let (frontmatter, _) = crate::util::frontmatter::read_post_file(&post_file).unwrap();
+        assert_eq!(
+            frontmatter.template_slug.as_deref(),
+            Some("renamed-article")
+        );
+        let tags = crate::engine::meta::read_tags_json(dir.path()).unwrap();
+        assert_eq!(
+            tags[0].post_template_slug.as_deref(),
+            Some("renamed-article")
+        );
+
+        let emitted = events.drain();
+        for (entity, id) in [
+            (DomainEntity::Template, template.id.as_str()),
+            (DomainEntity::Post, post.id.as_str()),
+            (DomainEntity::Tag, tag.id.as_str()),
+        ] {
+            assert!(emitted.iter().any(|event| matches!(
+                event,
+                crate::model::DomainEvent::EntityChanged {
+                    project_id,
+                    entity: actual_entity,
+                    entity_id,
+                    action: NotificationAction::Updated,
+                } if project_id == "p1" && actual_entity == &entity && entity_id == id
+            )));
+        }
+    }
+
+    #[test]
+    fn update_template_slug_rolls_back_the_whole_reference_cascade() {
+        let (db, dir) = setup();
+        let template =
+            create_template(db.conn(), "p1", "Article", TemplateKind::Post, "body").unwrap();
+        let mut post = crate::db::queries::post::make_test_post("post1", "p1", "post");
+        post.template_slug = Some(template.slug.clone());
+        crate::db::queries::post::insert_post(db.conn(), &post).unwrap();
+        let tag =
+            crate::engine::tag::create_tag(db.conn(), dir.path(), "p1", "featured", None).unwrap();
+        crate::engine::tag::update_tag(
+            db.conn(),
+            dir.path(),
+            &tag.id,
+            None,
+            None,
+            Some(&template.slug),
+        )
+        .unwrap();
+        db.conn().reject_tag_template_updates_for_test().unwrap();
+
+        let result = update_template(
+            db.conn(),
+            dir.path(),
+            &template.id,
+            "p1",
+            None,
+            Some("renamed-article"),
+            None,
+            None,
+            None,
+        );
+
+        assert!(result.is_err());
+        let unchanged_template = qt::get_template_by_id(db.conn(), &template.id).unwrap();
+        assert_eq!(unchanged_template.slug, "article");
+        let unchanged_post = crate::db::queries::post::get_post_by_id(db.conn(), &post.id).unwrap();
+        assert_eq!(unchanged_post.template_slug.as_deref(), Some("article"));
+        let unchanged_tag = crate::db::queries::tag::get_tag_by_id(db.conn(), &tag.id).unwrap();
+        assert_eq!(unchanged_tag.post_template_slug.as_deref(), Some("article"));
     }
 
     #[test]

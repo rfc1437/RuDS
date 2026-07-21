@@ -53,6 +53,15 @@ impl DbConnection {
             .batch_execute("ROLLBACK TO bds_operation; RELEASE bds_operation")
     }
 
+    #[cfg(test)]
+    pub(crate) fn reject_tag_template_updates_for_test(&self) -> diesel::QueryResult<()> {
+        self.0.borrow_mut().batch_execute(
+            "CREATE TRIGGER reject_template_tag_cascade \
+             BEFORE UPDATE OF post_template_slug ON tags \
+             BEGIN SELECT RAISE(ABORT, 'reject cascade'); END",
+        )
+    }
+
     /// Filesystem database path for sibling surfaces that must open their own
     /// short-lived connection (gallery workers, preview servers, Lua hosts).
     pub fn database_path(&self) -> diesel::QueryResult<std::path::PathBuf> {

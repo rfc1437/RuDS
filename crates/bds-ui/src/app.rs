@@ -797,12 +797,14 @@ fn post_preview_url(post: &Post, language: &str, main_language: &str) -> String 
 
 fn save_template_editor_state_impl(
     db: &Database,
+    data_dir: &Path,
     project_id: &str,
     state: &TemplateEditorState,
 ) -> Result<Template, String> {
     engine::template::validate_template(&state.content)?;
     engine::template::update_template(
         db.conn(),
+        data_dir,
         &state.template_id,
         project_id,
         Some(&state.title),
@@ -6621,7 +6623,11 @@ impl BdsApp {
             return Task::none();
         };
 
-        match save_template_editor_state_impl(db, &project.id, state) {
+        let Some(ref data_dir) = self.data_dir else {
+            return Task::none();
+        };
+
+        match save_template_editor_state_impl(db, data_dir, &project.id, state) {
             Ok(tmpl) => {
                 let s = self.template_editors.get_mut(template_id).unwrap();
                 s.is_dirty = false;
@@ -11322,7 +11328,7 @@ mod tests {
 
     #[test]
     fn template_editor_save_flow_persists_changes() {
-        let (db, project, _tmp) = setup();
+        let (db, project, tmp) = setup();
         let created = template::create_template(
             db.conn(),
             &project.id,
@@ -11338,7 +11344,8 @@ mod tests {
         editor.title = "Updated Template".to_string();
         editor.content = "<main>{{ title }}</main>".to_string();
 
-        let saved_template = save_template_editor_state_impl(&db, &project.id, &editor).unwrap();
+        let saved_template =
+            save_template_editor_state_impl(&db, tmp.path(), &project.id, &editor).unwrap();
         assert_eq!(saved_template.title, "Updated Template");
 
         let saved =
@@ -11349,7 +11356,7 @@ mod tests {
 
     #[test]
     fn template_editor_save_rejects_invalid_content() {
-        let (db, project, _tmp) = setup();
+        let (db, project, tmp) = setup();
         let created = template::create_template(
             db.conn(),
             &project.id,
@@ -11364,7 +11371,8 @@ mod tests {
         let mut editor = TemplateEditorState::from_template(&template_record);
         editor.content = "{% if title %}".to_string();
 
-        let error = save_template_editor_state_impl(&db, &project.id, &editor).unwrap_err();
+        let error =
+            save_template_editor_state_impl(&db, tmp.path(), &project.id, &editor).unwrap_err();
         assert!(error.contains("endif") || error.contains("unclosed") || error.contains("missing"));
 
         let saved =

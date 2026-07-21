@@ -1224,6 +1224,7 @@ impl TuiApp {
                 let project_id = self.project_id()?.to_owned();
                 engine::template::update_template(
                     db.conn(),
+                    self.data_dir()?,
                     &id,
                     &project_id,
                     Some(&title),
