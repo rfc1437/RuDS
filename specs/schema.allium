@@ -1,7 +1,7 @@
 -- allium: 1
 -- bDS Persistence Data Contract
 -- Scope: core (Wave 1 — exact compatibility contract)
--- Distilled from: ../bDS2/src/main/database/schema.ts
+-- Distilled from: crates/bds-core/migrations/ and ../bDS2/priv/repo/migrations/
 --
 -- This document specifies the persisted data model the rewrite must be able
 -- to read and write. It is the ground truth for storage compatibility.
@@ -25,6 +25,23 @@ enum TemplateStatus {
 enum ScriptStatus {
     draft
     published
+}
+
+enum McpProposalKind {
+    draft_post
+    propose_script
+    propose_template
+    propose_media_translation
+    propose_media_metadata
+    propose_post_metadata
+}
+
+enum McpProposalStatus {
+    pending
+    executing
+    accepted
+    rejected
+    expired
 }
 
 -- ============================================================================
@@ -229,6 +246,7 @@ entity ChatConversation {
     title: String
     model: String?          -- Model used for conversation
     copilot_session_id: String?  -- Legacy, no longer used
+    surface_state: String?  -- Serialized form/tab/dismissal state for inline chat surfaces
     created_at: Timestamp
     updated_at: Timestamp
 }
@@ -314,6 +332,26 @@ entity AiEndpointModel {
     supports_vision: Boolean
     updated_at: Timestamp
 }
+
+entity McpProposal {
+    -- RuDS persistence record. bDS2 stores the common kind, status,
+    -- entity_id, data, created_at, and expires_at subset without project,
+    -- result, or resolution timestamps.
+    id: String              -- UUID v4
+    project_id: String
+    kind: McpProposalKind
+    status: McpProposalStatus
+    entity_id: String
+    data: String            -- Serialized inert proposal payload
+    result: String?         -- Serialized resolution result
+    created_at: Timestamp
+    expires_at: Timestamp
+    resolved_at: Timestamp?
+}
+
+-- INTENTIONAL DIVERGENCE: bDS2 persists publish_jobs, but RuDS keeps publish
+-- jobs in memory. Maintainer decision #86 found no value in persisted job
+-- history, so no PublishJob persistence entity or table exists in RuDS.
 
 -- ============================================================================
 -- EMBEDDINGS TABLES
@@ -528,6 +566,7 @@ surface ChatConversationRecordSurface {
         conversation.title
         conversation.model when conversation.model != null
         conversation.copilot_session_id when conversation.copilot_session_id != null
+        conversation.surface_state when conversation.surface_state != null
         conversation.created_at
         conversation.updated_at
 }
@@ -608,6 +647,22 @@ surface AiEndpointModelRecordSurface {
         endpoint_model.supports_tools
         endpoint_model.supports_vision
         endpoint_model.updated_at
+}
+
+surface McpProposalRecordSurface {
+    context proposal: McpProposal
+
+    exposes:
+        proposal.id
+        proposal.project_id
+        proposal.kind
+        proposal.status
+        proposal.entity_id
+        proposal.data
+        proposal.result when proposal.result != null
+        proposal.created_at
+        proposal.expires_at
+        proposal.resolved_at when proposal.resolved_at != null
 }
 
 surface EmbeddingKeyRecordSurface {
@@ -759,6 +814,16 @@ invariant UniqueDismissedDuplicatePair {
                     and a.post_id_b = b.post_id_b)
 }
 
+invariant UniqueMcpProposalEntityStatus {
+    -- Enforced by SQLite unique index mcp_proposals_entity_idx.
+    for a in McpProposals:
+        for b in McpProposals:
+            a != b implies
+                not (a.kind = b.kind
+                    and a.entity_id = b.entity_id
+                    and a.status = b.status)
+}
+
 -- ============================================================================
 -- FTS5 VIRTUAL TABLE SCHEMAS (Snowball Stemmer Integration)
 -- ============================================================================
@@ -791,7 +856,8 @@ value Fts5MediaSchema {
 
 value MigrationVersion {
     -- Schema version tracking via embedded Diesel migrations
-    -- Current version: 20260718000000 (initial compatible schema baseline)
+    -- Current version: 2026-07-22-161429-0000
+    --   (MCP proposal entity/status uniqueness and non-null entity IDs)
     -- Migration directories located in: crates/bds-core/migrations/
     -- Note: Migration list documented in comments, not as Allium value
 }

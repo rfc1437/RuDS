@@ -93,6 +93,78 @@ mod tests {
     }
 
     #[test]
+    fn mcp_proposal_enum_constraints_round_trip_and_reject_unknown_values() {
+        use crate::db::queries::{mcp_proposal, project};
+        use crate::model::{McpProposal, ProposalKind, ProposalStatus};
+
+        let db = migrated_database();
+        project::insert_project(db.conn(), &project::make_test_project("p1", "blog")).unwrap();
+        let kinds = [
+            ProposalKind::DraftPost,
+            ProposalKind::ProposeScript,
+            ProposalKind::ProposeTemplate,
+            ProposalKind::ProposeMediaTranslation,
+            ProposalKind::ProposeMediaMetadata,
+            ProposalKind::ProposePostMetadata,
+        ];
+        let statuses = [
+            ProposalStatus::Pending,
+            ProposalStatus::Executing,
+            ProposalStatus::Accepted,
+            ProposalStatus::Rejected,
+            ProposalStatus::Expired,
+        ];
+
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let status = statuses[index % statuses.len()];
+            let id = format!("proposal-{index}");
+            let proposal = McpProposal {
+                id: id.clone(),
+                project_id: "p1".into(),
+                kind,
+                status,
+                entity_id: id.clone(),
+                data: "{}".into(),
+                result: None,
+                created_at: 1,
+                expires_at: 2,
+                resolved_at: None,
+            };
+            mcp_proposal::insert_proposal(db.conn(), &proposal).unwrap();
+            let stored = mcp_proposal::get_proposal(db.conn(), &id).unwrap();
+            assert_eq!(stored.kind, kind);
+            assert_eq!(stored.status, status);
+        }
+
+        for (id, kind, status) in [
+            ("invalid-kind", "unknown", "pending"),
+            ("invalid-status", "draft_post", "unknown"),
+        ] {
+            let result = db.conn().with(|connection| {
+                diesel::insert_into(mcp_proposals::table)
+                    .values((
+                        mcp_proposals::id.eq(id),
+                        mcp_proposals::project_id.eq("p1"),
+                        mcp_proposals::kind.eq(kind),
+                        mcp_proposals::status.eq(status),
+                        mcp_proposals::entity_id.eq(id),
+                        mcp_proposals::data.eq("{}"),
+                        mcp_proposals::created_at.eq(1_i64),
+                        mcp_proposals::expires_at.eq(2_i64),
+                    ))
+                    .execute(connection)
+            });
+            assert!(matches!(
+                result,
+                Err(diesel::result::Error::DatabaseError(
+                    diesel::result::DatabaseErrorKind::CheckViolation,
+                    _
+                ))
+            ));
+        }
+    }
+
+    #[test]
     fn migrations_create_every_persisted_table() {
         let db = migrated_database();
         macro_rules! assert_empty {
