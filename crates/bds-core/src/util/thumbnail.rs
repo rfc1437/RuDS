@@ -1,5 +1,5 @@
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader};
+use image::{DynamicImage, GenericImageView, ImageReader};
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
@@ -101,13 +101,11 @@ pub fn generate_thumbnail(
 
     match size.format {
         ThumbnailFormat::Webp => {
-            // Encode as WebP via image crate
-            let mut buf = Cursor::new(Vec::new());
-            resized
-                .write_to(&mut buf, ImageFormat::WebP)
-                .map_err(|e| format!("WebP encode: {e}"))?;
-            let _ = quality; // image crate WebP encoder doesn't expose quality directly
-            fs::write(dest, buf.into_inner()).map_err(|e| format!("write: {e}"))?;
+            let rgba = resized.to_rgba8();
+            let encoded = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height())
+                .encode_simple(false, f32::from(quality))
+                .map_err(|e| format!("WebP encode: {e:?}"))?;
+            fs::write(dest, &*encoded).map_err(|e| format!("write: {e}"))?;
         }
         ThumbnailFormat::Jpeg => {
             let rgb = resized.to_rgb8();
@@ -325,6 +323,8 @@ mod tests {
         // 100x80 is smaller than 150 wide, no enlargement
         assert_eq!(w, 100);
         assert_eq!(h, 80);
+        let encoded = fs::read(&dest).unwrap();
+        assert_eq!(&encoded[12..16], b"VP8 ", "thumbnail must use lossy WebP");
     }
 
     #[test]

@@ -34,6 +34,7 @@ axum = "0.8"
 walkdir = "2"
 futures = "0.3"
 image = "0.25"
+webp = { version = "0.3.1", default-features = false }
 rust-stemmers = "1"
 sys-locale = "0.3"
 fluent-bundle = "0.16"
