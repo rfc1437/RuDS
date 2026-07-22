@@ -384,7 +384,7 @@ config {
 -- ============================================================================
 
 rule IndexMediaForSearch {
-    when: SearchIndexUpdated(media: media/Media)
+    when: SearchIndexUpdated(media)
     -- Index fields: title, alt, caption, original_name, tags
     -- Plus all translation titles, alts, and captions
     let all_text = concat(

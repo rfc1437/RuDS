@@ -60,7 +60,8 @@ rule ClientUnsubscription {
 }
 
 rule ServerSideUiLanguage {
-    when: GlobalSettingWritten(key: "ui.language")
+    when: GlobalSettingWritten(key)
+    requires: key = "ui.language"
     -- The UI language is a single server-side setting: changing it in any
     -- client persists it and re-renders every connected client. The OS
     -- locale is only the fallback when the setting is unset.

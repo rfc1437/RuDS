@@ -52,13 +52,15 @@ rule ModeResolution {
 }
 
 rule DesktopBoot {
-    when: ApplicationStarted(mode: desktop)
+    when: ApplicationStarted(mode)
+    requires: mode = desktop
     -- Unchanged behavior: wx window shell, loopback HTTP endpoint.
     ensures: DesktopWindowStarted()
 }
 
 rule ServerBoot {
-    when: ApplicationStarted(mode: server)
+    when: ApplicationStarted(mode)
+    requires: mode = server
     -- Started by `bds-cli server` or explicit desktop boot mode. Headless: no
     -- desktop UI children at all. Works on macOS, Windows, Linux.
     ensures: LoopbackEndpointStarted()

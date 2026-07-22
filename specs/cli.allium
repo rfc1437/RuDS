@@ -68,7 +68,8 @@ rule AirplaneGate {
 }
 
 rule RebuildFull {
-    when: CliCommandExecuted(command: rebuild)
+    when: CliCommandExecuted(command)
+    requires: command = rebuild
     requires: not CliInvocation.incremental
     -- The same step sequence as the GUI "Rebuild Database"
     -- (BDS.Maintenance.full_rebuild_steps — posts, media, scripts,
@@ -78,7 +79,8 @@ rule RebuildFull {
 }
 
 rule RebuildIncremental {
-    when: CliCommandExecuted(command: rebuild)
+    when: CliCommandExecuted(command)
+    requires: command = rebuild
     requires: CliInvocation.incremental
     -- Metadata diff, then auto-apply file→db for every difference and
     -- import every orphan file.
@@ -86,7 +88,8 @@ rule RebuildIncremental {
 }
 
 rule Repair {
-    when: CliCommandExecuted(command: repair)
+    when: CliCommandExecuted(command)
+    requires: command = repair
     -- Subcommand argument selects the repair part: post-links,
     -- media-links, thumbnails, embeddings, or search — the standard
     -- rebuild tasks outside the full rebuild.
@@ -94,7 +97,8 @@ rule Repair {
 }
 
 rule Render {
-    when: CliCommandExecuted(command: render)
+    when: CliCommandExecuted(command)
+    requires: command = render
     -- Default: render all site sections plus the search index.
     -- --incremental: validate the generated output and apply only the
     -- differences (targeted render + extra-file deletion + calendar).
@@ -104,14 +108,16 @@ rule Render {
 }
 
 rule Upload {
-    when: CliCommandExecuted(command: upload)
+    when: CliCommandExecuted(command)
+    requires: command = upload
     -- Uses the project publishing preferences (ssh host/user/path/mode)
     -- exactly like the app's upload, and waits for the publish job.
     ensures: SiteUploaded()
 }
 
 rule GitSync {
-    when: CliCommandExecuted(command: push | pull)
+    when: CliCommandExecuted(command)
+    requires: command = push or command = pull
     -- push: git push of the project repository to origin.
     -- pull: git pull --ff-only, then the incremental cache update
     -- (metadata diff auto-apply + orphan import) so the database
@@ -120,7 +126,8 @@ rule GitSync {
 }
 
 rule CreatePost {
-    when: CliCommandExecuted(command: post)
+    when: CliCommandExecuted(command)
+    requires: command = post
     -- Post data from parameters or JSON on stdin (LLM-friendly).
     -- Language is auto-detected when missing: the configured AI
     -- endpoint (airplane mode routes to the local model), falling back
@@ -132,7 +139,8 @@ rule CreatePost {
 }
 
 rule CreateMedia {
-    when: CliCommandExecuted(command: media)
+    when: CliCommandExecuted(command)
+    requires: command = media
     -- Imports the image, then best-effort AI enrichment: generated
     -- title, alt text, caption, and translations to all configured
     -- blog languages (the gallery pipeline without post linking).
@@ -140,7 +148,8 @@ rule CreateMedia {
 }
 
 rule CreateGallery {
-    when: CliCommandExecuted(command: gallery)
+    when: CliCommandExecuted(command)
+    requires: command = gallery
     -- Creates the post, then runs the shared gallery import pipeline
     -- for every referenced image: import, mandatory post link, AI
     -- enrichment, translations; finally the post auto-translation.
@@ -149,7 +158,8 @@ rule CreateGallery {
 }
 
 rule Preferences {
-    when: CliCommandExecuted(command: config)
+    when: CliCommandExecuted(command)
+    requires: command = config
     -- get/list expose effective global preferences shared with the app:
     -- canonical defaults overlaid by persisted values. Project-file settings and
     -- internal maintenance state are outside this list. Secret-backed keys remain
@@ -159,21 +169,24 @@ rule Preferences {
 }
 
 rule Projects {
-    when: CliCommandExecuted(command: project)
+    when: CliCommandExecuted(command)
+    requires: command = project
     -- list, add <path> (register a folder in the cache database), and
     -- switch <id|slug|name> (change the active project).
     ensures: ProjectRegistryUpdated()
 }
 
 rule Tui {
-    when: CliCommandExecuted(command: tui)
+    when: CliCommandExecuted(command)
+    requires: command = tui
     -- The native CLI enters TUI boot mode so the interactive terminal UI owns
     -- the terminal.
     ensures: TuiStarted()
 }
 
 rule Server {
-    when: CliCommandExecuted(command: server)
+    when: CliCommandExecuted(command)
+    requires: command = server
     -- Starts the dedicated headless SSH host with optional bind address, port,
     -- database path, and data-directory overrides. The standalone bds-server
     -- executable is not distributed.
@@ -181,7 +194,8 @@ rule Server {
 }
 
 rule RunLuaTask {
-    when: CliCommandExecuted(command: lua)
+    when: CliCommandExecuted(command)
+    requires: command = lua
     -- Runs a utility ("task", long-running) script from the database by
     -- slug in the active project, with the managed-job execution budget
     -- (unlimited time/reductions) but synchronously. Macro and
@@ -190,7 +204,8 @@ rule RunLuaTask {
 }
 
 rule InstallLauncher {
-    when: CliInstallRequested() or CliCommandExecuted(command: install)
+    when: CliInstallRequested() or CliCommandExecuted(command)
+    requires: command = install
     -- Settings/Data, the future TUI settings action, and `bds-cli install`
     -- share one guarded installer. A forwarding launcher written to
     -- ~/.local/bin/bds-cli executes the packaged native CLI in place, so it

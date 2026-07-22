@@ -24,7 +24,8 @@ surface TuiSurface {
 }
 
 rule SidebarNavigation {
-    when: TuiKeyPressed(code: "up" | "down" | "j" | "k")
+    when: TuiKeyPressed(code, _)
+    requires: code = "up" or code = "down" or code = "j" or code = "k"
     -- Selection moves over the flattened sidebar items and skips
     -- section headers; data comes from BDS.UI.Sidebar.view, identical
     -- to the GUI sidebar content.
@@ -32,7 +33,8 @@ rule SidebarNavigation {
 }
 
 rule OpenEntry {
-    when: TuiKeyPressed(code: "enter")
+    when: TuiKeyPressed(code, _)
+    requires: code = "enter"
     -- Posts open in the editor by default (title + textarea seeded from
     -- the persisted form; syntax highlighting and word wrap on; ctrl+e
     -- switches to the rendered preview). New empty posts created with
@@ -43,7 +45,9 @@ rule OpenEntry {
 }
 
 rule SaveAndPublish {
-    when: TuiKeyPressed(code: "s" | "p", modifiers: "ctrl")
+    when: TuiKeyPressed(code, modifiers)
+    requires: code = "s" or code = "p"
+    requires: modifiers = "ctrl"
     -- ctrl+s saves the draft, ctrl+p saves and publishes — both through
     -- BDS.UI.PostEditor.Persistence, so files, embeddings, search, and
     -- the event bus behave exactly as a GUI save.
@@ -51,7 +55,9 @@ rule SaveAndPublish {
 }
 
 rule EditorMode {
-    when: TuiKeyPressed(code: "e", modifiers: "ctrl")
+    when: TuiKeyPressed(code, modifiers)
+    requires: code = "e"
+    requires: modifiers = "ctrl"
     -- ctrl+e toggles between the syntax-highlighted editor (the default
     -- mode when opening a post) and the read-only rendered-Markdown
     -- preview (rendered through tui-markdown so headings/emphasis/lists
@@ -72,7 +78,9 @@ rule CodeEditorWrapping {
 }
 
 rule AiQuickAction {
-    when: TuiKeyPressed(code: "g", modifiers: "ctrl")
+    when: TuiKeyPressed(code, modifiers)
+    requires: code = "g"
+    requires: modifiers = "ctrl"
     -- One-shot AI post analysis (title/excerpt suggestions). Gated by
     -- airplane mode: without a local endpoint the TUI shows a status
     -- message instead of calling out.
@@ -80,7 +88,8 @@ rule AiQuickAction {
 }
 
 rule ProjectSwitcher {
-    when: TuiKeyPressed(code: "p")
+    when: TuiKeyPressed(code, _)
+    requires: code = "p"
     -- "p" opens the projects overlay: all projects from the caching
     -- database with the active one marked; enter activates the selected
     -- project (BDS.Projects.set_active_project) and reloads the sidebar.
@@ -100,7 +109,8 @@ rule ProjectSwitcher {
 }
 
 rule SidebarSearch {
-    when: TuiKeyPressed(code: "/")
+    when: TuiKeyPressed(code, _)
+    requires: code = "/"
     -- "/" in sidebar focus opens a vi-style search prompt in the status
     -- line that live-filters the current view through the same
     -- BDS.UI.Sidebar filter params the GUI sidebar uses (posts, pages,
@@ -113,7 +123,8 @@ rule SidebarSearch {
 }
 
 rule CommandPrompt {
-    when: TuiKeyPressed(code: ":")
+    when: TuiKeyPressed(code, _)
+    requires: code = ":"
     -- Vi-style prompt: ":" opens a filterable list of the parameterless
     -- Blog-menu shell commands (metadata diff, validate site, force
     -- render, rebuilds, reindex, translations, duplicates, upload,
@@ -127,7 +138,8 @@ rule CommandPrompt {
 }
 
 rule SettingsPanel {
-    when: TuiKeyPressed(code: "6")
+    when: TuiKeyPressed(code, _)
+    requires: code = "6"
     -- "6" opens the settings panel (issue #29), matching the GUI panel
     -- numbering: the sidebar lists the same preference sections as the
     -- settings backends (Project, Editor, Content, AI, Technology,
@@ -145,7 +157,8 @@ rule SettingsPanel {
 }
 
 rule TagsPanel {
-    when: TuiKeyPressed(code: "5")
+    when: TuiKeyPressed(code, _)
+    requires: code = "5"
     -- "5" opens the tags view (issue #34), matching the GUI panel
     -- numbering. The sidebar lists the same three sections as the GUI
     -- tags editor (Tag Cloud, Create / Edit, Merge Tags — from
@@ -165,7 +178,8 @@ rule TagsPanel {
 }
 
 rule GitPanel {
-    when: TuiKeyPressed(code: "7")
+    when: TuiKeyPressed(code, _)
+    requires: code = "7"
     -- "7" opens the git panel (issue #30) for content sync: the sidebar
     -- lists the changed files from git status (code + path, branch with
     -- ahead/behind counts in the title) with the commit history in its
@@ -183,7 +197,8 @@ rule GitPanel {
 }
 
 rule ReportPanels {
-    when: ShellTaskCompleted(route: "metadata_diff" | "site_validation")
+    when: ShellTaskCompleted(route)
+    requires: route = "metadata_diff" or route = "site_validation"
     -- Completed metadata diff and site validation tasks open a
     -- scrollable report panel showing the differences. Enter applies
     -- the whole report — metadata diff repairs all items from the
@@ -204,7 +219,8 @@ rule MultiClientSync {
 }
 
 rule ServerSideLocale {
-    when: TuiSettingsChanged(key: "ui.language")
+    when: TuiSettingsChanged(key)
+    requires: key = "ui.language"
     -- The TUI re-reads the server-side UI language and re-renders; all
     -- clients always share one language.
     ensures: TuiRelocalized()
