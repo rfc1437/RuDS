@@ -9,7 +9,7 @@ use bds_core::model::{ChatConversation, ImportDefinition, Media, Post, Script, T
 
 use crate::app::Message;
 use crate::components::inputs;
-use crate::i18n::relative_date::format_relative_date;
+use crate::i18n::relative_date::{format_locale, format_relative_date};
 use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 use crate::state::sidebar_filter::{CalendarYear, MediaFilter, PostFilter};
@@ -145,12 +145,21 @@ fn post_type_icon(categories: &[String]) -> &'static str {
     "\u{1F4C4}" // 📄 document (default)
 }
 
-/// Per sidebar_views.allium PostDateFormat: "Feb 10, 2026".
-fn format_post_date(unix_ms: i64) -> String {
-    let secs = unix_ms / 1000;
-    let dt = chrono::DateTime::from_timestamp(secs, 0)
-        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
-    dt.format("%b %d, %Y").to_string()
+/// Per sidebar_views.allium PostDateFormat: locale-formatted short month,
+/// numeric day, and numeric year (for example, "Feb 10, 2026" in en-US).
+fn format_post_date(locale: UiLocale, unix_ms: i64) -> String {
+    let timestamp = chrono::DateTime::from_timestamp_millis(unix_ms)
+        .unwrap_or_default()
+        .with_timezone(&chrono::Local);
+    let pattern = match locale {
+        UiLocale::En => "%b %-d, %Y",
+        UiLocale::De => "%-d. %b. %Y",
+        UiLocale::Fr | UiLocale::It | UiLocale::Es => "%-d %b %Y",
+    };
+
+    timestamp
+        .format_localized(pattern, format_locale(locale))
+        .to_string()
 }
 
 /// Search input style.
@@ -314,23 +323,14 @@ fn with_row_delete(
     )
 }
 
-/// Month name abbreviation for calendar display.
-fn month_abbr(month: u32) -> &'static str {
-    match month {
-        1 => "Jan",
-        2 => "Feb",
-        3 => "Mar",
-        4 => "Apr",
-        5 => "May",
-        6 => "Jun",
-        7 => "Jul",
-        8 => "Aug",
-        9 => "Sep",
-        10 => "Oct",
-        11 => "Nov",
-        12 => "Dec",
-        _ => "???",
-    }
+/// Locale-formatted short month name for calendar display.
+fn month_abbr(locale: UiLocale, month: u32) -> String {
+    chrono::NaiveDate::from_ymd_opt(2000, month, 1)
+        .map(|date| {
+            date.format_localized("%b", format_locale(locale))
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 /// Build the calendar archive tree widget.
@@ -376,7 +376,7 @@ fn calendar_widget(
         if year_selected {
             for cm in &cy.months {
                 let month_selected = selected_month == Some(cm.month);
-                let label = format!("  {} ({})", month_abbr(cm.month), cm.count);
+                let label = format!("  {} ({})", month_abbr(locale, cm.month), cm.count);
                 let month_val = cm.month;
                 let on_month_clone = on_month.clone();
                 let style_fn = if month_selected {
@@ -797,7 +797,7 @@ pub fn view(
                         bds_core::model::PostStatus::Published => "\u{25CF}",
                         bds_core::model::PostStatus::Archived => "\u{25A1}",
                     };
-                    let date = format_post_date(p.created_at);
+                    let date = format_post_date(locale, p.created_at);
                     let prefix_chars: usize = 5;
                     let text_px = width
                         - SIDEBAR_TEXT_OVERHEAD_PX
@@ -1320,6 +1320,35 @@ pub fn view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Local, TimeZone};
+
+    fn local_ms(year: i32, month: u32, day: u32) -> i64 {
+        Local
+            .with_ymd_and_hms(year, month, day, 12, 0, 0)
+            .single()
+            .expect("unambiguous local time")
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn post_date_uses_locale_order_month_name_and_punctuation() {
+        let timestamp = local_ms(2026, 2, 10);
+
+        assert_eq!(format_post_date(UiLocale::En, timestamp), "Feb 10, 2026");
+        assert_eq!(format_post_date(UiLocale::De, timestamp), "10. Feb. 2026");
+        assert_eq!(format_post_date(UiLocale::Fr, timestamp), "10 févr. 2026");
+        assert_eq!(format_post_date(UiLocale::It, timestamp), "10 feb 2026");
+        assert_eq!(format_post_date(UiLocale::Es, timestamp), "10 feb 2026");
+    }
+
+    #[test]
+    fn calendar_month_abbreviations_use_ui_locale() {
+        assert_eq!(month_abbr(UiLocale::En, 3), "Mar");
+        assert_eq!(month_abbr(UiLocale::De, 3), "Mär");
+        assert_eq!(month_abbr(UiLocale::Fr, 2), "févr.");
+        assert_eq!(month_abbr(UiLocale::It, 1), "gen");
+        assert_eq!(month_abbr(UiLocale::Es, 1), "ene");
+    }
 
     #[test]
     fn truncate_media_title_short() {

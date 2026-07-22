@@ -3,7 +3,7 @@ use chrono::{DateTime, Datelike, Local, NaiveDate};
 
 /// chrono format locale per sidebar_views.allium LocaleMapping
 /// (ui_locale → format_locale, e.g. "de" → "de-DE").
-fn format_locale(locale: UiLocale) -> chrono::Locale {
+pub(crate) fn format_locale(locale: UiLocale) -> chrono::Locale {
     match locale {
         UiLocale::En => chrono::Locale::en_US,
         UiLocale::De => chrono::Locale::de_DE,
