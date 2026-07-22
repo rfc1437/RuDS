@@ -41,7 +41,9 @@ pub struct MediaLinkRebuildReport {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ThumbnailRepairReport {
+    pub media_processed: usize,
     pub media_repaired: usize,
+    pub media_failed: usize,
     pub thumbnails_generated: usize,
 }
 
@@ -111,9 +113,10 @@ pub fn regenerate_missing_thumbnails(
 ) -> EngineResult<ThumbnailRepairReport> {
     let mut report = ThumbnailRepairReport::default();
     for item in qm::list_media_by_project(conn, project_id)? {
-        if !item.mime_type.starts_with("image/") {
+        if !item.mime_type.starts_with("image/") || item.mime_type.contains("svg") {
             continue;
         }
+        report.media_processed += 1;
         let prefix = &item.id[..2.min(item.id.len())];
         let missing = THUMBNAIL_SIZES
             .iter()
@@ -132,14 +135,17 @@ pub fn regenerate_missing_thumbnails(
         if missing == 0 {
             continue;
         }
-        generate_all_thumbnails(
+        match generate_all_thumbnails(
             &data_dir.join(&item.file_path),
             &data_dir.join("thumbnails"),
             &item.id,
-        )
-        .map_err(EngineError::Parse)?;
-        report.media_repaired += 1;
-        report.thumbnails_generated += missing;
+        ) {
+            Ok(_) => {
+                report.media_repaired += 1;
+                report.thumbnails_generated += missing;
+            }
+            Err(_) => report.media_failed += 1,
+        }
     }
     Ok(report)
 }
@@ -968,6 +974,12 @@ mod tests {
         path
     }
 
+    fn heic_fixture() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("close.heic")
+    }
+
     #[test]
     fn import_media_creates_artifacts() {
         let (db, dir) = setup();
@@ -1030,6 +1042,103 @@ mod tests {
                 .join(format!("{}-{}.{ext}", media.id, size.name));
             assert!(thumb.exists(), "thumbnail {} should exist", size.name);
         }
+    }
+
+    #[test]
+    fn import_heic_and_heif_create_dimensions_and_thumbnails() {
+        let (db, dir) = setup();
+
+        for (original_name, mime_type) in
+            [("photo.heic", "image/heic"), ("photo.heif", "image/heif")]
+        {
+            let media = import_media(
+                db.conn(),
+                dir.path(),
+                "p1",
+                &heic_fixture(),
+                original_name,
+                None,
+                None,
+                None,
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+
+            assert_eq!(media.mime_type, mime_type);
+            assert_eq!((media.width, media.height), (Some(27), Some(27)));
+            for size in THUMBNAIL_SIZES {
+                let extension = match size.format {
+                    ThumbnailFormat::Webp => "webp",
+                    ThumbnailFormat::Jpeg => "jpg",
+                };
+                assert!(
+                    dir.path()
+                        .join("thumbnails")
+                        .join(&media.id[..2])
+                        .join(format!("{}-{}.{}", media.id, size.name, extension))
+                        .is_file(),
+                    "missing {} thumbnail",
+                    size.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regenerate_missing_thumbnails_reports_undecodable_media_and_continues() {
+        let (db, dir) = setup();
+        let good = import_media(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &create_test_png(dir.path()),
+            "good.png",
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let bad_source = dir.path().join("bad.png");
+        fs::write(&bad_source, "not an image").unwrap();
+        let bad = import_media(
+            db.conn(),
+            dir.path(),
+            "p1",
+            &bad_source,
+            "bad.png",
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let good_small = dir
+            .path()
+            .join("thumbnails")
+            .join(&good.id[..2])
+            .join(format!("{}-small.webp", good.id));
+        fs::remove_file(good_small).unwrap();
+
+        let report = regenerate_missing_thumbnails(db.conn(), dir.path(), "p1").unwrap();
+
+        assert_eq!(report.media_processed, 2);
+        assert_eq!(report.media_repaired, 1);
+        assert_eq!(report.media_failed, 1);
+        assert_eq!(report.thumbnails_generated, 1);
+        assert!(
+            !dir.path()
+                .join("thumbnails")
+                .join(&bad.id[..2])
+                .join(format!("{}-small.webp", bad.id))
+                .exists()
+        );
     }
 
     #[test]

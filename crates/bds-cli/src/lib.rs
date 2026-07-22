@@ -388,6 +388,7 @@ fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
             "scripts_created": report.scripts_created,
             "scripts_updated": report.scripts_updated,
             "thumbnails_generated": thumbnails.thumbnails_generated,
+            "thumbnail_media_failed": thumbnails.media_failed,
         }),
     );
     result.progress = progress
@@ -446,7 +447,12 @@ fn repair(db: &Database, part: RepairPart) -> Result<CommandOutput> {
             })?;
             Ok(output(
                 "Missing thumbnails regenerated",
-                json!({"media_repaired": report.media_repaired, "thumbnails_generated": report.thumbnails_generated}),
+                json!({
+                    "media_processed": report.media_processed,
+                    "media_repaired": report.media_repaired,
+                    "media_failed": report.media_failed,
+                    "thumbnails_generated": report.thumbnails_generated,
+                }),
             ))
         }
         RepairPart::Search => {

@@ -881,21 +881,16 @@ impl CoreHost {
                 Ok(json!({"generated": true, "media_id": item.id}))
             }
             "regenerate_missing_thumbnails" => {
-                let mut generated = 0;
-                for item in media::list_media_by_project(db.conn(), &self.project_id)? {
-                    let path = self
-                        .data_dir
-                        .join(crate::util::thumbnail_path(&item.id, "small", "webp"));
-                    if !path.is_file() {
-                        crate::util::thumbnail::generate_all_thumbnails(
-                            &self.data_dir.join(&item.file_path),
-                            &self.data_dir.join("thumbnails"),
-                            &item.id,
-                        )?;
-                        generated += 1;
-                    }
-                }
-                Ok(json!({"generated": generated}))
+                let report = engine::media::regenerate_missing_thumbnails(
+                    db.conn(),
+                    &self.data_dir,
+                    &self.project_id,
+                )?;
+                Ok(json!({
+                    "processed": report.media_processed,
+                    "generated": report.thumbnails_generated,
+                    "failed": report.media_failed,
+                }))
             }
             "reindex_text" => {
                 engine::search::reindex_project(db.conn(), &self.project_id, None)?;

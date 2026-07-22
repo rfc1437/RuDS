@@ -1,5 +1,5 @@
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, ImageReader};
+use image::{DynamicImage, GenericImageView, ImageReader, RgbImage, RgbaImage};
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
@@ -70,7 +70,15 @@ pub fn generate_thumbnail(
     quality: u8,
 ) -> Result<(), String> {
     let img = load_and_orient(source)?;
+    generate_thumbnail_from_image(&img, dest, size, quality)
+}
 
+fn generate_thumbnail_from_image(
+    img: &DynamicImage,
+    dest: &Path,
+    size: &ThumbnailSize,
+    quality: u8,
+) -> Result<(), String> {
     let resized = match size.fit {
         ThumbnailFit::Inside => {
             let (orig_w, orig_h) = img.dimensions();
@@ -129,6 +137,7 @@ pub fn generate_all_thumbnails(
 ) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
     let prefix = &media_id[..2.min(media_id.len())];
+    let image = load_and_orient(source)?;
 
     for size in THUMBNAIL_SIZES {
         let ext = match size.format {
@@ -143,7 +152,7 @@ pub fn generate_all_thumbnails(
         } else {
             80
         };
-        generate_thumbnail(source, &dest, size, quality)?;
+        generate_thumbnail_from_image(&image, &dest, size, quality)?;
         paths.push(dest.to_string_lossy().to_string());
     }
 
@@ -152,6 +161,10 @@ pub fn generate_all_thumbnails(
 
 /// Load an image and apply EXIF orientation.
 fn load_and_orient(path: &Path) -> Result<DynamicImage, String> {
+    if is_heic_path(path) {
+        return load_heic(path);
+    }
+
     let reader = ImageReader::open(path)
         .map_err(|e| format!("open image: {e}"))?
         .with_guessed_format()
@@ -167,6 +180,135 @@ fn load_and_orient(path: &Path) -> Result<DynamicImage, String> {
     }
 
     Ok(img)
+}
+
+fn is_heic_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "heic" | "heif"))
+}
+
+fn load_heic(path: &Path) -> Result<DynamicImage, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read HEIC image: {error}"))?;
+    let decoded = hpvcd::Decoder::default()
+        .with_decode_gain_map(false)
+        .decode(&bytes)
+        .map_err(|error| format!("decode HEIC image: {error}"))?;
+    let shift = decoded.bit_depth.minus8();
+    let rgb = match decoded.pixels {
+        hpvcd::ImageBuffer::Rgb8(pixels) => pixels,
+        hpvcd::ImageBuffer::Rgb16(samples) => samples
+            .into_iter()
+            .map(|sample| (sample >> shift) as u8)
+            .collect(),
+        hpvcd::ImageBuffer::Luma8(samples) => {
+            samples.into_iter().flat_map(|sample| [sample; 3]).collect()
+        }
+        hpvcd::ImageBuffer::Luma16(samples) => samples
+            .into_iter()
+            .flat_map(|sample| [(sample >> shift) as u8; 3])
+            .collect(),
+    };
+    let mut image = if let Some(alpha) = decoded.alpha {
+        let alpha: Vec<u8> = match alpha {
+            hpvcd::SampleBuf::U8(samples) => samples,
+            hpvcd::SampleBuf::U16(samples) => samples
+                .into_iter()
+                .map(|sample| (sample >> shift) as u8)
+                .collect(),
+        };
+        if alpha.len().checked_mul(3) != Some(rgb.len()) {
+            return Err("decode HEIC image: decoder returned an invalid alpha buffer".to_string());
+        }
+        let rgba = rgb
+            .chunks_exact(3)
+            .zip(alpha)
+            .flat_map(|(rgb, alpha)| [rgb[0], rgb[1], rgb[2], alpha])
+            .collect();
+        DynamicImage::ImageRgba8(
+            RgbaImage::from_raw(decoded.width, decoded.height, rgba).ok_or_else(|| {
+                "decode HEIC image: decoder returned an invalid pixel buffer".to_string()
+            })?,
+        )
+    } else {
+        DynamicImage::ImageRgb8(
+            RgbImage::from_raw(decoded.width, decoded.height, rgb).ok_or_else(|| {
+                "decode HEIC image: decoder returned an invalid pixel buffer".to_string()
+            })?,
+        )
+    };
+
+    if let Some(aperture) = decoded.clean_aperture
+        && let Some((x, y, width, height)) =
+            clean_aperture_crop(decoded.width, decoded.height, decoded.orientation, aperture)
+    {
+        image = image.crop_imm(x, y, width, height);
+    }
+
+    Ok(image)
+}
+
+fn clean_aperture_crop(
+    oriented_width: u32,
+    oriented_height: u32,
+    orientation: hpvcd::Orientation,
+    aperture: hpvcd::CleanAperture,
+) -> Option<(u32, u32, u32, u32)> {
+    let width = aperture.width_pixels()?;
+    let height = aperture.height_pixels()?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let swaps_axes = matches!(
+        orientation,
+        hpvcd::Orientation::Rotate90
+            | hpvcd::Orientation::Rotate270
+            | hpvcd::Orientation::Transpose
+            | hpvcd::Orientation::Transverse
+    );
+    let (source_width, source_height) = if swaps_axes {
+        (oriented_height, oriented_width)
+    } else {
+        (oriented_width, oriented_height)
+    };
+    if width > source_width || height > source_height {
+        return None;
+    }
+
+    let horizontal_offset =
+        f64::from(aperture.horiz_off_n) / f64::from(aperture.horiz_off_d.max(1));
+    let vertical_offset = f64::from(aperture.vert_off_n) / f64::from(aperture.vert_off_d.max(1));
+    let source_x = ((f64::from(source_width - width) / 2.0) + horizontal_offset)
+        .round()
+        .clamp(0.0, f64::from(source_width - width)) as u32;
+    let source_y = ((f64::from(source_height - height) / 2.0) + vertical_offset)
+        .round()
+        .clamp(0.0, f64::from(source_height - height)) as u32;
+
+    let crop = match orientation {
+        hpvcd::Orientation::Normal => (source_x, source_y, width, height),
+        hpvcd::Orientation::FlipH => (source_width - source_x - width, source_y, width, height),
+        hpvcd::Orientation::FlipV => (source_x, source_height - source_y - height, width, height),
+        hpvcd::Orientation::Rotate180 => (
+            source_width - source_x - width,
+            source_height - source_y - height,
+            width,
+            height,
+        ),
+        hpvcd::Orientation::Rotate90 => {
+            (source_height - source_y - height, source_x, height, width)
+        }
+        hpvcd::Orientation::Rotate270 => (source_y, source_width - source_x - width, height, width),
+        hpvcd::Orientation::Transpose => (
+            source_height - source_y - height,
+            source_width - source_x - width,
+            height,
+            width,
+        ),
+        hpvcd::Orientation::Transverse => (source_y, source_x, height, width),
+    };
+    (crop.0 + crop.2 <= oriented_width && crop.1 + crop.3 <= oriented_height).then_some(crop)
 }
 
 /// Read EXIF orientation tag from raw file bytes.
@@ -268,6 +410,31 @@ fn apply_orientation(img: DynamicImage, orientation: u16) -> DynamicImage {
 
 /// Extract image dimensions from a file (header-only, no full decode).
 pub fn image_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    if is_heic_path(path) {
+        let bytes = fs::read(path).map_err(|error| format!("read HEIC image: {error}"))?;
+        let info =
+            hpvcd::read_heic_info(&bytes).map_err(|error| format!("HEIC dimensions: {error}"))?;
+        let swaps_axes = matches!(
+            info.orientation,
+            hpvcd::Orientation::Rotate90
+                | hpvcd::Orientation::Rotate270
+                | hpvcd::Orientation::Transpose
+                | hpvcd::Orientation::Transverse
+        );
+        if let Some(aperture) = info.clean_aperture
+            && let (Some(width), Some(height)) = (aperture.width_pixels(), aperture.height_pixels())
+            && width > 0
+            && height > 0
+        {
+            return Ok(if swaps_axes {
+                (height, width)
+            } else {
+                (width, height)
+            });
+        }
+        return Ok((info.width, info.height));
+    }
+
     let reader = ImageReader::open(path)
         .map_err(|e| format!("open: {e}"))?
         .with_guessed_format()
@@ -309,6 +476,12 @@ mod tests {
         let img = DynamicImage::new_rgb8(100, 80);
         img.save(&path).unwrap();
         path
+    }
+
+    fn heic_fixture() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("close.heic")
     }
 
     #[test]
@@ -357,6 +530,8 @@ mod tests {
         assert_eq!(mime_from_extension("jpg"), "image/jpeg");
         assert_eq!(mime_from_extension("PNG"), "image/png");
         assert_eq!(mime_from_extension("webp"), "image/webp");
+        assert_eq!(mime_from_extension("HEIC"), "image/heic");
+        assert_eq!(mime_from_extension("heif"), "image/heif");
         assert_eq!(mime_from_extension("xyz"), "application/octet-stream");
     }
 
@@ -367,5 +542,20 @@ mod tests {
         let (w, h) = image_dimensions(&source).unwrap();
         assert_eq!(w, 100);
         assert_eq!(h, 80);
+    }
+
+    #[test]
+    fn heic_dimensions_and_thumbnails() {
+        let dir = TempDir::new().unwrap();
+        let source = heic_fixture();
+
+        assert_eq!(image_dimensions(&source).unwrap(), (27, 27));
+
+        let paths =
+            generate_all_thumbnails(&source, &dir.path().join("thumbnails"), "heic-test").unwrap();
+        assert_eq!(paths.len(), THUMBNAIL_SIZES.len());
+        assert!(paths.iter().all(|path| Path::new(path).is_file()));
+        assert_eq!(image_dimensions(Path::new(&paths[0])).unwrap(), (27, 27));
+        assert_eq!(image_dimensions(Path::new(&paths[3])).unwrap(), (448, 448));
     }
 }

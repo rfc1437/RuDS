@@ -19,6 +19,7 @@ unicode-normalization = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
 image = { workspace = true }
+hpvcd = { workspace = true }
 webp = { workspace = true }
 rust-stemmers = { workspace = true }
 sys-locale = { workspace = true }

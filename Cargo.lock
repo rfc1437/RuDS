@@ -932,6 +932,7 @@ dependencies = [
  "fastembed",
  "fluent-bundle",
  "fluent-syntax",
+ "hpvcd",
  "htmd",
  "image 0.25.10",
  "keyring",
@@ -4046,6 +4047,12 @@ name = "hmac-sha256"
 version = "1.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec9d92d097f4749b64e8cc33d924d9f40a2d4eb91402b458014b781f5733d60f"
+
+[[package]]
+name = "hpvcd"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f06638af0669411fb9ab793bb86c534d560bf8b384fb48975afc82a52cdd341"
 
 [[package]]
 name = "htmd"
