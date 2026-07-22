@@ -849,14 +849,27 @@ mod tests {
 
     #[test]
     fn video_macros_with_missing_ids_still_use_the_localized_templates() {
-        let rendered =
-            expand_builtin_macros("[[youtube]] [[vimeo]]", &MacroRenderContext::default());
+        for (language, youtube_title, vimeo_title) in [
+            ("en", "YouTube video", "Vimeo video"),
+            ("de", "YouTube-Video", "Vimeo-Video"),
+            ("fr", "Vidéo YouTube", "Vidéo Vimeo"),
+            ("it", "Video YouTube", "Video Vimeo"),
+            ("es", "Vídeo de YouTube", "Vídeo de Vimeo"),
+        ] {
+            let mut roots = serde_json::Map::new();
+            roots.insert("language".into(), serde_json::json!(language));
+            let context = MacroRenderContext {
+                roots,
+                ..MacroRenderContext::default()
+            };
+            let rendered = expand_builtin_macros("[[youtube]] [[vimeo]]", &context);
 
-        assert!(rendered.contains("https://www.youtube.com/embed/?rel=0"));
-        assert!(rendered.contains("https://player.vimeo.com/video/"));
-        assert!(rendered.contains("title=\"YouTube video\""));
-        assert!(rendered.contains("title=\"Vimeo video\""));
-        assert!(!rendered.contains("Missing"));
+            assert!(rendered.contains("https://www.youtube.com/embed/?rel=0"));
+            assert!(rendered.contains("https://player.vimeo.com/video/"));
+            assert!(rendered.contains(&format!("title=\"{youtube_title}\"")));
+            assert!(rendered.contains(&format!("title=\"{vimeo_title}\"")));
+            assert!(!rendered.contains("Missing"));
+        }
     }
 
     #[test]

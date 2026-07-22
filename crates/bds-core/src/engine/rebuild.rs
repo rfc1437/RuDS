@@ -10,6 +10,7 @@ use crate::engine::media;
 use crate::engine::post;
 use crate::engine::script_rebuild;
 use crate::engine::template_rebuild;
+use crate::i18n::{UiLocale, translate, translate_with};
 
 /// Report from a full rebuild operation.
 #[derive(Debug, Default)]
@@ -74,8 +75,69 @@ pub fn rebuild_incremental(
     Ok(result)
 }
 
-/// Progress callback: (percent 0.0..1.0, phase description).
-pub type ProgressFn = Arc<dyn Fn(f32, &str) + Send + Sync>;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebuildProgress {
+    LoadingProjectMetadata,
+    ScanningPosts,
+    PostItem {
+        current: usize,
+        total: usize,
+        name: String,
+    },
+    ScanningMedia,
+    MediaItem {
+        current: usize,
+        total: usize,
+        name: String,
+    },
+    RebuildingTemplates,
+    RebuildingScripts,
+    ImportingTags,
+    RefreshingSemanticIndex,
+    Complete,
+}
+
+impl RebuildProgress {
+    pub fn localized(&self, locale: UiLocale) -> String {
+        match self {
+            Self::LoadingProjectMetadata => {
+                translate(locale, "engine.progress.loadingProjectMetadata")
+            }
+            Self::ScanningPosts => translate(locale, "engine.progress.scanningPosts"),
+            Self::PostItem {
+                current,
+                total,
+                name,
+            } => localize_item(locale, "engine.progress.postItem", *current, *total, name),
+            Self::ScanningMedia => translate(locale, "engine.progress.scanningMedia"),
+            Self::MediaItem {
+                current,
+                total,
+                name,
+            } => localize_item(locale, "engine.progress.mediaItem", *current, *total, name),
+            Self::RebuildingTemplates => translate(locale, "engine.progress.rebuildingTemplates"),
+            Self::RebuildingScripts => translate(locale, "engine.progress.rebuildingScripts"),
+            Self::ImportingTags => translate(locale, "engine.progress.importingTags"),
+            Self::RefreshingSemanticIndex => {
+                translate(locale, "engine.progress.refreshingSemanticIndex")
+            }
+            Self::Complete => translate(locale, "engine.progress.rebuildComplete"),
+        }
+    }
+}
+
+fn localize_item(locale: UiLocale, key: &str, current: usize, total: usize, name: &str) -> String {
+    let current = current.to_string();
+    let total = total.to_string();
+    translate_with(
+        locale,
+        key,
+        &[("current", &current), ("total", &total), ("name", name)],
+    )
+}
+
+/// Progress callback: (percent 0.0..1.0, semantic progress event).
+pub type ProgressFn = Arc<dyn Fn(f32, &RebuildProgress) + Send + Sync>;
 
 /// Orchestrate a full rebuild from filesystem into the database.
 ///
@@ -116,23 +178,23 @@ fn rebuild_from_filesystem_inner(
     on_progress: Option<ProgressFn>,
 ) -> EngineResult<FullRebuildReport> {
     let mut report = FullRebuildReport::default();
-    let progress = |pct: f32, msg: &str| {
+    let progress = |pct: f32, event: RebuildProgress| {
         if let Some(ref f) = on_progress {
-            f(pct, msg);
+            f(pct, &event);
         }
     };
 
     // Phase weights: posts 0.0..0.35, media 0.35..0.70, templates 0.70..0.85, scripts 0.85..1.0
 
     // 1. Load portable project metadata and clear all reconstructible rows.
-    progress(0.0, "Loading project metadata...");
+    progress(0.0, RebuildProgress::LoadingProjectMetadata);
     fts::ensure_fts_tables(conn)?;
     crate::engine::meta::startup_sync(data_dir)?;
     crate::engine::meta::sync_metadata_from_filesystem(conn, data_dir, project_id)?;
     clear_project_rows(conn, project_id)?;
 
     // 2. Rebuild posts  (0.00 .. 0.35)
-    progress(0.01, "Scanning posts...");
+    progress(0.01, RebuildProgress::ScanningPosts);
     let post_item_cb: Option<post::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: post::ItemProgressFn = Box::new(move |current, total, name| {
@@ -142,8 +204,14 @@ fn rebuild_from_filesystem_inner(
                 1.0
             };
             let global_pct = 0.01 + phase_pct * 0.34;
-            let msg = format!("Posts: {current}/{total} \u{2014} {name}");
-            cb(global_pct, &msg);
+            cb(
+                global_pct,
+                &RebuildProgress::PostItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            );
         });
         f
     });
@@ -160,7 +228,7 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(post_report.errors);
 
     // 3. Rebuild media  (0.35 .. 0.70)
-    progress(0.35, "Scanning media...");
+    progress(0.35, RebuildProgress::ScanningMedia);
     let media_item_cb: Option<media::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: media::ItemProgressFn = Box::new(move |current, total, name| {
@@ -170,8 +238,14 @@ fn rebuild_from_filesystem_inner(
                 1.0
             };
             let global_pct = 0.35 + phase_pct * 0.35;
-            let msg = format!("Media: {current}/{total} \u{2014} {name}");
-            cb(global_pct, &msg);
+            cb(
+                global_pct,
+                &RebuildProgress::MediaItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            );
         });
         f
     });
@@ -188,7 +262,7 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(media_report.errors);
 
     // 4. Rebuild templates  (0.70 .. 0.85)
-    progress(0.70, "Rebuilding templates...");
+    progress(0.70, RebuildProgress::RebuildingTemplates);
     let tpl_report =
         template_rebuild::rebuild_templates_from_filesystem(conn, data_dir, project_id)?;
     report.templates_created = tpl_report.created;
@@ -196,7 +270,7 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(tpl_report.errors);
 
     // 5. Rebuild scripts  (0.85 .. 0.95)
-    progress(0.85, "Rebuilding scripts...");
+    progress(0.85, RebuildProgress::RebuildingScripts);
     let script_report =
         script_rebuild::rebuild_scripts_from_filesystem(conn, data_dir, project_id)?;
     report.scripts_created = script_report.created;
@@ -204,7 +278,7 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(script_report.errors);
 
     // 6. Restore relationships and tags (0.95 .. 1.0)
-    progress(0.95, "Importing tags...");
+    progress(0.95, RebuildProgress::ImportingTags);
     super::tag::import_tags_from_file(conn, data_dir, project_id)?;
     super::tag::sync_tags_from_posts(conn, project_id)?;
     post::rebuild_all_links(conn, data_dir, project_id)?;
@@ -216,11 +290,11 @@ fn rebuild_from_filesystem_inner(
         )));
     }
 
-    progress(0.98, "Refreshing semantic index...");
+    progress(0.98, RebuildProgress::RefreshingSemanticIndex);
     crate::engine::embedding::EmbeddingService::production(conn, data_dir)
         .index_unindexed(project_id)?;
 
-    progress(1.0, "Rebuild complete");
+    progress(1.0, RebuildProgress::Complete);
     Ok(report)
 }
 
@@ -302,6 +376,27 @@ mod tests {
     };
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn progress_events_use_the_selected_ui_locale() {
+        assert_eq!(
+            RebuildProgress::LoadingProjectMetadata.localized(UiLocale::It),
+            "Caricamento dei metadati del progetto…"
+        );
+        assert_eq!(
+            RebuildProgress::PostItem {
+                current: 2,
+                total: 4,
+                name: "Bonjour".into(),
+            }
+            .localized(UiLocale::Fr),
+            "Articles : 2/4 — Bonjour"
+        );
+        assert_eq!(
+            RebuildProgress::Complete.localized(UiLocale::De),
+            "Neuaufbau abgeschlossen"
+        );
+    }
 
     fn setup() -> (Database, TempDir) {
         let db = Database::open_in_memory().unwrap();

@@ -13,6 +13,7 @@ use crate::engine::ai::{
     TranslationResult,
 };
 use crate::engine::{EngineError, EngineResult};
+use crate::i18n::{UiLocale, translate, translate_with};
 use crate::model::{Media, Post, PostStatus};
 use crate::util::frontmatter::read_post_file;
 
@@ -24,6 +25,29 @@ pub struct FillMissingTranslationsReport {
     pub warned_count: usize,
     pub nothing_to_do: bool,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FillMissingTranslationsProgress {
+    ScanningPublishedPosts,
+    TranslatingPost { title: String, language: String },
+    Complete,
+}
+
+impl FillMissingTranslationsProgress {
+    pub fn localized(&self, locale: UiLocale) -> String {
+        match self {
+            Self::ScanningPublishedPosts => {
+                translate(locale, "engine.progress.scanningPublishedPosts")
+            }
+            Self::TranslatingPost { title, language } => translate_with(
+                locale,
+                "engine.progress.translatingPost",
+                &[("title", title), ("language", language)],
+            ),
+            Self::Complete => translate(locale, "engine.progress.translationBatchComplete"),
+        }
+    }
 }
 
 pub fn configured_languages(main_language: &str, blog_languages: &[String]) -> Vec<String> {
@@ -64,7 +88,7 @@ pub fn fill_missing_translations(
     main_language: &str,
     blog_languages: &[String],
     offline_mode: bool,
-    mut on_progress: impl FnMut(f32, &str) -> bool,
+    mut on_progress: impl FnMut(f32, &FillMissingTranslationsProgress) -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
     fill_missing_translations_with(
         conn,
@@ -90,7 +114,7 @@ fn fill_missing_translations_with(
     blog_languages: &[String],
     post_translator: &mut dyn FnMut(&Post, &str) -> EngineResult<TranslationResult>,
     media_translator: &mut dyn FnMut(&Media, &str) -> EngineResult<MediaTranslationResult>,
-    on_progress: &mut dyn FnMut(f32, &str) -> bool,
+    on_progress: &mut dyn FnMut(f32, &FillMissingTranslationsProgress) -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
     let configured = configured_languages(main_language, blog_languages);
     if configured.len() <= 1 {
@@ -100,7 +124,10 @@ fn fill_missing_translations_with(
         });
     }
     let posts = qp::list_posts_by_project(conn, project_id)?;
-    if !on_progress(0.0, "Scanning published posts") {
+    if !on_progress(
+        0.0,
+        &FillMissingTranslationsProgress::ScanningPublishedPosts,
+    ) {
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     let mut work = Vec::new();
@@ -108,7 +135,10 @@ fn fill_missing_translations_with(
         .into_iter()
         .filter(|post| post.status == PostStatus::Published && !post.do_not_translate)
     {
-        if !on_progress(0.0, "Scanning published posts") {
+        if !on_progress(
+            0.0,
+            &FillMissingTranslationsProgress::ScanningPublishedPosts,
+        ) {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
         for language in missing_languages(conn, &post, &configured)? {
@@ -126,7 +156,10 @@ fn fill_missing_translations_with(
     for (index, (post, language)) in work.iter().enumerate() {
         if !on_progress(
             0.15 + (index as f32 / work.len() as f32) * 0.85,
-            &format!("{} → {language}", post.title),
+            &FillMissingTranslationsProgress::TranslatingPost {
+                title: post.title.clone(),
+                language: language.clone(),
+            },
         ) {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
@@ -151,7 +184,7 @@ fn fill_missing_translations_with(
             }
         }
     }
-    if !on_progress(1.0, "Translation batch complete") {
+    if !on_progress(1.0, &FillMissingTranslationsProgress::Complete) {
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     Ok(report)
@@ -398,6 +431,26 @@ mod tests {
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::engine::post::{create_post, publish_post, upsert_translation};
     use tempfile::TempDir;
+
+    #[test]
+    fn progress_events_use_the_selected_ui_locale() {
+        assert_eq!(
+            FillMissingTranslationsProgress::ScanningPublishedPosts.localized(UiLocale::De),
+            "Veröffentlichte Beiträge werden durchsucht…"
+        );
+        assert_eq!(
+            FillMissingTranslationsProgress::TranslatingPost {
+                title: "Hallo".into(),
+                language: "fr".into(),
+            }
+            .localized(UiLocale::Fr),
+            "Traduction de Hallo → fr"
+        );
+        assert_eq!(
+            FillMissingTranslationsProgress::Complete.localized(UiLocale::Es),
+            "Lote de traducciones completado"
+        );
+    }
 
     #[test]
     fn batch_translates_only_missing_languages_and_publishes() {

@@ -234,6 +234,47 @@ static RENDER_MAPS: LazyLock<[HashMap<String, String>; 5]> = LazyLock::new(|| {
 mod tests {
     use super::*;
 
+    #[test]
+    fn engine_progress_keys_exist_in_every_ui_catalog() {
+        let keys = [
+            "engine-progress-scanningPublishedPosts",
+            "engine-progress-translatingPost",
+            "engine-progress-translationBatchComplete",
+            "engine-progress-loadingProjectMetadata",
+            "engine-progress-scanningPosts",
+            "engine-progress-postItem",
+            "engine-progress-scanningMedia",
+            "engine-progress-mediaItem",
+            "engine-progress-rebuildingTemplates",
+            "engine-progress-rebuildingScripts",
+            "engine-progress-importingTags",
+            "engine-progress-refreshingSemanticIndex",
+            "engine-progress-rebuildComplete",
+        ];
+        let catalogs = [
+            ("en", UI_EN),
+            ("de", include_str!("../../../../locales/ui/de.ftl")),
+            ("fr", include_str!("../../../../locales/ui/fr.ftl")),
+            ("it", include_str!("../../../../locales/ui/it.ftl")),
+            ("es", include_str!("../../../../locales/ui/es.ftl")),
+        ];
+
+        for (language, source) in catalogs {
+            let present = resource(source)
+                .entries()
+                .filter_map(|entry| match entry {
+                    fluent_syntax::ast::Entry::Message(message) => {
+                        Some(message.id.name.to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<std::collections::HashSet<_>>();
+            for key in keys {
+                assert!(present.contains(key), "{language} is missing {key}");
+            }
+        }
+    }
+
     // LanguageNormalization invariant: base-extract and fallback
     #[test]
     fn normalize_strips_region() {

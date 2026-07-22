@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, anyhow, bail};
 use bds_core::db::{Database, DbConnection};
 use bds_core::engine::{self, cli_sync, domain_events};
+use bds_core::i18n::UiLocale;
 use bds_core::model::{DomainEntity, NotificationAction, Project, ScriptKind};
 use bds_core::scripting::{CoreHost, ExecutionControl, ExecutionKind, execute_many_with_host};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -359,7 +360,8 @@ fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
             db.conn(),
             &data_dir,
             &project.id,
-            Some(Arc::new(move |value, message| {
+            Some(Arc::new(move |value, event| {
+                let message = event.localized(UiLocale::En);
                 let line = format!("[{:>3}%] {message}", (value * 100.0).round() as i32);
                 let mut progress = progress_sink
                     .lock()

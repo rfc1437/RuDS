@@ -3,29 +3,33 @@ use super::*;
 impl BdsApp {
     pub(super) fn handle_engine_message(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::RebuildDatabase => self.spawn_engine_task(
-                "engine.rebuildStarted",
-                |db_path, project_id, data_dir, tm, tid| {
-                    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                    let on_progress: engine::rebuild::ProgressFn = Arc::new(move |pct, msg| {
-                        tm.report_progress(tid, Some(pct), Some(msg.to_string()));
-                    });
-                    let report = engine::rebuild::rebuild_from_filesystem_with_progress(
-                        db.conn(),
-                        &data_dir,
-                        &project_id,
-                        Some(on_progress),
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let posts = report.posts_created + report.posts_updated;
-                    let media = report.media_created + report.media_updated;
-                    let templates = report.templates_created + report.templates_updated;
-                    let scripts = report.scripts_created + report.scripts_updated;
-                    Ok(format!(
-                        "posts={posts}, media={media}, templates={templates}, scripts={scripts}"
-                    ))
-                },
-            ),
+            Message::RebuildDatabase => {
+                let locale = self.ui_locale;
+                self.spawn_engine_task(
+                    "engine.rebuildStarted",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let on_progress: engine::rebuild::ProgressFn =
+                            Arc::new(move |pct, event| {
+                                tm.report_progress(tid, Some(pct), Some(event.localized(locale)));
+                            });
+                        let report = engine::rebuild::rebuild_from_filesystem_with_progress(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            Some(on_progress),
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let posts = report.posts_created + report.posts_updated;
+                        let media = report.media_created + report.media_updated;
+                        let templates = report.templates_created + report.templates_updated;
+                        let scripts = report.scripts_created + report.scripts_updated;
+                        Ok(format!(
+                            "posts={posts}, media={media}, templates={templates}, scripts={scripts}"
+                        ))
+                    },
+                )
+            }
             Message::ReindexText => {
                 if !self.search_index_rebuild_running {
                     self.active_modal = Some(modal::ModalState::SearchIndexRepair);

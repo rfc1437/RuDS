@@ -4340,11 +4340,11 @@ impl BdsApp {
                             main_language,
                             &meta.blog_languages,
                             offline_mode,
-                            move |progress, _message| {
+                            move |progress, event| {
                                 task_manager_for_progress.report_progress(
                                     task_id,
                                     Some(progress),
-                                    Some(t(locale, "engine.translatingContent")),
+                                    Some(event.localized(locale)),
                                 );
                                 !task_manager_for_progress.is_cancelled(task_id)
                             },
