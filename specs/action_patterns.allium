@@ -224,7 +224,6 @@ config {
         ConfirmationAssignment(action: "menu_item_delete", pattern: none),
         ConfirmationAssignment(action: "metadata_diff_field_sync", pattern: none),
         ConfirmationAssignment(action: "import_execute", pattern: none),
-        ConfirmationAssignment(action: "media_translation_delete", pattern: none),
         ConfirmationAssignment(action: "media_unlink", pattern: none)
     }
 }

@@ -280,6 +280,8 @@ rule UpsertMediaTranslationSideEffects {
 
 rule DeleteMediaTranslationSideEffects {
     when: MediaTranslationDeleted(media, language)
+    -- No UI affordance; reached only via the scripting API
+    -- (script.allium bds.media.delete_translation)
     ensures: TranslatedSidecarDeleted(media, language)
 }
 

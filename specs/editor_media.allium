@@ -105,7 +105,6 @@ surface MediaEditorSurface {
         MediaLinkToPostRequested(editor.media_id)
         MediaTranslationEditClicked(editor.media_id, language)
         MediaTranslationRefreshClicked(editor.media_id, language)
-        MediaTranslationDeleteClicked(editor.media_id, language)
         MediaUnlinkPostRequested(editor.media_id, post_id)
         MediaDeleteConfirmed(editor.media_id)
         TranslationEditModalSaved(editor.media_id, language, title, alt, caption)
@@ -140,7 +139,10 @@ surface MediaEditorSurface {
     @guarantee TranslationsSection
         -- Shown only when language is set.
         -- List of existing translations: flag emoji + language name + title.
-        -- Per-translation actions: click to edit (opens modal), refresh button, delete button.
+        -- Per-translation actions: click to edit (opens modal), refresh button.
+        -- No delete action; translations are only removed via the scripting
+        --   API (script.allium bds.media.delete_translation) or when the
+        --   media item itself is deleted.
         -- "No translations" message when list is empty.
 
     @guarantee TranslationEditModal
@@ -305,16 +307,4 @@ rule MediaTranslationRefresh {
         translated.title, translated.alt, translated.caption)
         -- overwrites the existing translation fields and rewrites the
         -- translated sidecar
-}
-
-rule MediaTranslationDelete {
-    when: MediaTranslationDeleteClicked(media_id, language)
-    let item = media/Media{id: media_id}
-    let translation = media/MediaTranslation{media: item, language: language}
-    -- No confirmation dialog (action_patterns.allium
-    -- confirmation_assignments: media_translation_delete)
-    ensures: not exists translation
-    ensures: MediaTranslationDeleted(item, language)
-        -- engine_side_effects.allium DeleteMediaTranslationSideEffects
-        -- deletes the translated sidecar {path}.{lang}.meta
 }
