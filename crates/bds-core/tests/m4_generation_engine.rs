@@ -782,7 +782,7 @@ fn apply_validation_repairs_core_section_outputs() {
     std::fs::remove_file(dir.path().join("atom.xml")).unwrap();
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
-    let sections = sections_from_validation_report(&report);
+    let sections = sections_from_validation_report(&report, &metadata);
     let apply_report =
         apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
             .unwrap();
@@ -817,7 +817,7 @@ fn apply_validation_removes_extra_section_outputs() {
             .extra_pages
             .contains(&"tag/ghost/index.html".to_string())
     );
-    let sections = sections_from_validation_report(&report);
+    let sections = sections_from_validation_report(&report, &metadata);
     let apply_report =
         apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
             .unwrap();
@@ -829,6 +829,59 @@ fn apply_validation_removes_extra_section_outputs() {
             .contains(&"tag/ghost/index.html".to_string())
     );
     assert!(repaired.extra_pages.is_empty());
+}
+
+#[test]
+fn configured_language_prefixes_select_their_actual_validation_section() {
+    let mut metadata = make_metadata();
+    metadata.blog_languages = vec!["en".into(), "pt".into(), "ja".into()];
+    let report = bds_core::engine::validate_site::SiteValidationReport {
+        missing_pages: vec![
+            "pt/category/ghost/index.html".into(),
+            "ja/category/ghost/index.html".into(),
+        ],
+        extra_pages: Vec::new(),
+        stale_pages: Vec::new(),
+    };
+
+    assert_eq!(
+        sections_from_validation_report(&report, &metadata),
+        vec![GenerationSection::Category]
+    );
+}
+
+#[test]
+fn validation_apply_removes_extra_output_under_configured_language() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.blog_languages = vec!["en".into(), "pt".into(), "ja".into()];
+    bds_core::engine::meta::write_project_json(dir.path(), &metadata).unwrap();
+    let mut post = make_post("hello", 1_710_000_000_000);
+    write_published_snapshot(&dir, &mut post, "Hello **world**");
+    bds_core::db::queries::post::insert_post(db.conn(), &post).unwrap();
+    let posts = vec![PublishedPostSource {
+        post,
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let extra = dir.path().join("pt/category/ghost/index.html");
+    std::fs::create_dir_all(extra.parent().unwrap()).unwrap();
+    std::fs::write(&extra, "ghost").unwrap();
+
+    let validation = validate_site(db.conn(), dir.path(), "p1").unwrap();
+    let sections = sections_from_validation_report(&validation, &metadata);
+    let applied =
+        apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
+            .unwrap();
+
+    assert_eq!(sections, vec![GenerationSection::Category]);
+    assert!(
+        applied
+            .deleted_paths
+            .contains(&"pt/category/ghost/index.html".to_string())
+    );
+    assert!(!extra.exists());
 }
 
 #[test]

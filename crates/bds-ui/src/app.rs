@@ -5355,8 +5355,10 @@ impl BdsApp {
             extra_pages: self.site_validation_state.extra_files.clone(),
             stale_pages: self.site_validation_state.stale_files.clone(),
         };
-        let sections = engine::generation::sections_from_validation_report(&report);
-        if sections.is_empty() {
+        if report.missing_pages.is_empty()
+            && report.extra_pages.is_empty()
+            && report.stale_pages.is_empty()
+        {
             return Task::none();
         }
 

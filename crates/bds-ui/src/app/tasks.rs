@@ -82,7 +82,7 @@ impl BdsApp {
 
         let sections = validation.as_ref().map_or_else(
             || engine::generation::GenerationSection::ALL.to_vec(),
-            engine::generation::sections_from_validation_report,
+            |validation| engine::generation::sections_from_validation_report(validation, &metadata),
         );
         if sections.is_empty() {
             return Task::none();

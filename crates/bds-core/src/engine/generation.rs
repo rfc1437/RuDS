@@ -210,7 +210,10 @@ pub fn render_site_section_with_progress(
     Ok(report)
 }
 
-pub fn sections_from_validation_report(report: &SiteValidationReport) -> Vec<GenerationSection> {
+pub fn sections_from_validation_report(
+    report: &SiteValidationReport,
+    metadata: &ProjectMetadata,
+) -> Vec<GenerationSection> {
     let mut sections = HashSet::new();
     let mut saw_unknown = false;
 
@@ -220,7 +223,7 @@ pub fn sections_from_validation_report(report: &SiteValidationReport) -> Vec<Gen
         .chain(report.extra_pages.iter())
         .chain(report.stale_pages.iter())
     {
-        match classify_generated_path(path) {
+        match classify_generated_path(path, metadata) {
             Some(section) => {
                 sections.insert(section);
             }
@@ -276,7 +279,13 @@ pub fn apply_validation_sections(
         )?);
     }
 
-    remove_extra_section_paths(output_dir, &expected_paths, &section_set, &mut report)?;
+    remove_extra_section_paths(
+        output_dir,
+        &expected_paths,
+        metadata,
+        &section_set,
+        &mut report,
+    )?;
     report.append(build_site_search_index(
         conn, output_dir, project_id, metadata,
     )?);
@@ -318,7 +327,7 @@ pub fn apply_validation_section_with_progress(
         .iter()
         .chain(validation.extra_pages.iter())
         .chain(validation.stale_pages.iter())
-        .any(|path| classify_generated_path(path).is_none());
+        .any(|path| classify_generated_path(path, metadata).is_none());
     let artifacts = if fallback {
         build_site_section_render_artifacts(
             conn,
@@ -376,7 +385,7 @@ pub fn apply_validation_section_with_progress(
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        let owned_by_section = classify_generated_path(path)
+        let owned_by_section = classify_generated_path(path, metadata)
             .map_or(section == GenerationSection::Core, |owner| owner == section);
         if owned_by_section && output_dir.join(path).is_file() {
             std::fs::remove_file(output_dir.join(path)).map_err(EngineError::Io)?;
@@ -680,7 +689,7 @@ fn expected_paths_for_sections(
 ) -> HashSet<String> {
     let mut expected = pages
         .iter()
-        .filter(|page| path_matches_sections(&page.relative_path, sections))
+        .filter(|page| path_matches_sections(&page.relative_path, metadata, sections))
         .map(|page| page.relative_path.clone())
         .collect::<HashSet<_>>();
 
@@ -710,6 +719,7 @@ fn expected_paths_for_sections(
 fn remove_extra_section_paths(
     output_dir: &Path,
     expected: &HashSet<String>,
+    metadata: &ProjectMetadata,
     sections: &HashSet<GenerationSection>,
     report: &mut GenerationReport,
 ) -> EngineResult<()> {
@@ -738,7 +748,7 @@ fn remove_extra_section_paths(
             continue;
         }
         if !matches_generated_extension(&rel)
-            || !path_matches_sections(&rel, sections)
+            || !path_matches_sections(&rel, metadata, sections)
             || expected.contains(&rel)
         {
             continue;
@@ -752,13 +762,20 @@ fn remove_extra_section_paths(
     Ok(())
 }
 
-fn path_matches_sections(path: &str, sections: &HashSet<GenerationSection>) -> bool {
-    classify_generated_path(path)
+fn path_matches_sections(
+    path: &str,
+    metadata: &ProjectMetadata,
+    sections: &HashSet<GenerationSection>,
+) -> bool {
+    classify_generated_path(path, metadata)
         .map(|section| sections.contains(&section))
         .unwrap_or(false)
 }
 
-pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
+pub(crate) fn classify_generated_path(
+    path: &str,
+    metadata: &ProjectMetadata,
+) -> Option<GenerationSection> {
     if path.ends_with(".xml") || path.ends_with(".json") {
         return Some(GenerationSection::Core);
     }
@@ -767,7 +784,7 @@ pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
     if parts.is_empty() {
         return None;
     }
-    if has_language_prefix(&parts) {
+    if has_language_prefix(&parts, metadata) {
         parts.remove(0);
     }
 
@@ -805,10 +822,12 @@ pub(crate) fn classify_generated_path(path: &str) -> Option<GenerationSection> {
     }
 }
 
-fn has_language_prefix(parts: &[&str]) -> bool {
+fn has_language_prefix(parts: &[&str], metadata: &ProjectMetadata) -> bool {
     match parts {
         [first, second, ..] => {
-            matches!(*first, "de" | "en" | "es" | "fr" | "it")
+            render_languages(metadata)
+                .iter()
+                .any(|language| language.eq_ignore_ascii_case(first))
                 && (*second == "index.html"
                     || *second == "404.html"
                     || *second == "page"

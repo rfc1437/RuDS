@@ -498,7 +498,7 @@ fn render(db: &Database, incremental: bool, force: bool) -> Result<CommandOutput
     std::fs::create_dir_all(&output_dir)?;
     if incremental {
         let validation = engine::validate_site::validate_site(db.conn(), &data_dir, &project.id)?;
-        let sections = engine::generation::sections_from_validation_report(&validation);
+        let sections = engine::generation::sections_from_validation_report(&validation, &metadata);
         let report = engine::generation::apply_validation_sections(
             db.conn(),
             &output_dir,

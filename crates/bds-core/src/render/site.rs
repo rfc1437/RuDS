@@ -227,7 +227,7 @@ fn build_site_render_artifacts_with_mode(
             .par_iter()
             .filter(|route| {
                 section.is_none_or(|section| {
-                    classify_generated_path(&route.relative_path) == Some(section)
+                    classify_generated_path(&route.relative_path, metadata) == Some(section)
                 }) && requested_paths
                     .is_none_or(|requested| requested.contains(&route.relative_path))
             })

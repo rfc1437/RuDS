@@ -2965,7 +2965,8 @@ impl TuiApp {
                     engine::validate_site::validate_site(db.conn(), &data_dir, &project_id)?;
                 let metadata = engine::meta::read_project_json(&data_dir)?;
                 let posts = published_sources(db.conn(), &data_dir, &project_id)?;
-                let sections = engine::generation::sections_from_validation_report(&validation);
+                let sections =
+                    engine::generation::sections_from_validation_report(&validation, &metadata);
                 let report = engine::generation::apply_validation_sections(
                     db.conn(),
                     &data_dir.join("html"),
