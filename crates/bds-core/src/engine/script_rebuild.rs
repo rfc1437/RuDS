@@ -186,6 +186,47 @@ end
     }
 
     #[test]
+    fn rebuild_defaults_missing_entrypoint_from_script_kind() {
+        let (db, dir) = setup();
+        let scripts_dir = dir.path().join("scripts");
+        fs::create_dir_all(&scripts_dir).unwrap();
+
+        for (id, kind, expected_entrypoint) in [
+            ("legacy-macro", "macro", "render"),
+            ("legacy-utility", "utility", "main"),
+            ("legacy-transform", "transform", "main"),
+        ] {
+            let content = format!(
+                "---\nid: \"{id}\"\nslug: \"{id}\"\ntitle: \"{id}\"\nkind: \"{kind}\"\nenabled: true\nversion: 1\ncreatedAt: \"2024-01-01T00:00:00.000Z\"\nupdatedAt: \"2024-01-01T00:00:00.000Z\"\n---\nfunction {expected_entrypoint}() end\n"
+            );
+            fs::write(scripts_dir.join(format!("{id}.lua")), content).unwrap();
+        }
+
+        let report = rebuild_scripts_from_filesystem(db.conn(), dir.path(), "p1").unwrap();
+
+        assert_eq!(report.created, 3);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        assert_eq!(
+            qs::get_script_by_id(db.conn(), "legacy-macro")
+                .unwrap()
+                .entrypoint,
+            "render"
+        );
+        assert_eq!(
+            qs::get_script_by_id(db.conn(), "legacy-utility")
+                .unwrap()
+                .entrypoint,
+            "main"
+        );
+        assert_eq!(
+            qs::get_script_by_id(db.conn(), "legacy-transform")
+                .unwrap()
+                .entrypoint,
+            "main"
+        );
+    }
+
+    #[test]
     fn rebuild_updates_existing() {
         let (db, dir) = setup();
 

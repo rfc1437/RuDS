@@ -126,6 +126,10 @@ fn default_entrypoint() -> String {
     "render".to_owned()
 }
 
+fn default_entrypoint_for_kind(kind: &str) -> String {
+    if kind == "macro" { "render" } else { "main" }.to_owned()
+}
+
 fn deserialize_version<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
@@ -532,7 +536,18 @@ impl ScriptFrontmatter {
     }
 
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(yaml).map_err(|error| format!("YAML parse error: {error}"))?;
+        let entrypoint_key = serde_yaml::Value::String("entrypoint".to_owned());
+        let entrypoint_is_missing = value
+            .as_mapping()
+            .is_none_or(|mapping| !mapping.contains_key(&entrypoint_key));
+        let mut frontmatter: Self =
+            serde_yaml::from_value(value).map_err(|error| format!("YAML parse error: {error}"))?;
+        if entrypoint_is_missing {
+            frontmatter.entrypoint = default_entrypoint_for_kind(&frontmatter.kind);
+        }
+        Ok(frontmatter)
     }
 }
 
