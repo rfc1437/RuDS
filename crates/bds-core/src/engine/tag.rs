@@ -78,7 +78,9 @@ pub fn update_tag(
     Ok(())
 }
 
-/// Delete a tag: remove from all posts' tag arrays, delete from DB, rewrite tags.json.
+/// Delete a tag: remove its exact name from posts, delete from DB, rewrite tags.json.
+/// Tag entity lookup remains case-insensitive, but portable post tag arrays
+/// follow bDS2 and Allium's exact string membership semantics.
 pub fn delete_tag(
     conn: &Connection,
     data_dir: &Path,
@@ -96,7 +98,9 @@ pub fn delete_tag(
     Ok(())
 }
 
-/// Rename a tag: update all posts' tag arrays, update tag in DB, rewrite tags.json.
+/// Rename a tag: replace its exact name in posts, update the DB and tags.json.
+/// Tag entity lookup remains case-insensitive, but portable post tag arrays
+/// follow bDS2 and Allium's exact string membership semantics.
 pub fn rename_tag(
     conn: &Connection,
     data_dir: &Path,
@@ -113,12 +117,12 @@ pub fn rename_tag(
     let now = now_unix_ms();
     let mut modified = Vec::new();
     for mut post in posts {
-        if post.tags.iter().any(|t| t.eq_ignore_ascii_case(&old_name)) {
+        if post.tags.iter().any(|t| t == &old_name) {
             post.tags = post
                 .tags
                 .into_iter()
                 .map(|t| {
-                    if t.eq_ignore_ascii_case(&old_name) {
+                    if t == old_name {
                         new_name.to_string()
                     } else {
                         t
@@ -142,6 +146,8 @@ pub fn rename_tag(
 
 /// Merge multiple source tags into one target tag.
 /// For each source: update posts (remove source name, add target name if not present), delete source.
+/// Source and target membership in portable post tag arrays is exact, matching
+/// bDS2 and Allium; tag entity lookup and uniqueness remain case-insensitive.
 pub fn merge_tags(
     conn: &Connection,
     data_dir: &Path,
@@ -161,20 +167,12 @@ pub fn merge_tags(
         let posts = post_q::list_posts_by_project(conn, project_id)?;
         let now = now_unix_ms();
         for mut post in posts {
-            let has_source = post
-                .tags
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(&source_tag.name));
+            let has_source = post.tags.iter().any(|t| t == &source_tag.name);
             if has_source {
                 // Remove source tag name
-                post.tags
-                    .retain(|t| !t.eq_ignore_ascii_case(&source_tag.name));
+                post.tags.retain(|t| t != &source_tag.name);
                 // Add target tag name if not already present
-                if !post
-                    .tags
-                    .iter()
-                    .any(|t| t.eq_ignore_ascii_case(&target_tag.name))
-                {
+                if !post.tags.iter().any(|t| t == &target_tag.name) {
                     post.tags.push(target_tag.name.clone());
                 }
                 post.updated_at = now;
@@ -354,8 +352,8 @@ fn remove_tag_name_from_posts(
     let now = now_unix_ms();
     let mut modified = Vec::new();
     for mut post in posts {
-        if post.tags.iter().any(|t| t.eq_ignore_ascii_case(tag_name)) {
-            post.tags.retain(|t| !t.eq_ignore_ascii_case(tag_name));
+        if post.tags.iter().any(|t| t == tag_name) {
+            post.tags.retain(|t| t != tag_name);
             post.updated_at = now;
             post_q::update_post(conn, &post)?;
             modified.push(post.id.clone());
@@ -517,6 +515,57 @@ mod tests {
         let all = crate::db::queries::tag::list_tags_by_project(db.conn(), "p1").unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "target");
+    }
+
+    #[test]
+    fn tag_mutations_match_post_tag_names_exactly() {
+        let (db, dir) = setup();
+        let renamed = create_tag(db.conn(), dir.path(), "p1", "rust", None).unwrap();
+        insert_post(
+            db.conn(),
+            &make_post("rename", "rename", vec!["Rust".into(), "rust".into()]),
+        )
+        .unwrap();
+
+        rename_tag(db.conn(), dir.path(), "p1", &renamed.id, "golang").unwrap();
+
+        assert_eq!(
+            post_q::get_post_by_id(db.conn(), "rename").unwrap().tags,
+            vec!["Rust", "golang"]
+        );
+
+        let source = create_tag(db.conn(), dir.path(), "p1", "source", None).unwrap();
+        let target = create_tag(db.conn(), dir.path(), "p1", "target", None).unwrap();
+        insert_post(
+            db.conn(),
+            &make_post(
+                "merge",
+                "merge",
+                vec!["SOURCE".into(), "source".into(), "Target".into()],
+            ),
+        )
+        .unwrap();
+
+        merge_tags(db.conn(), dir.path(), "p1", &[&source.id], &target.id).unwrap();
+
+        assert_eq!(
+            post_q::get_post_by_id(db.conn(), "merge").unwrap().tags,
+            vec!["SOURCE", "Target", "target"]
+        );
+
+        let deleted = create_tag(db.conn(), dir.path(), "p1", "delete", None).unwrap();
+        insert_post(
+            db.conn(),
+            &make_post("delete", "delete", vec!["DELETE".into(), "delete".into()]),
+        )
+        .unwrap();
+
+        delete_tag(db.conn(), dir.path(), "p1", &deleted.id).unwrap();
+
+        assert_eq!(
+            post_q::get_post_by_id(db.conn(), "delete").unwrap().tags,
+            vec!["DELETE"]
+        );
     }
 
     #[test]
