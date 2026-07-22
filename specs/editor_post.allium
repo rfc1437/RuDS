@@ -114,6 +114,8 @@ surface PostEditorSurface {
         PostGalleryRequested(editor.post_id)
         ImageDroppedOnEditor(editor.post_id, file_path)
         PostLanguageDetectRequested(editor.post_id)
+        PostDiscardConfirmed(editor.post_id)
+        PostDeleteConfirmed(editor.post_id)
 
     @guarantee HeaderLayout
         -- Header bar with two areas.
@@ -207,119 +209,136 @@ invariant PostEditorModePersistence {
 
 rule PostAIAnalysis {
     when: PostAIAnalysisRequested(post_id)
-    -- Gate: airplane mode check (see action_patterns.allium AIOperationGating)
-    -- Uses title model (not default chat model)
-    -- Input: post title + excerpt + content (first config.post_content_sample_length chars)
-    -- Response: suggested title, excerpt, slug
-    -- Opens AISuggestionsModal with 3 fields:
-    --   Each field: current value, suggested value, accept checkbox
-    --   Slug field locked (no accept checkbox) if post was ever published
-    -- On confirm: applies only checked fields, triggers auto-save
+    ensures: AISuggestionRequested(entity_type: "post", entity_id: post_id)
+        -- Shared flow: action_patterns.allium PostAISuggestionFlow —
+        -- airplane gating, title model (not the default chat model)
+        -- over title + excerpt + content sample, AISuggestionsModal
+        -- with title/excerpt/slug (slug locked once published),
+        -- accepted fields re-arm the auto-save timer.
 }
 
 rule PostTranslateAction {
     when: PostTranslateRequested(post_id, target_language)
-    -- Gate: airplane mode check
-    -- Opens language picker modal:
-    --   Available target languages from project blogLanguages
-    --   Existing translations shown with status badge (draft/published)
-    -- Two sequential AI calls via title model:
-    --   1. Translate metadata (title, excerpt) to target language
-    --   2. Translate content (full markdown body) to target language
-    -- Creates/updates translation record in DB
-    -- If source post is published: transitions source to draft
-    --   (copies file content back to DB so it can be edited)
+    let target = post/Post{id: post_id}
+    requires: active_endpoint_configured
+        -- airplane-mode gating: ai.allium AirplaneModeGating
+    requires: target_language in target.project.blog_languages
+        -- chosen in the language picker modal; existing translations
+        -- are listed with their status badge (draft/published)
+    let translated_meta = ai_translate_post_metadata(target, target_language)
+        -- AI call 1: title + excerpt via the title model
+    let translated_content = ai_translate_post_content(target, target_language)
+        -- AI call 2 (sequential): full markdown body via the title model
+    ensures: PostTranslationUpserted(
+        translation_record(target, target_language, translated_meta, translated_content),
+        target)
+        -- creates/updates the translation record; a published source
+        -- post transitions back to draft with the file content copied
+        -- to the DB so it can be edited (engine_side_effects.allium
+        -- UpsertPostTranslationSideEffects)
 }
 
-rule PostAutoTranslateOnSave {
-    when: PostSaved(post_id)
-    -- Only an explicit manual save (or publish) triggers this. Auto-saves and
-    -- post creation (sidebar, deeplink/bookmarklet, import, scripting) never do.
-    -- Gate: airplane mode check + auto_translate not disabled (doNotTranslate=false)
-    -- For each configured blog language missing a translation:
-    --   Enqueue background translation task (title model)
-    -- Each task: translate metadata + content, create translation record
-    -- Cascades to linked media: for each linked media item,
-    --   translate media metadata for missing languages
-    -- See action_patterns.allium AutoTranslationChain for full chain
-}
+-- Auto-translation on manual save is specified once in
+-- action_patterns.allium AutoTranslationChain (triggered by PostSaved),
+-- including the linked-media cascade. It is not duplicated here.
 
 rule PostPublishAction {
     when: PostPublishRequested(post_id)
-    -- Implicit save first (awaited) if post is dirty
-    -- Then calls engine publish (see engine_side_effects.allium PublishPostSideEffects)
-    -- Also publishes all translations whose source language is published
-    -- UI updates: status badge -> published, sidebar section move
+    let target = post/Post{id: post_id}
+    ensures:
+        if editor_is_dirty(post_id):
+            PostSaved(post_id)
+            -- implicit save first (awaited)
+    ensures: PublishPostRequested(target)
+        -- engine publish: file write, translation publishing, FTS,
+        -- links (engine_side_effects.allium PublishPostSideEffects)
+        -- UI updates reactively: status badge -> published, sidebar
+        -- section move (ui_data_flow.allium PostStatusChanged)
 }
 
 rule PostDiscardChanges {
     when: PostDiscardRequested(post_id)
-    -- Only available for published posts with pending draft changes
-    -- System confirm dialog: "Discard changes to this post?"
-    -- On confirm: reads published version from .md file,
-    --   restores DB to published state (content=null, status=published)
-    -- Editor reloads with restored content
+    let target = post/Post{id: post_id}
+    requires: target.published_at != null
+    requires: target.status = draft
+        -- only published posts with pending draft changes
+    ensures: DiscardConfirmShown(post_id)
+        -- system confirm dialog: "Discard changes to this post?"
+        -- (action_patterns.allium confirmation_assignments:
+        -- post_discard)
+}
+
+rule PostDiscardExecute {
+    when: PostDiscardConfirmed(post_id)
+    let target = post/Post{id: post_id}
+    ensures: DiscardPostChangesRequested(target)
+        -- engine restores the published state from the .md file:
+        -- content = null, status = published
+    ensures: EditorReloaded(post_id)
+        -- editor reloads with the restored content
 }
 
 rule PostDeleteAction {
     when: PostDeleteRequested(post_id)
-    -- System confirm dialog: "Delete this post?"
-    -- If published: also deletes .md file and all translation files
-    -- If never published: only deletes DB record
-    -- Removes from DB, closes tab, sidebar removes item
-    -- See engine_side_effects.allium DeletePostSideEffects
+    ensures: DeleteConfirmShown(post_id)
+        -- system confirm dialog: "Delete this post?"
+        -- (action_patterns.allium confirmation_assignments: post_delete)
+}
+
+rule PostDeleteExecute {
+    when: PostDeleteConfirmed(post_id)
+    let target = post/Post{id: post_id}
+    ensures: DeletePostRequested(target)
+        -- published posts also delete the .md file and all translation
+        -- files; never-published drafts only the DB record
+        -- (engine_side_effects.allium DeletePostSideEffects)
+    ensures: closeTab(post_id)
+        -- sidebar removes the item reactively (ui_data_flow.allium
+        -- PostEditorDelete)
 }
 
 rule PostInsertLink {
     when: PostInsertLinkRequested(post_id)
-    -- Keyboard shortcut: Ctrl/Cmd+K
-    -- Opens InsertPostLinkModal with two tabs: Internal, External
-    -- Internal tab:
-    --   Search input (debounced, queries post titles)
-    --   Results list: title + status badge (draft/published)
-    --   If semantic similarity enabled: results ranked by similarity
-    --   Click inserts markdown link: [title](/YYYY/MM/DD/slug)
-    --   "Create Post" option at bottom of search results:
-    --     Creates new post with search query as title
-    --     Inserts link to newly created post
-    -- External tab:
-    --   URL input + optional display text input
-    --   Inserts: [text](url) or bare url if no display text
+    -- Keyboard shortcut: Ctrl/Cmd+K (markdown mode only, per the
+    -- provides guard)
+    ensures: InsertPostLinkModalOpened(post_id)
+        -- two tabs: Internal (debounced title search, similarity
+        -- ranking, Create Post row) and External (URL + display text);
+        -- picked entries insert [title](/YYYY/MM/DD/slug) or
+        -- [text](url) at the cursor — modals.allium InsertPostLinkModal
 }
 
 rule PostInsertMedia {
     when: PostInsertMediaRequested(post_id)
-    -- Opens InsertMediaModal (media search variant)
-    -- Search input, grid of media items with bds-thumb:// thumbnails
-    -- Click inserts markdown:
-    --   Images: ![alt](/media/YYYY/MM/file)
-    --   Non-images: [originalName](/media/YYYY/MM/file)
+    ensures: InsertMediaModalOpened(post_id)
+        -- media search grid with bds-thumb:// thumbnails; picked items
+        -- insert ![alt](/media/YYYY/MM/file) for images or
+        -- [originalName](/media/YYYY/MM/file) otherwise —
+        -- modals.allium InsertMediaModal
 }
 
 rule PostGalleryAction {
     when: PostGalleryRequested(post_id)
-    -- Opens gallery overlay showing all media linked to this post
-    -- Image grid with bds-thumb:// thumbnails
-    -- Click on image opens lightbox (full-size bds-media:// preview)
-    -- Lightbox: left/right arrow navigation, close button, ESC to close
+    ensures: GalleryOverlayOpened(post_id)
+        -- grid of all media linked to this post; clicking an image
+        -- opens the lightbox (full-size preview, arrow navigation,
+        -- ESC to close) — modals.allium GalleryOverlay / LightboxView
 }
 
 rule PostDragDropImage {
     when: ImageDroppedOnEditor(post_id, file_path)
-    -- Chain of operations (see action_patterns.allium DragDropImageChain):
-    -- 1. Import media file -> media record + file copy + sidecar
-    -- 2. Generate thumbnails (async: small/medium/large/ai)
-    -- 3. Link media to post (update sidecar linkedPostIds)
-    -- 4. Insert markdown image at cursor: ![](/media/YYYY/MM/file)
-    -- 5. If AI available: AI image analysis (async, auto-applied, no modal)
-    -- 6. If auto-translate enabled: cascade translate media metadata
-    -- Steps 1-4 synchronous. Steps 5-6 background tasks.
+    ensures: ImageFileDroppedOnPostEditor(post_id, file_path)
+        -- full chain: action_patterns.allium PostDragDropImageChain
+        -- (synchronous import + thumbnails + link + cursor insert,
+        -- background AI auto-apply and translation cascade)
 }
 
 rule PostLanguageDetect {
     when: PostLanguageDetectRequested(post_id)
-    -- Gate: airplane mode check
-    -- Sends content sample to title model
-    -- Auto-sets post language field (no modal)
-    -- Triggers auto-save
+    let target = post/Post{id: post_id}
+    requires: active_endpoint_configured
+    let detected = ai_detect_language(post_suggestion_input(target))
+        -- title model over the content sample; no modal
+    ensures: target.language = detected
+    ensures: PostAutoSaveTimerReset(post_id)
 }

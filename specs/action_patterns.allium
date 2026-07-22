@@ -15,114 +15,215 @@ surface UserAction {
     provides: AISuggestionRequested(entity_type, entity_id)
     provides: PostSaved(post_id)
     provides: PostAutoTranslateCompleted(post_id, language)
+    provides: ImageFileDroppedOnPostEditor(post_id, file)
+    provides: AISuggestionsModalConfirmed(entity_type, entity_id, fields)
+    provides: AISuggestionsModalCancelled(entity_type, entity_id)
 }
 
--- ─── AI operation gating ───────────────────────────────
+surface AiEngine {
+    facing _: AiRuntime
 
-invariant AIOperationGating {
-    -- All AI operations route through the active endpoint for the current mode.
-    -- See ai.allium AirplaneModeGating for endpoint selection logic.
-    -- If airplane_mode: use airplane endpoint (local model, e.g. Ollama/LM Studio)
-    -- If online: use online endpoint (cloud provider)
-    -- If active endpoint not configured: show toast, abort operation
-    -- Two model categories:
-    --   Title model: text analysis (suggestions, translation, language detect)
-    --   Image model: vision-capable (image analysis only)
-    -- Model selection: per-operation default from settings,
-    --   overrideable per-conversation in chat panel only
+    provides: AiFieldSuggestionsResponded(entity_type, entity_id, suggestions)
+        -- The active endpoint's response, parsed into per-field suggestions
 }
 
--- ─── AI suggestions pattern ────────────────────────────
+-- ─── AI operation gating ────────────────────────────────────
+--
+-- All AI operations route through the active endpoint for the current
+-- mode; endpoint selection and the active_endpoint_configured predicate
+-- are specified in ai.allium (AirplaneModeGating, TwoEndpointModel).
+-- Rules below gate on active_endpoint_configured and refuse with a
+-- toast when it is false. Two model categories are used:
+--   title model: text analysis (suggestions, translation, language detect)
+--   image model: vision-capable (image analysis only)
+-- Model selection: per-operation default from settings, overrideable
+-- per-conversation in the chat panel only.
 
--- Shared flow used by PostAIAnalysis and MediaAIImageAnalysis.
--- See modals.allium AISuggestionsModal value type.
-
-rule AISuggestionFlow {
+rule AiOperationRefusedWithoutEndpoint {
     when: AISuggestionRequested(entity_type, entity_id)
-    -- 1. Check AIOperationGating (abort if offline and no local model)
-    -- 2. Send request to appropriate model:
-    --      Posts: title model, input = title + excerpt + first 2000 chars
-    --      Media: image model, input = 448x448 AI thumbnail JPEG
-    -- 3. Parse response into per-field suggestions
-    -- 4. Open AISuggestionsModal:
-    --      Each field: label, current value, suggested value, accept checkbox
-    --      Accept checkboxes default to true
-    --      Special case: post slug locked (no checkbox) if ever published
-    -- 5. On Confirm: apply only accepted fields to entity
-    --      Posts: triggers auto-save (3s timer reset)
-    --      Media: triggers explicit save
-    -- 6. On Cancel: discard all suggestions, no changes
+    requires: not active_endpoint_configured
+    ensures: ToastShown(message_key: "ai.unavailable_configure_endpoint")
+        -- "AI unavailable — configure {online|airplane} endpoint in Settings"
+    ensures: AiOperationAborted(entity_type, entity_id)
 }
 
--- ─── Auto-translation chain ────────────────────────────
+-- ─── AI suggestions pattern ─────────────────────────────────
+--
+-- Shared flow used by PostAIAnalysis (editor_post.allium) and
+-- MediaAIImageAnalysis (editor_media.allium). Modal layout:
+-- see modals.allium AISuggestionsModal / AISuggestionField.
+
+config {
+    post_suggestion_sample_length: Integer = 2000
+}
+
+rule PostAISuggestionFlow {
+    when: AISuggestionRequested(entity_type, entity_id)
+    requires: entity_type = "post"
+    requires: active_endpoint_configured
+    let target = post/Post{id: entity_id}
+    ensures: AiFieldSuggestionsRequested(entity_id,
+        model: "title",
+        input: post_suggestion_input(target))
+        -- black box: title + excerpt + first
+        -- config.post_suggestion_sample_length chars of content
+}
+
+rule MediaAISuggestionFlow {
+    when: AISuggestionRequested(entity_type, entity_id)
+    requires: entity_type = "media"
+    requires: active_endpoint_configured
+    let target = media/Media{id: entity_id}
+    ensures: AiFieldSuggestionsRequested(entity_id,
+        model: "image",
+        input: ai_thumbnail(target))
+        -- black box: the 448x448 AI thumbnail JPEG
+}
+
+rule PresentAiSuggestions {
+    when: AiFieldSuggestionsResponded(entity_type, entity_id, suggestions)
+    -- Response parsed into per-field suggestions; each field row shows
+    -- label, current value, suggested value, and an accept checkbox
+    -- defaulting to true. The post slug field is locked (no checkbox)
+    -- if the post was ever published.
+    ensures: AISuggestionsModalOpened(entity_type, entity_id, suggestions)
+}
+
+rule ApplyAcceptedSuggestions {
+    when: AISuggestionsModalConfirmed(entity_type, entity_id, fields)
+    let accepted = filter(fields, f => f.accepted and not f.locked)
+    for field in accepted:
+        ensures: SuggestionFieldApplied(entity_type, entity_id, field)
+    ensures:
+        if entity_type = "post":
+            PostAutoSaveTimerReset(entity_id)
+            -- Posts: applied fields go through the 3s auto-save timer
+        else:
+            MediaSaveRequested(entity_id)
+            -- Media: applied fields trigger an explicit save
+}
+
+rule CancelAiSuggestions {
+    when: AISuggestionsModalCancelled(entity_type, entity_id)
+    ensures: AiSuggestionsDiscarded(entity_type, entity_id)
+        -- All suggestions discarded, no entity changes
+}
+
+-- ─── Auto-translation chain ─────────────────────────────────
 
 rule AutoTranslationChain {
     when: PostSaved(post_id)
-    -- Gate: AIOperationGating + post.doNotTranslate must be false
-    -- Triggered only by explicit manual save or publish, never by auto-save,
-    -- unmount/tab-switch persistence, post creation, import, or scripting.
-    -- For each configured blogLanguage missing a translation for this post:
-    --   1. Enqueue one background task for that language
-    --   2. Translate metadata (title, excerpt) via title model
-    --   3. Translate content (full markdown) via title model
-    --   4. Create/update translation record in DB
-    -- A later manual save with no missing languages enqueues no task.
-    -- Work is sequential within a language and parallel across languages.
-    -- Progress visible in Tasks panel
+    -- Triggered only by explicit manual save or publish, never by
+    -- auto-save, unmount/tab-switch persistence, post creation, import,
+    -- or scripting.
+    let saved_post = post/Post{id: post_id}
+    requires: active_endpoint_configured
+    requires: not saved_post.do_not_translate
+    let missing = saved_post.project.blog_languages - saved_post.available_languages
+    for language in missing:
+        ensures: PostTranslationTaskEnqueued(post_id, language)
+        -- One background task per missing language. Each task:
+        --   1. translate metadata (title, excerpt) via title model
+        --   2. translate content (full markdown) via title model
+        --   3. create/update the translation record in the DB
+        -- Sequential within a language, parallel across languages;
+        -- progress visible in the Tasks panel. A save with no missing
+        -- languages enqueues nothing (empty set).
 }
 
 rule MediaMetadataTranslationCascade {
     when: PostAutoTranslateCompleted(post_id, language)
-    -- After a post translation completes for a given language:
-    -- For each media item linked to this post:
-    --   If media has source language set
-    --     and no translation exists for {language}:
-    --     Enqueue background task: translate media metadata
-    --       (title, alt, caption) via title model
-    --     Creates translated sidecar file: {path}.{lang}.meta
+    let saved_post = post/Post{id: post_id}
+    for link in saved_post.linked_media:
+        let item = media/Media{id: link.media_id}
+        if item.language != null
+            and not exists media/MediaTranslation{media: item, language: language}:
+            ensures: MediaMetadataTranslationTaskEnqueued(link.media_id, language)
+            -- Translates title, alt, caption via the title model and
+            -- writes the translated sidecar {path}.{lang}.meta
 }
 
--- ─── Drag-and-drop image chain ─────────────────────────
+-- ─── Drag-and-drop image chain ──────────────────────────────
+--
+-- Full chain when an image file is dropped on the post editor body.
+-- See editor_post.allium PostDragDropImage for the trigger rule.
 
--- Full chain when image file is dropped on post editor body.
--- See editor_post.allium PostDragDropImage for trigger rule.
+rule PostDragDropImageChain {
+    when: ImageFileDroppedOnPostEditor(post_id, file)
+    let target = post/Post{id: post_id}
+    -- Synchronous steps (user waits):
+    let imported = import_media(target.project, file)
+        -- black box: new media record + file copy + base sidecar
+        -- (media.allium ImportMedia)
+    ensures: ThumbnailGenerationStarted(imported)
+        -- async start: small/medium/large/ai variants
+    ensures: MediaLinkedToPost(imported, target)
+        -- updates sidecar linkedPostIds
+    ensures: MarkdownImageInserted(target, imported)
+        -- inserts ![](/media/YYYY/MM/file) at the cursor position
+    ensures: DragDropImportCompleted(target, imported)
+}
 
--- Synchronous steps (user waits):
---   1. importMedia(file) -> new media record + file copy + base sidecar
---   2. generateThumbnails(media) -> async start (small/medium/large/ai)
---   3. linkMediaToPost(media, post) -> update sidecar linkedPostIds
---   4. insertMarkdownImage(cursor) -> insert ![](/media/YYYY/MM/file) at cursor
+rule DragDropAiAutoApply {
+    when: DragDropImportCompleted(target, imported)
+    requires: active_endpoint_configured
+    -- Background, non-blocking: image model on the 448x448 AI thumbnail.
+    -- Results are auto-applied WITHOUT the AISuggestionsModal (unlike
+    -- the manual Quick Action).
+    ensures: MediaMetadataUpdated(imported, ai_image_analysis(imported))
+    ensures: MediaSidecarRewritten(imported)
+}
 
--- Background steps (non-blocking, results auto-applied):
---   5. If AI available: aiImageAnalysis(media)
---        Uses image model on 448x448 AI thumbnail
---        Results auto-applied to media metadata (NO modal for drag-drop,
---          unlike manual Quick Action which shows AISuggestionsModal)
---        Triggers sidecar rewrite
---   6. If auto-translate enabled (post.doNotTranslate=false):
---        For each blogLanguage: translateMediaMetadata(media, lang)
---        Creates translated sidecar files
+rule DragDropTranslationCascade {
+    when: DragDropImportCompleted(target, imported)
+    requires: active_endpoint_configured
+    requires: not target.do_not_translate
+    for language in target.project.blog_languages:
+        ensures: MediaMetadataTranslationTaskEnqueued(imported.id, language)
+        -- creates translated sidecar files
+}
 
--- ─── Confirmation dialog patterns ──────────────────────
+-- ─── Confirmation dialog patterns ───────────────────────────
+--
+-- Four distinct patterns used across the application. The assignment
+-- table below is the authoritative mapping from destructive or
+-- irreversible actions to their confirmation UI.
 
--- Four distinct patterns used across the application:
+enum ConfirmationPattern {
+    system_confirm
+        -- Simple yes/no system dialog, no custom UI
+    confirm_delete_modal
+        -- Custom modal with entity name, reference counts, linked
+        -- entity list; buttons Cancel + Delete (destructive red style)
+    confirm_dialog
+        -- Custom modal describing the action and its consequences;
+        -- buttons Cancel + Confirm
+    none
+        -- Immediate execution on click, no dialog
+}
 
--- Pattern 1: System confirm dialog
---   Simple yes/no system dialog, no custom UI
---   Used by: PostDelete, PostDiscard, TemplateDelete (when references exist)
+value ConfirmationAssignment {
+    action: String
+    pattern: ConfirmationPattern
+}
 
--- Pattern 2: ConfirmDeleteModal (custom modal with reference info)
---   Shows entity name, reference counts, linked entity list
---   Two buttons: Cancel, Delete (destructive red style)
---   Used by: MediaDelete (shows linked posts), TagDelete (shows post count)
-
--- Pattern 3: ConfirmDialog (custom modal for non-delete confirmations)
---   Shows description of action and consequences
---   Two buttons: Cancel, Confirm
---   Used by: TagMerge ("Merge N tags into {target}? Cannot be undone.")
-
--- Pattern 4: No confirmation (immediate execution)
---   Action executes on click, no dialog
---   Used by: all Rebuild operations, ScriptDelete, MenuItemDelete,
---     MetadataDiff per-field sync, ImportExecute, MediaTranslationDelete,
---     MediaUnlink
+config {
+    confirmation_assignments: Set<ConfirmationAssignment> = {
+        ConfirmationAssignment(action: "post_delete", pattern: system_confirm),
+        ConfirmationAssignment(action: "post_discard", pattern: system_confirm),
+        ConfirmationAssignment(action: "template_delete_with_references", pattern: system_confirm),
+        ConfirmationAssignment(action: "media_delete", pattern: confirm_delete_modal),
+            -- shows linked posts
+        ConfirmationAssignment(action: "tag_delete", pattern: confirm_delete_modal),
+            -- shows post count
+        ConfirmationAssignment(action: "tag_merge", pattern: confirm_dialog),
+            -- "Merge N tags into {target}? Cannot be undone."
+        ConfirmationAssignment(action: "rebuild_operations", pattern: none),
+        ConfirmationAssignment(action: "script_delete", pattern: none),
+        ConfirmationAssignment(action: "menu_item_delete", pattern: none),
+        ConfirmationAssignment(action: "metadata_diff_field_sync", pattern: none),
+        ConfirmationAssignment(action: "import_execute", pattern: none),
+        ConfirmationAssignment(action: "media_translation_delete", pattern: none),
+        ConfirmationAssignment(action: "media_unlink", pattern: none)
+    }
+}

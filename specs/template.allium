@@ -194,75 +194,81 @@ rule RebuildTemplatesFromFiles {
             ensures: not exists template
 }
 
--- Exact Liquid subset required (distilled from bundled starter templates)
--- No features beyond this list are used.
+-- ─── Liquid subset (compatibility contract) ─────────────────
+--
+-- Exact Liquid subset required (distilled from bundled starter templates).
+-- No features beyond these sets are accepted. Enforcement happens at
+-- publish/validation time (ValidateLiquid); anything outside the sets is
+-- rejected even though Liquex would otherwise support it as a built-in.
+
+config {
+    -- The 5 allowed tag families as their concrete tag names.
+    -- Whitespace-stripped variants ({%- -%}) of each are also accepted.
+    -- render takes named parameters: {% render 'partial', param: value %}.
+    -- NOT allowed: include, capture, case/when, unless, raw, comment,
+    --   cycle, tablerow, increment, decrement, liquid, echo
+    liquid_allowed_tags: Set<String> = {
+        "if", "elsif", "else", "endif",
+        "for", "endfor",
+        "assign",
+        "render"
+    }
+
+    -- Standard filters (4).
+    -- default takes a fallback value, append a suffix string.
+    -- NOT allowed: date, strip_html, truncate, split, join, size (as
+    --   filter), upcase, downcase, replace, remove, sort, map, where,
+    --   first, last, reverse, concat, uniq, compact, strip,
+    --   newline_to_br, json, prepend, and all math filters
+    liquid_allowed_standard_filters: Set<String> = {
+        "escape", "url_encode", "default", "append"
+    }
+
+    -- Custom filters (3):
+    --   i18n: language          — translates a key string for given language
+    --   markdown: post_id, post_data_json_by_id, canonical_post_path_by_slug,
+    --             canonical_media_path_by_source_path, language, language_prefix
+    --     — renders Markdown to HTML with link rewriting (6 arguments)
+    --   slugify                 — slugifies a string (tag/category URLs)
+    liquid_allowed_custom_filters: Set<String> = {
+        "i18n", "markdown", "slugify"
+    }
+
+    -- NOT allowed: !=, <, >=, <=, contains.
+    -- Logical operators or/and, bare-variable truthiness in {% if %},
+    -- the special value blank, dot property access, .size on arrays,
+    -- and bracket map lookups are part of expression syntax, not
+    -- operator validation.
+    liquid_allowed_comparison_operators: Set<String> = { "==", ">" }
+}
+
+-- A published template has passed ValidateLiquid, so its content only
+-- uses the allowed sets. liquid_tags / liquid_filters /
+-- liquid_comparison_operators are black boxes extracting the construct
+-- names a template uses.
 
 invariant LiquidTagSubset {
-    -- Only these 5 tags are used:
-    --   {% if %} / {% elsif %} / {% else %} / {% endif %}
-    --   {% for %} / {% endfor %}
-    --   {% assign %}
-    --   {% render 'partial', named_param: value %}  (with named parameters)
-    --   Whitespace-stripped variants: {%- -%}
-    --
-    -- NOT used: include, capture, case/when, unless, raw, comment,
-    --   cycle, tablerow, increment, decrement, liquid, echo
+    for t in Templates:
+        t.status = published implies
+            for tag in liquid_tags(effective_template_content(t)):
+                tag in config.liquid_allowed_tags
 }
 
 invariant LiquidFilterSubset {
-    -- Standard filters (4):
-    --   | escape
-    --   | url_encode
-    --   | default: fallback_value
-    --   | append: suffix_string
-    --
-    -- Custom filters (3):
-    --   | i18n: language          — translates a key string for given language
-    --   | markdown: post_id, post_data_json_by_id, canonical_post_path_by_slug,
-    --              canonical_media_path_by_source_path, language, language_prefix
-    --     — renders Markdown to HTML with link rewriting (6 arguments)
-    --   | slugify                 — slugifies a string (used for tag/category URLs)
-    --
-    -- Enforced at publish/validation time (LiquidParser.validate); any other
-    -- filter is rejected even though Liquex would otherwise apply it as a
-    -- built-in standard filter.
-    --
-    -- NOT used: date, strip_html, truncate, split, join, size (as filter),
-    --   upcase, downcase, replace, remove, sort, map, where, first, last,
-    --   reverse, concat, uniq, compact, strip, newline_to_br, json, prepend,
-    --   and all math filters
+    let allowed = config.liquid_allowed_standard_filters
+        + config.liquid_allowed_custom_filters
+    for t in Templates:
+        t.status = published implies
+            for f in liquid_filters(effective_template_content(t)):
+                f in allowed
 }
 
 invariant LiquidOperatorSubset {
-    -- Comparison: ==, >
-    -- Logical: or, and
-    -- Truthy/falsy: bare variable in {% if variable %}
-    -- Special values: blank (nil/empty comparison)
-    -- Property access: dot notation (object.property), .size on arrays,
-    --   bracket notation for map lookups (map[key])
-    --
-    -- Enforced at publish/validation time (LiquidParser.validate); any other
-    -- comparison operator (!=, <, >=, <=, contains) is rejected even though
-    -- Liquex would otherwise evaluate it.
+    for t in Templates:
+        t.status = published implies
+            for op in liquid_comparison_operators(effective_template_content(t)):
+                op in config.liquid_allowed_comparison_operators
 }
 
-invariant LiquidRenderContext {
-    -- Template rendering context provides these top-level variables:
-    --   language, language_prefix, html_theme_attribute,
-    --   page_title, pico_stylesheet_href,
-    --   blog_languages (array of {is_current, code, flag, href_prefix}),
-    --   alternate_links (array of {hreflang, href}),
-    --   menu_items (tree of {href, title, has_children, children}),
-    --   calendar_initial_year, calendar_initial_month,
-    --   post (single post context: {title, content, id, slug, show_title}),
-    --   post_categories, post_tags, tag_color_by_name (map),
-    --   backlinks (array of {path, display_slug}),
-    --   day_blocks (array of {show_date_marker, date_label, posts, show_separator}),
-    --   archive_context ({kind, name, month, year, day}),
-    --   show_archive_range_heading, min_date, max_date,
-    --   canonical_post_path_by_slug (map), canonical_media_path_by_source_path (map),
-    --   post_data_json_by_id (map),
-    --   is_list_page, is_first_page, is_last_page,
-    --   has_prev_page, has_next_page, prev_page_href, next_page_href,
-    --   not_found_message, not_found_back_label
-}
+-- The top-level variables available to templates at render time are
+-- formalized as the RenderContext value records in template_context.allium.

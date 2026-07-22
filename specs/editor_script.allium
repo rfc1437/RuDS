@@ -70,40 +70,66 @@ surface ScriptEditorSurface {
 
 rule ScriptSave {
     when: ScriptSaveRequested(script_id)
-    -- Lua syntax check first using the configured runtime semantics
-    -- If syntax error: blocks save, shows error inline in editor gutter
-    -- If valid: bumps version, saves to DB + rewrites the published script file
-    -- Entrypoint list re-discovered from Lua source after save
+    let target = script/Script{id: script_id}
+    let syntax = ValidateScript(editor_content(script_id))
+        -- editor_content: the current code editor buffer
+    ensures:
+        if syntax = valid:
+            UpdateScriptRequested(target, editor_field_changes(script_id))
+            -- Version bump + DB write + published-file rewrite:
+            -- script.allium UpdateScript. The entrypoint select is
+            -- re-populated from functions discovered in the Lua source.
+        else:
+            ScriptSyntaxErrorsShown(script_id, syntax)
+            -- Save blocked; errors shown inline in the editor gutter
 }
 
 rule ScriptPublish {
     when: ScriptPublishRequested(script_id)
-    -- Only offered while the script is a draft (can_publish gate on the button)
-    -- Validates Lua syntax first (publish gate); invalid source blocks publish
-    -- Saves current draft fields, then publishes (status -> published)
-    -- Writes the published script file to disk
-    -- See script.allium PublishScript
+    let target = script/Script{id: script_id}
+    requires: target.status = draft
+        -- can_publish gate on the button
+    let syntax = ValidateScript(editor_content(script_id))
+    ensures:
+        if syntax = valid:
+            UpdateScriptRequested(target, editor_field_changes(script_id))
+            PublishScriptRequested(target)
+            -- status -> published + file write: script.allium PublishScript
+        else:
+            ScriptSyntaxErrorsShown(script_id, syntax)
 }
 
 rule ScriptCheckSyntax {
     when: ScriptCheckSyntaxRequested(script_id)
-    -- Validates Lua syntax without saving
-    -- Shows errors inline in editor gutter
-    -- Success shown as toast or status indicator
+    -- Validation only, never saves
+    let syntax = ValidateScript(editor_content(script_id))
+    ensures:
+        if syntax = valid:
+            ScriptSyntaxOkShown(script_id)
+            -- toast / status indicator
+        else:
+            ScriptSyntaxErrorsShown(script_id, syntax)
 }
 
 rule ScriptRun {
     when: ScriptRunRequested(script_id)
-    -- Executes the script in the configured Lua runtime
-    -- Calls the configured Lua entrypoint function
-    -- stdout/stderr directed to Output panel tab
-    -- Output panel auto-opens if not already visible
-    -- Errors shown in Output panel with line numbers
+    let target = script/Script{id: script_id}
+    ensures: ExecuteScriptRequested(target, editor_entrypoint(script_id),
+        empty_args(), output_panel_sink())
+        -- Runs the current buffer's entrypoint in the sandboxed Lua
+        -- runtime (script.allium ScriptRuntimeSurface)
+    ensures: OutputPanelOpened()
+        -- stdout/stderr and errors (with line numbers) stream to the
+        -- Output panel tab, which auto-opens when not visible
 }
 
 rule ScriptDelete {
     when: ScriptDeleteRequested(script_id)
-    -- No confirmation dialog
-    -- Deletes DB record + published script file on disk
-    -- Closes script tab, sidebar removes item
+    let target = script/Script{id: script_id}
+    -- No confirmation dialog (action_patterns.allium
+    -- confirmation_assignments: script_delete -> none)
+    ensures: DeleteScriptRequested(target)
+        -- DB record + published script file: script.allium DeleteScript
+    ensures: closeTab(script_id)
+        -- sidebar removes the item reactively
 }

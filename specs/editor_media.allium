@@ -7,6 +7,7 @@
 -- the main content area when a media tab is active.
 
 use "./media.allium" as media
+use "./post.allium" as post
 use "./i18n.allium" as i18n
 
 -- ─── Media editor ─────────────────────────────────────────────
@@ -56,6 +57,9 @@ surface PostPickerOverlaySurface {
             result.post_id
             result.title
         overlay.overflow_count when overlay.overflow_count != null
+
+    provides:
+        PostPickerResultClicked(media_id, post_id)
 }
 
 value PostPickerResult {
@@ -103,6 +107,8 @@ surface MediaEditorSurface {
         MediaTranslationRefreshClicked(editor.media_id, language)
         MediaTranslationDeleteClicked(editor.media_id, language)
         MediaUnlinkPostRequested(editor.media_id, post_id)
+        MediaDeleteConfirmed(editor.media_id)
+        TranslationEditModalSaved(editor.media_id, language, title, alt, caption)
 
     @guarantee HeaderLayout
         -- Header bar with media display name.
@@ -162,84 +168,153 @@ surface MediaEditorSurface {
 
 -- ─── Media editor actions ─────────────────────────────────────
 
+rule MediaSave {
+    when: MediaSaveRequested(media_id)
+    let item = media/Media{id: media_id}
+    ensures: UpdateMediaRequested(item, editor_field_changes(media_id))
+        -- Persists all form fields; the engine update rewrites the
+        -- sidecar and FTS entry (media.allium UpdateMedia,
+        -- engine_side_effects.allium UpdateMediaSideEffects)
+}
+
 rule MediaAIImageAnalysis {
     when: MediaAIImageAnalysisRequested(media_id)
-    -- Gate: airplane mode check (see action_patterns.allium AIOperationGating)
-    -- Only available for image/* MIME types (button hidden for non-images)
-    -- Uses image analysis model (vision-capable, not title model)
-    -- Input: AI-optimized JPEG thumbnail (448x448, generated on import)
-    -- Response: suggested title, alt text, caption
-    -- Opens AISuggestionsModal with 3 fields (title, alt, caption)
-    -- On confirm: applies checked fields, triggers explicit save
+    -- Only available for image/* MIME types (editor.is_image guard
+    -- on the provides entry; button hidden for non-images).
+    ensures: AISuggestionRequested(entity_type: "media", entity_id: media_id)
+        -- Shared flow: action_patterns.allium MediaAISuggestionFlow —
+        -- airplane gating, image model over the 448x448 AI thumbnail,
+        -- AISuggestionsModal with title/alt/caption, accepted fields
+        -- trigger an explicit save.
 }
 
 rule MediaDetectLanguage {
     when: MediaDetectLanguageRequested(media_id)
-    -- Gate: airplane mode check
-    -- Input: concatenation of title + alt + caption text
-    -- Response: detected language code
-    -- Immediately persists to media record (no modal, no confirmation)
-    -- Triggers sidecar rewrite
+    let item = media/Media{id: media_id}
+    requires: active_endpoint_configured
+        -- airplane-mode gating: ai.allium AirplaneModeGating
+    let detected = ai_detect_language(concat(item.title, item.alt, item.caption))
+        -- title model over the concatenated metadata text
+    ensures: UpdateMediaRequested(item, language_change(detected))
+        -- persisted immediately — no modal, no confirmation; the
+        -- engine update rewrites the sidecar
 }
 
 rule MediaTranslateMetadata {
     when: MediaTranslateMetadataRequested(media_id, target_language)
-    -- Gate: airplane mode check
-    -- Opens language picker modal (same pattern as post translate)
-    -- Two-step process:
-    --   1. If source language not set: detect it first (auto-persist)
-    --   2. Translate title, alt, caption to target language via title model
-    -- Creates/updates media translation record
-    -- Writes translated sidecar file: {path}.{lang}.meta
+    let item = media/Media{id: media_id}
+    requires: active_endpoint_configured
+    -- target_language comes from the language picker modal (same
+    -- pattern as post translate).
+    let source_language = item.language
+        ?? ai_detect_language(concat(item.title, item.alt, item.caption))
+        -- step 1: detect the source language first when unset
+        -- (auto-persisted, as in MediaDetectLanguage)
+    let translated = ai_translate_media_metadata(item, source_language, target_language)
+        -- step 2: translate title, alt, caption via the title model
+    ensures: UpsertMediaTranslationRequested(item, target_language,
+        translated.title, translated.alt, translated.caption)
+        -- creates/updates the translation record and writes the
+        -- translated sidecar {path}.{lang}.meta (media.allium
+        -- UpsertMediaTranslation)
 }
 
 rule MediaReplaceFile {
     when: MediaReplaceFileRequested(media_id)
-    -- Opens native file dialog (no MIME type filter)
-    -- Copies selected file over existing media file path
-    -- If image: regenerates thumbnails synchronously (awaited)
-    -- Preview area updates with cache-busting timestamp query param
+    let item = media/Media{id: media_id}
+    let source = native_file_dialog_selection()
+        -- native file dialog, no MIME type filter; cancel aborts
+    ensures: ReplaceMediaFileRequested(item, source)
+        -- copies over the existing media file path; images regenerate
+        -- thumbnails synchronously (media.allium ReplaceMediaFile)
+    ensures: MediaPreviewRefreshed(media_id)
+        -- preview reloads with a cache-busting timestamp query param
 }
 
 rule MediaDeleteAction {
     when: MediaDeleteRequested(media_id)
-    -- Opens ConfirmDeleteModal (custom modal, not native dialog)
-    -- Shows: media display name, linked posts count and list
-    -- Two buttons: Cancel, Delete (destructive red style)
-    -- On confirm: deletes file, sidecar, thumbnails, all translations,
-    --   post-media links, FTS index entry
-    -- Closes media tab, sidebar removes item
-    -- See engine_side_effects.allium DeleteMediaSideEffects
+    let item = media/Media{id: media_id}
+    ensures: ConfirmDeleteModalOpened(media_id, item.linked_posts)
+        -- custom modal (not a native dialog): media display name,
+        -- linked post count and list; Cancel + Delete (destructive
+        -- red style) — action_patterns.allium
+        -- confirmation_assignments: media_delete
+}
+
+rule MediaDeleteExecute {
+    when: MediaDeleteConfirmed(media_id)
+    let item = media/Media{id: media_id}
+    ensures: DeleteMediaRequested(item)
+        -- file, sidecar, thumbnails, translations, post-media links,
+        -- FTS entry: media.allium DeleteMedia +
+        -- engine_side_effects.allium DeleteMediaSideEffects
+    ensures: closeTab(media_id)
+        -- sidebar removes the item reactively
 }
 
 rule MediaLinkToPost {
     when: MediaLinkToPostRequested(media_id)
-    -- Opens inline post picker overlay (not a modal, positioned near button)
-    -- Search input filtering unlinked posts by title
-    -- Up to config.media_post_picker_max_results results shown
-    -- "and N more" text if results exceed limit
-    -- Click links media to selected post (updates sidecar linkedPostIds)
-    -- Linked posts list refreshes immediately
+    ensures: PostPickerOverlayOpened(media_id)
+        -- inline overlay near the button (not a modal): search input
+        -- filters unlinked posts by title, at most
+        -- config.media_post_picker_max_results results, "and N more"
+        -- when the total exceeds the limit
+}
+
+rule MediaLinkToPostSelected {
+    when: PostPickerResultClicked(media_id, post_id)
+    let item = media/Media{id: media_id}
+    ensures: MediaLinkedToPost(item, post/Post{id: post_id})
+        -- creates the post-media link and updates sidecar
+        -- linkedPostIds; the linked posts list refreshes reactively
+    ensures: PostPickerOverlayClosed(media_id)
+}
+
+rule MediaUnlinkPost {
+    when: MediaUnlinkPostRequested(media_id, post_id)
+    let item = media/Media{id: media_id}
+    -- No confirmation (action_patterns.allium
+    -- confirmation_assignments: media_unlink)
+    ensures: MediaUnlinkedFromPost(item, post_id)
+        -- removes the post-media link row and updates sidecar
+        -- linkedPostIds
 }
 
 rule MediaTranslationEdit {
     when: MediaTranslationEditClicked(media_id, language)
-    -- Opens the "Edit Translation" modal pre-filled with the translation's
-    --   title, alt, and caption for that language
-    -- Save persists to DB + translated sidecar {path}.{lang}.meta; Cancel discards
+    ensures: TranslationEditModalOpened(media_id, language)
+        -- "Edit Translation" modal pre-filled with the translation's
+        -- title, alt, and caption; Cancel/close discards
+}
+
+rule MediaTranslationEditSave {
+    when: TranslationEditModalSaved(media_id, language, title, alt, caption)
+    let item = media/Media{id: media_id}
+    ensures: UpsertMediaTranslationRequested(item, language, title, alt, caption)
+        -- persists the DB record + translated sidecar
+        -- {path}.{lang}.meta
 }
 
 rule MediaTranslationRefresh {
     when: MediaTranslationRefreshClicked(media_id, language)
-    -- Gate: airplane mode check
-    -- Re-translates from source language to target via title model
-    -- Overwrites existing translation fields
-    -- Rewrites translated sidecar file
+    let item = media/Media{id: media_id}
+    requires: active_endpoint_configured
+    let translated = ai_translate_media_metadata(item, item.language, language)
+        -- re-translates from the source language via the title model
+    ensures: UpsertMediaTranslationRequested(item, language,
+        translated.title, translated.alt, translated.caption)
+        -- overwrites the existing translation fields and rewrites the
+        -- translated sidecar
 }
 
 rule MediaTranslationDelete {
     when: MediaTranslationDeleteClicked(media_id, language)
-    -- Deletes translation record from DB
-    -- Deletes translated sidecar file: {path}.{lang}.meta
-    -- No confirmation dialog
+    let item = media/Media{id: media_id}
+    let translation = media/MediaTranslation{media: item, language: language}
+    -- No confirmation dialog (action_patterns.allium
+    -- confirmation_assignments: media_translation_delete)
+    ensures: not exists translation
+    ensures: MediaTranslationDeleted(item, language)
+        -- engine_side_effects.allium DeleteMediaTranslationSideEffects
+        -- deletes the translated sidecar {path}.{lang}.meta
 }

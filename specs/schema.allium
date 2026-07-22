@@ -684,52 +684,79 @@ surface MigrationVersionSurface {
 -- ============================================================================
 
 invariant UniqueProjectSlug {
-    -- projects.slug must be unique across all projects
+    for a in Projects:
+        for b in Projects:
+            a != b implies a.slug != b.slug
 }
 
 invariant UniquePostSlugPerProject {
-    -- posts.slug must be unique within each project.project_id
     -- Enforced by: posts_project_slug_idx unique index
+    for a in Posts:
+        for b in Posts:
+            a != b and a.project_id = b.project_id implies a.slug != b.slug
 }
 
 invariant UniqueTranslationPerPostLanguage {
-    -- post_translations must have unique (translation_for, language)
     -- Enforced by: post_translations_translation_language_idx
+    for a in PostTranslations:
+        for b in PostTranslations:
+            a != b implies
+                not (a.translation_for = b.translation_for and a.language = b.language)
 }
 
 invariant UniqueMediaTranslationPerMediaLanguage {
-    -- media_translations must have unique (translation_for, language)
     -- Enforced by: media_translations_translation_language_idx
+    for a in MediaTranslations:
+        for b in MediaTranslations:
+            a != b implies
+                not (a.translation_for = b.translation_for and a.language = b.language)
 }
 
 invariant UniqueTagNamePerProject {
-    -- tags.name must be unique within each project.project_id
     -- Enforced by: tags_project_name_idx unique index
+    -- Case-insensitive: lower() is the SQLite collation applied by the index
+    for a in Tags:
+        for b in Tags:
+            a != b and a.project_id = b.project_id implies lower(a.name) != lower(b.name)
 }
 
 invariant UniqueScriptSlugPerProject {
-    -- scripts.slug must be unique within each project.project_id
     -- Enforced by: scripts_project_slug_idx unique index
+    for a in Scripts:
+        for b in Scripts:
+            a != b and a.project_id = b.project_id implies a.slug != b.slug
 }
 
 invariant UniqueTemplateSlugPerProject {
-    -- templates.slug must be unique within each project.project_id
     -- Enforced by: templates_project_slug_idx unique index
+    for a in Templates:
+        for b in Templates:
+            a != b and a.project_id = b.project_id implies a.slug != b.slug
 }
 
 invariant UniquePostMediaLink {
-    -- post_media must have unique (post_id, media_id) pair
     -- Enforced by: post_media_post_media_idx unique index
+    for a in PostMediaLinks:
+        for b in PostMediaLinks:
+            a != b implies not (a.post_id = b.post_id and a.media_id = b.media_id)
 }
 
 invariant UniqueGeneratedFileHash {
-    -- generated_file_hashes must have unique (project_id, relative_path)
     -- Enforced by: generated_file_hashes_project_path_idx unique index
+    for a in GeneratedFileHashes:
+        for b in GeneratedFileHashes:
+            a != b implies
+                not (a.project_id = b.project_id and a.relative_path = b.relative_path)
 }
 
 invariant UniqueDismissedDuplicatePair {
-    -- dismissed_duplicate_pairs must have unique (project_id, post_id_a, post_id_b)
     -- Enforced by: dismissed_pairs_idx unique index
+    for a in DismissedDuplicatePairs:
+        for b in DismissedDuplicatePairs:
+            a != b implies
+                not (a.project_id = b.project_id
+                    and a.post_id_a = b.post_id_a
+                    and a.post_id_b = b.post_id_b)
 }
 
 -- ============================================================================

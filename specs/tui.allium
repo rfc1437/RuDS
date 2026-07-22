@@ -8,9 +8,20 @@ entity TuiState {
     focus: sidebar | editor
     selected_index: Integer
     editing_post: Boolean
+    editor_preview: Boolean
+        -- true while the read-only rendered-Markdown preview is shown
     -- The editor drives the same BDS.UI.PostEditor workflow as the GUI:
     -- canonical-language edits update the post, other languages update
     -- translations; publish routes through the same publishing pipeline.
+}
+
+config {
+    -- Same preference sections as the settings backends; matches the
+    -- GUI settings nav minus the GUI-only Style tab.
+    tui_settings_sections: List<String> = [
+        "project", "editor", "content", "ai",
+        "technology", "publishing", "data", "mcp"
+    ]
 }
 
 surface TuiSurface {
@@ -21,207 +32,468 @@ surface TuiSurface {
         TuiEventReceived(entity, entity_id, action)
         TuiSettingsChanged(key)
         ShellTaskCompleted(route)
+        ProjectsOverlaySelectionConfirmed(project)
+        FolderPathPromptTabPressed(input)
+        FolderPathPromptSubmitted(path)
+        SearchPromptChanged(query)
+        SearchPromptConfirmed(query)
+        SearchPromptCancelled()
+        CommandListSelectionConfirmed(command)
+        GitCommitPromptSubmitted(message)
+
+    @guarantee OverlayPrecedence
+        -- Open overlays and status-line prompts capture key input
+        -- before the sidebar/editor key rules below apply. Overlays
+        -- clear the terminal cells beneath them.
+
+    @guarantee EditorRendering
+        -- The post editor renders the buffer with syntax highlighting
+        -- (markdown with [[macro]] accents for posts, HTML+Liquid for
+        -- templates, Lua for scripts), soft-wraps long lines to the
+        -- viewport width, keeps the cursor's visual row visible while
+        -- scrolling, and highlights the cursor's source line. There is
+        -- no line-number gutter.
 }
+
+-- ─── Sidebar navigation ─────────────────────────────────────
 
 rule SidebarNavigation {
     when: TuiKeyPressed(code, _)
     requires: code = "up" or code = "down" or code = "j" or code = "k"
-    -- Selection moves over the flattened sidebar items and skips
-    -- section headers; data comes from BDS.UI.Sidebar.view, identical
-    -- to the GUI sidebar content.
-    ensures: TuiState.selected_index.updated()
+    requires: TuiState.focus = sidebar
+    let items = flattened_sidebar_items()
+        -- BDS.UI.Sidebar.view data, identical to the GUI sidebar
+    ensures:
+        if code = "up" or code = "k":
+            TuiState.selected_index = previous_selectable_index(items, TuiState.selected_index)
+        else:
+            TuiState.selected_index = next_selectable_index(items, TuiState.selected_index)
+        -- section headers are not selectable; movement skips them
 }
 
 rule OpenEntry {
     when: TuiKeyPressed(code, _)
     requires: code = "enter"
-    -- Posts open in the editor by default (title + textarea seeded from
-    -- the persisted form; syntax highlighting and word wrap on; ctrl+e
-    -- switches to the rendered preview). New empty posts created with
-    -- "n" open in the editor as well. Images open in the terminal image
-    -- preview. Other entities report that terminal editing is not
-    -- available yet.
-    ensures: TuiState.editing_post.updated()
+    requires: TuiState.focus = sidebar
+    let entry = selected_sidebar_entry(TuiState.selected_index)
+    ensures:
+        if entry.kind = "post":
+            TuiState.editing_post = true
+            TuiState.focus = editor
+            -- editor seeded from the persisted form (title + textarea);
+            -- syntax highlighting and word wrap on. New empty posts
+            -- created with "n" open in the editor the same way.
+        if entry.kind = "image":
+            TerminalImagePreviewOpened(entry)
+        if entry.kind != "post" and entry.kind != "image":
+            StatusMessageShown(message_key: "tui.editing_not_available")
 }
+
+-- ─── Post editor keys ───────────────────────────────────────
 
 rule SaveAndPublish {
     when: TuiKeyPressed(code, modifiers)
     requires: code = "s" or code = "p"
     requires: modifiers = "ctrl"
-    -- ctrl+s saves the draft, ctrl+p saves and publishes — both through
-    -- BDS.UI.PostEditor.Persistence, so files, embeddings, search, and
-    -- the event bus behave exactly as a GUI save.
-    ensures: PostPersisted()
+    requires: TuiState.editing_post
+    ensures:
+        if code = "s":
+            PostDraftPersisted()
+        else:
+            PostPersistedAndPublished()
+    -- Both persist through BDS.UI.PostEditor.Persistence, so files,
+    -- embeddings, search index, and the event bus behave exactly as a
+    -- GUI save.
 }
 
 rule EditorMode {
     when: TuiKeyPressed(code, modifiers)
     requires: code = "e"
     requires: modifiers = "ctrl"
-    -- ctrl+e toggles between the syntax-highlighted editor (the default
-    -- mode when opening a post) and the read-only rendered-Markdown
-    -- preview (rendered through tui-markdown so headings/emphasis/lists
-    -- are styled); keys in preview never edit content, and esc returns
-    -- to the sidebar from either mode.
-    ensures: PreviewToggled()
+    requires: TuiState.editing_post
+    ensures: TuiState.editor_preview = not TuiState.editor_preview
+        -- toggles between the syntax-highlighted editor (the default
+        -- when opening a post) and the read-only rendered-Markdown
+        -- preview (tui-markdown: headings/emphasis/lists styled);
+        -- keys in preview never edit content
 }
 
-rule CodeEditorWrapping {
-    when: TuiState.editing_post.updated()
-    -- The post editor renders the buffer with syntax highlighting
-    -- (markdown with [[macro]] accents for posts, HTML+Liquid for
-    -- templates, Lua for scripts), soft-wraps long lines to the
-    -- viewport width, keeps the cursor's visual row visible while
-    -- scrolling, and highlights the cursor's source line. There is no
-    -- line-number gutter.
-    ensures: TuiState.updated()
+rule EditorEscape {
+    when: TuiKeyPressed(code, _)
+    requires: code = "esc"
+    requires: TuiState.focus = editor
+    ensures: TuiState.focus = sidebar
+        -- esc returns to the sidebar from either editor mode
 }
 
 rule AiQuickAction {
     when: TuiKeyPressed(code, modifiers)
     requires: code = "g"
     requires: modifiers = "ctrl"
-    -- One-shot AI post analysis (title/excerpt suggestions). Gated by
-    -- airplane mode: without a local endpoint the TUI shows a status
-    -- message instead of calling out.
-    ensures: AiSuggestionsRequestedOrRefused()
+    requires: TuiState.editing_post
+    ensures:
+        if active_endpoint_configured:
+            AISuggestionRequested(entity_type: "post", entity_id: edited_post_id())
+            -- one-shot AI post analysis (title/excerpt suggestions)
+        else:
+            StatusMessageShown(message_key: "tui.ai_unavailable_offline")
+            -- airplane gating: without a local endpoint the TUI shows
+            -- a status message instead of calling out
 }
 
+-- ─── Project switcher ───────────────────────────────────────
+
 rule ProjectSwitcher {
-    when: TuiKeyPressed(code, _)
+    when: TuiKeyPressed(code, modifiers)
     requires: code = "p"
-    -- "p" opens the projects overlay: all projects from the caching
-    -- database with the active one marked; enter activates the selected
-    -- project (BDS.Projects.set_active_project) and reloads the sidebar.
-    -- "o" switches to a folder-path prompt with bash-style tab
-    -- completion: tab completes a unique directory (trailing slash
-    -- appended), an ambiguous prefix completes to the longest common
-    -- prefix and lists the candidate folders; only directories are
-    -- offered, dotfolders only for a dot-prefixed input, and a leading
-    -- "~" expands to the home directory. A typed path is validated
-    -- to be an existing directory, then opened as a project
-    -- (BDS.Projects.create_project with data_path, named after the
-    -- folder) and activated; a full database rebuild is queued
-    -- automatically through the rebuild_database shell command so the
-    -- folder's content is loaded into the caching database. Invalid
-    -- paths keep the prompt open and report the error.
-    ensures: ProjectSwitchedOrOpened()
+    requires: modifiers != "ctrl"
+    requires: TuiState.focus = sidebar
+    ensures: ProjectsOverlayOpened(projects: all_projects(), active: active_project())
+        -- all projects from the caching database, active one marked
+}
+
+rule ProjectOverlayActivate {
+    when: ProjectsOverlaySelectionConfirmed(project)
+    ensures: ActiveProjectChanged(project)
+        -- BDS.Projects.set_active_project
+    ensures: SidebarReloaded()
+}
+
+rule ProjectOverlayFolderPrompt {
+    when: TuiKeyPressed(code, _)
+    requires: code = "o"
+    requires: projects_overlay_open()
+    ensures: FolderPathPromptOpened()
+        -- switches the overlay to a folder-path prompt with bash-style
+        -- tab completion
+}
+
+rule FolderPromptTabCompletion {
+    when: FolderPathPromptTabPressed(input)
+    let expanded = expand_home(input)
+        -- a leading "~" expands to the home directory
+    let candidates = completion_candidates(expanded)
+        -- only directories are offered; dotfolders only when the last
+        -- path segment starts with "."
+    ensures:
+        if candidates.count = 1:
+            FolderPromptInputReplaced(candidates.first + "/")
+            -- a unique directory completes with a trailing slash
+        if candidates.count > 1:
+            FolderPromptInputReplaced(longest_common_prefix(candidates))
+            FolderPromptCandidatesListed(candidates)
+            -- ambiguous prefix: longest common prefix + candidate list
+        if candidates.count = 0:
+            FolderPromptUnchanged()
+}
+
+rule FolderPromptSubmit {
+    when: FolderPathPromptSubmitted(path)
+    let expanded = expand_home(path)
+    ensures:
+        if directory_exists(expanded):
+            ProjectOpenedFromFolder(expanded)
+            -- BDS.Projects.create_project with data_path, named after
+            -- the folder, then activated
+            DatabaseRebuildQueued(expanded)
+            -- queued automatically through the rebuild_database shell
+            -- command so the folder's content is loaded into the
+            -- caching database
+        else:
+            FolderPromptErrorShown(path)
+            -- invalid paths keep the prompt open and report the error
+}
+
+-- ─── Sidebar search ─────────────────────────────────────────
+
+enum TuiSearchTokenKind {
+    text
+        -- plain word: text search
+    tag_filter
+        -- "tag:x": filters like the GUI tag chip
+    category_filter
+        -- "category:x": filters like the GUI category chip
+    day_filter
+        -- ISO date (yyyy-mm-dd): narrows to that day; extends the
+        -- shared sidebar queries
+}
+
+value TuiSearchToken {
+    kind: TuiSearchTokenKind
+    argument: String
+        -- the search word, tag/category name, or ISO date
+}
+
+surface TuiSearchTokenSurface {
+    context token: TuiSearchToken
+
+    exposes:
+        token.kind
+        token.argument
 }
 
 rule SidebarSearch {
     when: TuiKeyPressed(code, _)
     requires: code = "/"
-    -- "/" in sidebar focus opens a vi-style search prompt in the status
-    -- line that live-filters the current view through the same
-    -- BDS.UI.Sidebar filter params the GUI sidebar uses (posts, pages,
-    -- media). Plain words are a text search, "tag:x" and "category:x"
-    -- filter like the GUI chips, and an ISO date (yyyy-mm-dd) narrows
-    -- to that day — the day filter extends the shared sidebar queries.
-    -- Tokens combine with AND. Enter keeps the filter (shown appended
-    -- to the sidebar title), esc clears it; filters are per view.
-    ensures: SidebarFiltered()
+    requires: TuiState.focus = sidebar
+    ensures: SearchPromptOpened()
+        -- vi-style search prompt in the status line
 }
+
+rule SidebarSearchInput {
+    when: SearchPromptChanged(query)
+    let tokens = parse_search_tokens(query)
+        -- black box: each whitespace-separated token classified as a
+        -- TuiSearchToken; tokens combine with AND
+    ensures: SidebarFiltered(filters: tokens)
+        -- live-filters the current view through the same shared
+        -- BDS.UI.Sidebar filter params the GUI sidebar uses
+        -- (posts, pages, media)
+}
+
+rule SidebarSearchCommit {
+    when: SearchPromptConfirmed(query)
+    ensures: SidebarFilterKept(view: TuiState.view, query: query)
+        -- enter keeps the filter, shown appended to the sidebar title;
+        -- filters are per view
+}
+
+rule SidebarSearchCancel {
+    when: SearchPromptCancelled()
+    ensures: SidebarFilterCleared(view: TuiState.view)
+        -- esc clears the filter
+}
+
+-- ─── Command prompt ─────────────────────────────────────────
 
 rule CommandPrompt {
     when: TuiKeyPressed(code, _)
     requires: code = ":"
-    -- Vi-style prompt: ":" opens a filterable list of the parameterless
-    -- Blog-menu shell commands (metadata diff, validate site, force
-    -- render, rebuilds, reindex, translations, duplicates, upload,
-    -- browser preview URL) and runs the selection through the same
-    -- BDS.Desktop.ShellCommands backend as the GUI menu; typing ":?"
-    -- shows the full list as help. Overlays clear the cells beneath
-    -- them. Commands whose follow-up UI is GUI-only (validate
-    -- translations, find duplicates) are marked. Queued tasks report
-    -- progress in the status line until all tasks finish.
-    ensures: CommandListShownOrExecuted()
+    requires: TuiState.focus = sidebar
+    ensures: CommandListOpened(commands: parameterless_shell_commands())
+        -- vi-style prompt: filterable list of the parameterless
+        -- Blog-menu shell commands (metadata diff, validate site,
+        -- force render, rebuilds, reindex, translations, duplicates,
+        -- upload, browser preview URL) — the same
+        -- BDS.Desktop.ShellCommands backend as the GUI menu. ":?"
+        -- shows the full list as help. Commands whose follow-up UI is
+        -- GUI-only (validate translations, find duplicates) are marked.
 }
+
+rule CommandPromptExecute {
+    when: CommandListSelectionConfirmed(command)
+    ensures: ShellCommandExecuted(command)
+    ensures: TaskProgressShownInStatusLine()
+        -- queued tasks report progress in the status line until all
+        -- tasks finish
+}
+
+-- ─── Settings panel (issue #29) ─────────────────────────────
 
 rule SettingsPanel {
     when: TuiKeyPressed(code, _)
     requires: code = "6"
-    -- "6" opens the settings panel (issue #29), matching the GUI panel
-    -- numbering: the sidebar lists the same preference sections as the
-    -- settings backends (Project, Editor, Content, AI, Technology,
-    -- Publishing, Data, MCP). The GUI-only Style tab is intentionally
-    -- absent. Enter on a section opens a section-specific editor in the
-    -- main area: a generic typed-field form from BDS.UI.SettingsForm.
-    -- Enter edits a text field in a status-line prompt, toggles a
-    -- boolean, or cycles an enum through its options; read-only info
-    -- rows are skipped by the selection. ctrl+s saves the section
-    -- through the same backends as the GUI editor (BDS.Metadata,
-    -- BDS.Settings, BDS.AI, BDS.MCP.AgentConfig) and reloads the form;
-    -- esc cancels the prompt, then closes the form. Category removal
-    -- and AI model discovery remain GUI-only.
-    ensures: SettingsFormShownEditedOrSaved()
+    requires: TuiState.focus = sidebar
+    -- "6" matches the GUI panel numbering
+    ensures: TuiState.view = settings
+    ensures: SettingsSectionsListed(sections: config.tui_settings_sections)
+        -- enter on a section opens a section-specific editor in the
+        -- main area: a generic typed-field form from BDS.UI.SettingsForm
 }
+
+rule SettingsFieldEdit {
+    when: TuiKeyPressed(code, _)
+    requires: code = "enter"
+    requires: TuiState.view = settings
+    let row = selected_settings_row()
+    requires: not row.read_only
+        -- read-only info rows are skipped by the selection
+    ensures:
+        if row.kind = "text":
+            StatusLinePromptOpened(row)
+            -- esc cancels the prompt, then closes the form
+        if row.kind = "boolean":
+            SettingToggled(row)
+        if row.kind = "enum":
+            SettingCycled(row)
+            -- cycles the enum through its options
+}
+
+rule SettingsSave {
+    when: TuiKeyPressed(code, modifiers)
+    requires: code = "s"
+    requires: modifiers = "ctrl"
+    requires: TuiState.view = settings
+    ensures: SettingsSectionSaved(selected_settings_section())
+        -- saves through the same backends as the GUI editor
+        -- (BDS.Metadata, BDS.Settings, BDS.AI, BDS.MCP.AgentConfig)
+        -- and reloads the form. Category removal and AI model
+        -- discovery remain GUI-only.
+}
+
+-- ─── Tags panel (issue #34) ─────────────────────────────────
 
 rule TagsPanel {
     when: TuiKeyPressed(code, _)
     requires: code = "5"
-    -- "5" opens the tags view (issue #34), matching the GUI panel
-    -- numbering. The sidebar lists the same three sections as the GUI
-    -- tags editor (Tag Cloud, Create / Edit, Merge Tags — from
-    -- BDS.UI.Sidebar's tags nav view); enter opens the section in the
-    -- main area, all backed by BDS.UI.TagsPanel over the same BDS.Tags
-    -- operations as the GUI editor. Cloud lists tags with their post
-    -- usage counts ordered by usage; manage is alphabetical with "n"
-    -- (create prompt), enter (rename prompt), "c" (cycle colour through
-    -- the shared presets), "t" (cycle post template), "d" then "y"
-    -- (delete with post-count confirmation; any other key cancels) and
-    -- "s" (sync tags from post tags); merge marks tags with space and
-    -- "m" merges the marked tags into the selected one (at least two,
-    -- target included). Text prompts live in the status line; esc
-    -- cancels the prompt, then closes the panel. Domain tag events
-    -- reload an open panel, keeping it in sync with GUI and CLI writes.
-    ensures: TagsPanelShownOrEdited()
+    requires: TuiState.focus = sidebar
+    -- "5" matches the GUI panel numbering
+    ensures: TuiState.view = tags
+    ensures: TagsSectionsListed()
+        -- the same three sections as the GUI tags editor (Tag Cloud,
+        -- Create / Edit, Merge Tags — from BDS.UI.Sidebar's tags nav
+        -- view); enter opens the section in the main area, all backed
+        -- by BDS.UI.TagsPanel over the same BDS.Tags operations as the
+        -- GUI editor. Cloud lists tags with post usage counts ordered
+        -- by usage; manage is alphabetical. Text prompts live in the
+        -- status line; esc cancels the prompt, then closes the panel.
+        -- Domain tag events reload an open panel, keeping it in sync
+        -- with GUI and CLI writes.
 }
+
+rule TagsManageKeys {
+    when: TuiKeyPressed(code, _)
+    requires: TuiState.view = tags
+    requires: tags_manage_section_active()
+    ensures:
+        if code = "n":
+            TagCreatePromptOpened()
+        if code = "enter":
+            TagRenamePromptOpened(selected_tag())
+        if code = "c":
+            TagColourCycled(selected_tag())
+            -- cycles through the shared colour presets
+        if code = "t":
+            TagTemplateCycled(selected_tag())
+            -- cycles the tag's post template
+        if code = "d":
+            TagDeleteConfirmArmed(selected_tag())
+            -- "d" then "y" deletes with post-count confirmation;
+            -- any other key cancels
+        if code = "s":
+            TagsSyncedFromPosts()
+}
+
+rule TagsMergeKeys {
+    when: TuiKeyPressed(code, _)
+    requires: TuiState.view = tags
+    requires: tags_merge_section_active()
+    ensures:
+        if code = "space":
+            TagMarkToggled(selected_tag())
+        if code = "m" and marked_tags().count >= 2:
+            TagsMerged(source_tags: marked_tags(), target_tag: selected_tag())
+            -- merges the marked tags into the selected one (target
+            -- included, at least two marked)
+}
+
+-- ─── Git panel (issue #30) ──────────────────────────────────
 
 rule GitPanel {
     when: TuiKeyPressed(code, _)
     requires: code = "7"
-    -- "7" opens the git panel (issue #30) for content sync: the sidebar
-    -- lists the changed files from git status (code + path, branch with
-    -- ahead/behind counts in the title) with the commit history in its
-    -- lower half, like the GUI (short hash + subject; ↑ marks commits
-    -- that still need a push, ↓ remote-only ones), the main area shows a
-    -- scrollable whole-folder diff (staged + unstaged, capped) paged
-    -- with pgup/pgdn; enter on a file jumps the diff to it. "c" opens a
-    -- status-line commit prompt (git add -A + commit, empty messages
-    -- rejected), "u" pulls (ff-only) and "s" pushes — both run off the
-    -- UI process and report back as a status toast. Every action is
-    -- BDS.Git, the same backend as the GUI git panel. A project folder
-    -- that is not a git repository shows a message and refuses the
-    -- actions.
-    ensures: GitPanelShownOrSynced()
+    requires: TuiState.focus = sidebar
+    -- "7" matches the GUI panel numbering; content sync panel
+    ensures: TuiState.view = git
+    ensures: GitPanelOpened()
+        -- sidebar: changed files from git status (code + path, branch
+        -- with ahead/behind counts in the title), commit history in
+        -- the lower half like the GUI (short hash + subject; ↑ marks
+        -- commits that still need a push, ↓ remote-only ones).
+        -- Main area: scrollable whole-folder diff (staged + unstaged,
+        -- capped) paged with pgup/pgdn. Every action is BDS.Git, the
+        -- same backend as the GUI git panel.
 }
+
+rule GitPanelKeys {
+    when: TuiKeyPressed(code, _)
+    requires: TuiState.view = git
+    requires: is_git_repository(active_project())
+    ensures:
+        if code = "enter":
+            GitDiffJumpedToFile(selected_changed_file())
+        if code = "c":
+            GitCommitPromptOpened()
+            -- status-line commit prompt
+        if code = "u":
+            GitPullStarted()
+            -- ff-only, runs off the UI process, reports back as a
+            -- status toast
+        if code = "s":
+            GitPushStarted()
+            -- runs off the UI process, reports back as a status toast
+}
+
+rule GitPanelNonRepo {
+    when: TuiKeyPressed(code, _)
+    requires: TuiState.view = git
+    requires: not is_git_repository(active_project())
+    requires: code = "c" or code = "u" or code = "s"
+    ensures: StatusMessageShown(message_key: "tui.not_a_git_repository")
+        -- a project folder that is not a git repository shows a
+        -- message and refuses the actions
+}
+
+rule GitCommitSubmit {
+    when: GitCommitPromptSubmitted(message)
+    ensures:
+        if message = "":
+            GitCommitRejectedEmptyMessage()
+            -- empty messages are rejected
+        else:
+            GitCommitExecuted(message)
+            -- git add -A + commit
+}
+
+-- ─── Report panels ──────────────────────────────────────────
 
 rule ReportPanels {
     when: ShellTaskCompleted(route)
     requires: route = "metadata_diff" or route = "site_validation"
-    -- Completed metadata diff and site validation tasks open a
-    -- scrollable report panel showing the differences. Enter applies
-    -- the whole report — metadata diff repairs all items from the
-    -- filesystem (file → db) and imports orphan files; site validation
-    -- applies the full report incrementally (render missing, remove
-    -- extra, re-render updated), matching the GUI defaults. Esc closes
-    -- the report without applying. Reports completed before this
-    -- session started never pop up.
-    ensures: ReportShownThenAppliedOrCancelled()
+    requires: task_completed_in_current_session(route)
+        -- reports completed before this session started never pop up
+    ensures: ReportPanelOpened(route)
+        -- scrollable report panel showing the differences
 }
+
+rule ReportPanelApply {
+    when: TuiKeyPressed(code, _)
+    requires: code = "enter"
+    requires: report_panel_open()
+    ensures: ReportApplied(open_report())
+        -- enter applies the whole report: metadata diff repairs all
+        -- items from the filesystem (file -> db) and imports orphan
+        -- files; site validation applies the full report incrementally
+        -- (render missing, remove extra, re-render updated) — matching
+        -- the GUI defaults
+    ensures: ReportPanelClosed()
+}
+
+rule ReportPanelDismiss {
+    when: TuiKeyPressed(code, _)
+    requires: code = "esc"
+    requires: report_panel_open()
+    ensures: ReportPanelClosed()
+        -- esc closes the report without applying
+}
+
+-- ─── Multi-client sync ──────────────────────────────────────
 
 rule MultiClientSync {
     when: TuiEventReceived(entity, entity_id, action)
-    -- Domain events refresh the sidebar; a post deleted elsewhere closes
-    -- the open editor. Keeps TUI sessions synchronized with GUI clients
-    -- and pipeline ingestion.
-    ensures: TuiState.updated()
+    -- Keeps TUI sessions synchronized with GUI clients and pipeline
+    -- ingestion.
+    ensures: SidebarReloaded()
+    ensures:
+        if entity = "post" and action = "deleted" and edited_post_id() = entity_id:
+            TuiState.editing_post = false
+            -- a post deleted elsewhere closes the open editor
 }
 
 rule ServerSideLocale {
     when: TuiSettingsChanged(key)
     requires: key = "ui.language"
-    -- The TUI re-reads the server-side UI language and re-renders; all
-    -- clients always share one language.
     ensures: TuiRelocalized()
+        -- the TUI re-reads the server-side UI language and re-renders;
+        -- all clients always share one language
 }

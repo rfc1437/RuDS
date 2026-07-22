@@ -21,34 +21,85 @@ config {
     default_language: String = "en"
 }
 
-invariant SplitLocalization {
-    -- Two independent locale scopes:
-    --   1. UI locale: follows OS system locale
-    --   2. Content/render locale: follows project settings (mainLanguage)
-    -- These are resolved independently and may differ
+-- ─── Split localization ─────────────────────────────────────
+--
+-- Two independent locale scopes exist per running app. They are
+-- resolved by separate rules from separate inputs and may differ.
+
+entity LocaleScopes {
+    -- Singleton holding the two locale scopes.
+    ui_locale: String
+        -- Follows the OS system locale; used for menus and app chrome
+    render_locale: String
+        -- Follows the active project's mainLanguage; used for
+        -- template rendering and generated content
 }
 
-invariant LanguageNormalization {
-    -- Input language codes are normalized:
-    --   Take base language code (split on '-'): "en-US" -> "en"
-    --   Fall back to "en" if unrecognized
+surface LocaleSurface {
+    facing _: LocaleConsumer
+
+    provides:
+        OsLocaleDetected(os_locale)
+        ProjectMainLanguageResolved(main_language)
+        MenuTranslationRequested(item_key)
+        RenderTranslationRequested(label_key)
 }
 
-invariant MenuTranslations {
-    -- Menu item labels are separately translatable
-    -- translateMenu() uses UI locale (system/OS locale), NOT render locale
-    -- This follows the OS convention: menus match the system language
+-- ─── Language normalization ─────────────────────────────────
+--
+-- Both scopes normalize their input the same way: take the base
+-- language code, fall back to the default when unsupported.
+
+rule NormalizeUiLocale {
+    when: OsLocaleDetected(os_locale)
+    let base = base_language_code(os_locale)
+        -- black box: substring of the input before the first "-"
+        -- ("en-US" -> "en")
+    let codes = config.supported_languages -> code
+    ensures:
+        if base in codes:
+            LocaleScopes.ui_locale = base
+        else:
+            LocaleScopes.ui_locale = config.default_language
 }
 
-invariant RenderTranslations {
+rule NormalizeRenderLocale {
+    when: ProjectMainLanguageResolved(main_language)
+    let base = base_language_code(main_language)
+    let codes = config.supported_languages -> code
+    ensures:
+        if base in codes:
+            LocaleScopes.render_locale = base
+        else:
+            LocaleScopes.render_locale = config.default_language
+}
+
+-- ─── Translation lookup scopes ──────────────────────────────
+
+rule TranslateMenuLabel {
+    when: MenuTranslationRequested(item_key)
+    -- Menus follow the OS convention: labels match the system
+    -- language (UI locale), never the render locale.
+    ensures: MenuLabelTranslated(item_key, locale: LocaleScopes.ui_locale)
+}
+
+rule TranslateRenderLabel {
+    when: RenderTranslationRequested(label_key)
     -- Template rendering i18n strings (date formats, archive labels,
-    --   "older posts", "newer posts", etc.) come from locale JSON files
-    -- translateRender() and getRenderTranslations() provide these
+    -- "older posts", "newer posts", etc.) come from the locale JSON
+    -- files for the render locale.
+    ensures: RenderLabelTranslated(label_key, locale: LocaleScopes.render_locale)
 }
 
--- Stemmer language support for search (broader than UI languages)
+-- ─── Search stemmer coverage ────────────────────────────────
+
 invariant SnowballStemmerCoverage {
-    -- 24 languages supported for FTS5 search stemming
-    -- ISO 639-1 mapped to Snowball stemmer names
-    -- All 5 UI languages are a subset of stemmer languages
+    -- ISO 639-1 codes with a dedicated Snowball algorithm
+    -- (stemmer_for_language in bds-core fts.rs); nb/nn/no share the
+    -- Norwegian stemmer, unknown codes fall back to English.
+    -- Every UI language must have real stemming, not the fallback.
+    let stemmed_codes = {"ar", "da", "de", "el", "en", "es", "fi", "fr",
+        "hu", "it", "nb", "nn", "no", "nl", "pt", "ro", "ru", "sv", "ta", "tr"}
+    for lang in config.supported_languages:
+        lang.code in stemmed_codes
 }
