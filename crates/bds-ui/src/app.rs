@@ -12499,6 +12499,37 @@ mod tests {
     }
 
     #[test]
+    fn script_delete_requires_confirmation_before_removal() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateScript);
+        let script_id = app.sidebar_scripts[0].id.clone();
+
+        let _ = app.update(Message::ScriptEditor(ScriptEditorMsg::Delete));
+        assert!(
+            bds_core::db::queries::script::get_script_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &script_id
+            )
+            .is_ok()
+        );
+        assert!(app.tabs.iter().any(|tab| tab.id == script_id));
+
+        let _ = app.update(Message::ConfirmModal(modal::ConfirmAction::DeleteScript(
+            script_id.clone(),
+        )));
+        assert!(
+            bds_core::db::queries::script::get_script_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &script_id
+            )
+            .is_err()
+        );
+        assert!(!app.tabs.iter().any(|tab| tab.id == script_id));
+        assert!(!app.script_editors.contains_key(&script_id));
+    }
+
+    #[test]
     fn rebuild_completion_refreshes_project_metadata_in_settings() {
         let (db, project, tmp) = setup();
         let mut app = make_app(db, project, &tmp);

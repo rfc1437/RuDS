@@ -43,6 +43,7 @@ surface ScriptEditorSurface {
         ScriptRunRequested(editor.script_id)
         ScriptCheckSyntaxRequested(editor.script_id)
         ScriptDeleteRequested(editor.script_id)
+        ScriptDeleteConfirmed(editor.script_id)
 
     @guarantee HeaderLayout
         -- Header bar with script title tab.
@@ -123,11 +124,19 @@ rule ScriptRun {
         -- Output panel tab, which auto-opens when not visible
 }
 
-rule ScriptDelete {
+rule ScriptDeleteAction {
     when: ScriptDeleteRequested(script_id)
     let target = script/Script{id: script_id}
-    -- No confirmation dialog (action_patterns.allium
-    -- confirmation_assignments: script_delete -> none)
+    ensures: ConfirmDeleteModalOpened(script_id)
+        -- custom modal (not a native dialog): script title, no
+        -- reference list; Cancel + Delete (destructive red style)
+        -- — action_patterns.allium
+        -- confirmation_assignments: script_delete
+}
+
+rule ScriptDeleteExecute {
+    when: ScriptDeleteConfirmed(script_id)
+    let target = script/Script{id: script_id}
     ensures: DeleteScriptRequested(target)
         -- DB record + published script file: script.allium DeleteScript
     ensures: closeTab(script_id)

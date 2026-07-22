@@ -219,7 +219,8 @@ config {
         ConfirmationAssignment(action: "tag_merge", pattern: confirm_dialog),
             -- "Merge N tags into {target}? Cannot be undone."
         ConfirmationAssignment(action: "rebuild_operations", pattern: none),
-        ConfirmationAssignment(action: "script_delete", pattern: none),
+        ConfirmationAssignment(action: "script_delete", pattern: confirm_delete_modal),
+            -- shows script title, no reference list
         ConfirmationAssignment(action: "menu_item_delete", pattern: none),
         ConfirmationAssignment(action: "metadata_diff_field_sync", pattern: none),
         ConfirmationAssignment(action: "import_execute", pattern: none),
