@@ -48,6 +48,21 @@ pub fn list_pending_proposals(
 
 pub fn expire_pending(conn: &DbConnection, now: i64) -> QueryResult<usize> {
     conn.with(|connection| {
+        let expiring = mcp_proposals::table
+            .filter(mcp_proposals::status.eq(ProposalStatus::Pending))
+            .filter(mcp_proposals::expires_at.le(now))
+            .select(McpProposal::as_select())
+            .load::<McpProposal>(connection)?;
+        for proposal in &expiring {
+            diesel::delete(
+                mcp_proposals::table
+                    .filter(mcp_proposals::id.ne(&proposal.id))
+                    .filter(mcp_proposals::kind.eq(proposal.kind))
+                    .filter(mcp_proposals::entity_id.eq(&proposal.entity_id))
+                    .filter(mcp_proposals::status.eq(ProposalStatus::Expired)),
+            )
+            .execute(connection)?;
+        }
         diesel::update(
             mcp_proposals::table
                 .filter(mcp_proposals::status.eq(ProposalStatus::Pending))
@@ -58,6 +73,23 @@ pub fn expire_pending(conn: &DbConnection, now: i64) -> QueryResult<usize> {
             mcp_proposals::resolved_at.eq(Some(now)),
             mcp_proposals::result.eq(Some("{\"message\":\"expired\"}".to_string())),
         ))
+        .execute(connection)
+    })
+}
+
+pub fn delete_status_collision(
+    conn: &DbConnection,
+    proposal: &McpProposal,
+    status: ProposalStatus,
+) -> QueryResult<usize> {
+    conn.with(|connection| {
+        diesel::delete(
+            mcp_proposals::table
+                .filter(mcp_proposals::id.ne(&proposal.id))
+                .filter(mcp_proposals::kind.eq(proposal.kind))
+                .filter(mcp_proposals::entity_id.eq(&proposal.entity_id))
+                .filter(mcp_proposals::status.eq(status)),
+        )
         .execute(connection)
     })
 }
@@ -123,7 +155,7 @@ mod tests {
             project_id: "p1".into(),
             kind: ProposalKind::DraftPost,
             status: ProposalStatus::Pending,
-            entity_id: None,
+            entity_id: id.into(),
             data: "{}".into(),
             result: None,
             created_at: 1,

@@ -13196,7 +13196,7 @@ mod tests {
             project_id: project.id.clone(),
             kind: bds_core::model::ProposalKind::DraftPost,
             status: bds_core::model::ProposalStatus::Pending,
-            entity_id: None,
+            entity_id: "accept-entity".into(),
             data: serde_json::json!({"title":"Approved","content":"Body"}).to_string(),
             result: None,
             created_at: now,
@@ -13205,6 +13205,7 @@ mod tests {
         };
         let mut rejected = accepted.clone();
         rejected.id = "reject-me".into();
+        rejected.entity_id = "reject-entity".into();
         rejected.data = serde_json::json!({"title":"Rejected","content":"Body"}).to_string();
         bds_core::db::queries::mcp_proposal::insert_proposal(db.conn(), &accepted).unwrap();
         bds_core::db::queries::mcp_proposal::insert_proposal(db.conn(), &rejected).unwrap();

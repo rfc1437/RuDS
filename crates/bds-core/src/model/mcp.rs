@@ -119,7 +119,7 @@ pub struct McpProposal {
     pub project_id: String,
     pub kind: ProposalKind,
     pub status: ProposalStatus,
-    pub entity_id: Option<String>,
+    pub entity_id: String,
     pub data: String,
     pub result: Option<String>,
     pub created_at: i64,

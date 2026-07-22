@@ -1064,10 +1064,7 @@ fn section_mcp<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a
     } else {
         column(state.mcp_proposals.iter().map(|proposal| {
             let kind = t(locale, proposal_kind_i18n_key(proposal.kind));
-            let summary = proposal
-                .entity_id
-                .as_deref()
-                .map_or(kind.clone(), |entity| format!("{kind} · {entity}"));
+            let summary = format!("{kind} · {}", proposal.entity_id);
             inputs::card(
                 row![
                     column![

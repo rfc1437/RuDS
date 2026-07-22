@@ -62,6 +62,15 @@ impl DbConnection {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_legacy_null_mcp_proposal_for_test(&self) -> diesel::QueryResult<()> {
+        self.0.borrow_mut().batch_execute(
+            "INSERT INTO mcp_proposals \
+             (id, project_id, kind, status, entity_id, data, created_at, expires_at) \
+             VALUES ('null-entity', 'p1', 'draft_post', 'pending', NULL, '{}', 3, 99)",
+        )
+    }
+
     /// Filesystem database path for sibling surfaces that must open their own
     /// short-lived connection (gallery workers, preview servers, Lua hosts).
     pub fn database_path(&self) -> diesel::QueryResult<std::path::PathBuf> {

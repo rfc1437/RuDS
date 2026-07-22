@@ -98,7 +98,17 @@ pub fn list_pending_proposals(
 }
 
 pub fn expire_proposals(conn: &DbConnection) -> EngineResult<usize> {
-    let expired = proposal_q::expire_pending(conn, now_unix_ms())?;
+    conn.begin_savepoint()?;
+    let expired = match proposal_q::expire_pending(conn, now_unix_ms()) {
+        Ok(expired) => {
+            conn.release_savepoint()?;
+            expired
+        }
+        Err(error) => {
+            let _ = conn.rollback_savepoint();
+            return Err(error.into());
+        }
+    };
     if expired > 0 {
         notify_proposals_changed();
     }
@@ -114,19 +124,37 @@ pub(crate) fn create_proposal(
 ) -> EngineResult<McpProposal> {
     expire_proposals(conn)?;
     let now = now_unix_ms();
+    let entity_id = entity_id
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let proposal = McpProposal {
         id: Uuid::new_v4().to_string(),
         project_id: project_id.to_string(),
         kind,
         status: ProposalStatus::Pending,
-        entity_id: entity_id.map(str::to_string),
+        entity_id,
         data: serde_json::to_string(data)?,
         result: None,
         created_at: now,
         expires_at: now + PROPOSAL_TTL_MS,
         resolved_at: None,
     };
-    proposal_q::insert_proposal(conn, &proposal)?;
+    if let Err(error) = proposal_q::insert_proposal(conn, &proposal) {
+        if matches!(
+            error,
+            diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                _
+            )
+        ) {
+            return Err(EngineError::Conflict(format!(
+                "proposal already pending for {} entity {}",
+                proposal.kind.as_str(),
+                proposal.entity_id
+            )));
+        }
+        return Err(error.into());
+    }
     cli_sync::record_cli_event(
         conn,
         &DomainEvent::SettingsChanged {
@@ -182,6 +210,7 @@ fn resolve_proposal(
         } else {
             ProposalStatus::Rejected
         };
+        proposal_q::delete_status_collision(conn, &proposal, status)?;
         if !proposal_q::resolve_claimed(
             conn,
             proposal_id,

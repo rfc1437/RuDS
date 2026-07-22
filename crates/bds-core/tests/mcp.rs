@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Barrier};
 
 use bds_core::db::Database;
-use bds_core::engine::{mcp, project};
+use bds_core::engine::{EngineError, mcp, project};
 use bds_core::model::{DomainEntity, DomainEvent, McpProposal, ProposalKind, ProposalStatus};
 use serde_json::json;
 
@@ -523,7 +523,7 @@ fn expiry_invalid_ids_unavailable_projects_and_concurrent_acceptance_are_safe() 
         project_id: fixture.project_id.clone(),
         kind: ProposalKind::DraftPost,
         status: ProposalStatus::Pending,
-        entity_id: None,
+        entity_id: "expired-entity".into(),
         data: json!({"title":"Expired","content":"Body"}).to_string(),
         result: None,
         created_at: 1,
@@ -585,6 +585,130 @@ fn expiry_invalid_ids_unavailable_projects_and_concurrent_acceptance_are_safe() 
             .call_tool("check_term", json!({"term":"rust"}))
             .is_err()
     );
+}
+
+#[test]
+fn duplicate_pending_entity_proposals_are_rejected_cleanly() {
+    let fixture = Fixture::new();
+    let post = fixture.post("One target", "Body");
+    let context = fixture.context();
+    let arguments = json!({"postId": post.id, "title": "First change"});
+
+    context
+        .call_tool("propose_post_metadata", arguments.clone())
+        .unwrap();
+    let error = context
+        .call_tool("propose_post_metadata", arguments)
+        .unwrap_err();
+
+    assert!(matches!(error, EngineError::Conflict(_)));
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "conflict: proposal already pending for propose_post_metadata entity {}",
+            post.id
+        )
+    );
+    let db = fixture.database();
+    assert_eq!(
+        mcp::list_pending_proposals(db.conn(), &fixture.project_id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn untargeted_proposals_receive_distinct_entity_ids() {
+    let fixture = Fixture::new();
+    let context = fixture.context();
+
+    context
+        .call_tool("draft_post", json!({"title": "First", "content": "Body"}))
+        .unwrap();
+    context
+        .call_tool("draft_post", json!({"title": "Second", "content": "Body"}))
+        .unwrap();
+
+    let db = fixture.database();
+    let proposals = mcp::list_pending_proposals(db.conn(), &fixture.project_id).unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert_ne!(proposals[0].entity_id, proposals[1].entity_id);
+}
+
+#[test]
+fn newer_terminal_proposals_replace_older_status_history() {
+    let fixture = Fixture::new();
+    let post = fixture.post("Original", "Body");
+    let context = fixture.context();
+
+    let first = context
+        .call_tool(
+            "propose_post_metadata",
+            json!({"postId": post.id, "title": "First change"}),
+        )
+        .unwrap();
+    let db = fixture.database();
+    mcp::accept_proposal(
+        db.conn(),
+        &fixture.data_dir,
+        first["proposalId"].as_str().unwrap(),
+    )
+    .unwrap();
+
+    let second = context
+        .call_tool(
+            "propose_post_metadata",
+            json!({"postId": post.id, "title": "Second change"}),
+        )
+        .unwrap();
+    mcp::accept_proposal(
+        db.conn(),
+        &fixture.data_dir,
+        second["proposalId"].as_str().unwrap(),
+    )
+    .unwrap();
+
+    let accepted = mcp::list_proposals(db.conn(), &fixture.project_id)
+        .unwrap()
+        .into_iter()
+        .filter(|proposal| proposal.status == ProposalStatus::Accepted)
+        .collect::<Vec<_>>();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].id, second["proposalId"]);
+}
+
+#[test]
+fn newer_expired_proposals_replace_older_expired_history() {
+    let fixture = Fixture::new();
+    let db = fixture.database();
+    for (id, status, expires_at) in [
+        ("old-expired", ProposalStatus::Expired, 1),
+        ("new-expiring", ProposalStatus::Pending, 2),
+    ] {
+        bds_core::db::queries::mcp_proposal::insert_proposal(
+            db.conn(),
+            &McpProposal {
+                id: id.into(),
+                project_id: fixture.project_id.clone(),
+                kind: ProposalKind::ProposePostMetadata,
+                status,
+                entity_id: "same-post".into(),
+                data: "{}".into(),
+                result: None,
+                created_at: expires_at,
+                expires_at,
+                resolved_at: (status == ProposalStatus::Expired).then_some(1),
+            },
+        )
+        .unwrap();
+    }
+
+    assert_eq!(mcp::expire_proposals(db.conn()).unwrap(), 1);
+    let proposals = mcp::list_proposals(db.conn(), &fixture.project_id).unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].id, "new-expiring");
+    assert_eq!(proposals[0].status, ProposalStatus::Expired);
 }
 
 #[test]

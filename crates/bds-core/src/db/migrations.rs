@@ -36,7 +36,60 @@ mod tests {
         let applied = db
             .conn()
             .with_migrations(|conn| conn.applied_migrations().unwrap().len());
-        assert_eq!(applied, 8);
+        assert_eq!(applied, 9);
+    }
+
+    #[test]
+    fn mcp_proposal_upgrade_normalizes_entities_and_enforces_uniqueness() {
+        use crate::db::queries::{mcp_proposal, project};
+        use crate::model::{McpProposal, ProposalKind, ProposalStatus};
+
+        let db = Database::open_in_memory().unwrap();
+        db.conn().with_migrations(|conn| {
+            for _ in 0..8 {
+                conn.run_next_migration(MIGRATIONS).unwrap();
+            }
+        });
+        project::insert_project(db.conn(), &project::make_test_project("p1", "blog")).unwrap();
+
+        let targeted = |id: &str, created_at| McpProposal {
+            id: id.into(),
+            project_id: "p1".into(),
+            kind: ProposalKind::ProposePostMetadata,
+            status: ProposalStatus::Pending,
+            entity_id: "post-1".into(),
+            data: "{}".into(),
+            result: None,
+            created_at,
+            expires_at: 99,
+            resolved_at: None,
+        };
+        mcp_proposal::insert_proposal(db.conn(), &targeted("older", 1)).unwrap();
+        mcp_proposal::insert_proposal(db.conn(), &targeted("newer", 2)).unwrap();
+        db.conn()
+            .insert_legacy_null_mcp_proposal_for_test()
+            .unwrap();
+
+        run_migrations(db.conn()).unwrap();
+
+        let proposals = mcp_proposal::list_proposals(db.conn(), "p1").unwrap();
+        assert_eq!(proposals.len(), 2);
+        assert!(proposals.iter().any(|proposal| proposal.id == "newer"));
+        assert_eq!(
+            proposals
+                .iter()
+                .find(|proposal| proposal.id == "null-entity")
+                .unwrap()
+                .entity_id,
+            "null-entity"
+        );
+        assert!(matches!(
+            mcp_proposal::insert_proposal(db.conn(), &targeted("duplicate", 4)),
+            Err(diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                _
+            ))
+        ));
     }
 
     #[test]

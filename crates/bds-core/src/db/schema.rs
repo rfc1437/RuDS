@@ -161,7 +161,7 @@ diesel::table! {
         project_id -> Text,
         kind -> Text,
         status -> Text,
-        entity_id -> Nullable<Text>,
+        entity_id -> Text,
         data -> Text,
         result -> Nullable<Text>,
         created_at -> BigInt,
