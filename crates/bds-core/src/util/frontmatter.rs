@@ -1,6 +1,12 @@
 use crate::model::{Post, PostTranslation};
 use crate::util::timestamp::{iso_to_unix_ms, unix_ms_to_iso};
+use regex::Regex;
 use serde::{Deserialize, Deserializer};
+use std::sync::LazyLock;
+
+static SIMPLE_YAML_STRING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\p{L}\p{N} ._/-]+$").expect("canonical frontmatter regex is valid")
+});
 
 fn scalar_string(value: serde_yaml::Value) -> Option<String> {
     match value {
@@ -35,31 +41,6 @@ where
     Ok(deserialize_optional_scalar_string(deserializer)?.filter(|value| !value.is_empty()))
 }
 
-fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<serde_yaml::Value>::deserialize(deserializer)?
-        .and_then(|value| value.as_str().map(str::to_owned)))
-}
-
-fn deserialize_string<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    serde_yaml::Value::deserialize(deserializer)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| serde::de::Error::custom("expected a string"))
-}
-
-fn deserialize_optional_nonempty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(deserialize_optional_string(deserializer)?.filter(|value| !value.is_empty()))
-}
-
 fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -87,13 +68,6 @@ where
 {
     Ok(deserialize_optional_scalar_string(deserializer)?
         .and_then(|value| iso_to_unix_ms(&value).ok()))
-}
-
-fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(deserialize_optional_string(deserializer)?.and_then(|value| iso_to_unix_ms(&value).ok()))
 }
 
 fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -167,7 +141,7 @@ pub fn split_frontmatter(input: &str) -> Option<(&str, &str)> {
 
 /// Format frontmatter + body into a complete file string.
 pub fn format_frontmatter(yaml: &str, body: &str) -> String {
-    format!("---\n{yaml}\n---\n{body}")
+    format!("---\n{yaml}\n---\n{}\n", body.trim_end_matches('\n'))
 }
 
 // --- Post Frontmatter ---
@@ -239,51 +213,27 @@ impl PostFrontmatter {
         }
     }
 
-    /// Serialize to YAML string (matching TypeScript gray-matter output).
+    /// Serialize using the canonical bDS2 frontmatter field and scalar rules.
     pub fn to_yaml(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("id: {}", self.id));
-        lines.push(format!("title: {}", yaml_string_value(&self.title)));
-        lines.push(format!("slug: {}", self.slug));
-        lines.push(format!("status: {}", self.status));
-        lines.push(format!("createdAt: '{}'", unix_ms_to_iso(self.created_at)));
-        lines.push(format!("updatedAt: '{}'", unix_ms_to_iso(self.updated_at)));
-
-        // Tags as YAML list
-        if self.tags.is_empty() {
-            lines.push("tags: []".to_string());
-        } else {
-            lines.push("tags:".to_string());
-            for tag in &self.tags {
-                lines.push(format!("  - {}", yaml_string_value(tag)));
-            }
-        }
-
-        // Categories as YAML list
-        if self.categories.is_empty() {
-            lines.push("categories: []".to_string());
-        } else {
-            lines.push("categories:".to_string());
-            for cat in &self.categories {
-                lines.push(format!("  - {}", yaml_string_value(cat)));
-            }
-        }
-
-        // Conditional fields (only when truthy)
+        push_yaml_string(&mut lines, "id", &self.id);
+        push_yaml_string(&mut lines, "title", &self.title);
+        push_yaml_string(&mut lines, "slug", &self.slug);
         if let Some(ref excerpt) = self.excerpt
             && !excerpt.is_empty()
         {
-            lines.push(format!("excerpt: {}", yaml_string_value(excerpt)));
+            push_yaml_string(&mut lines, "excerpt", excerpt);
         }
+        push_yaml_string(&mut lines, "status", &self.status);
         if let Some(ref author) = self.author
             && !author.is_empty()
         {
-            lines.push(format!("author: {}", yaml_string_value(author)));
+            push_yaml_string(&mut lines, "author", author);
         }
         if let Some(ref language) = self.language
             && !language.is_empty()
         {
-            lines.push(format!("language: {language}"));
+            push_yaml_string(&mut lines, "language", language);
         }
         if self.do_not_translate {
             lines.push("doNotTranslate: true".to_string());
@@ -291,11 +241,15 @@ impl PostFrontmatter {
         if let Some(ref template_slug) = self.template_slug
             && !template_slug.is_empty()
         {
-            lines.push(format!("templateSlug: {template_slug}"));
+            push_yaml_string(&mut lines, "templateSlug", template_slug);
         }
+        lines.push(format!("createdAt: '{}'", unix_ms_to_iso(self.created_at)));
+        lines.push(format!("updatedAt: '{}'", unix_ms_to_iso(self.updated_at)));
         if let Some(published_at) = self.published_at {
             lines.push(format!("publishedAt: '{}'", unix_ms_to_iso(published_at)));
         }
+        serialize_yaml_list(&mut lines, "tags", &self.tags);
+        serialize_yaml_list(&mut lines, "categories", &self.categories);
 
         lines.join("\n")
     }
@@ -316,7 +270,7 @@ pub fn write_post_file(post: &Post, body: &str) -> String {
 pub fn read_post_file(content: &str) -> Result<(PostFrontmatter, String), String> {
     let (yaml, body) = split_frontmatter(content).ok_or("no frontmatter delimiters found")?;
     let fm = PostFrontmatter::from_yaml(yaml)?;
-    Ok((fm, body.to_string()))
+    Ok((fm, body.trim_end_matches('\n').to_string()))
 }
 
 // --- Translation Frontmatter ---
@@ -325,23 +279,26 @@ pub fn read_post_file(content: &str) -> Result<(PostFrontmatter, String), String
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslationFrontmatter {
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar_string")]
     pub id: Option<String>,
-    #[serde(deserialize_with = "deserialize_string")]
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub translation_for: String,
-    #[serde(deserialize_with = "deserialize_string")]
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub language: String,
-    #[serde(deserialize_with = "deserialize_string")]
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub title: String,
-    #[serde(default, deserialize_with = "deserialize_optional_nonempty_string")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nonempty_scalar_string"
+    )]
     pub excerpt: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    #[serde(default, deserialize_with = "deserialize_optional_scalar_string")]
     pub status: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
+    #[serde(default, deserialize_with = "deserialize_optional_timestamp")]
     pub created_at: Option<i64>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
+    #[serde(default, deserialize_with = "deserialize_optional_timestamp")]
     pub updated_at: Option<i64>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_timestamp")]
+    #[serde(default, deserialize_with = "deserialize_optional_timestamp")]
     pub published_at: Option<i64>,
 }
 
@@ -363,18 +320,18 @@ impl TranslationFrontmatter {
     pub fn to_yaml(&self) -> String {
         let mut lines = Vec::new();
         if let Some(id) = &self.id {
-            lines.push(format!("id: {id}"));
+            push_yaml_string(&mut lines, "id", id);
         }
-        lines.push(format!("translationFor: {}", self.translation_for));
-        lines.push(format!("language: {}", self.language));
-        lines.push(format!("title: {}", yaml_string_value(&self.title)));
+        push_yaml_string(&mut lines, "translationFor", &self.translation_for);
+        push_yaml_string(&mut lines, "language", &self.language);
+        push_yaml_string(&mut lines, "title", &self.title);
         if let Some(ref excerpt) = self.excerpt
             && !excerpt.is_empty()
         {
-            lines.push(format!("excerpt: {}", yaml_string_value(excerpt)));
+            push_yaml_string(&mut lines, "excerpt", excerpt);
         }
         if let Some(status) = &self.status {
-            lines.push(format!("status: {status}"));
+            push_yaml_string(&mut lines, "status", status);
         }
         if let Some(created_at) = self.created_at {
             lines.push(format!("createdAt: '{}'", unix_ms_to_iso(created_at)));
@@ -403,12 +360,12 @@ pub fn write_translation_file(translation: &PostTranslation, body: &str) -> Stri
 pub fn read_translation_file(content: &str) -> Result<(TranslationFrontmatter, String), String> {
     let (yaml, body) = split_frontmatter(content).ok_or("no frontmatter delimiters found")?;
     let fm = TranslationFrontmatter::from_yaml(yaml)?;
-    Ok((fm, body.to_string()))
+    Ok((fm, body.trim_end_matches('\n').to_string()))
 }
 
 // --- Template Frontmatter ---
 
-/// Parsed template frontmatter (double-quoted strings, matching TypeScript output).
+/// Parsed template frontmatter.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateFrontmatter {
@@ -436,26 +393,20 @@ pub struct TemplateFrontmatter {
 }
 
 impl TemplateFrontmatter {
-    /// Serialize to YAML with double-quoted strings (matching TypeScript).
+    /// Serialize using the canonical bDS2 frontmatter scalar rules.
     pub fn to_yaml(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("id: \"{}\"", self.id));
+        push_yaml_string(&mut lines, "id", &self.id);
         if let Some(ref pid) = self.project_id {
-            lines.push(format!("projectId: \"{pid}\""));
+            push_yaml_string(&mut lines, "projectId", pid);
         }
-        lines.push(format!("slug: \"{}\"", self.slug));
-        lines.push(format!("title: \"{}\"", self.title));
-        lines.push(format!("kind: \"{}\"", self.kind));
+        push_yaml_string(&mut lines, "slug", &self.slug);
+        push_yaml_string(&mut lines, "title", &self.title);
+        push_yaml_string(&mut lines, "kind", &self.kind);
         lines.push(format!("enabled: {}", self.enabled));
         lines.push(format!("version: {}", self.version));
-        lines.push(format!(
-            "createdAt: \"{}\"",
-            unix_ms_to_iso(self.created_at)
-        ));
-        lines.push(format!(
-            "updatedAt: \"{}\"",
-            unix_ms_to_iso(self.updated_at)
-        ));
+        lines.push(format!("createdAt: '{}'", unix_ms_to_iso(self.created_at)));
+        lines.push(format!("updatedAt: '{}'", unix_ms_to_iso(self.updated_at)));
         lines.join("\n")
     }
 
@@ -468,7 +419,7 @@ impl TemplateFrontmatter {
 pub fn read_template_file(content: &str) -> Result<(TemplateFrontmatter, String), String> {
     let (yaml, body) = split_frontmatter(content).ok_or("no frontmatter delimiters found")?;
     let fm = TemplateFrontmatter::from_yaml(yaml)?;
-    Ok((fm, body.to_string()))
+    Ok((fm, body.trim_end_matches('\n').to_string()))
 }
 
 /// Write a template file (frontmatter + body).
@@ -478,7 +429,7 @@ pub fn write_template_file(fm: &TemplateFrontmatter, body: &str) -> String {
 
 // --- Script Frontmatter ---
 
-/// Parsed script frontmatter (double-quoted strings like templates, plus entrypoint).
+/// Parsed script frontmatter (template fields plus entrypoint).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptFrontmatter {
@@ -511,27 +462,21 @@ pub struct ScriptFrontmatter {
 }
 
 impl ScriptFrontmatter {
-    /// Serialize to YAML with double-quoted strings.
+    /// Serialize using the canonical bDS2 frontmatter scalar rules.
     pub fn to_yaml(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("id: \"{}\"", self.id));
+        push_yaml_string(&mut lines, "id", &self.id);
         if let Some(ref pid) = self.project_id {
-            lines.push(format!("projectId: \"{pid}\""));
+            push_yaml_string(&mut lines, "projectId", pid);
         }
-        lines.push(format!("slug: \"{}\"", self.slug));
-        lines.push(format!("title: \"{}\"", self.title));
-        lines.push(format!("kind: \"{}\"", self.kind));
-        lines.push(format!("entrypoint: \"{}\"", self.entrypoint));
+        push_yaml_string(&mut lines, "slug", &self.slug);
+        push_yaml_string(&mut lines, "title", &self.title);
+        push_yaml_string(&mut lines, "kind", &self.kind);
+        push_yaml_string(&mut lines, "entrypoint", &self.entrypoint);
         lines.push(format!("enabled: {}", self.enabled));
         lines.push(format!("version: {}", self.version));
-        lines.push(format!(
-            "createdAt: \"{}\"",
-            unix_ms_to_iso(self.created_at)
-        ));
-        lines.push(format!(
-            "updatedAt: \"{}\"",
-            unix_ms_to_iso(self.updated_at)
-        ));
+        lines.push(format!("createdAt: '{}'", unix_ms_to_iso(self.created_at)));
+        lines.push(format!("updatedAt: '{}'", unix_ms_to_iso(self.updated_at)));
         lines.join("\n")
     }
 
@@ -555,7 +500,7 @@ impl ScriptFrontmatter {
 pub fn read_script_file(content: &str) -> Result<(ScriptFrontmatter, String), String> {
     let (yaml, body) = split_frontmatter(content).ok_or("no frontmatter delimiters found")?;
     let fm = ScriptFrontmatter::from_yaml(yaml)?;
-    Ok((fm, body.to_string()))
+    Ok((fm, body.trim_end_matches('\n').to_string()))
 }
 
 /// Write a script file (always Lua format with --- delimiters).
@@ -565,50 +510,31 @@ pub fn write_script_file(fm: &ScriptFrontmatter, body: &str) -> String {
 
 // --- Helpers ---
 
-/// Quote a YAML string value if it contains special characters.
-/// Simple values (alphanumeric, hyphens, dots) are left unquoted.
-/// Values with colons, quotes, special chars are single-quoted.
 fn yaml_string_value(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    // Check if the value needs quoting
-    let needs_quoting = s.contains(':')
-        || s.contains('#')
-        || s.contains('\'')
-        || s.contains('"')
-        || s.contains('\n')
-        || s.contains('{')
-        || s.contains('}')
-        || s.contains('[')
-        || s.contains(']')
-        || s.contains(',')
-        || s.contains('&')
-        || s.contains('*')
-        || s.contains('!')
-        || s.contains('|')
-        || s.contains('>')
-        || s.contains('%')
-        || s.contains('@')
-        || s.contains('`')
-        || s.starts_with(' ')
-        || s.ends_with(' ')
-        || s.starts_with('-')
-        || s.starts_with('?')
-        || s == "true"
-        || s == "false"
-        || s == "null"
-        || s == "yes"
-        || s == "no"
-        || s == "on"
-        || s == "off";
-
-    if needs_quoting {
-        // Use single quotes, escaping internal single quotes by doubling them
-        let escaped = s.replace('\'', "''");
-        format!("'{escaped}'")
-    } else {
+    if SIMPLE_YAML_STRING.is_match(s) {
         s.to_string()
+    } else {
+        format!(
+            "\"{}\"",
+            s.replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        )
+    }
+}
+
+fn serialize_yaml_list(lines: &mut Vec<String>, key: &str, values: &[String]) {
+    lines.push(format!("{key}:"));
+    lines.extend(
+        values
+            .iter()
+            .map(|value| format!("  - {}", yaml_string_value(value))),
+    );
+}
+
+fn push_yaml_string(lines: &mut Vec<String>, key: &str, value: &str) {
+    if !value.is_empty() {
+        lines.push(format!("{key}: {}", yaml_string_value(value)));
     }
 }
 
@@ -653,9 +579,12 @@ mod tests {
     }
 
     #[test]
-    fn translation_frontmatter_remains_string_only() {
-        let yaml = "translationFor: 42\nlanguage: en\ntitle: Title";
-        assert!(TranslationFrontmatter::from_yaml(yaml).is_err());
+    fn translation_frontmatter_accepts_canonical_unquoted_scalars() {
+        let yaml = "translationFor: 42\nlanguage: en\ntitle: true";
+        let parsed = TranslationFrontmatter::from_yaml(yaml).unwrap();
+        assert_eq!(parsed.translation_for, "42");
+        assert_eq!(parsed.language, "en");
+        assert_eq!(parsed.title, "true");
     }
 
     #[test]
@@ -745,42 +674,6 @@ mod tests {
     }
 
     #[test]
-    fn golden_output_esmeralda() {
-        let path = fixture_dir().join("posts/2005/11/esmeralda.md");
-        let expected = fs::read_to_string(&path).unwrap();
-        let (fm, body) = read_post_file(&expected).unwrap();
-
-        let yaml = fm.to_yaml();
-        let actual = format_frontmatter(&yaml, &body);
-        assert_eq!(actual, expected, "golden output mismatch for esmeralda.md");
-    }
-
-    #[test]
-    fn golden_output_ghostty() {
-        let path = fixture_dir().join("posts/2026/03/ghostty.md");
-        let expected = fs::read_to_string(&path).unwrap();
-        let (fm, body) = read_post_file(&expected).unwrap();
-
-        let yaml = fm.to_yaml();
-        let actual = format_frontmatter(&yaml, &body);
-        assert_eq!(actual, expected, "golden output mismatch for ghostty.md");
-    }
-
-    #[test]
-    fn golden_output_translation() {
-        let path = fixture_dir().join("posts/2005/11/esmeralda.en.md");
-        let expected = fs::read_to_string(&path).unwrap();
-        let (fm, body) = read_translation_file(&expected).unwrap();
-
-        let yaml = fm.to_yaml();
-        let actual = format_frontmatter(&yaml, &body);
-        assert_eq!(
-            actual, expected,
-            "golden output mismatch for esmeralda.en.md"
-        );
-    }
-
-    #[test]
     fn current_translation_output_carries_full_metadata() {
         let translation = PostTranslation {
             id: "translation-1".into(),
@@ -807,11 +700,154 @@ mod tests {
     }
 
     #[test]
+    fn translation_output_matches_bds2_quoting_and_trailing_newline() {
+        let fm = TranslationFrontmatter {
+            id: Some("translation-1".into()),
+            translation_for: "post-1".into(),
+            language: "de".into(),
+            title: "true".into(),
+            excerpt: Some("Summary: translated".into()),
+            status: Some("published".into()),
+            created_at: Some(1_711_833_600_000),
+            updated_at: Some(1_711_920_000_000),
+            published_at: Some(1_712_006_400_000),
+        };
+        assert_eq!(
+            format_frontmatter(&fm.to_yaml(), "body\n\n"),
+            concat!(
+                "---\n",
+                "id: translation-1\n",
+                "translationFor: post-1\n",
+                "language: de\n",
+                "title: true\n",
+                "excerpt: \"Summary: translated\"\n",
+                "status: published\n",
+                "createdAt: '2024-03-30T21:20:00.000Z'\n",
+                "updatedAt: '2024-03-31T21:20:00.000Z'\n",
+                "publishedAt: '2024-04-01T21:20:00.000Z'\n",
+                "---\n",
+                "body\n",
+            )
+        );
+        let parsed = TranslationFrontmatter::from_yaml(&fm.to_yaml()).unwrap();
+        assert_eq!(parsed.title, "true");
+    }
+
+    #[test]
     fn yaml_quoting() {
         assert_eq!(yaml_string_value("simple"), "simple");
-        assert_eq!(yaml_string_value("has: colon"), "'has: colon'");
-        assert_eq!(yaml_string_value("true"), "'true'");
-        assert_eq!(yaml_string_value(""), "''");
+        assert_eq!(yaml_string_value("Über Öl/123"), "Über Öl/123");
+        assert_eq!(yaml_string_value("has: colon"), "\"has: colon\"");
+        assert_eq!(yaml_string_value("true"), "true");
+        assert_eq!(
+            yaml_string_value("say \"hi\"\nnext"),
+            "\"say \\\"hi\\\"\\nnext\""
+        );
+        assert_eq!(yaml_string_value(""), "\"\"");
+    }
+
+    #[test]
+    fn post_output_matches_bds2_canonical_bytes() {
+        let fm = PostFrontmatter {
+            id: "post-1".into(),
+            title: "Published: \"Post\"".into(),
+            slug: "published-post".into(),
+            excerpt: Some("Summary".into()),
+            status: "published".into(),
+            author: Some("Writer".into()),
+            language: Some("en".into()),
+            do_not_translate: true,
+            template_slug: Some("article".into()),
+            created_at: 1_711_833_600_000,
+            updated_at: 1_711_920_000_000,
+            published_at: Some(1_712_006_400_000),
+            tags: Vec::new(),
+            categories: vec!["notes".into()],
+        };
+
+        assert_eq!(
+            format_frontmatter(&fm.to_yaml(), "Hello from markdown\n\n"),
+            concat!(
+                "---\n",
+                "id: post-1\n",
+                "title: \"Published: \\\"Post\\\"\"\n",
+                "slug: published-post\n",
+                "excerpt: Summary\n",
+                "status: published\n",
+                "author: Writer\n",
+                "language: en\n",
+                "doNotTranslate: true\n",
+                "templateSlug: article\n",
+                "createdAt: '2024-03-30T21:20:00.000Z'\n",
+                "updatedAt: '2024-03-31T21:20:00.000Z'\n",
+                "publishedAt: '2024-04-01T21:20:00.000Z'\n",
+                "tags:\n",
+                "categories:\n",
+                "  - notes\n",
+                "---\n",
+                "Hello from markdown\n",
+            )
+        );
+    }
+
+    #[test]
+    fn template_and_script_output_match_bds2_scalar_and_timestamp_rules() {
+        let template = TemplateFrontmatter {
+            id: "template-1".into(),
+            project_id: Some("project-1".into()),
+            slug: "article".into(),
+            title: "Article: Wide".into(),
+            kind: "post".into(),
+            enabled: true,
+            version: 2,
+            created_at: 1_711_833_600_000,
+            updated_at: 1_711_920_000_000,
+        };
+        assert_eq!(
+            write_template_file(&template, "body\n\n"),
+            concat!(
+                "---\n",
+                "id: template-1\n",
+                "projectId: project-1\n",
+                "slug: article\n",
+                "title: \"Article: Wide\"\n",
+                "kind: post\n",
+                "enabled: true\n",
+                "version: 2\n",
+                "createdAt: '2024-03-30T21:20:00.000Z'\n",
+                "updatedAt: '2024-03-31T21:20:00.000Z'\n",
+                "---\n",
+                "body\n",
+            )
+        );
+
+        let script = ScriptFrontmatter {
+            id: "script-1".into(),
+            project_id: Some("project-1".into()),
+            slug: "render-card".into(),
+            title: "Render Card".into(),
+            kind: "macro".into(),
+            entrypoint: "render".into(),
+            enabled: true,
+            version: 3,
+            created_at: 1_711_833_600_000,
+            updated_at: 1_711_920_000_000,
+        };
+        assert_eq!(
+            script.to_yaml(),
+            concat!(
+                "id: script-1\n",
+                "projectId: project-1\n",
+                "slug: render-card\n",
+                "title: Render Card\n",
+                "kind: macro\n",
+                "entrypoint: render\n",
+                "enabled: true\n",
+                "version: 3\n",
+                "createdAt: '2024-03-30T21:20:00.000Z'\n",
+                "updatedAt: '2024-03-31T21:20:00.000Z'",
+            )
+        );
     }
 
     #[test]
@@ -881,18 +917,6 @@ mod tests {
         assert!(fm.enabled);
         assert_eq!(fm.version, 3);
         assert!(body.contains("<div>"));
-    }
-
-    #[test]
-    fn golden_output_template() {
-        let path = fixture_dir().join("templates/testvorlage.liquid");
-        let expected = fs::read_to_string(&path).unwrap();
-        let (fm, body) = read_template_file(&expected).unwrap();
-        let actual = write_template_file(&fm, &body);
-        assert_eq!(
-            actual, expected,
-            "golden output mismatch for testvorlage.liquid"
-        );
     }
 
     #[test]

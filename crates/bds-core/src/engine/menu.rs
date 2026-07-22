@@ -6,7 +6,9 @@ use quick_xml::{Reader, Writer, XmlVersion, escape::escape};
 
 use crate::engine::EngineError;
 use crate::engine::EngineResult;
+use crate::model::Project;
 use crate::util::atomic_write_str;
+use crate::util::timestamp::unix_ms_to_iso;
 
 /// A navigation menu item per menu.allium.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,23 +64,28 @@ pub fn read_menu(data_dir: &Path) -> EngineResult<Vec<MenuItem>> {
 
 /// Write the navigation menu to meta/menu.opml.
 /// Per menu.allium UpdateMenu rule: Home entry is always extracted and prepended.
-pub fn write_menu(data_dir: &Path, items: &[MenuItem]) -> EngineResult<()> {
+pub fn write_menu(data_dir: &Path, project: &Project, items: &[MenuItem]) -> EngineResult<()> {
     let normalized = normalize_menu(items);
-    let opml = serialize_opml(&normalized)?;
+    let timestamp = if project.updated_at > 0 {
+        project.updated_at
+    } else {
+        project.created_at
+    };
+    let opml = serialize_opml(&project.name, timestamp, &normalized)?;
     let path = data_dir.join("meta").join("menu.opml");
     atomic_write_str(&path, &opml)?;
     Ok(())
 }
 
 /// Return the default menu OPML for new projects.
-pub fn default_menu_opml() -> String {
+pub fn default_menu_opml(project_name: &str, timestamp: i64) -> String {
     let items = vec![MenuItem {
         kind: MenuItemKind::Home,
         label: "Home".to_string(),
         slug: None,
         children: Vec::new(),
     }];
-    serialize_opml(&items).expect("writing menu XML to memory cannot fail")
+    serialize_opml(project_name, timestamp, &items).expect("writing menu XML to memory cannot fail")
 }
 
 /// Per menu.allium HomeAlwaysPresent: ensure Home is always first.
@@ -233,8 +240,9 @@ fn attach_outline(item: MenuItem, parents: &mut [Option<MenuItem>], items: &mut 
 }
 
 /// Serialize menu items to OPML 2.0 format.
-fn serialize_opml(items: &[MenuItem]) -> EngineResult<String> {
+fn serialize_opml(project_name: &str, timestamp: i64, items: &[MenuItem]) -> EngineResult<String> {
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    writer.config_mut().add_space_before_slash_in_empty_elements = true;
     writer
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
         .map_err(|error| EngineError::Parse(error.to_string()))?;
@@ -246,14 +254,12 @@ fn serialize_opml(items: &[MenuItem]) -> EngineResult<String> {
     writer
         .write_event(Event::Start(BytesStart::new("head")))
         .map_err(|error| EngineError::Parse(error.to_string()))?;
-    writer
-        .write_event(Event::Start(BytesStart::new("title")))
+    write_text_element(&mut writer, "title", project_name)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
-    writer
-        .write_event(Event::Text(BytesText::new("Blog Menu")))
+    let timestamp = unix_ms_to_iso(timestamp);
+    write_text_element(&mut writer, "dateCreated", &timestamp)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
-    writer
-        .write_event(Event::End(BytesEnd::new("title")))
+    write_text_element(&mut writer, "dateModified", &timestamp)
         .map_err(|error| EngineError::Parse(error.to_string()))?;
     writer
         .write_event(Event::End(BytesEnd::new("head")))
@@ -270,7 +276,21 @@ fn serialize_opml(items: &[MenuItem]) -> EngineResult<String> {
     writer
         .write_event(Event::End(BytesEnd::new("opml")))
         .map_err(|error| EngineError::Parse(error.to_string()))?;
-    String::from_utf8(writer.into_inner()).map_err(|error| EngineError::Parse(error.to_string()))
+    let mut rendered = String::from_utf8(writer.into_inner())
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+fn write_text_element(
+    writer: &mut Writer<Vec<u8>>,
+    name: &str,
+    value: &str,
+) -> quick_xml::Result<()> {
+    writer.write_event(Event::Start(BytesStart::new(name)))?;
+    writer.write_event(Event::Text(BytesText::new(value)))?;
+    writer.write_event(Event::End(BytesEnd::new(name)))?;
+    Ok(())
 }
 
 fn write_outline(writer: &mut Writer<Vec<u8>>, item: &MenuItem) -> quick_xml::Result<()> {
@@ -310,7 +330,7 @@ mod tests {
 
     #[test]
     fn default_opml_has_home() {
-        let opml = default_menu_opml();
+        let opml = default_menu_opml("Test Blog", 1_711_833_600_000);
         assert!(opml.contains("type=\"home\""));
         assert!(opml.contains("text=\"Home\""));
     }
@@ -342,7 +362,7 @@ mod tests {
                 }],
             },
         ];
-        let opml = serialize_opml(&items).unwrap();
+        let opml = serialize_opml("Test Blog", 1_711_833_600_000, &items).unwrap();
         let parsed = parse_opml(&opml).unwrap();
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].kind, MenuItemKind::Home);
@@ -385,7 +405,21 @@ mod tests {
             slug: Some("/blog".into()),
             children: Vec::new(),
         }];
-        write_menu(dir.path(), &items).unwrap();
+        write_menu(
+            dir.path(),
+            &Project {
+                id: "project-1".into(),
+                name: "Test Blog".into(),
+                slug: "test-blog".into(),
+                description: None,
+                data_path: None,
+                is_active: true,
+                created_at: 1_711_833_600_000,
+                updated_at: 1_711_833_600_000,
+            },
+            &items,
+        )
+        .unwrap();
         let read = read_menu(dir.path()).unwrap();
         // Home is always prepended
         assert_eq!(read.len(), 2);
@@ -415,12 +449,39 @@ mod tests {
         assert_eq!(parsed[1].children[1].kind, MenuItemKind::CategoryArchive);
         assert_eq!(parsed[1].children[1].slug.as_deref(), Some("notes"));
 
-        let serialized = serialize_opml(&parsed).unwrap();
+        let serialized = serialize_opml("Test Blog", 1_711_833_600_000, &parsed).unwrap();
         assert!(serialized.contains("type=\"home\" pageSlug=\"home\""));
         assert!(serialized.contains("type=\"page\" pageSlug=\"about\""));
         assert!(serialized.contains("type=\"category-archive\" categoryName=\"notes\""));
         assert!(!serialized.contains("htmlUrl"));
         assert!(!serialized.contains("category_archive"));
+    }
+
+    #[test]
+    fn serializer_matches_bds2_head_spacing_and_trailing_newline() {
+        let items = vec![MenuItem {
+            kind: MenuItemKind::Home,
+            label: "Home".into(),
+            slug: None,
+            children: Vec::new(),
+        }];
+        let serialized = serialize_opml("Test Blog", 1_711_833_600_000, &items).unwrap();
+        assert_eq!(
+            serialized,
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<opml version=\"2.0\">\n",
+                "  <head>\n",
+                "    <title>Test Blog</title>\n",
+                "    <dateCreated>2024-03-30T21:20:00.000Z</dateCreated>\n",
+                "    <dateModified>2024-03-30T21:20:00.000Z</dateModified>\n",
+                "  </head>\n",
+                "  <body>\n",
+                "    <outline text=\"Home\" type=\"home\" pageSlug=\"home\" />\n",
+                "  </body>\n",
+                "</opml>\n",
+            )
+        );
     }
 
     #[test]

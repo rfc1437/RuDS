@@ -138,12 +138,12 @@ pub enum SshMode {
 pub struct PublishingPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_host: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_user: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_remote_path: Option<String>,
     #[serde(default = "default_ssh_mode")]
     pub ssh_mode: SshMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_remote_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_user: Option<String>,
 }
 
 impl Default for PublishingPreferences {

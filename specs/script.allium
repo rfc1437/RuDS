@@ -199,7 +199,10 @@ invariant ScriptFileLayout {
     for s in Scripts where file_path != "":
         s.file_path = format("scripts/{slug}.lua", slug: s.slug)
 }
--- Script files use standard --- YAML frontmatter
+-- Script files use standard --- YAML frontmatter in field order id, projectId,
+-- slug, title, kind, entrypoint, enabled, version, createdAt, updatedAt. Scalars
+-- use the canonical post quoting rules, timestamps are single-quoted ISO values,
+-- and the complete file ends in one newline.
 
 rule CreateScript {
     when: CreateScriptRequested(project, title, kind, content, entrypoint)

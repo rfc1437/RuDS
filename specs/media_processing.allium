@@ -364,7 +364,10 @@ invariant MediaSidecarFormat {
     -- Sidecar files use YAML-like key-value format (hand-built, not gray-matter)
     -- Path: {binary_path}.meta
     -- Only truthy fields are written (except required fields)
-    -- Fields: title, alt, caption, author, tags, language, linkedPostIds
+    -- linkedPostIds is always written (including []), immediately before tags.
+    -- Always-quoted values and inline-list strings escape backslash, quote, and
+    -- newline; the reader reverses those escapes.
+    -- Fields include: title, alt, caption, author, language, linkedPostIds, tags.
     -- Note: 'filename' is NOT written to sidecar (it is the binary filename itself)
 }
 

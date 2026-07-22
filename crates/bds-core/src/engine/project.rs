@@ -56,7 +56,7 @@ pub fn create_project(
     }
 
     // Write default meta files
-    write_default_meta_files(&data_dir, name)?;
+    write_default_meta_files(&data_dir, &project)?;
     crate::engine::meta::sync_metadata_from_filesystem(conn, &data_dir, &project.id)?;
 
     emit_project(&project, NotificationAction::Created);
@@ -184,7 +184,7 @@ pub fn ensure_default_project(
                 None => std::path::PathBuf::from("projects").join(DEFAULT_PROJECT_ID),
             };
             create_directory_structure(&data_dir)?;
-            write_default_meta_files(&data_dir, "My Blog")?;
+            write_default_meta_files(&data_dir, &project)?;
             crate::engine::meta::sync_metadata_from_filesystem(conn, &data_dir, &project.id)?;
             emit_project(&project, NotificationAction::Created);
             Ok(project)
@@ -302,12 +302,12 @@ fn create_directory_structure(data_dir: &Path) -> EngineResult<()> {
     Ok(())
 }
 
-fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult<()> {
+fn write_default_meta_files(data_dir: &Path, project: &Project) -> EngineResult<()> {
     let meta_dir = data_dir.join("meta");
 
     // project.json
     let project_meta = ProjectMetadata {
-        name: project_name.to_string(),
+        name: project.name.clone(),
         description: None,
         public_url: None,
         main_language: None,
@@ -332,14 +332,19 @@ fn write_default_meta_files(data_dir: &Path, project_name: &str) -> EngineResult
     let json = serde_json::to_string_pretty(&empty_map)?;
     atomic_write_str(&meta_dir.join("category-meta.json"), &json)?;
 
-    // publishing.json — empty object
-    atomic_write_str(&meta_dir.join("publishing.json"), "{}")?;
+    // publishing.json
+    crate::engine::meta::write_publishing_json(data_dir, &Default::default())?;
 
     // tags.json — empty array
     atomic_write_str(&meta_dir.join("tags.json"), "[]")?;
 
     // menu.opml — default empty menu per menu.allium HomeAlwaysPresent
-    let default_opml = crate::engine::menu::default_menu_opml();
+    let timestamp = if project.updated_at > 0 {
+        project.updated_at
+    } else {
+        project.created_at
+    };
+    let default_opml = crate::engine::menu::default_menu_opml(&project.name, timestamp);
     atomic_write_str(&meta_dir.join("menu.opml"), &default_opml)?;
 
     copy_bundled_site_assets(data_dir)?;

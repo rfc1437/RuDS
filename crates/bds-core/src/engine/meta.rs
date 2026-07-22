@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -274,7 +274,7 @@ pub fn read_categories_json(data_dir: &Path) -> EngineResult<Vec<String>> {
 /// Sort categories, then atomic write to meta/categories.json.
 pub fn write_categories_json(data_dir: &Path, categories: &[String]) -> EngineResult<()> {
     let mut sorted = categories.to_vec();
-    sorted.sort_by_key(|a| a.to_lowercase());
+    sorted.sort();
     let path = data_dir.join("meta").join("categories.json");
     let json = serde_json::to_string_pretty(&sorted)?;
     atomic_write_str(&path, &json)?;
@@ -288,7 +288,7 @@ pub fn set_categories(
     categories: &[String],
 ) -> EngineResult<()> {
     let mut sorted = categories.to_vec();
-    sorted.sort_by_key(|category| category.to_lowercase());
+    sorted.sort();
     persist_snapshot(
         conn,
         project_id,
@@ -316,7 +316,8 @@ pub fn write_category_meta_json(
     meta: &HashMap<String, CategorySettings>,
 ) -> EngineResult<()> {
     let path = data_dir.join("meta").join("category-meta.json");
-    let json = serde_json::to_string_pretty(meta)?;
+    let sorted = meta.iter().collect::<BTreeMap<_, _>>();
+    let json = serde_json::to_string_pretty(&sorted)?;
     atomic_write_str(&path, &json)?;
     Ok(())
 }
@@ -346,7 +347,7 @@ pub fn set_categories_and_meta(
     meta: &HashMap<String, CategorySettings>,
 ) -> EngineResult<()> {
     let mut sorted = categories.to_vec();
-    sorted.sort_by_key(|category| category.to_lowercase());
+    sorted.sort();
     conn.begin_savepoint()?;
     let result = (|| {
         persist_snapshot(
@@ -514,7 +515,7 @@ pub fn startup_sync(data_dir: &Path) -> EngineResult<()> {
 
     // Ensure publishing.json exists
     if !meta_dir.join("publishing.json").exists() {
-        atomic_write_str(&meta_dir.join("publishing.json"), "{}")?;
+        write_publishing_json(data_dir, &PublishingPreferences::default())?;
     }
 
     // Ensure tags.json exists
@@ -524,7 +525,9 @@ pub fn startup_sync(data_dir: &Path) -> EngineResult<()> {
 
     // Ensure menu.opml exists
     if !meta_dir.join("menu.opml").exists() {
-        let opml = crate::engine::menu::default_menu_opml();
+        let project = read_project_json(data_dir)?;
+        let opml =
+            crate::engine::menu::default_menu_opml(&project.name, crate::util::now_unix_ms());
         atomic_write_str(&meta_dir.join("menu.opml"), &opml)?;
     }
 
@@ -568,6 +571,45 @@ mod tests {
         assert_eq!(read.description.as_deref(), Some("A blog"));
     }
 
+    #[test]
+    fn project_json_matches_bds2_canonical_key_order() {
+        let dir = setup();
+        let meta = ProjectMetadata {
+            name: "Test".into(),
+            description: Some("A blog".into()),
+            public_url: Some("https://example.com".into()),
+            main_language: Some("en".into()),
+            default_author: Some("Writer".into()),
+            max_posts_per_page: 25,
+            image_import_concurrency: 3,
+            blogmark_category: Some("links".into()),
+            pico_theme: Some("amber".into()),
+            semantic_similarity_enabled: true,
+            blog_languages: vec!["en".into(), "de".into()],
+        };
+        write_project_json(dir.path(), &meta).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/project.json")).unwrap(),
+            r#"{
+  "blogLanguages": [
+    "en",
+    "de"
+  ],
+  "blogmarkCategory": "links",
+  "defaultAuthor": "Writer",
+  "description": "A blog",
+  "imageImportConcurrency": 3,
+  "mainLanguage": "en",
+  "maxPostsPerPage": 25,
+  "name": "Test",
+  "picoTheme": "amber",
+  "publicUrl": "https://example.com",
+  "semanticSimilarityEnabled": true
+}"#
+        );
+    }
+
     // ── categories.json ─────────────────────────────────────────────
 
     #[test]
@@ -577,6 +619,17 @@ mod tests {
         write_categories_json(dir.path(), &cats).unwrap();
         let read = read_categories_json(dir.path()).unwrap();
         assert_eq!(read, vec!["article", "aside", "picture"]);
+    }
+
+    #[test]
+    fn categories_json_uses_bds2_case_sensitive_sort() {
+        let dir = setup();
+        write_categories_json(dir.path(), &["alpha".into(), "Zebra".into(), "Beta".into()])
+            .unwrap();
+        assert_eq!(
+            read_categories_json(dir.path()).unwrap(),
+            vec!["Beta", "Zebra", "alpha"]
+        );
     }
 
     // ── category-meta.json ──────────────────────────────────────────
@@ -628,6 +681,50 @@ mod tests {
         assert_eq!(read["news"].title.as_deref(), Some("News Archive"));
     }
 
+    #[test]
+    fn category_meta_json_matches_bds2_deterministic_key_order() {
+        let dir = setup();
+        let mut meta = HashMap::new();
+        meta.insert(
+            "zebra".to_string(),
+            CategorySettings {
+                title: Some("Zebra".into()),
+                render_in_lists: true,
+                show_title: false,
+                post_template_slug: Some("post".into()),
+                list_template_slug: Some("list".into()),
+            },
+        );
+        meta.insert(
+            "alpha".to_string(),
+            CategorySettings {
+                title: None,
+                render_in_lists: false,
+                show_title: true,
+                post_template_slug: None,
+                list_template_slug: None,
+            },
+        );
+        write_category_meta_json(dir.path(), &meta).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/category-meta.json")).unwrap(),
+            r#"{
+  "alpha": {
+    "renderInLists": false,
+    "showTitle": true
+  },
+  "zebra": {
+    "listTemplateSlug": "list",
+    "postTemplateSlug": "post",
+    "renderInLists": true,
+    "showTitle": false,
+    "title": "Zebra"
+  }
+}"#
+        );
+    }
+
     // ── publishing.json ─────────────────────────────────────────────
 
     #[test]
@@ -643,6 +740,77 @@ mod tests {
         let read = read_publishing_json(dir.path()).unwrap();
         assert_eq!(read.ssh_host.as_deref(), Some("example.com"));
         assert_eq!(read.ssh_mode, SshMode::Rsync);
+    }
+
+    #[test]
+    fn publishing_json_matches_bds2_canonical_key_order() {
+        let dir = setup();
+        let prefs = PublishingPreferences {
+            ssh_host: Some("example.com".into()),
+            ssh_user: Some("deploy".into()),
+            ssh_remote_path: Some("/var/www".into()),
+            ssh_mode: SshMode::Rsync,
+        };
+        write_publishing_json(dir.path(), &prefs).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/publishing.json")).unwrap(),
+            r#"{
+  "sshHost": "example.com",
+  "sshMode": "rsync",
+  "sshRemotePath": "/var/www",
+  "sshUser": "deploy"
+}"#
+        );
+    }
+
+    #[test]
+    fn canonical_empty_metadata_collections_and_default_publishing_are_compact() {
+        let dir = setup();
+        write_project_json(
+            dir.path(),
+            &ProjectMetadata {
+                name: "Minimal".into(),
+                description: None,
+                public_url: None,
+                main_language: None,
+                default_author: None,
+                max_posts_per_page: 50,
+                image_import_concurrency: 4,
+                blogmark_category: None,
+                pico_theme: None,
+                semantic_similarity_enabled: false,
+                blog_languages: Vec::new(),
+            },
+        )
+        .unwrap();
+        write_category_meta_json(dir.path(), &HashMap::new()).unwrap();
+        write_tags_json(dir.path(), &[]).unwrap();
+        write_publishing_json(dir.path(), &PublishingPreferences::default()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/project.json")).unwrap(),
+            concat!(
+                "{\n",
+                "  \"blogLanguages\": [],\n",
+                "  \"imageImportConcurrency\": 4,\n",
+                "  \"maxPostsPerPage\": 50,\n",
+                "  \"name\": \"Minimal\",\n",
+                "  \"semanticSimilarityEnabled\": false\n",
+                "}"
+            )
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/category-meta.json")).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/tags.json")).unwrap(),
+            "[]"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/publishing.json")).unwrap(),
+            "{\n  \"sshMode\": \"scp\"\n}"
+        );
     }
 
     // ── tags.json ───────────────────────────────────────────────────
@@ -666,6 +834,29 @@ mod tests {
         let read = read_tags_json(dir.path()).unwrap();
         assert_eq!(read[0].name, "alpha");
         assert_eq!(read[1].name, "Zebra");
+    }
+
+    #[test]
+    fn tags_json_matches_bds2_entry_order_and_omits_blank_optional_values() {
+        let dir = setup();
+        write_tags_json(
+            dir.path(),
+            &[TagEntry {
+                name: "rust".into(),
+                color: Some("".into()),
+                post_template_slug: Some("article".into()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("meta/tags.json")).unwrap(),
+            r#"[
+  {
+    "name": "rust",
+    "postTemplateSlug": "article"
+  }
+]"#
+        );
     }
 
     // ── add / remove category ───────────────────────────────────────

@@ -297,6 +297,20 @@ invariant FrontmatterRoundtrip {
         parse_frontmatter(read_file(post.file_path)) = frontmatter_fields(post)
 }
 
+invariant CanonicalFrontmatterSerialization {
+    -- Post field order is id, title, slug, excerpt, status, author, language,
+    -- doNotTranslate, templateSlug, createdAt, updatedAt, publishedAt, tags,
+    -- categories; nil/empty optional fields and false doNotTranslate are absent.
+    -- Translation field order is id, translationFor, language, title, excerpt,
+    -- status, createdAt, updatedAt, publishedAt.
+    -- Strings containing only Unicode letters/numbers, space, dot, underscore,
+    -- slash, or hyphen are bare. Other strings are double quoted with backslash,
+    -- quote, and newline escaping. Timestamp values are single-quoted ISO values.
+    -- Empty lists use a bare key line. Written bodies have all trailing newlines
+    -- removed and the complete file ends in exactly one newline; reads remove
+    -- that terminal body newline before comparing or storing content.
+}
+
 invariant DateBasedFileLayout {
     for post in Posts where file_path != "":
         post.file_path = format("posts/{yyyy}/{mm}/{slug}.md",

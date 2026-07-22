@@ -81,6 +81,10 @@ invariant MenuPersistedAsOpml {
     -- OPML outline attributes: text (label), type (kind),
     --   pageSlug (slug for page/home), categoryName (slug for category_archive).
     -- Nested <outline> elements represent submenu children.
+    -- The head title is the project name. dateCreated and dateModified both use
+    -- the project's updated timestamp, falling back to created timestamp.
+    -- Empty outlines have one space before '/>' and the document ends in one
+    -- newline, matching bDS2's canonical serializer.
     parse_opml(read_file("meta/menu.opml")) = menu.items
 }
 

@@ -54,7 +54,7 @@ impl MediaSidecar {
         }
     }
 
-    /// Serialize to the hand-built YAML-like format matching TypeScript output.
+    /// Serialize to the canonical bDS2 hand-built YAML-like format.
     fn serialize(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
         lines.push("---".into());
@@ -99,27 +99,14 @@ impl MediaSidecar {
         lines.push(format!("createdAt: {}", unix_ms_to_iso(self.created_at)));
         lines.push(format!("updatedAt: {}", unix_ms_to_iso(self.updated_at)));
 
-        // Tags: inline JSON array
-        if self.tags.is_empty() {
-            lines.push("tags: []".into());
-        } else {
-            let quoted: Vec<String> = self
-                .tags
-                .iter()
-                .map(|t| format!("\"{}\"", escape_double_quotes(t)))
-                .collect();
-            lines.push(format!("tags: [{}]", quoted.join(", ")));
-        }
-
-        // linkedPostIds: only if non-empty
-        if !self.linked_post_ids.is_empty() {
-            let quoted: Vec<String> = self
-                .linked_post_ids
-                .iter()
-                .map(|id| format!("\"{id}\""))
-                .collect();
-            lines.push(format!("linkedPostIds: [{}]", quoted.join(", ")));
-        }
+        lines.push(format!(
+            "linkedPostIds: {}",
+            serialize_inline_string_array(&self.linked_post_ids)
+        ));
+        lines.push(format!(
+            "tags: {}",
+            serialize_inline_string_array(&self.tags)
+        ));
 
         lines.push("---".into());
         lines.join("\n")
@@ -281,17 +268,30 @@ pub fn read_translation_sidecar(content: &str) -> Result<MediaTranslationSidecar
 // --- Helpers ---
 
 fn escape_double_quotes(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 fn unquote_double(s: &str) -> String {
     let s = s.trim();
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         let inner = &s[1..s.len() - 1];
-        inner.replace("\\\"", "\"").replace("\\\\", "\\")
+        inner
+            .replace("\\n", "\n")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     } else {
         s.to_string()
     }
+}
+
+fn serialize_inline_string_array(values: &[String]) -> String {
+    let quoted = values
+        .iter()
+        .map(|value| format!("\"{}\"", escape_double_quotes(value)))
+        .collect::<Vec<_>>();
+    format!("[{}]", quoted.join(", "))
 }
 
 /// Parse inline JSON-like array: `["a", "b"]` or `[]`.
@@ -343,21 +343,6 @@ mod tests {
         assert_eq!(
             sc.linked_post_ids,
             vec!["40a83ab1-423d-4310-aac4-642d84675007"]
-        );
-    }
-
-    #[test]
-    fn golden_output_sidecar() {
-        let path =
-            fixture_dir().join("media/2005/11/eb0cf9d7-6fbd-4b74-9be3-759d6e16f240.jpg.meta");
-        let expected = fs::read_to_string(&path).unwrap();
-        let sc = read_sidecar(&expected).unwrap();
-        let actual = sc.to_string();
-        // Compare trimmed (fixture may or may not have trailing newline)
-        assert_eq!(
-            actual.trim(),
-            expected.trim(),
-            "golden output mismatch for media sidecar"
         );
     }
 
@@ -420,5 +405,61 @@ mod tests {
         assert_eq!(unquote_double("\"hello\""), "hello");
         assert_eq!(unquote_double("plain"), "plain");
         assert_eq!(escape_double_quotes("say \"hi\""), "say \\\"hi\\\"");
+        assert_eq!(
+            escape_double_quotes("line one\nline two"),
+            "line one\\nline two"
+        );
+    }
+
+    #[test]
+    fn output_matches_bds2_order_empty_links_and_escaping() {
+        let sidecar = MediaSidecar {
+            id: "media-1".into(),
+            original_name: "photo.jpg".into(),
+            mime_type: "image/jpeg".into(),
+            size: 123,
+            width: None,
+            height: None,
+            title: Some("Photo".into()),
+            alt: None,
+            caption: Some("First line\nSecond line".into()),
+            author: None,
+            language: Some("en".into()),
+            created_at: 1_711_833_600_000,
+            updated_at: 1_711_920_000_000,
+            tags: vec!["alpha".into()],
+            linked_post_ids: Vec::new(),
+        };
+        assert_eq!(
+            sidecar.to_string(),
+            concat!(
+                "---\n",
+                "id: media-1\n",
+                "originalName: \"photo.jpg\"\n",
+                "mimeType: image/jpeg\n",
+                "size: 123\n",
+                "title: \"Photo\"\n",
+                "caption: \"First line\\nSecond line\"\n",
+                "language: en\n",
+                "createdAt: 2024-03-30T21:20:00.000Z\n",
+                "updatedAt: 2024-03-31T21:20:00.000Z\n",
+                "linkedPostIds: []\n",
+                "tags: [\"alpha\"]\n",
+                "---",
+            )
+        );
+
+        let translation = MediaTranslationSidecar {
+            translation_for: "media-1".into(),
+            language: "de".into(),
+            title: None,
+            alt: None,
+            caption: Some("Erste Zeile\nZweite Zeile".into()),
+        };
+        assert!(
+            translation
+                .to_string()
+                .contains("caption: \"Erste Zeile\\nZweite Zeile\"")
+        );
     }
 }

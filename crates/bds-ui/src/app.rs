@@ -4932,13 +4932,18 @@ impl BdsApp {
                     );
                     return Task::none();
                 }
-                let Some(data_dir) = self.data_dir.clone() else {
+                let (Some(data_dir), Some(project)) =
+                    (self.data_dir.clone(), self.active_project.clone())
+                else {
                     return Task::none();
                 };
                 self.menu_editor_state.status = MenuEditorStatus::Saving;
-                let result =
-                    engine::menu::write_menu(&data_dir, &self.menu_editor_state.persisted_items())
-                        .and_then(|()| engine::menu::read_menu(&data_dir));
+                let result = engine::menu::write_menu(
+                    &data_dir,
+                    &project,
+                    &self.menu_editor_state.persisted_items(),
+                )
+                .and_then(|()| engine::menu::read_menu(&data_dir));
                 match result {
                     Ok(items) => {
                         let project_id = self

@@ -56,6 +56,9 @@ invariant UniqueTemplateSlug {
 invariant TemplateFrontmatter {
     -- .liquid files use standard --- YAML frontmatter
     -- Fields: id, slug, title, kind, enabled, version, createdAt, updatedAt
+    -- Field order also includes projectId after id when present. Scalars use
+    -- the canonical post frontmatter quoting rules, timestamps are single-quoted
+    -- ISO values, and the complete file ends in one newline.
     for t in Templates where status = published:
         parse_frontmatter(read_file(t.file_path)).slug = t.slug
 }

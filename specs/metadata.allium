@@ -70,6 +70,17 @@ invariant MetadataPersistedAsFiles {
     --   meta/category-meta.json — per-category render settings
     --   meta/publishing.json    — SSH connection details (non-secret)
     -- All writes are atomic (temp file + rename)
+    -- JSON is pretty-printed without a trailing newline and uses bDS2/Jason
+    -- byte-order key ordering. Project keys are blogLanguages,
+    -- blogmarkCategory, defaultAuthor, description, imageImportConcurrency,
+    -- mainLanguage, maxPostsPerPage, name, picoTheme, publicUrl,
+    -- semanticSimilarityEnabled (nil keys absent). Publishing keys are sshHost,
+    -- sshMode, sshRemotePath, sshUser (nil keys absent; sshMode defaults to scp).
+    -- Category names and per-category keys are byte-order sorted; per-category
+    -- keys are listTemplateSlug, postTemplateSlug, renderInLists, showTitle,
+    -- title. categories.json uses case-sensitive byte-order sorting. tags.json
+    -- remains case-insensitively name-sorted; entry keys are color, name,
+    -- postTemplateSlug and blank optional values are absent.
 }
 
 config {

@@ -44,30 +44,30 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMetadata {
-    pub name: String,
+    #[serde(default)]
+    pub blog_languages: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub public_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub main_language: Option<String>,
+    pub blogmark_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_author: Option<String>,
-    #[serde(default = "default_max_posts")]
-    pub max_posts_per_page: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(
         default = "default_image_import_concurrency",
         deserialize_with = "deserialize_image_import_concurrency"
     )]
     pub image_import_concurrency: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub blogmark_category: Option<String>,
+    pub main_language: Option<String>,
+    #[serde(default = "default_max_posts")]
+    pub max_posts_per_page: i32,
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pico_theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
     #[serde(default)]
     pub semantic_similarity_enabled: bool,
-    #[serde(default)]
-    pub blog_languages: Vec<String>,
 }
 
 impl ProjectMetadata {
@@ -98,24 +98,31 @@ impl ProjectMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct CategorySettings {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    pub list_template_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_template_slug: Option<String>,
     #[serde(default = "default_true")]
     pub render_in_lists: bool,
     #[serde(default = "default_true")]
     pub show_title: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub post_template_slug: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub list_template_slug: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagEntry {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "option_is_none_or_blank")]
     pub color: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "postTemplateSlug")]
+    pub name: String,
+    #[serde(
+        skip_serializing_if = "option_is_none_or_blank",
+        rename = "postTemplateSlug"
+    )]
     pub post_template_slug: Option<String>,
+}
+
+fn option_is_none_or_blank(value: &Option<String>) -> bool {
+    value.as_deref().is_none_or(str::is_empty)
 }
 
 #[cfg(test)]

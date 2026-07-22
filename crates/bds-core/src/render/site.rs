@@ -1862,8 +1862,10 @@ mod menu_tests {
     fn renderer_consumes_the_saved_opml_tree() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        let project = crate::db::queries::project::make_test_project("p1", "Test Blog");
         crate::engine::menu::write_menu(
             dir.path(),
+            &project,
             &[
                 MenuItem {
                     kind: MenuItemKind::Page,
