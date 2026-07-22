@@ -338,8 +338,8 @@ pub fn delete_template(
     let tpl = qt::get_template_by_id(conn, template_id)?;
 
     // Check references
-    let referencing_posts = count_posts_using_template(conn, &tpl.slug)?;
-    let referencing_tags = count_tags_using_template(conn, &tpl.slug)?;
+    let referencing_posts = count_posts_using_template(conn, &tpl.project_id, &tpl.slug)?;
+    let referencing_tags = count_tags_using_template(conn, &tpl.project_id, &tpl.slug)?;
 
     if (referencing_posts > 0 || referencing_tags > 0) && !force {
         return Err(EngineError::Conflict(format!(
@@ -348,15 +348,16 @@ pub fn delete_template(
         )));
     }
 
-    // Force: null out references
-    if force {
-        if referencing_posts > 0 {
-            null_template_slug_on_posts(conn, &tpl.slug)?;
+    let (affected_posts, affected_tags) = if force {
+        let affected = clear_template_references(conn, &tpl.project_id, &tpl.slug, now_unix_ms())?;
+        for post in &affected.0 {
+            crate::engine::post::rewrite_published_post(conn, data_dir, &post.id)?;
         }
-        if referencing_tags > 0 {
-            null_template_slug_on_tags(conn, &tpl.slug)?;
-        }
-    }
+        crate::engine::tag::rewrite_tags_json(conn, data_dir, &tpl.project_id)?;
+        affected
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     // Delete file if exists
     if !tpl.file_path.is_empty() {
@@ -368,6 +369,22 @@ pub fn delete_template(
 
     qt::delete_template(conn, template_id)?;
     emit_template(&tpl, NotificationAction::Deleted);
+    for post in &affected_posts {
+        domain_events::entity_changed(
+            &post.project_id,
+            DomainEntity::Post,
+            &post.id,
+            NotificationAction::Updated,
+        );
+    }
+    for tag in &affected_tags {
+        domain_events::entity_changed(
+            &tag.project_id,
+            DomainEntity::Tag,
+            &tag.id,
+            NotificationAction::Updated,
+        );
+    }
     Ok(())
 }
 
@@ -595,9 +612,14 @@ fn unquoted_byte_positions(content: &str, target: u8) -> Vec<usize> {
     positions
 }
 
-fn count_posts_using_template(conn: &Connection, slug: &str) -> EngineResult<usize> {
+fn count_posts_using_template(
+    conn: &Connection,
+    project_id: &str,
+    slug: &str,
+) -> EngineResult<usize> {
     let count: i64 = conn.with(|c| {
         posts::table
+            .filter(posts::project_id.eq(project_id))
             .filter(posts::template_slug.eq(slug))
             .count()
             .get_result(c)
@@ -605,9 +627,14 @@ fn count_posts_using_template(conn: &Connection, slug: &str) -> EngineResult<usi
     Ok(count as usize)
 }
 
-fn count_tags_using_template(conn: &Connection, slug: &str) -> EngineResult<usize> {
+fn count_tags_using_template(
+    conn: &Connection,
+    project_id: &str,
+    slug: &str,
+) -> EngineResult<usize> {
     let count: i64 = conn.with(|c| {
         tags::table
+            .filter(tags::project_id.eq(project_id))
             .filter(tags::post_template_slug.eq(slug))
             .count()
             .get_result(c)
@@ -673,22 +700,61 @@ fn cascade_template_slug_change(
     Ok((affected_posts, affected_tags))
 }
 
-fn null_template_slug_on_posts(conn: &Connection, slug: &str) -> EngineResult<()> {
-    conn.with(|c| {
-        diesel::update(posts::table.filter(posts::template_slug.eq(slug)))
-            .set(posts::template_slug.eq(None::<String>))
-            .execute(c)
+fn clear_template_references(
+    conn: &Connection,
+    project_id: &str,
+    slug: &str,
+    updated_at: i64,
+) -> EngineResult<(Vec<Post>, Vec<Tag>)> {
+    let mut affected_posts = conn.with(|c| {
+        posts::table
+            .filter(posts::project_id.eq(project_id))
+            .filter(posts::template_slug.eq(slug))
+            .select(Post::as_select())
+            .load(c)
     })?;
-    Ok(())
-}
+    let mut affected_tags = conn.with(|c| {
+        tags::table
+            .filter(tags::project_id.eq(project_id))
+            .filter(tags::post_template_slug.eq(slug))
+            .select(Tag::as_select())
+            .load(c)
+    })?;
 
-fn null_template_slug_on_tags(conn: &Connection, slug: &str) -> EngineResult<()> {
     conn.with(|c| {
-        diesel::update(tags::table.filter(tags::post_template_slug.eq(slug)))
-            .set(tags::post_template_slug.eq(None::<String>))
-            .execute(c)
+        diesel::update(
+            posts::table
+                .filter(posts::project_id.eq(project_id))
+                .filter(posts::template_slug.eq(slug)),
+        )
+        .set((
+            posts::template_slug.eq(None::<String>),
+            posts::updated_at.eq(updated_at),
+        ))
+        .execute(c)
     })?;
-    Ok(())
+    conn.with(|c| {
+        diesel::update(
+            tags::table
+                .filter(tags::project_id.eq(project_id))
+                .filter(tags::post_template_slug.eq(slug)),
+        )
+        .set((
+            tags::post_template_slug.eq(None::<String>),
+            tags::updated_at.eq(updated_at),
+        ))
+        .execute(c)
+    })?;
+
+    for post in &mut affected_posts {
+        post.template_slug = None;
+        post.updated_at = updated_at;
+    }
+    for tag in &mut affected_tags {
+        tag.post_template_slug = None;
+        tag.updated_at = updated_at;
+    }
+    Ok((affected_posts, affected_tags))
 }
 
 #[cfg(test)]
@@ -1116,6 +1182,139 @@ mod tests {
         delete_template(db.conn(), dir.path(), &tpl.id, false).unwrap();
         assert!(!dir.path().join("templates/del.liquid").exists());
         assert!(qt::get_template_by_id(db.conn(), &tpl.id).is_err());
+    }
+
+    #[test]
+    fn force_delete_clears_and_flushes_only_its_projects_references() {
+        use crate::db::queries::{post as post_q, tag as tag_q};
+        use crate::engine::{post, tag};
+
+        let (db, dir) = setup();
+        crate::db::fts::ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &make_test_project("p2", "other-blog")).unwrap();
+        let p1_dir = dir.path().join("p1");
+        let p2_dir = dir.path().join("p2");
+        fs::create_dir_all(&p1_dir).unwrap();
+        fs::create_dir_all(&p2_dir).unwrap();
+
+        let p1_template = create_template(
+            db.conn(),
+            "p1",
+            "Article View",
+            TemplateKind::Post,
+            "{{ content }}",
+        )
+        .unwrap();
+        let p2_template = create_template(
+            db.conn(),
+            "p2",
+            "Article View",
+            TemplateKind::Post,
+            "{{ content }}",
+        )
+        .unwrap();
+        let p1_template = publish_template(db.conn(), &p1_dir, &p1_template.id).unwrap();
+        let p2_template = publish_template(db.conn(), &p2_dir, &p2_template.id).unwrap();
+
+        let p1_post = post::create_post(
+            db.conn(),
+            &p1_dir,
+            "p1",
+            "P1 Post",
+            Some("P1 body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            Some(&p1_template.slug),
+        )
+        .unwrap();
+        let p2_post = post::create_post(
+            db.conn(),
+            &p2_dir,
+            "p2",
+            "P2 Post",
+            Some("P2 body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            Some(&p2_template.slug),
+        )
+        .unwrap();
+        let mut p1_post = post::publish_post(db.conn(), &p1_dir, &p1_post.id).unwrap();
+        let p2_post = post::publish_post(db.conn(), &p2_dir, &p2_post.id).unwrap();
+
+        let p1_tag = tag::create_tag(db.conn(), &p1_dir, "p1", "Feature", None).unwrap();
+        tag::update_tag(
+            db.conn(),
+            &p1_dir,
+            &p1_tag.id,
+            None,
+            None,
+            Some(&p1_template.slug),
+        )
+        .unwrap();
+        let p2_tag = tag::create_tag(db.conn(), &p2_dir, "p2", "Feature", None).unwrap();
+        tag::update_tag(
+            db.conn(),
+            &p2_dir,
+            &p2_tag.id,
+            None,
+            None,
+            Some(&p2_template.slug),
+        )
+        .unwrap();
+
+        p1_post.updated_at = 1;
+        post_q::update_post(db.conn(), &p1_post).unwrap();
+        let mut p1_tag = tag_q::get_tag_by_id(db.conn(), &p1_tag.id).unwrap();
+        p1_tag.updated_at = 1;
+        tag_q::update_tag(db.conn(), &p1_tag).unwrap();
+
+        assert!(delete_template(db.conn(), &p1_dir, &p1_template.id, false).is_err());
+        delete_template(db.conn(), &p1_dir, &p1_template.id, true).unwrap();
+
+        let reloaded_p1_post = post_q::get_post_by_id(db.conn(), &p1_post.id).unwrap();
+        let reloaded_p2_post = post_q::get_post_by_id(db.conn(), &p2_post.id).unwrap();
+        let reloaded_p1_tag = tag_q::get_tag_by_id(db.conn(), &p1_tag.id).unwrap();
+        let reloaded_p2_tag = tag_q::get_tag_by_id(db.conn(), &p2_tag.id).unwrap();
+        assert_eq!(reloaded_p1_post.template_slug, None);
+        assert_eq!(reloaded_p1_tag.post_template_slug, None);
+        assert_eq!(
+            reloaded_p2_post.template_slug.as_deref(),
+            Some(p2_template.slug.as_str())
+        );
+        assert_eq!(
+            reloaded_p2_tag.post_template_slug.as_deref(),
+            Some(p2_template.slug.as_str())
+        );
+        assert!(reloaded_p1_post.updated_at > p1_post.updated_at);
+        assert!(reloaded_p1_tag.updated_at > p1_tag.updated_at);
+
+        let p1_post_file = fs::read_to_string(p1_dir.join(&p1_post.file_path)).unwrap();
+        let p2_post_file = fs::read_to_string(p2_dir.join(&p2_post.file_path)).unwrap();
+        let (p1_frontmatter, p1_body) =
+            crate::util::frontmatter::read_post_file(&p1_post_file).unwrap();
+        let (p2_frontmatter, p2_body) =
+            crate::util::frontmatter::read_post_file(&p2_post_file).unwrap();
+        assert_eq!(p1_frontmatter.template_slug, None);
+        assert_eq!(p1_body.trim_end(), "P1 body");
+        assert_eq!(
+            p2_frontmatter.template_slug.as_deref(),
+            Some(p2_template.slug.as_str())
+        );
+        assert_eq!(p2_body.trim_end(), "P2 body");
+
+        let p1_tags = crate::engine::meta::read_tags_json(&p1_dir).unwrap();
+        let p2_tags = crate::engine::meta::read_tags_json(&p2_dir).unwrap();
+        assert_eq!(p1_tags[0].post_template_slug, None);
+        assert_eq!(
+            p2_tags[0].post_template_slug.as_deref(),
+            Some(p2_template.slug.as_str())
+        );
+        assert!(!p1_dir.join(&p1_template.file_path).exists());
+        assert!(p2_dir.join(&p2_template.file_path).exists());
     }
 
     #[test]

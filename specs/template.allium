@@ -42,6 +42,7 @@ surface TemplateManagementSurface {
         UpdateTemplateRequested(template, changes)
         PublishTemplateRequested(template)
         DeleteTemplateRequested(template)
+        ForceDeleteTemplateRequested(template)
         RebuildTemplatesFromFilesRequested(project)
 }
 
@@ -167,6 +168,24 @@ rule DeleteTemplate {
     requires: template.referencing_posts.count = 0
     requires: template.referencing_tags.count = 0
         -- Cannot delete a template still referenced by posts or tags
+    ensures: not exists template
+    ensures: TemplateFileDeleted(template)
+}
+
+rule ForceDeleteTemplate {
+    when: ForceDeleteTemplateRequested(template)
+    -- Force deletion clears every project-scoped post and tag reference before
+    -- removing the template. A same-slug template in another project is unrelated.
+    for post in template.referencing_posts:
+        ensures: post.template_slug = null
+        ensures: post.updated_at = now
+        if post.status = published:
+            ensures: PublishedPostFrontmatterRewritten(post)
+                -- Published files drop templateSlug while retaining their body.
+    for tag in template.referencing_tags:
+        ensures: tag.post_template_slug = null
+        ensures: tag.updated_at = now
+    ensures: TagsMetadataWritten(template.project_id)
     ensures: not exists template
     ensures: TemplateFileDeleted(template)
 }
