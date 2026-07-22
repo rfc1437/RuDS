@@ -25,6 +25,9 @@ surface TabRuntimeSurface {
     provides:
         TabOpening(tab_type, intent)
         ActiveTabChanged(active_tab)
+        ProjectUiStateChanged(project_id)
+        ProjectActivated(project_id)
+        ApplicationClosing(project_id)
 }
 
 -- ─── Tab types ────────────────────────────────────────────────
@@ -247,5 +250,74 @@ invariant DirtyIndicator {
 
 -- ─── Tab state persistence ───────────────────────────────────
 
--- Tab state (list + activeTabId) can be serialized/restored
--- for session continuity across project switches.
+value ProjectUiSession {
+    project_id: String
+    active_view: String
+    sidebar_visible: Boolean
+    sidebar_width: Integer
+    panel_visible: Boolean
+    panel_tab: String
+    tabs: List<Tab>
+    active_tab_id: String?
+}
+
+surface ProjectUiSessionSurface {
+    context session: ProjectUiSession
+
+    exposes:
+        session.project_id
+        session.active_view
+        session.sidebar_visible
+        session.sidebar_width
+        session.panel_visible
+        session.panel_tab
+        session.tabs
+        session.active_tab_id when session.active_tab_id != null
+}
+
+rule PersistProjectUiSession {
+    when: ProjectUiStateChanged(project_id)
+    let session = current_project_ui_session(project_id)
+    ensures: DatabaseSettingWritten(
+        key: format("project:{project_id}:ui_state", project_id: project_id),
+        value: serialize_json(session)
+    )
+        -- Persist after every shell/tab mutation, so the database already
+        -- represents the last visible state if the process is closed.
+}
+
+rule PersistProjectUiSessionOnClose {
+    when: ApplicationClosing(project_id)
+    let session = current_project_ui_session(project_id)
+    ensures: DatabaseProjectUiSession(project_id) = session
+}
+
+rule RestoreProjectUiSession {
+    when: ProjectActivated(project_id)
+    let session = DatabaseProjectUiSession(project_id)
+    if session != null:
+        ensures: active_view = valid_sidebar_view_or_default(session.active_view, posts)
+        ensures: sidebar_visible = session.sidebar_visible
+        ensures: sidebar_width = clamp(session.sidebar_width, 200, 500)
+        ensures: panel_visible = session.panel_visible
+        ensures: panel_tab = valid_panel_tab_or_default(session.panel_tab, tasks)
+        ensures: tabs = existing_project_tabs(session.tabs, project_id)
+            -- Stale, unknown, and cross-project entity references are discarded.
+        ensures: active_tab = valid_restored_active_tab_or_null(session.active_tab_id, tabs)
+        ensures: EditorsHydratedFromCurrentRecords(tabs, project_id)
+            -- Titles and editor content are resolved afresh; unsaved editor bodies
+            -- are never serialized as UI session state.
+    else:
+        ensures: active_view = posts
+        ensures: sidebar_visible = true
+        ensures: sidebar_width = 280
+        ensures: panel_visible = false
+        ensures: panel_tab = tasks
+        ensures: tabs = empty
+        ensures: active_tab = null
+}
+
+invariant ProjectUiSessionIsolation {
+    -- Each project has an independent database session. Activating one project
+    -- never retains tabs, editor state, or shell state from another project.
+}

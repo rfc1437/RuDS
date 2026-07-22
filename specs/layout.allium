@@ -96,6 +96,9 @@ value ShellVisibility {
     sidebar_visible: Boolean
     panel_visible: Boolean
     assistant_sidebar_visible: Boolean
+    -- Existing shell fields are stored per project with the tab session;
+    -- see tabs.allium ProjectUiSession. RuDS currently has no assistant sidebar,
+    -- so only the sidebar and bottom-panel fields participate there.
 }
 
 surface ShellVisibilitySurface {

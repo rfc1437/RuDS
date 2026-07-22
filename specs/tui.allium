@@ -18,10 +18,10 @@ entity TuiState {
 config {
     -- Same preference sections as the settings backends; matches the
     -- GUI settings nav minus the GUI-only Style tab.
-    tui_settings_sections: List<String> = [
+    tui_settings_sections: Set<String> = {
         "project", "editor", "content", "ai",
         "technology", "publishing", "data", "mcp"
-    ]
+    }
 }
 
 surface TuiSurface {

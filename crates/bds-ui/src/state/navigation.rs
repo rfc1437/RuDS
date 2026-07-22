@@ -23,6 +23,37 @@ impl fmt::Display for SidebarView {
 }
 
 impl SidebarView {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Posts => "posts",
+            Self::Pages => "pages",
+            Self::Media => "media",
+            Self::Scripts => "scripts",
+            Self::Templates => "templates",
+            Self::Tags => "tags",
+            Self::Chat => "chat",
+            Self::Import => "import",
+            Self::Git => "git",
+            Self::Settings => "settings",
+        }
+    }
+
+    pub fn from_persisted(value: &str) -> Option<Self> {
+        Some(match value {
+            "posts" => Self::Posts,
+            "pages" => Self::Pages,
+            "media" => Self::Media,
+            "scripts" => Self::Scripts,
+            "templates" => Self::Templates,
+            "tags" => Self::Tags,
+            "chat" => Self::Chat,
+            "import" => Self::Import,
+            "git" => Self::Git,
+            "settings" => Self::Settings,
+            _ => return None,
+        })
+    }
+
     /// Returns the `activity.*` i18n key for this sidebar view.
     pub fn i18n_key(&self) -> &'static str {
         match self {
@@ -49,6 +80,27 @@ pub enum PanelTab {
     Output,
     PostLinks,
     GitLog,
+}
+
+impl PanelTab {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tasks => "tasks",
+            Self::Output => "output",
+            Self::PostLinks => "post_links",
+            Self::GitLog => "git_log",
+        }
+    }
+
+    pub fn from_persisted(value: &str) -> Option<Self> {
+        Some(match value {
+            "tasks" => Self::Tasks,
+            "output" => Self::Output,
+            "post_links" => Self::PostLinks,
+            "git_log" => Self::GitLog,
+            _ => return None,
+        })
+    }
 }
 
 /// A snapshot of a running or completed task shown in the panel.
@@ -126,5 +178,33 @@ mod tests {
     fn display_returns_i18n_key() {
         assert_eq!(SidebarView::Posts.to_string(), "activity.posts");
         assert_eq!(SidebarView::Settings.to_string(), "common.settings");
+    }
+
+    #[test]
+    fn persisted_navigation_names_round_trip() {
+        for view in [
+            SidebarView::Posts,
+            SidebarView::Pages,
+            SidebarView::Media,
+            SidebarView::Scripts,
+            SidebarView::Templates,
+            SidebarView::Tags,
+            SidebarView::Chat,
+            SidebarView::Import,
+            SidebarView::Git,
+            SidebarView::Settings,
+        ] {
+            assert_eq!(SidebarView::from_persisted(view.as_str()), Some(view));
+        }
+        for tab in [
+            PanelTab::Tasks,
+            PanelTab::Output,
+            PanelTab::PostLinks,
+            PanelTab::GitLog,
+        ] {
+            assert_eq!(PanelTab::from_persisted(tab.as_str()), Some(tab));
+        }
+        assert_eq!(SidebarView::from_persisted("unknown"), None);
+        assert_eq!(PanelTab::from_persisted("unknown"), None);
     }
 }

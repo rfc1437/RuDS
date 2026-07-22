@@ -914,6 +914,21 @@ fn format_bytes(size: i64) -> String {
     format!("{:.1} GB", size / (1024.0 * 1024.0 * 1024.0))
 }
 
+fn project_languages(data_dir: Option<&Path>) -> (String, Vec<String>) {
+    let metadata = data_dir.and_then(|path| engine::meta::read_project_json(path).ok());
+    let main_language = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.main_language.clone())
+        .unwrap_or_else(|| "en".to_string());
+    let mut blog_languages = metadata
+        .map(|metadata| metadata.blog_languages)
+        .unwrap_or_default();
+    if !blog_languages.contains(&main_language) {
+        blog_languages.insert(0, main_language.clone());
+    }
+    (main_language, blog_languages)
+}
+
 // ───────────────────────────────────────────────────────────
 // App State
 // ───────────────────────────────────────────────────────────
@@ -1105,6 +1120,7 @@ impl BdsApp {
             .as_ref()
             .and_then(|p| p.data_path.as_ref())
             .map(PathBuf::from);
+        let (content_language, blog_languages) = project_languages(data_dir.as_deref());
 
         // If no projects exist, ensure the default project per spec
         let init_task = if projects.is_empty() {
@@ -1145,110 +1161,110 @@ impl BdsApp {
                 .map(|(handler, receiver)| (Some(handler), Some(receiver)))
                 .unwrap_or((None, None));
 
-        (
-            Self {
-                db,
-                db_path,
-                active_project: active_project.clone(),
-                projects,
-                data_dir,
-                post_count: 0,
-                media_count: 0,
-                sidebar_posts: Vec::new(),
-                sidebar_media: Vec::new(),
-                sidebar_scripts: Vec::new(),
-                sidebar_templates: Vec::new(),
-                sidebar_imports: Vec::new(),
-                chat_conversations,
-                sidebar_media_thumbs: HashMap::new(),
-                sidebar_posts_has_more: false,
-                sidebar_media_has_more: false,
-                sidebar_posts_loading_more: false,
-                sidebar_media_loading_more: false,
-                post_filter: PostFilter::default(),
-                page_filter: PostFilter::default(),
-                media_filter: MediaFilter::default(),
-                sidebar_view: SidebarView::Posts,
-                sidebar_visible: true,
-                sidebar_width: 280.0,
-                sidebar_dragging: false,
-                tabs: Vec::new(),
-                active_tab: None,
-                panel_visible: false,
-                panel_tab: PanelTab::Tasks,
-                task_manager: Arc::new(TaskManager::default()),
-                domain_events: engine::domain_events::subscribe(),
-                chat_events: engine::chat::subscribe_events(),
-                script_menu_actions: Arc::new(Mutex::new(Vec::new())),
-                task_snapshots: Vec::new(),
-                collapsed_task_groups: HashSet::new(),
-                output_entries: Vec::new(),
-                search_index_rebuild_required,
-                search_index_rebuild_running: false,
-                search_index_rebuild_task_id: None,
-                site_generation_workflows: HashMap::new(),
-                pending_image_drops: VecDeque::new(),
-                image_drop_import_running: false,
-                _menu_bar: Some(menu_bar),
-                menu_registry: registry,
-                native_edit_commands: native_edit::command_queue(),
-                #[cfg(target_os = "macos")]
-                _lifecycle_handler: lifecycle_handler,
-                #[cfg(target_os = "macos")]
-                lifecycle_receiver,
-                ui_locale: locale,
-                content_language: "en".to_string(),
-                blog_languages: Vec::new(),
-                offline_mode,
-                locale_dropdown_open: false,
-                project_dropdown_open: false,
-                theme_badge: String::from("pico"),
-                toasts: Vec::new(),
-                active_modal: search_index_rebuild_required
-                    .then_some(modal::ModalState::SearchIndexRepair),
-                remote_client: None,
-                remote_projects: Vec::new(),
-                remote_project: None,
-                remote_display_name: None,
-                remote_previous_locale: None,
-                preview_session: None,
-                mcp_server,
-                embedded_preview: None,
-                embedded_style_preview: None,
-                main_window_id: None,
-                post_editors: HashMap::new(),
-                media_editors: HashMap::new(),
-                template_editors: HashMap::new(),
-                script_editors: HashMap::new(),
-                import_editors: HashMap::new(),
-                chat_editors: HashMap::new(),
-                tags_view_state: None,
-                settings_state: None,
-                style_view_state: None,
-                dashboard_state: None,
-                site_validation_state: SiteValidationState::default(),
-                duplicates_state: DuplicatesState::default(),
-                guide_documentation: DocumentationState::new(DocumentationKind::Guide),
-                api_documentation: DocumentationState::new(DocumentationKind::Api),
-                cli_documentation: DocumentationState::new(DocumentationKind::Cli),
-                mcp_documentation: DocumentationState::new(DocumentationKind::Mcp),
-                metadata_diff_state: MetadataDiffState::default(),
-                menu_editor_state: MenuEditorState::default(),
-                translation_validation_state: Default::default(),
-                git_state: GitUiState::default(),
-                git_diffs: HashMap::new(),
-                git_file_history: Vec::new(),
-                git_file_history_target: None,
-            },
-            init_task,
-        )
+        let mut app = Self {
+            db,
+            db_path,
+            active_project: active_project.clone(),
+            projects,
+            data_dir,
+            post_count: 0,
+            media_count: 0,
+            sidebar_posts: Vec::new(),
+            sidebar_media: Vec::new(),
+            sidebar_scripts: Vec::new(),
+            sidebar_templates: Vec::new(),
+            sidebar_imports: Vec::new(),
+            chat_conversations,
+            sidebar_media_thumbs: HashMap::new(),
+            sidebar_posts_has_more: false,
+            sidebar_media_has_more: false,
+            sidebar_posts_loading_more: false,
+            sidebar_media_loading_more: false,
+            post_filter: PostFilter::default(),
+            page_filter: PostFilter::default(),
+            media_filter: MediaFilter::default(),
+            sidebar_view: SidebarView::Posts,
+            sidebar_visible: true,
+            sidebar_width: 280.0,
+            sidebar_dragging: false,
+            tabs: Vec::new(),
+            active_tab: None,
+            panel_visible: false,
+            panel_tab: PanelTab::Tasks,
+            task_manager: Arc::new(TaskManager::default()),
+            domain_events: engine::domain_events::subscribe(),
+            chat_events: engine::chat::subscribe_events(),
+            script_menu_actions: Arc::new(Mutex::new(Vec::new())),
+            task_snapshots: Vec::new(),
+            collapsed_task_groups: HashSet::new(),
+            output_entries: Vec::new(),
+            search_index_rebuild_required,
+            search_index_rebuild_running: false,
+            search_index_rebuild_task_id: None,
+            site_generation_workflows: HashMap::new(),
+            pending_image_drops: VecDeque::new(),
+            image_drop_import_running: false,
+            _menu_bar: Some(menu_bar),
+            menu_registry: registry,
+            native_edit_commands: native_edit::command_queue(),
+            #[cfg(target_os = "macos")]
+            _lifecycle_handler: lifecycle_handler,
+            #[cfg(target_os = "macos")]
+            lifecycle_receiver,
+            ui_locale: locale,
+            content_language,
+            blog_languages,
+            offline_mode,
+            locale_dropdown_open: false,
+            project_dropdown_open: false,
+            theme_badge: String::from("pico"),
+            toasts: Vec::new(),
+            active_modal: search_index_rebuild_required
+                .then_some(modal::ModalState::SearchIndexRepair),
+            remote_client: None,
+            remote_projects: Vec::new(),
+            remote_project: None,
+            remote_display_name: None,
+            remote_previous_locale: None,
+            preview_session: None,
+            mcp_server,
+            embedded_preview: None,
+            embedded_style_preview: None,
+            main_window_id: None,
+            post_editors: HashMap::new(),
+            media_editors: HashMap::new(),
+            template_editors: HashMap::new(),
+            script_editors: HashMap::new(),
+            import_editors: HashMap::new(),
+            chat_editors: HashMap::new(),
+            tags_view_state: None,
+            settings_state: None,
+            style_view_state: None,
+            dashboard_state: None,
+            site_validation_state: SiteValidationState::default(),
+            duplicates_state: DuplicatesState::default(),
+            guide_documentation: DocumentationState::new(DocumentationKind::Guide),
+            api_documentation: DocumentationState::new(DocumentationKind::Api),
+            cli_documentation: DocumentationState::new(DocumentationKind::Cli),
+            mcp_documentation: DocumentationState::new(DocumentationKind::Mcp),
+            metadata_diff_state: MetadataDiffState::default(),
+            menu_editor_state: MenuEditorState::default(),
+            translation_validation_state: Default::default(),
+            git_state: GitUiState::default(),
+            git_diffs: HashMap::new(),
+            git_file_history: Vec::new(),
+            git_file_history_target: None,
+        };
+        let restored_ui_task = app.restore_project_ui_state();
+        (app, Task::batch([init_task, restored_ui_task]))
     }
 
     #[cfg(test)]
     fn new_for_tests(db: Database, project: Project, data_dir: PathBuf) -> Self {
         let chat_conversations = engine::chat::list_conversations(db.conn()).unwrap_or_default();
         let offline_mode = engine::settings::airplane_mode(db.conn()).unwrap_or(true);
-        Self {
+        let (content_language, blog_languages) = project_languages(Some(&data_dir));
+        let mut app = Self {
             db: Some(db),
             db_path: data_dir.join("bds.db"),
             active_project: Some(project.clone()),
@@ -1299,8 +1315,8 @@ impl BdsApp {
             #[cfg(target_os = "macos")]
             lifecycle_receiver: None,
             ui_locale: UiLocale::En,
-            content_language: "en".to_string(),
-            blog_languages: Vec::new(),
+            content_language,
+            blog_languages,
             offline_mode,
             locale_dropdown_open: false,
             project_dropdown_open: false,
@@ -1340,7 +1356,9 @@ impl BdsApp {
             git_diffs: HashMap::new(),
             git_file_history: Vec::new(),
             git_file_history_target: None,
-        }
+        };
+        let _ = app.restore_project_ui_state();
+        app
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -1363,7 +1381,7 @@ impl BdsApp {
                 // When switching to/from Posts/Pages, re-query with correct filter
                 let needs_post_refresh = old_view != new_view
                     && matches!(new_view, SidebarView::Posts | SidebarView::Pages);
-                if needs_post_refresh {
+                let task = if needs_post_refresh {
                     self.refresh_sidebar_posts()
                 } else if new_view == SidebarView::Git && new_visible {
                     self.refresh_git()
@@ -1372,14 +1390,18 @@ impl BdsApp {
                     Task::none()
                 } else {
                     Task::none()
-                }
+                };
+                self.persist_project_ui_state();
+                task
             }
             Message::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
+                self.persist_project_ui_state();
                 Task::none()
             }
             Message::TogglePanel => {
                 self.panel_visible = !self.panel_visible;
+                self.persist_project_ui_state();
                 Task::none()
             }
             Message::CreatePost => self.create_sidebar_post(false),
@@ -1459,6 +1481,7 @@ impl BdsApp {
                             self.active_tab = None;
                         }
                         self.refresh_chat_conversations();
+                        self.persist_project_ui_state();
                         self.notify(ToastLevel::Success, &t(self.ui_locale, "chat.deleted"));
                     }
                     Err(error) => self.notify(ToastLevel::Error, &error),
@@ -1663,6 +1686,7 @@ impl BdsApp {
             }
             Message::SidebarResizeEnd => {
                 self.sidebar_dragging = false;
+                self.persist_project_ui_state();
                 Task::none()
             }
 
@@ -1680,6 +1704,7 @@ impl BdsApp {
                 self.git_diffs.remove(&id);
                 self.enforce_panel_tab_fallback();
                 self.sync_menu_state();
+                self.persist_project_ui_state();
                 self.sync_embedded_previews()
             }
             Message::SelectTab(id) => {
@@ -1690,6 +1715,7 @@ impl BdsApp {
                     self.active_tab = Some(id.clone());
                 }
                 self.enforce_panel_tab_fallback();
+                self.persist_project_ui_state();
                 let semantic_task = self
                     .tabs
                     .iter()
@@ -1701,6 +1727,7 @@ impl BdsApp {
             }
             // ── Project management ──
             Message::ProjectsLoaded(projects) => {
+                let needs_ui_state_restore = self.active_project.is_none();
                 self.projects = projects;
                 if let Some(ref db) = self.db {
                     self.active_project = engine::project::get_active_project(db.conn())
@@ -1731,15 +1758,14 @@ impl BdsApp {
                         self.add_output(&message);
                     }
                     // Extract content language from project metadata
-                    if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
-                        let main_lang = meta.main_language.unwrap_or_else(|| "en".to_string());
-                        self.content_language = main_lang.clone();
-                        self.blog_languages = meta.blog_languages;
-                        if !self.blog_languages.contains(&main_lang) {
-                            self.blog_languages.insert(0, main_lang);
-                        }
-                    }
+                    (self.content_language, self.blog_languages) =
+                        project_languages(Some(&data_dir));
                 }
+                let restored_ui_task = if needs_ui_state_restore {
+                    self.restore_project_ui_state()
+                } else {
+                    Task::none()
+                };
                 let sidebar_task = self.refresh_counts();
                 let documentation_task = self.reload_changed_documentation();
                 let menu_editor_task = if self
@@ -1758,10 +1784,14 @@ impl BdsApp {
                     Task::done(Message::EmbeddingBackfill),
                     documentation_task,
                     menu_editor_task,
+                    restored_ui_task,
                 ])
             }
             Message::SwitchProject(project_id) => {
                 self.project_dropdown_open = false;
+                self.flush_active_post_editor();
+                self.persist_project_ui_state();
+                let mut switched = false;
                 if let Some(ref db) = self.db {
                     if let (Some(outgoing), Some(data_dir)) = (&self.active_project, &self.data_dir)
                     {
@@ -1799,17 +1829,8 @@ impl BdsApp {
                                 .and_then(|p| p.data_path.as_ref())
                                 .map(PathBuf::from);
                             // Per metadata.allium StartupSync
-                            if let Some(data_dir) = self.data_dir.clone()
-                                && let Ok(meta) = engine::meta::read_project_json(&data_dir)
-                            {
-                                let main_lang =
-                                    meta.main_language.unwrap_or_else(|| "en".to_string());
-                                self.content_language = main_lang.clone();
-                                self.blog_languages = meta.blog_languages;
-                                if !self.blog_languages.contains(&main_lang) {
-                                    self.blog_languages.insert(0, main_lang);
-                                }
-                            }
+                            (self.content_language, self.blog_languages) =
+                                project_languages(self.data_dir.as_deref());
                             if self.tabs.iter().any(|tab| tab.tab_type == TabType::Style) {
                                 self.style_view_state = self.hydrate_style_state();
                             }
@@ -1826,6 +1847,7 @@ impl BdsApp {
                                     &[("name", &name)],
                                 ),
                             );
+                            switched = true;
                         }
                         Err(_) => {
                             self.notify(
@@ -1835,12 +1857,35 @@ impl BdsApp {
                         }
                     }
                 }
+                let restored_ui_task = if switched {
+                    self.restore_project_ui_state()
+                } else {
+                    Task::none()
+                };
+                let documentation_task = if switched {
+                    self.reload_changed_documentation()
+                } else {
+                    Task::none()
+                };
+                let menu_editor_task = if switched
+                    && self
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.tab_type == TabType::MenuEditor)
+                {
+                    Task::done(Message::MenuEditor(MenuEditorMsg::Reload))
+                } else {
+                    Task::none()
+                };
                 self.sync_menu_state();
                 Task::batch([
                     self.refresh_counts(),
                     self.refresh_git_if_visible(),
                     Task::done(Message::EmbeddingBackfill),
                     self.sync_embedded_previews(),
+                    restored_ui_task,
+                    documentation_task,
+                    menu_editor_task,
                 ])
             }
             Message::RequestCreateProject => {
@@ -1851,6 +1896,9 @@ impl BdsApp {
                 "dialog.openProject",
             )),
             Message::CreateProject { name, data_path } => {
+                self.flush_active_post_editor();
+                self.persist_project_ui_state();
+                let mut restored_ui_task = Task::none();
                 if let Some(ref db) = self.db {
                     let path_str = data_path.as_ref().map(|p| p.to_string_lossy().to_string());
                     match engine::project::create_project(db.conn(), &name, path_str.as_deref()) {
@@ -1862,6 +1910,9 @@ impl BdsApp {
                             self.active_project = Some(project.clone());
                             self.preview_session = None;
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
+                            (self.content_language, self.blog_languages) =
+                                project_languages(self.data_dir.as_deref());
+                            restored_ui_task = self.restore_project_ui_state();
                             let msg = tw(
                                 self.ui_locale,
                                 "projectSelector.toast.created",
@@ -1877,7 +1928,7 @@ impl BdsApp {
                         }
                     }
                 }
-                self.refresh_git_if_visible()
+                Task::batch([self.refresh_git_if_visible(), restored_ui_task])
             }
             Message::DeleteProject(project_id) => {
                 if let Some(ref db) = self.db {
@@ -1920,6 +1971,8 @@ impl BdsApp {
                 Task::none()
             }
             Message::ProjectFolderPicked(path) => {
+                self.flush_active_post_editor();
+                self.persist_project_ui_state();
                 if let (Some(path), Some(db)) = (path, self.db.as_ref()) {
                     match engine::project::open_project(db.conn(), &path) {
                         Ok(project) => {
@@ -1929,10 +1982,23 @@ impl BdsApp {
                             self.reset_git_for_project_change();
                             self.active_project = Some(project.clone());
                             self.data_dir = project.data_path.as_ref().map(PathBuf::from);
+                            (self.content_language, self.blog_languages) =
+                                project_languages(self.data_dir.as_deref());
                             self.preview_session = None;
                             self.hide_embedded_preview();
                             self.hide_embedded_style_preview();
                             self.style_view_state = None;
+                            let restored_ui_task = self.restore_project_ui_state();
+                            let documentation_task = self.reload_changed_documentation();
+                            let menu_editor_task = if self
+                                .tabs
+                                .iter()
+                                .any(|tab| tab.tab_type == TabType::MenuEditor)
+                            {
+                                Task::done(Message::MenuEditor(MenuEditorMsg::Reload))
+                            } else {
+                                Task::none()
+                            };
                             self.notify(
                                 ToastLevel::Success,
                                 &tw(
@@ -1945,6 +2011,9 @@ impl BdsApp {
                             return Task::batch([
                                 self.refresh_counts(),
                                 self.refresh_git_if_visible(),
+                                restored_ui_task,
+                                documentation_task,
+                                menu_editor_task,
                             ]);
                         }
                         Err(error) => self.notify(
@@ -2167,6 +2236,9 @@ impl BdsApp {
                             &[("error", &errors.join("; "))],
                         ),
                     );
+                }
+                if !imported.is_empty() {
+                    self.persist_project_ui_state();
                 }
                 self.refresh_sidebar_media()
             }
@@ -2577,7 +2649,10 @@ impl BdsApp {
                     self.notify(ToastLevel::Error, &t(self.ui_locale, "blogmark.noProject"));
                     return Task::none();
                 };
+                let mut project_restore_task = Task::none();
                 if self.active_project.as_ref().map(|project| &project.id) != Some(&target.id) {
+                    self.flush_active_post_editor();
+                    self.persist_project_ui_state();
                     if let Some(db) = self.db.as_ref()
                         && let Err(error) =
                             engine::project::set_active_project(db.conn(), &target.id)
@@ -2585,20 +2660,15 @@ impl BdsApp {
                         self.notify(ToastLevel::Error, &error.to_string());
                         return Task::none();
                     }
+                    self.reset_git_for_project_change();
                     self.active_project = Some(target.clone());
                     self.data_dir = Some(data_dir.clone());
                     self.preview_session = None;
                     self.hide_embedded_preview();
                     self.hide_embedded_style_preview();
-                    self.style_view_state = None;
-                    if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
-                        let main_language = meta.main_language.unwrap_or_else(|| "en".into());
-                        self.content_language = main_language.clone();
-                        self.blog_languages = meta.blog_languages;
-                        if !self.blog_languages.contains(&main_language) {
-                            self.blog_languages.insert(0, main_language);
-                        }
-                    }
+                    (self.content_language, self.blog_languages) =
+                        project_languages(Some(&data_dir));
+                    project_restore_task = self.restore_project_ui_state();
                     self.sync_menu_state();
                 }
                 let db_path = self.db_path.clone();
@@ -2612,7 +2682,7 @@ impl BdsApp {
                     t(self.ui_locale, "dialog.selectFolder"),
                 );
                 self.refresh_task_snapshots();
-                Task::perform(
+                let import_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
                             if !task_manager.wait_until_runnable(task_id) {
@@ -2642,7 +2712,8 @@ impl BdsApp {
                         .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
                     },
                     move |result| Message::BlogmarkImported { task_id, result },
-                )
+                );
+                Task::batch([project_restore_task, import_task])
             }
             Message::BlogmarkImported { task_id, result } => match result {
                 Ok(result) => {
@@ -2683,6 +2754,7 @@ impl BdsApp {
             // ── Panel ──
             Message::SetPanelTab(tab) => {
                 self.panel_tab = tab;
+                self.persist_project_ui_state();
                 if tab == PanelTab::GitLog {
                     self.refresh_git_file_history()
                 } else {
@@ -3818,10 +3890,12 @@ impl BdsApp {
         match destination {
             "toggle_sidebar" => {
                 self.sidebar_visible = !self.sidebar_visible;
+                self.persist_project_ui_state();
                 return;
             }
             "toggle_panel" => {
                 self.panel_visible = !self.panel_visible;
+                self.persist_project_ui_state();
                 return;
             }
             "toggle_assistant_sidebar" => {
@@ -3831,6 +3905,7 @@ impl BdsApp {
                     self.sidebar_view = SidebarView::Chat;
                     self.sidebar_visible = true;
                 }
+                self.persist_project_ui_state();
                 return;
             }
             _ => {}
@@ -3850,6 +3925,7 @@ impl BdsApp {
             _ => return,
         };
         self.sidebar_visible = true;
+        self.persist_project_ui_state();
         if destination == "settings" && entity_id.is_none() {
             self.open_singleton_tab(TabType::Settings, "common.settings");
             if self.settings_state.is_none() {
@@ -3906,6 +3982,7 @@ impl BdsApp {
             self.active_tab = Some(tab.id.clone());
             self.load_editor_for_tab(&tab);
         }
+        self.persist_project_ui_state();
     }
 
     fn apply_ui_locale(&mut self, locale: UiLocale) {
@@ -4474,6 +4551,7 @@ impl BdsApp {
             self.active_tab = Some(t.id.clone());
         }
         self.enforce_panel_tab_fallback();
+        self.persist_project_ui_state();
     }
 
     fn create_sidebar_post(&mut self, is_page: bool) -> Task<Message> {
@@ -4515,6 +4593,7 @@ impl BdsApp {
                     self.load_editor_for_tab(&tab);
                 }
                 self.sync_menu_state();
+                self.persist_project_ui_state();
                 self.refresh_counts()
             }
             Err(error) => {
@@ -4555,6 +4634,7 @@ impl BdsApp {
                     self.load_editor_for_tab(&tab);
                 }
                 self.sync_menu_state();
+                self.persist_project_ui_state();
                 self.refresh_counts()
             }
             Err(error) => {
@@ -4594,6 +4674,7 @@ impl BdsApp {
                     self.load_editor_for_tab(&tab);
                 }
                 self.sync_menu_state();
+                self.persist_project_ui_state();
                 self.refresh_counts()
             }
             Err(error) => {
@@ -4627,6 +4708,7 @@ impl BdsApp {
                     self.load_editor_for_tab(&tab);
                 }
                 self.sync_menu_state();
+                self.persist_project_ui_state();
             }
             Err(error) => self.notify(ToastLevel::Error, &error.to_string()),
         }
@@ -5593,6 +5675,211 @@ impl BdsApp {
         })
     }
 
+    fn persisted_project_ui_state(&self) -> engine::ui_state::ProjectUiState {
+        engine::ui_state::ProjectUiState {
+            sidebar_view: self.sidebar_view.as_str().to_string(),
+            sidebar_visible: self.sidebar_visible,
+            sidebar_width: self.sidebar_width,
+            panel_visible: self.panel_visible,
+            panel_tab: self.panel_tab.as_str().to_string(),
+            tabs: self
+                .tabs
+                .iter()
+                .map(|tab| engine::ui_state::PersistedTab {
+                    tab_type: tab.tab_type.as_str().to_string(),
+                    id: tab.id.clone(),
+                    title: tab.title.clone(),
+                    is_transient: tab.is_transient,
+                })
+                .collect(),
+            active_tab: self.active_tab.clone(),
+        }
+    }
+
+    fn persist_project_ui_state(&mut self) {
+        let Some(project_id) = self
+            .active_project
+            .as_ref()
+            .map(|project| project.id.clone())
+        else {
+            return;
+        };
+        let state = self.persisted_project_ui_state();
+        let result = self
+            .db
+            .as_ref()
+            .ok_or_else(|| engine::EngineError::Validation("database unavailable".to_string()))
+            .and_then(|db| engine::ui_state::save(db.conn(), &project_id, &state));
+        if let Err(error) = result {
+            let message = self.operation_failed_text("common.workspaceState", error);
+            self.add_output(&message);
+        }
+    }
+
+    fn restore_project_ui_state(&mut self) -> Task<Message> {
+        let Some(project_id) = self
+            .active_project
+            .as_ref()
+            .map(|project| project.id.clone())
+        else {
+            self.reset_project_ui_state();
+            return Task::none();
+        };
+        let loaded = self
+            .db
+            .as_ref()
+            .ok_or_else(|| engine::EngineError::Validation("database unavailable".to_string()))
+            .and_then(|db| engine::ui_state::load(db.conn(), &project_id));
+
+        self.reset_project_ui_state();
+        let state = match loaded {
+            Ok(Some(state)) => state,
+            Ok(None) => return Task::none(),
+            Err(error) => {
+                let message = self.operation_failed_text("common.workspaceState", error);
+                self.add_output(&message);
+                return Task::none();
+            }
+        };
+        self.sidebar_view =
+            SidebarView::from_persisted(&state.sidebar_view).unwrap_or(SidebarView::Posts);
+        self.sidebar_visible = state.sidebar_visible;
+        self.sidebar_width = state.sidebar_width.clamp(200.0, 500.0);
+        self.panel_visible = state.panel_visible;
+        self.panel_tab = PanelTab::from_persisted(&state.panel_tab).unwrap_or(PanelTab::Tasks);
+        for persisted in state.tabs {
+            if let Some(tab) = self.restore_tab(&project_id, persisted) {
+                tabs::open_tab(&mut self.tabs, tab);
+            }
+        }
+        self.active_tab = state
+            .active_tab
+            .filter(|id| self.tabs.iter().any(|tab| tab.id == *id));
+        let restored_tabs = self.tabs.clone();
+        for tab in &restored_tabs {
+            self.load_editor_for_tab(tab);
+        }
+        self.enforce_panel_tab_fallback();
+        self.sync_menu_state();
+        self.reload_restored_git_diffs()
+    }
+
+    fn reload_restored_git_diffs(&mut self) -> Task<Message> {
+        let active_tab = self.active_tab.clone();
+        let git_tabs = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.tab_type == TabType::GitDiff)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut tasks = Vec::new();
+        for tab in git_tabs {
+            if let Some(hash) = tab.id.strip_prefix("git-diff:commit:") {
+                let subject = tab
+                    .title
+                    .split_once(' ')
+                    .map(|(_, subject)| subject)
+                    .unwrap_or("")
+                    .to_string();
+                tasks.push(self.open_git_commit_diff(hash.to_string(), subject));
+            } else if let Some(path) = tab.id.strip_prefix("git-diff:") {
+                tasks.push(self.open_git_file_diff(path.to_string()));
+            }
+        }
+        self.active_tab = active_tab.filter(|id| self.tabs.iter().any(|tab| tab.id == *id));
+        self.enforce_panel_tab_fallback();
+        self.persist_project_ui_state();
+        Task::batch(tasks)
+    }
+
+    fn reset_project_ui_state(&mut self) {
+        self.sidebar_view = SidebarView::Posts;
+        self.sidebar_visible = true;
+        self.sidebar_width = 280.0;
+        self.sidebar_dragging = false;
+        self.tabs.clear();
+        self.active_tab = None;
+        self.panel_visible = false;
+        self.panel_tab = PanelTab::Tasks;
+        self.post_editors.clear();
+        self.media_editors.clear();
+        self.template_editors.clear();
+        self.script_editors.clear();
+        self.import_editors.clear();
+        self.chat_editors.clear();
+        self.tags_view_state = None;
+        self.settings_state = None;
+        self.style_view_state = None;
+        self.dashboard_state = None;
+        self.site_validation_state = SiteValidationState::default();
+        self.duplicates_state = DuplicatesState::default();
+        self.metadata_diff_state = MetadataDiffState::default();
+        self.menu_editor_state = MenuEditorState::default();
+        self.translation_validation_state = Default::default();
+        self.git_diffs.clear();
+        self.git_file_history.clear();
+        self.git_file_history_target = None;
+    }
+
+    fn restore_tab(
+        &self,
+        project_id: &str,
+        persisted: engine::ui_state::PersistedTab,
+    ) -> Option<Tab> {
+        let tab_type = TabType::from_persisted(&persisted.tab_type)?;
+        let is_transient = persisted.is_transient
+            && !tab_type.is_singleton()
+            && !matches!(tab_type, TabType::Chat | TabType::Import);
+        let db = self.db.as_ref()?;
+        let title = match tab_type {
+            TabType::Post => {
+                let post =
+                    bds_core::db::queries::post::get_post_by_id(db.conn(), &persisted.id).ok()?;
+                (post.project_id == project_id).then_some(post.title)?
+            }
+            TabType::Media => {
+                let media =
+                    bds_core::db::queries::media::get_media_by_id(db.conn(), &persisted.id).ok()?;
+                (media.project_id == project_id)
+                    .then_some(media.title.unwrap_or(media.original_name))?
+            }
+            TabType::Templates => {
+                let template =
+                    bds_core::db::queries::template::get_template_by_id(db.conn(), &persisted.id)
+                        .ok()?;
+                (template.project_id == project_id).then_some(template.title)?
+            }
+            TabType::Scripts => {
+                let script =
+                    bds_core::db::queries::script::get_script_by_id(db.conn(), &persisted.id)
+                        .ok()?;
+                (script.project_id == project_id).then_some(script.title)?
+            }
+            TabType::Import => {
+                let definition =
+                    engine::wordpress_import::get_definition(db.conn(), &persisted.id).ok()?;
+                (definition.project_id == project_id).then_some(definition.name)?
+            }
+            TabType::Chat => {
+                engine::chat::get_conversation(db.conn(), &persisted.id)
+                    .ok()?
+                    .title
+            }
+            TabType::GitDiff => persisted.title,
+            _ => {
+                let key = tab_type.i18n_key()?;
+                t(self.ui_locale, key)
+            }
+        };
+        Some(Tab {
+            id: persisted.id,
+            tab_type,
+            title,
+            is_transient,
+            is_dirty: false,
+        })
+    }
+
     fn open_tab(&mut self, tab: Tab) -> Task<Message> {
         self.flush_active_post_editor();
         let index = tabs::open_tab(&mut self.tabs, tab);
@@ -5606,6 +5893,7 @@ impl BdsApp {
         }
         self.enforce_panel_tab_fallback();
         self.sync_menu_state();
+        self.persist_project_ui_state();
         let mut tasks = vec![self.sync_embedded_previews()];
         if let Some(post_id) = semantic_post_id {
             tasks.push(Task::done(Message::LoadSemanticTagSuggestions(post_id)));
@@ -6859,6 +7147,7 @@ impl BdsApp {
         }
         self.enforce_panel_tab_fallback();
         self.sync_menu_state();
+        self.persist_project_ui_state();
     }
 
     fn delete_post_editor(&mut self, post_id: &str) -> Task<Message> {
@@ -10134,6 +10423,190 @@ mod tests {
             crate::views::documentation::DocumentStatus::Ready
         );
         assert_eq!(app.guide_documentation.signature, 42);
+    }
+
+    #[test]
+    fn project_ui_state_survives_switches_and_app_restart() {
+        use crate::state::navigation::PanelTab;
+
+        let temp = TempDir::new().unwrap();
+        let p1_dir = temp.path().join("one");
+        let p2_dir = temp.path().join("two");
+        let db_path = temp.path().join("app.db");
+        let db = Database::open(&db_path).unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        let p1 = bds_core::engine::project::create_project(
+            db.conn(),
+            "One",
+            Some(p1_dir.to_str().unwrap()),
+        )
+        .unwrap();
+        let p2 = bds_core::engine::project::create_project(
+            db.conn(),
+            "Two",
+            Some(p2_dir.to_str().unwrap()),
+        )
+        .unwrap();
+        bds_core::engine::project::set_active_project(db.conn(), &p1.id).unwrap();
+        let p1_post = post::create_post(
+            db.conn(),
+            &p1_dir,
+            &p1.id,
+            "One post",
+            Some("One body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let p2_post = post::create_post(
+            db.conn(),
+            &p2_dir,
+            &p2.id,
+            "Two post",
+            Some("Two body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let mut app = BdsApp::new_for_tests(db, p1.clone(), p1_dir.clone());
+        app.projects = vec![p1.clone(), p2.clone()];
+        let _ = app.update(Message::OpenTab(Tab {
+            id: p1_post.id.clone(),
+            tab_type: TabType::Post,
+            title: p1_post.title.clone(),
+            is_transient: false,
+            is_dirty: false,
+        }));
+        let _ = app.update(Message::SetActiveView(SidebarView::Media));
+        let _ = app.update(Message::ToggleSidebar);
+        app.sidebar_width = 412.0;
+        let _ = app.update(Message::SidebarResizeEnd);
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::SetPanelTab(PanelTab::Output));
+
+        let _ = app.update(Message::SwitchProject(p2.id.clone()));
+        assert!(app.tabs.is_empty());
+        assert_eq!(app.sidebar_view, SidebarView::Posts);
+        assert!(app.sidebar_visible);
+        assert!(!app.panel_visible);
+
+        let _ = app.update(Message::OpenTab(Tab {
+            id: p2_post.id.clone(),
+            tab_type: TabType::Post,
+            title: p2_post.title.clone(),
+            is_transient: true,
+            is_dirty: false,
+        }));
+        let _ = app.update(Message::SetActiveView(SidebarView::Scripts));
+
+        let _ = app.update(Message::SwitchProject(p1.id.clone()));
+        assert_eq!(app.sidebar_view, SidebarView::Media);
+        assert!(!app.sidebar_visible);
+        assert_eq!(app.sidebar_width, 412.0);
+        assert!(app.panel_visible);
+        assert_eq!(app.panel_tab, PanelTab::Output);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.active_tab.as_deref(), Some(p1_post.id.as_str()));
+        assert_eq!(app.tabs[0].title, "One post");
+        assert!(app.post_editors.contains_key(&p1_post.id));
+        assert!(!app.post_editors.contains_key(&p2_post.id));
+
+        let _ = app.update(Message::SwitchProject(p2.id.clone()));
+        assert_eq!(app.sidebar_view, SidebarView::Scripts);
+        assert!(app.sidebar_visible);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.active_tab.as_deref(), Some(p2_post.id.as_str()));
+        assert!(app.tabs[0].is_transient);
+        assert!(app.post_editors.contains_key(&p2_post.id));
+        assert!(!app.post_editors.contains_key(&p1_post.id));
+
+        drop(app);
+        let db = Database::open(&db_path).unwrap();
+        let restarted = BdsApp::new_for_tests(db, p2, p2_dir);
+        assert_eq!(restarted.sidebar_view, SidebarView::Scripts);
+        assert!(restarted.sidebar_visible);
+        assert_eq!(restarted.tabs.len(), 1);
+        assert_eq!(restarted.active_tab.as_deref(), Some(p2_post.id.as_str()));
+        assert_eq!(restarted.tabs[0].title, "Two post");
+        assert!(restarted.post_editors.contains_key(&p2_post.id));
+    }
+
+    #[test]
+    fn project_ui_restore_discards_stale_unknown_and_cross_project_tabs() {
+        let (db, project, temp) = setup();
+        let other = Project {
+            id: "p2".to_string(),
+            name: "Other".to_string(),
+            slug: "other".to_string(),
+            is_active: false,
+            ..project.clone()
+        };
+        insert_project(db.conn(), &other).unwrap();
+        let other_post = post::create_post(
+            db.conn(),
+            temp.path(),
+            &other.id,
+            "Other post",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        bds_core::engine::ui_state::save(
+            db.conn(),
+            &project.id,
+            &bds_core::engine::ui_state::ProjectUiState {
+                tabs: vec![
+                    bds_core::engine::ui_state::PersistedTab {
+                        tab_type: "post".into(),
+                        id: other_post.id.clone(),
+                        title: "Wrong project".into(),
+                        is_transient: false,
+                    },
+                    bds_core::engine::ui_state::PersistedTab {
+                        tab_type: "post".into(),
+                        id: "missing".into(),
+                        title: "Missing".into(),
+                        is_transient: false,
+                    },
+                    bds_core::engine::ui_state::PersistedTab {
+                        tab_type: "future_type".into(),
+                        id: "future".into(),
+                        title: "Future".into(),
+                        is_transient: false,
+                    },
+                    bds_core::engine::ui_state::PersistedTab {
+                        tab_type: "settings".into(),
+                        id: "settings".into(),
+                        title: "Stale title".into(),
+                        is_transient: true,
+                    },
+                ],
+                active_tab: Some(other_post.id),
+                ..bds_core::engine::ui_state::ProjectUiState::default()
+            },
+        )
+        .unwrap();
+
+        let app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].tab_type, TabType::Settings);
+        assert_eq!(app.tabs[0].title, t(UiLocale::En, "common.settings"));
+        assert!(!app.tabs[0].is_transient);
+        assert_eq!(app.active_tab, None);
+        assert!(app.post_editors.is_empty());
     }
 
     #[test]

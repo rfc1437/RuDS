@@ -25,6 +25,55 @@ pub enum TabType {
 }
 
 impl TabType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Post => "post",
+            Self::Media => "media",
+            Self::Settings => "settings",
+            Self::Style => "style",
+            Self::Tags => "tags",
+            Self::Chat => "chat",
+            Self::Import => "import",
+            Self::MenuEditor => "menu_editor",
+            Self::MetadataDiff => "metadata_diff",
+            Self::GitDiff => "git_diff",
+            Self::Scripts => "scripts",
+            Self::Templates => "templates",
+            Self::Documentation => "documentation",
+            Self::ApiDocumentation => "api_documentation",
+            Self::CliDocumentation => "cli_documentation",
+            Self::McpDocumentation => "mcp_documentation",
+            Self::SiteValidation => "site_validation",
+            Self::TranslationValidation => "translation_validation",
+            Self::FindDuplicates => "find_duplicates",
+        }
+    }
+
+    pub fn from_persisted(value: &str) -> Option<Self> {
+        Some(match value {
+            "post" => Self::Post,
+            "media" => Self::Media,
+            "settings" => Self::Settings,
+            "style" => Self::Style,
+            "tags" => Self::Tags,
+            "chat" => Self::Chat,
+            "import" => Self::Import,
+            "menu_editor" => Self::MenuEditor,
+            "metadata_diff" => Self::MetadataDiff,
+            "git_diff" => Self::GitDiff,
+            "scripts" => Self::Scripts,
+            "templates" => Self::Templates,
+            "documentation" => Self::Documentation,
+            "api_documentation" => Self::ApiDocumentation,
+            "cli_documentation" => Self::CliDocumentation,
+            "mcp_documentation" => Self::McpDocumentation,
+            "site_validation" => Self::SiteValidation,
+            "translation_validation" => Self::TranslationValidation,
+            "find_duplicates" => Self::FindDuplicates,
+            _ => return None,
+        })
+    }
+
     /// Singleton tool tabs per tabs.allium: always one instance, id = type name.
     ///
     /// Singleton types (12): settings, tags, style, menu_editor,
@@ -287,5 +336,33 @@ mod tests {
         open_tab(&mut tabs, make_tab("c1", TabType::Chat, false));
         open_tab(&mut tabs, make_tab("c2", TabType::Chat, false));
         assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn persisted_tab_type_names_round_trip() {
+        for tab_type in [
+            TabType::Post,
+            TabType::Media,
+            TabType::Settings,
+            TabType::Style,
+            TabType::Tags,
+            TabType::Chat,
+            TabType::Import,
+            TabType::MenuEditor,
+            TabType::MetadataDiff,
+            TabType::GitDiff,
+            TabType::Scripts,
+            TabType::Templates,
+            TabType::Documentation,
+            TabType::ApiDocumentation,
+            TabType::CliDocumentation,
+            TabType::McpDocumentation,
+            TabType::SiteValidation,
+            TabType::TranslationValidation,
+            TabType::FindDuplicates,
+        ] {
+            assert_eq!(TabType::from_persisted(tab_type.as_str()), Some(tab_type));
+        }
+        assert_eq!(TabType::from_persisted("unknown"), None);
     }
 }

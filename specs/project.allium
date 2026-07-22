@@ -49,7 +49,7 @@ entity Project {
         --   the SQLite database, the per-project embeddings index
         --   (projects/{id}/embeddings.usearch + .meta.json sidecar), the
         --   downloaded embedding-model cache, the project registry, and
-        --   window/UI state.
+        --   window/UI state (project:{id}:ui_state in the SQLite settings table).
         -- OS-specific base (resolved via :filename.basedir, app name "bds"):
         --   macOS:   ~/Library/Application Support/bds   (:user_config)
         --   Linux:   $XDG_CONFIG_HOME/bds  (default ~/.config/bds)

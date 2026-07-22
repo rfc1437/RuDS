@@ -89,6 +89,7 @@ activity-aiAssistant = Assistant IA
 activity-import = Importation
 activity-sourceControl = Contrôle de source
 common-save = Enregistrer
+common-workspaceState = État de l’espace de travail
 common-open = Ouvrir
 common-cancel = Annuler
 common-delete = Supprimer

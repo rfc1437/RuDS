@@ -206,7 +206,9 @@ entity PostMediaLink {
 
 entity Setting {
     key: String             -- Primary key
+                            -- Per-project UI sessions use project:{id}:ui_state.
     value: String           -- Serialized value
+                            -- UI session values are version-tolerant JSON.
     updated_at: Timestamp
 }
 

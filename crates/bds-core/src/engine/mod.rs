@@ -33,6 +33,7 @@ pub mod tag;
 pub mod task;
 pub mod template;
 pub mod template_rebuild;
+pub mod ui_state;
 pub mod validate_media;
 pub mod validate_site;
 pub mod validate_translations;

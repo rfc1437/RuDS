@@ -72,6 +72,7 @@ impl BdsApp {
                         if operation == GitOperation::Commit {
                             self.git_state.commit_message.clear();
                             self.close_git_diff_tabs();
+                            self.persist_project_ui_state();
                         }
                         self.notify(
                             ToastLevel::Success,
@@ -340,7 +341,7 @@ impl BdsApp {
         )
     }
 
-    fn open_git_file_diff(&mut self, path: String) -> Task<Message> {
+    pub(super) fn open_git_file_diff(&mut self, path: String) -> Task<Message> {
         let tab = crate::views::git::file_tab(&path);
         let tab_id = tab.id.clone();
         self.activate_git_tab(tab);
@@ -373,7 +374,7 @@ impl BdsApp {
         )
     }
 
-    fn open_git_commit_diff(&mut self, hash: String, subject: String) -> Task<Message> {
+    pub(super) fn open_git_commit_diff(&mut self, hash: String, subject: String) -> Task<Message> {
         let tab = crate::views::git::commit_tab(&hash, &subject);
         let tab_id = tab.id.clone();
         self.activate_git_tab(tab);
@@ -462,6 +463,7 @@ impl BdsApp {
         self.active_tab = self.tabs.get(index).map(|tab| tab.id.clone());
         self.enforce_panel_tab_fallback();
         self.sync_menu_state();
+        self.persist_project_ui_state();
     }
 
     fn close_git_diff_tabs(&mut self) {
@@ -559,6 +561,7 @@ impl BdsApp {
         }
         self.enforce_panel_tab_fallback();
         self.sync_menu_state();
+        self.persist_project_ui_state();
     }
 
     pub(super) fn reset_git_for_project_change(&mut self) {
