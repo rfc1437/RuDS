@@ -1799,15 +1799,15 @@ impl BdsApp {
                                 .and_then(|p| p.data_path.as_ref())
                                 .map(PathBuf::from);
                             // Per metadata.allium StartupSync
-                            if let Some(data_dir) = self.data_dir.clone() {
-                                if let Ok(meta) = engine::meta::read_project_json(&data_dir) {
-                                    let main_lang =
-                                        meta.main_language.unwrap_or_else(|| "en".to_string());
-                                    self.content_language = main_lang.clone();
-                                    self.blog_languages = meta.blog_languages;
-                                    if !self.blog_languages.contains(&main_lang) {
-                                        self.blog_languages.insert(0, main_lang);
-                                    }
+                            if let Some(data_dir) = self.data_dir.clone()
+                                && let Ok(meta) = engine::meta::read_project_json(&data_dir)
+                            {
+                                let main_lang =
+                                    meta.main_language.unwrap_or_else(|| "en".to_string());
+                                self.content_language = main_lang.clone();
+                                self.blog_languages = meta.blog_languages;
+                                if !self.blog_languages.contains(&main_lang) {
+                                    self.blog_languages.insert(0, main_lang);
                                 }
                             }
                             if self.tabs.iter().any(|tab| tab.tab_type == TabType::Style) {

@@ -6,7 +6,7 @@ The project is under active development. Core blogging workflows are broadly ava
 
 ## Available Features
 
-- Native Iced desktop workspace with localized menus, tabs, anchored editor popovers, automatically paged post/media sidebars, dialogs, tasks, embedded Wry previews, and a live Pico CSS theme editor.
+- Native Iced desktop workspace with localized menus, tabs, anchored editor popovers, automatically paged post/media sidebars, relative-dated entity lists with row deletion, dialogs, tasks, embedded Wry previews, and a live Pico CSS theme editor.
 - Post and translation authoring with change-aware draft/published/archive lifecycle, file-backed change discard, canonical draft reopening after manual translation edits, non-disruptive automatic translation, desktop archive/unarchive actions, in-place published-frontmatter updates, metadata, tags, categories, live link/backlink graphs, media, and batch gallery-image import.
 - Media import, thumbnails, metadata translations, filters, validation, post assignment, and sequential drag-and-drop insertion into post editors.
 - WordPress WXR migration with saved analyses, HTML-to-Markdown and shortcode conversion, conflict/taxonomy review, recoverable 500-item execution batches, media-parent linking, progress reporting, and optional AI-assisted taxonomy mapping.
