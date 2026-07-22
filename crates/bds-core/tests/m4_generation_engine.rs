@@ -851,6 +851,68 @@ fn configured_language_prefixes_select_their_actual_validation_section() {
 }
 
 #[test]
+fn localized_page_paths_select_the_core_validation_section() {
+    let mut metadata = make_metadata();
+    metadata.blog_languages.push("de".into());
+    let report = bds_core::engine::validate_site::SiteValidationReport {
+        missing_pages: vec!["de/about/index.html".into()],
+        extra_pages: Vec::new(),
+        stale_pages: Vec::new(),
+    };
+
+    assert_eq!(
+        sections_from_validation_report(&report, &metadata),
+        vec![GenerationSection::Core]
+    );
+}
+
+#[test]
+fn validation_apply_repairs_and_cleans_localized_page_outputs() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.blog_languages = vec!["en".into(), "de".into()];
+    bds_core::engine::meta::write_project_json(dir.path(), &metadata).unwrap();
+    let mut page = make_post("about", 1_710_000_000_000);
+    page.categories = vec!["page".into()];
+    write_published_snapshot(&dir, &mut page, "About");
+    bds_core::db::queries::post::insert_post(db.conn(), &page).unwrap();
+    let posts = vec![PublishedPostSource {
+        post: page,
+        body_markdown: "About".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let localized_page = dir.path().join("de/about/index.html");
+    let localized_extra = dir.path().join("de/ghost/index.html");
+    std::fs::write(&localized_page, "tampered").unwrap();
+    std::fs::create_dir_all(localized_extra.parent().unwrap()).unwrap();
+    std::fs::write(&localized_extra, "ghost").unwrap();
+
+    let validation = validate_site(db.conn(), dir.path(), "p1").unwrap();
+    let sections = sections_from_validation_report(&validation, &metadata);
+    let applied =
+        apply_validation_sections(db.conn(), dir.path(), "p1", &metadata, &posts, &sections)
+            .unwrap();
+    let repaired = validate_site(db.conn(), dir.path(), "p1").unwrap();
+
+    assert_eq!(sections, vec![GenerationSection::Core]);
+    assert!(
+        applied
+            .written_paths
+            .contains(&"de/about/index.html".into())
+    );
+    assert!(
+        applied
+            .deleted_paths
+            .contains(&"de/ghost/index.html".into())
+    );
+    assert!(!localized_extra.exists());
+    assert!(repaired.missing_pages.is_empty());
+    assert!(repaired.extra_pages.is_empty());
+    assert!(repaired.stale_pages.is_empty());
+}
+
+#[test]
 fn validation_apply_removes_extra_output_under_configured_language() {
     let (db, dir) = setup();
     let mut metadata = make_metadata();

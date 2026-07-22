@@ -823,20 +823,10 @@ pub(crate) fn classify_generated_path(
 }
 
 fn has_language_prefix(parts: &[&str], metadata: &ProjectMetadata) -> bool {
-    match parts {
-        [first, second, ..] => {
-            render_languages(metadata)
-                .iter()
-                .any(|language| language.eq_ignore_ascii_case(first))
-                && (*second == "index.html"
-                    || *second == "404.html"
-                    || *second == "page"
-                    || is_year_segment(second)
-                    || *second == "category"
-                    || *second == "tag")
-        }
-        _ => false,
-    }
+    parts.len() > 1
+        && render_languages(metadata)
+            .iter()
+            .any(|language| language.eq_ignore_ascii_case(parts[0]))
 }
 
 fn is_year_segment(value: &str) -> bool {
