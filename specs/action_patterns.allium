@@ -113,9 +113,8 @@ rule CancelAiSuggestions {
 
 rule AutoTranslationChain {
     when: PostSaved(post_id)
-    -- Triggered only by explicit manual save or publish, never by
-    -- auto-save, unmount/tab-switch persistence, post creation, import,
-    -- or scripting.
+    -- Triggered only by explicit manual save, never by publish, auto-save,
+    -- unmount/tab-switch persistence, post creation, import, or scripting.
     let saved_post = post/Post{id: post_id}
     requires: active_endpoint_configured
     requires: not saved_post.do_not_translate

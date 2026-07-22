@@ -6048,7 +6048,6 @@ impl BdsApp {
                     }
                 }
                 self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.published"));
-                return self.schedule_post_auto_translation(post_id);
             }
             Err(e) => {
                 self.notify_operation_failed("editor.publish", e);
@@ -11918,6 +11917,21 @@ mod tests {
                 .filter(|task| task.group_name.as_deref() == Some("AI"))
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    fn publish_does_not_enqueue_missing_translations() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&[]);
+
+        let _ = app.publish_post_editor(&post_id);
+
+        assert_eq!(app.post_editors[&post_id].status, PostStatus::Published);
+        assert!(
+            app.task_manager
+                .snapshots()
+                .iter()
+                .all(|task| task.group_name.as_deref() != Some("AI"))
         );
     }
 

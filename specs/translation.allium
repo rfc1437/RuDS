@@ -196,7 +196,7 @@ invariant FtsIncludesTranslations {
 --
 -- Two entry points share one translation primitive:
 --   1. ScheduleAutoTranslation - reactive, fired only by an explicit manual
---      save (or publish) in the post editor — never by post creation or
+--      save in the post editor — never by publish, post creation, or
 --      auto-save. One background task per missing language produces a DRAFT
 --      translation, then cascades to the post's linked media.
 --   2. FillMissingTranslations - batch maintenance action. Scans every
@@ -215,8 +215,8 @@ surface AutoTranslationControlSurface {
 
     provides:
         -- Reactive trigger: emitted only when a post is updated with
-        -- auto_translate enabled (the editor's manual save/publish path);
-        -- post creation and auto-save never emit it.
+        -- auto_translate enabled (the editor's manual save path); publish,
+        -- post creation, and auto-save never emit it.
         PostSavedForAutoTranslation(post)
         -- Batch trigger: "fill missing translations" maintenance action.
         FillMissingTranslationsRequested(project)
