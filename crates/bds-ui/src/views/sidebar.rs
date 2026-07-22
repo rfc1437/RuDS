@@ -9,6 +9,7 @@ use bds_core::model::{ChatConversation, ImportDefinition, Media, Post, Script, T
 
 use crate::app::Message;
 use crate::components::inputs;
+use crate::i18n::relative_date::format_relative_date;
 use crate::i18n::t;
 use crate::state::navigation::SidebarView;
 use crate::state::sidebar_filter::{CalendarYear, MediaFilter, PostFilter};
@@ -285,6 +286,32 @@ fn row_delete_style(_theme: &Theme, status: button::Status) -> button::Style {
         },
         ..button::Style::default()
     }
+}
+
+/// Wrap a sidebar row in a hover overlay carrying its delete button (×).
+/// Per sidebar_views.allium *ListItemEntry RowLayout: right-aligned, visible
+/// only on row hover, routed to the row's delete message.
+fn with_row_delete(
+    open_button: iced::widget::Button<'static, Message>,
+    on_delete: Message,
+) -> Element<'static, Message> {
+    let delete_button = button(
+        text("\u{2715}") // ✕
+            .size(11)
+            .shaping(Shaping::Advanced),
+    )
+    .on_press(on_delete)
+    .padding([2, 6])
+    .style(row_delete_style);
+    iced::widget::hover(
+        open_button,
+        container(delete_button)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Right)
+            .align_y(iced::alignment::Vertical::Center)
+            .padding([0, 4]),
+    )
 }
 
 /// Month name abbreviation for calendar display.
@@ -661,6 +688,8 @@ pub fn view(
 ) -> Element<'static, Message> {
     let header_text = t(locale, sidebar_view.i18n_key());
     let muted = Color::from_rgb(0.50, 0.50, 0.55);
+    // Reference date for RelativeDateFormat's diff_days (sidebar_views.allium).
+    let today = chrono::Local::now().date_naive();
 
     let header = text(header_text)
         .size(13)
@@ -1006,42 +1035,33 @@ pub fn view(
                             .size(12)
                             .shaping(Shaping::Advanced)
                             .wrapping(iced::widget::text::Wrapping::None);
+                        // sidebar_views.allium ScriptListItemEntry RowLayout:
+                        // line 2 is the date in relative format, smaller and muted.
+                        let date_text = text(format_relative_date(locale, s.updated_at, today))
+                            .size(10)
+                            .shaping(Shaping::Advanced)
+                            .color(muted);
                         let style_fn = if is_active {
                             item_active_style
                         } else {
                             item_style
                         };
-                        let open_button =
-                            button(container(label_text).width(Length::Fill).clip(true))
-                                .on_press(Message::OpenTab(Tab {
-                                    id: s.id.clone(),
-                                    tab_type: TabType::Scripts,
-                                    title: display_title,
-                                    is_transient: true,
-                                    is_dirty: false,
-                                }))
-                                .padding([5, 8])
+                        let open_button = button(
+                            container(column![label_text, date_text].spacing(1))
                                 .width(Length::Fill)
-                                .style(style_fn);
-                        // sidebar_views.allium ScriptListItemEntry: delete button (x),
-                        // visible only on row hover, routed through the confirm modal.
-                        let delete_button = button(
-                            text("\u{2715}") // ✕
-                                .size(11)
-                                .shaping(Shaping::Advanced),
+                                .clip(true),
                         )
-                        .on_press(Message::ScriptDeleteRequested(s.id.clone()))
-                        .padding([2, 6])
-                        .style(row_delete_style);
-                        iced::widget::hover(
-                            open_button,
-                            container(delete_button)
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .align_x(iced::alignment::Horizontal::Right)
-                                .align_y(iced::alignment::Vertical::Center)
-                                .padding([0, 4]),
-                        )
+                        .on_press(Message::OpenTab(Tab {
+                            id: s.id.clone(),
+                            tab_type: TabType::Scripts,
+                            title: display_title,
+                            is_transient: true,
+                            is_dirty: false,
+                        }))
+                        .padding([5, 8])
+                        .width(Length::Fill)
+                        .style(style_fn);
+                        with_row_delete(open_button, Message::ScriptDeleteRequested(s.id.clone()))
                     })
                     .collect();
                 iced::widget::Column::with_children(items).spacing(1).into()
@@ -1059,29 +1079,43 @@ pub fn view(
                     .iter()
                     .map(|tmpl| {
                         let is_active = active_tab == Some(tmpl.id.as_str());
-                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX;
+                        // Reserve room on the right for the hover-revealed delete button.
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 20.0;
                         let display_title = truncate_to_fit(&tmpl.title, text_px);
                         let label_text = text(display_title.clone())
                             .size(12)
                             .shaping(Shaping::Advanced)
                             .wrapping(iced::widget::text::Wrapping::None);
+                        // sidebar_views.allium TemplateListItemEntry RowLayout:
+                        // line 2 is the date in relative format, smaller and muted.
+                        let date_text = text(format_relative_date(locale, tmpl.updated_at, today))
+                            .size(10)
+                            .shaping(Shaping::Advanced)
+                            .color(muted);
                         let style_fn = if is_active {
                             item_active_style
                         } else {
                             item_style
                         };
-                        button(container(label_text).width(Length::Fill).clip(true))
-                            .on_press(Message::OpenTab(Tab {
-                                id: tmpl.id.clone(),
-                                tab_type: TabType::Templates,
-                                title: display_title,
-                                is_transient: true,
-                                is_dirty: false,
-                            }))
-                            .padding([5, 8])
-                            .width(Length::Fill)
-                            .style(style_fn)
-                            .into()
+                        let open_button = button(
+                            container(column![label_text, date_text].spacing(1))
+                                .width(Length::Fill)
+                                .clip(true),
+                        )
+                        .on_press(Message::OpenTab(Tab {
+                            id: tmpl.id.clone(),
+                            tab_type: TabType::Templates,
+                            title: display_title,
+                            is_transient: true,
+                            is_dirty: false,
+                        }))
+                        .padding([5, 8])
+                        .width(Length::Fill)
+                        .style(style_fn);
+                        with_row_delete(
+                            open_button,
+                            Message::TemplateDeleteRequested(tmpl.id.clone()),
+                        )
                     })
                     .collect();
                 iced::widget::Column::with_children(items).spacing(1).into()
@@ -1104,19 +1138,18 @@ pub fn view(
                         } else {
                             item_style
                         };
-                        let analyzed = if definition.last_analysis_result.is_some() {
-                            t(locale, "import.sidebar.analyzed")
-                        } else {
-                            t(locale, "import.sidebar.pending")
-                        };
-                        button(
+                        // sidebar_views.allium ImportListItemEntry RowLayout:
+                        // line 2 is the date in relative format, smaller and muted.
+                        let date_text =
+                            text(format_relative_date(locale, definition.updated_at, today))
+                                .size(10)
+                                .shaping(Shaping::Advanced)
+                                .color(muted);
+                        let open_button = button(
                             container(
                                 column![
                                     text(definition_name).size(12).shaping(Shaping::Advanced),
-                                    text(analyzed)
-                                        .size(10)
-                                        .shaping(Shaping::Advanced)
-                                        .color(Color::from_rgb(0.50, 0.50, 0.55)),
+                                    date_text,
                                 ]
                                 .spacing(1),
                             )
@@ -1131,8 +1164,11 @@ pub fn view(
                         }))
                         .padding([5, 8])
                         .width(Length::Fill)
-                        .style(style)
-                        .into()
+                        .style(style);
+                        with_row_delete(
+                            open_button,
+                            Message::ImportDeleteRequested(definition.id.clone()),
+                        )
                     })
                     .collect::<Vec<Element<'static, Message>>>();
                 iced::widget::Column::with_children(items).spacing(1).into()
@@ -1154,17 +1190,20 @@ pub fn view(
                         } else {
                             item_style
                         };
-                        let model = conversation
-                            .model
-                            .clone()
-                            .unwrap_or_else(|| t(locale, "chat.model.none"));
-                        button(
+                        // sidebar_views.allium ChatListItemEntry RowLayout:
+                        // line 2 is the date in relative format, smaller and muted.
+                        let date_text =
+                            text(format_relative_date(locale, conversation.updated_at, today))
+                                .size(10)
+                                .shaping(Shaping::Advanced)
+                                .color(muted);
+                        let open_button = button(
                             container(
                                 column![
                                     text(conversation.title.clone())
                                         .size(12)
                                         .shaping(Shaping::Advanced),
-                                    text(model).size(10).shaping(Shaping::Advanced).color(muted),
+                                    date_text,
                                 ]
                                 .spacing(1),
                             )
@@ -1179,8 +1218,11 @@ pub fn view(
                         }))
                         .padding([5, 8])
                         .width(Length::Fill)
-                        .style(style)
-                        .into()
+                        .style(style);
+                        // Per action_patterns.allium confirmation_assignments chat
+                        // delete has no confirmation; ChatDelete removes the
+                        // conversation and closes its tab.
+                        with_row_delete(open_button, Message::ChatDelete(conversation.id.clone()))
                     })
                     .collect::<Vec<Element<'static, Message>>>();
                 iced::widget::Column::with_children(items).spacing(1).into()

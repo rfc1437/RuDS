@@ -382,6 +382,10 @@ pub enum Message {
     CreateImport,
     /// Per sidebar_views.allium ScriptListItemEntry: row-level delete affordance.
     ScriptDeleteRequested(String),
+    /// Per sidebar_views.allium TemplateListItemEntry: row-level delete affordance.
+    TemplateDeleteRequested(String),
+    /// Per sidebar_views.allium ImportListItemEntry: row-level delete affordance.
+    ImportDeleteRequested(String),
 
     // Conversational AI
     ChatCreate,
@@ -1389,6 +1393,12 @@ impl BdsApp {
             Message::CreateImport => self.create_sidebar_import(),
             Message::ScriptDeleteRequested(script_id) => {
                 self.show_script_delete_confirmation(&script_id)
+            }
+            Message::TemplateDeleteRequested(template_id) => {
+                self.show_template_delete_confirmation(&template_id)
+            }
+            Message::ImportDeleteRequested(definition_id) => {
+                self.show_import_delete_confirmation(&definition_id)
             }
             Message::ChatCreate => self.create_chat_conversation(),
             Message::ChatRenameInputChanged(value) => {
@@ -4677,17 +4687,7 @@ impl BdsApp {
             ImportEditorMsg::Execute => self.start_import_execution(&definition_id),
             ImportEditorMsg::AutoMapTaxonomy => self.start_import_auto_mapping(&definition_id),
             ImportEditorMsg::DeleteRequested => {
-                let name = self
-                    .import_editors
-                    .get(&definition_id)
-                    .map(|state| state.definition.name.clone())
-                    .unwrap_or_default();
-                self.active_modal = Some(modal::ModalState::Confirm {
-                    title: t(self.ui_locale, "import.deleteTitle"),
-                    message: tw(self.ui_locale, "import.deleteMessage", &[("name", &name)]),
-                    on_confirm: modal::ConfirmAction::DeleteImport(definition_id),
-                });
-                Task::none()
+                self.show_import_delete_confirmation(&definition_id)
             }
             ImportEditorMsg::SetResolution {
                 kind,
@@ -7046,18 +7046,20 @@ impl BdsApp {
                     ("tags", &referencing_tags.to_string()),
                 ],
             );
-            return Task::done(Message::ShowModal(modal::ModalState::Confirm {
+            self.active_modal = Some(modal::ModalState::Confirm {
                 title,
                 message,
                 on_confirm: modal::ConfirmAction::ForceDeleteTemplate(template_id.to_string()),
-            }));
+            });
+            return Task::none();
         }
 
-        Task::done(Message::ShowModal(modal::ModalState::ConfirmDelete {
+        self.active_modal = Some(modal::ModalState::ConfirmDelete {
             entity_name: template.title,
             references: Vec::new(),
             on_confirm: modal::ConfirmAction::DeleteTemplate(template_id.to_string()),
-        }))
+        });
+        Task::none()
     }
 
     /// Per editor_script.allium ScriptDeleteAction / action_patterns.allium
@@ -7075,6 +7077,29 @@ impl BdsApp {
             entity_name: script.title,
             references: Vec::new(),
             on_confirm: modal::ConfirmAction::DeleteScript(script_id.to_string()),
+        });
+        Task::none()
+    }
+
+    /// Per sidebar_views.allium ImportListItemEntry: confirming an import
+    /// deletion must not depend on an open editor tab, so the definition
+    /// name comes from the database.
+    fn show_import_delete_confirmation(&mut self, definition_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else {
+            return Task::none();
+        };
+        let Ok(definition) = engine::wordpress_import::get_definition(db.conn(), definition_id)
+        else {
+            return Task::none();
+        };
+        self.active_modal = Some(modal::ModalState::Confirm {
+            title: t(self.ui_locale, "import.deleteTitle"),
+            message: tw(
+                self.ui_locale,
+                "import.deleteMessage",
+                &[("name", &definition.name)],
+            ),
+            on_confirm: modal::ConfirmAction::DeleteImport(definition_id.to_string()),
         });
         Task::none()
     }
@@ -12617,6 +12642,166 @@ mod tests {
             }
             ref other => panic!("expected ConfirmDelete modal, got {other:?}"),
         }
+    }
+
+    /// sidebar_views.allium TemplateListItemEntry provides
+    /// TemplateDeleteRequested(item.template_id): deleting from the sidebar
+    /// row routes through the same confirm modal as the editor delete button
+    /// and works without an open editor tab.
+    #[test]
+    fn sidebar_template_delete_requires_confirmation_and_works_without_open_tab() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateTemplate);
+        let template_id = app.sidebar_templates[0].id.clone();
+
+        // Close the editor tab: the sidebar row must not depend on one.
+        let _ = app.update(Message::CloseTab(template_id.clone()));
+        assert!(!app.tabs.iter().any(|tab| tab.id == template_id));
+
+        // Requesting deletion only opens the confirm modal; nothing is deleted.
+        let _ = app.update(Message::TemplateDeleteRequested(template_id.clone()));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::ConfirmDelete {
+                on_confirm: modal::ConfirmAction::DeleteTemplate(ref id),
+                ..
+            }) if id == &template_id
+        ));
+        assert!(
+            bds_core::db::queries::template::get_template_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &template_id
+            )
+            .is_ok()
+        );
+
+        let _ = app.update(Message::ConfirmModal(modal::ConfirmAction::DeleteTemplate(
+            template_id.clone(),
+        )));
+        assert!(
+            bds_core::db::queries::template::get_template_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &template_id
+            )
+            .is_err()
+        );
+        assert!(!app.template_editors.contains_key(&template_id));
+    }
+
+    /// editor_template.allium TemplateDelete / TemplateListItemEntry
+    /// DeleteConfirmation: a referenced template prompts the force-delete
+    /// confirmation with reference counts instead of the plain delete modal.
+    #[test]
+    fn sidebar_template_delete_with_references_prompts_force_delete() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateTemplate);
+        let template = app.sidebar_templates[0].clone();
+
+        let referencing_post = post::create_post(
+            app.db.as_ref().unwrap().conn(),
+            tmp.path(),
+            &template.project_id,
+            "Uses Template",
+            None,
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            Some(&template.slug),
+        )
+        .unwrap();
+
+        let _ = app.update(Message::TemplateDeleteRequested(template.id.clone()));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::Confirm {
+                on_confirm: modal::ConfirmAction::ForceDeleteTemplate(ref id),
+                ..
+            }) if id == &template.id
+        ));
+
+        // Force delete removes the template and clears the post reference.
+        let _ = app.update(Message::ConfirmModal(
+            modal::ConfirmAction::ForceDeleteTemplate(template.id.clone()),
+        ));
+        assert!(
+            bds_core::db::queries::template::get_template_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &template.id
+            )
+            .is_err()
+        );
+        assert_eq!(
+            bds_core::db::queries::post::get_post_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &referencing_post.id
+            )
+            .unwrap()
+            .template_slug,
+            None
+        );
+    }
+
+    /// sidebar_views.allium ChatListItemEntry provides
+    /// ChatDeleteRequested(item.conversation_id); per DeleteBehaviour and
+    /// action_patterns.allium the delete is immediate (no confirmation) and
+    /// must not depend on an open tab.
+    #[test]
+    fn sidebar_chat_delete_works_without_open_tab() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::ChatCreate);
+        let conversation_id = app.chat_conversations[0].id.clone();
+
+        let _ = app.update(Message::CloseTab(conversation_id.clone()));
+        assert!(!app.tabs.iter().any(|tab| tab.id == conversation_id));
+
+        let _ = app.update(Message::ChatDelete(conversation_id.clone()));
+        assert!(app.active_modal.is_none());
+        assert!(app.chat_conversations.is_empty());
+        assert!(
+            chat::list_conversations(app.db.as_ref().unwrap().conn())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// sidebar_views.allium ImportListItemEntry provides
+    /// ImportDeleteRequested(item.definition_id): deleting from the sidebar
+    /// row confirms first and works without an open editor tab.
+    #[test]
+    fn sidebar_import_delete_requires_confirmation_and_works_without_open_tab() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateImport);
+        let definition_id = app.sidebar_imports[0].id.clone();
+
+        let _ = app.update(Message::CloseTab(definition_id.clone()));
+        assert!(!app.tabs.iter().any(|tab| tab.id == definition_id));
+
+        let _ = app.update(Message::ImportDeleteRequested(definition_id.clone()));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::Confirm {
+                on_confirm: modal::ConfirmAction::DeleteImport(ref id),
+                ..
+            }) if id == &definition_id
+        ));
+        assert!(
+            wordpress_import::get_definition(app.db.as_ref().unwrap().conn(), &definition_id)
+                .is_ok()
+        );
+
+        let _ = app.update(Message::ConfirmModal(modal::ConfirmAction::DeleteImport(
+            definition_id.clone(),
+        )));
+        assert!(
+            wordpress_import::get_definition(app.db.as_ref().unwrap().conn(), &definition_id)
+                .is_err()
+        );
+        assert!(app.sidebar_imports.is_empty());
     }
 
     #[test]

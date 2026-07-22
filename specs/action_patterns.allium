@@ -211,6 +211,8 @@ config {
     confirmation_assignments: Set<ConfirmationAssignment> = {
         ConfirmationAssignment(action: "post_delete", pattern: system_confirm),
         ConfirmationAssignment(action: "post_discard", pattern: system_confirm),
+        ConfirmationAssignment(action: "template_delete", pattern: confirm_delete_modal),
+            -- shows template title, no reference list
         ConfirmationAssignment(action: "template_delete_with_references", pattern: system_confirm),
         ConfirmationAssignment(action: "media_delete", pattern: confirm_delete_modal),
             -- shows linked posts

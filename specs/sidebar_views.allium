@@ -412,8 +412,13 @@ surface TemplateListItemEntry {
         -- Row is focusable with tabIndex and has aria-label from title.
 
     @guarantee DeleteConfirmation
-        -- If template is referenced by posts or tags, shows confirmation dialog
-        -- with reference counts before force-delete.
+        -- Delete always confirms before executing. Unreferenced templates
+        -- use the confirm-delete modal (template title, no reference list);
+        -- templates referenced by posts or tags use the force-delete
+        -- confirmation dialog with reference counts.
+        -- See editor_template.allium TemplateDelete and action_patterns.allium
+        -- confirmation_assignments (template_delete,
+        -- template_delete_with_references).
 
     @guarantee CreateDefaults
         -- New templates default to: kind=post, content='', enabled=true.

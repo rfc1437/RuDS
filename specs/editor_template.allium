@@ -40,6 +40,7 @@ surface TemplateEditorSurface {
             when editor.can_publish
         TemplateValidateRequested(editor.template_id)
         TemplateDeleteRequested(editor.template_id)
+        TemplateDeleteConfirmed(editor.template_id)
         TemplateForceDeleteConfirmed(editor.template_id)
 
     @guarantee HeaderLayout
@@ -119,9 +120,20 @@ rule TemplateDelete {
             -- and M tags. Force delete?" (action_patterns.allium
             -- confirmation_assignments: template_delete_with_references)
         else:
-            DeleteTemplateRequested(target)
-            closeTab(template_id)
-            -- no confirmation when nothing references the template
+            ConfirmDeleteModalOpened(template_id)
+            -- custom modal (not a native dialog): template title, no
+            -- reference list; Cancel + Delete (destructive red style)
+            -- — action_patterns.allium
+            -- confirmation_assignments: template_delete
+}
+
+rule TemplateDeleteExecute {
+    when: TemplateDeleteConfirmed(template_id)
+    let target = template/Template{id: template_id}
+    ensures: DeleteTemplateRequested(target)
+        -- DB record + .liquid file on disk
+    ensures: closeTab(template_id)
+        -- sidebar removes the item reactively
 }
 
 rule TemplateForceDelete {

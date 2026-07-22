@@ -1,3 +1,5 @@
+pub mod relative_date;
+
 use bds_core::i18n::{UiLocale, translate, translate_with};
 
 /// Shorthand for translate in view code.
