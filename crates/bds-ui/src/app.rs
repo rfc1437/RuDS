@@ -380,6 +380,8 @@ pub enum Message {
     CreateScript,
     CreateTemplate,
     CreateImport,
+    /// Per sidebar_views.allium ScriptListItemEntry: row-level delete affordance.
+    ScriptDeleteRequested(String),
 
     // Conversational AI
     ChatCreate,
@@ -1385,6 +1387,9 @@ impl BdsApp {
             Message::CreateScript => self.create_sidebar_script(),
             Message::CreateTemplate => self.create_sidebar_template(),
             Message::CreateImport => self.create_sidebar_import(),
+            Message::ScriptDeleteRequested(script_id) => {
+                self.show_script_delete_confirmation(&script_id)
+            }
             Message::ChatCreate => self.create_chat_conversation(),
             Message::ChatRenameInputChanged(value) => {
                 if let Some(state) = self.active_chat_state_mut() {
@@ -7055,6 +7060,25 @@ impl BdsApp {
         }))
     }
 
+    /// Per editor_script.allium ScriptDeleteAction / action_patterns.allium
+    /// confirmation_assignments: script_delete uses the confirm-delete modal
+    /// showing the script title with no reference list.
+    fn show_script_delete_confirmation(&mut self, script_id: &str) -> Task<Message> {
+        let Some(db) = &self.db else {
+            return Task::none();
+        };
+        let Ok(script) = bds_core::db::queries::script::get_script_by_id(db.conn(), script_id)
+        else {
+            return Task::none();
+        };
+        self.active_modal = Some(modal::ModalState::ConfirmDelete {
+            entity_name: script.title,
+            references: Vec::new(),
+            on_confirm: modal::ConfirmAction::DeleteScript(script_id.to_string()),
+        });
+        Task::none()
+    }
+
     fn delete_script_editor(&mut self, script_id: &str) -> Task<Message> {
         let Some(db) = &self.db else {
             return Task::none();
@@ -12527,6 +12551,72 @@ mod tests {
         );
         assert!(!app.tabs.iter().any(|tab| tab.id == script_id));
         assert!(!app.script_editors.contains_key(&script_id));
+    }
+
+    /// sidebar_views.allium ScriptListItemEntry provides
+    /// ScriptDeleteRequested(item.script_id): deleting from the sidebar row
+    /// routes through the same confirm modal as the editor delete button and
+    /// works without an open editor tab.
+    #[test]
+    fn sidebar_script_delete_requires_confirmation_and_works_without_open_tab() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateScript);
+        let script_id = app.sidebar_scripts[0].id.clone();
+
+        // Close the editor tab: the sidebar row must not depend on one.
+        let _ = app.update(Message::CloseTab(script_id.clone()));
+        assert!(!app.tabs.iter().any(|tab| tab.id == script_id));
+
+        // Requesting deletion only opens the confirm modal; nothing is deleted.
+        let _ = app.update(Message::ScriptDeleteRequested(script_id.clone()));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::ConfirmDelete { .. })
+        ));
+        assert!(
+            bds_core::db::queries::script::get_script_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &script_id
+            )
+            .is_ok()
+        );
+
+        let _ = app.update(Message::ConfirmModal(modal::ConfirmAction::DeleteScript(
+            script_id.clone(),
+        )));
+        assert!(
+            bds_core::db::queries::script::get_script_by_id(
+                app.db.as_ref().unwrap().conn(),
+                &script_id
+            )
+            .is_err()
+        );
+        assert!(!app.script_editors.contains_key(&script_id));
+    }
+
+    /// editor_script.allium ScriptDeleteAction: the confirm modal shows the
+    /// script title with no reference list.
+    #[test]
+    fn sidebar_script_delete_confirmation_shows_script_title() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let _ = app.update(Message::CreateScript);
+        let script = app.sidebar_scripts[0].clone();
+
+        let _ = app.update(Message::ScriptDeleteRequested(script.id.clone()));
+        match app.active_modal {
+            Some(modal::ModalState::ConfirmDelete {
+                ref entity_name,
+                ref references,
+                on_confirm: modal::ConfirmAction::DeleteScript(ref id),
+            }) => {
+                assert_eq!(entity_name, &script.title);
+                assert!(references.is_empty());
+                assert_eq!(id, &script.id);
+            }
+            ref other => panic!("expected ConfirmDelete modal, got {other:?}"),
+        }
     }
 
     #[test]

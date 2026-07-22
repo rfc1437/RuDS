@@ -269,6 +269,24 @@ fn clear_filters_style(_theme: &Theme, status: button::Status) -> button::Style 
     }
 }
 
+/// Row delete button (×) revealed on row hover; turns red on button hover.
+/// Per sidebar_views.allium ScriptListItemEntry RowLayout.
+fn row_delete_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let text_color = match status {
+        button::Status::Hovered | button::Status::Pressed => Color::from_rgb(0.90, 0.30, 0.30),
+        _ => Color::from_rgb(0.60, 0.60, 0.65),
+    };
+    button::Style {
+        background: Some(Background::Color(Color::from_rgb(0.20, 0.20, 0.25))),
+        text_color,
+        border: Border {
+            radius: 4.0.into(),
+            ..Border::default()
+        },
+        ..button::Style::default()
+    }
+}
+
 /// Month name abbreviation for calendar display.
 fn month_abbr(month: u32) -> &'static str {
     match month {
@@ -981,7 +999,8 @@ pub fn view(
                     .iter()
                     .map(|s| {
                         let is_active = active_tab == Some(s.id.as_str());
-                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX;
+                        // Reserve room on the right for the hover-revealed delete button.
+                        let text_px = width - SIDEBAR_TEXT_OVERHEAD_PX - 20.0;
                         let display_title = truncate_to_fit(&s.title, text_px);
                         let label_text = text(display_title.clone())
                             .size(12)
@@ -992,18 +1011,37 @@ pub fn view(
                         } else {
                             item_style
                         };
-                        button(container(label_text).width(Length::Fill).clip(true))
-                            .on_press(Message::OpenTab(Tab {
-                                id: s.id.clone(),
-                                tab_type: TabType::Scripts,
-                                title: display_title,
-                                is_transient: true,
-                                is_dirty: false,
-                            }))
-                            .padding([5, 8])
-                            .width(Length::Fill)
-                            .style(style_fn)
-                            .into()
+                        let open_button =
+                            button(container(label_text).width(Length::Fill).clip(true))
+                                .on_press(Message::OpenTab(Tab {
+                                    id: s.id.clone(),
+                                    tab_type: TabType::Scripts,
+                                    title: display_title,
+                                    is_transient: true,
+                                    is_dirty: false,
+                                }))
+                                .padding([5, 8])
+                                .width(Length::Fill)
+                                .style(style_fn);
+                        // sidebar_views.allium ScriptListItemEntry: delete button (x),
+                        // visible only on row hover, routed through the confirm modal.
+                        let delete_button = button(
+                            text("\u{2715}") // ✕
+                                .size(11)
+                                .shaping(Shaping::Advanced),
+                        )
+                        .on_press(Message::ScriptDeleteRequested(s.id.clone()))
+                        .padding([2, 6])
+                        .style(row_delete_style);
+                        iced::widget::hover(
+                            open_button,
+                            container(delete_button)
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .align_x(iced::alignment::Horizontal::Right)
+                                .align_y(iced::alignment::Vertical::Center)
+                                .padding([0, 4]),
+                        )
                     })
                     .collect();
                 iced::widget::Column::with_children(items).spacing(1).into()
