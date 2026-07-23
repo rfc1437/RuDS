@@ -765,7 +765,9 @@ surface GitHistoryEntryView {
 
     @guarantee SyncStatusIndicator
         -- sync_status rendered as a coloured dot.
-        -- "synced" = both local and remote. "local_only" = local only. "remote_only" = remote only.
+        -- "synced" = both local and remote, green #73c991.
+        -- "local_only" = local only, warning yellow #cca700.
+        -- "remote_only" = remote only, information blue #75beff.
         -- A colour legend is shown in the git view header.
 }
 

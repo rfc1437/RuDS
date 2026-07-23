@@ -7,7 +7,7 @@ use bds_core::engine::git::{
 use bds_core::i18n::UiLocale;
 use iced::widget::text::{Shaping, Wrapping};
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
-use iced::{Color, Element, Font, Length};
+use iced::{Alignment, Background, Color, Element, Font, Length};
 
 use crate::app::Message;
 use crate::components::inputs;
@@ -192,7 +192,16 @@ pub fn sidebar_view(
     .spacing(4)
     .wrap();
 
-    let mut content: Vec<Element<'static, Message>> = vec![header.into(), actions.into()];
+    let sync_legend = row![
+        sync_legend_item(SyncStatus::Both, locale),
+        sync_legend_item(SyncStatus::LocalOnly, locale),
+        sync_legend_item(SyncStatus::RemoteOnly, locale),
+    ]
+    .spacing(8)
+    .wrap();
+
+    let mut content: Vec<Element<'static, Message>> =
+        vec![header.into(), sync_legend.into(), actions.into()];
     if offline_mode {
         content.push(
             text(t(locale, "git.airplaneBlocked"))
@@ -299,17 +308,15 @@ fn history_button(commit: &GitCommit) -> Element<'static, Message> {
     let hash = commit.hash.clone();
     let subject = commit.subject.clone().unwrap_or_else(|| hash.clone());
     let short = hash.chars().take(7).collect::<String>();
-    let marker = match commit.sync_status {
-        SyncStatus::Both => "●",
-        SyncStatus::LocalOnly => "↑",
-        SyncStatus::RemoteOnly => "↓",
-    };
     button(
         column![
             text(subject.clone()).size(11),
-            text(format!("{marker} {short}"))
-                .size(10)
-                .color(Color::from_rgb(0.5, 0.5, 0.56)),
+            row![
+                sync_status_dot(commit.sync_status),
+                text(short).size(10).color(Color::from_rgb(0.5, 0.5, 0.56)),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
         ]
         .spacing(1),
     )
@@ -318,6 +325,45 @@ fn history_button(commit: &GitCommit) -> Element<'static, Message> {
     .padding([5, 8])
     .style(inputs::disclosure_button)
     .into()
+}
+
+fn sync_legend_item(status: SyncStatus, locale: UiLocale) -> Element<'static, Message> {
+    let key = match status {
+        SyncStatus::Both => "git.synced",
+        SyncStatus::LocalOnly => "git.localOnly",
+        SyncStatus::RemoteOnly => "git.remoteOnly",
+    };
+    row![
+        sync_status_dot(status),
+        text(t(locale, key))
+            .size(10)
+            .color(Color::from_rgb(0.5, 0.5, 0.56)),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn sync_status_dot(status: SyncStatus) -> Element<'static, Message> {
+    let color = sync_status_color(status);
+    container(Space::new(8, 8))
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn sync_status_color(status: SyncStatus) -> Color {
+    match status {
+        SyncStatus::Both => Color::from_rgb8(0x73, 0xC9, 0x91),
+        SyncStatus::LocalOnly => Color::from_rgb8(0xCC, 0xA7, 0x00),
+        SyncStatus::RemoteOnly => Color::from_rgb8(0x75, 0xBE, 0xFF),
+    }
 }
 
 fn network_output(run: &GitNetworkRunState, locale: UiLocale) -> Element<'static, Message> {
@@ -533,5 +579,21 @@ mod tests {
         initialized.repository.remote_url = Some("ssh://example.test/blog.git".into());
         let active_tree = Tree::new(sidebar_view(&initialized, false, UiLocale::En).as_widget());
         assert_eq!(count_text_inputs(&active_tree), 1);
+    }
+
+    #[test]
+    fn commit_sync_colors_match_bds2() {
+        assert_eq!(
+            sync_status_color(SyncStatus::Both),
+            Color::from_rgb8(0x73, 0xC9, 0x91)
+        );
+        assert_eq!(
+            sync_status_color(SyncStatus::LocalOnly),
+            Color::from_rgb8(0xCC, 0xA7, 0x00)
+        );
+        assert_eq!(
+            sync_status_color(SyncStatus::RemoteOnly),
+            Color::from_rgb8(0x75, 0xBE, 0xFF)
+        );
     }
 }
