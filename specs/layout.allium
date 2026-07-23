@@ -210,6 +210,11 @@ invariant ActivityActiveHighlight {
         btn.active = (active_view = btn.id and sidebar_visible)
 }
 
+invariant PassiveOverlayFocusStability {
+    -- Adding or removing passive overlays such as toasts and background-task
+    -- notifications never changes the keyboard-focused control.
+}
+
 -- ─── Git badge ────────────────────────────────────────────────
 
 -- Only the git activity button carries a badge.

@@ -387,16 +387,17 @@ pub fn view<'a>(
         overlays.push(modal::view(modal_state, locale, data_dir));
     }
 
-    if overlays.is_empty() {
-        base_layout
-    } else {
-        let mut layers = vec![base_layout];
-        layers.extend(overlays);
-        stack(layers)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
+    workspace_with_overlays(base_layout, overlays)
+}
+
+fn workspace_with_overlays<'a>(
+    base_layout: Element<'a, Message>,
+    overlays: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    stack(std::iter::once(base_layout).chain(overlays))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// Route the content area based on the active tab type.
@@ -711,6 +712,11 @@ fn loading_view<'a>(locale: UiLocale) -> Element<'a, Message> {
 mod tests {
     use super::*;
     use crate::state::tabs::{Tab, TabType};
+    use iced::advanced::widget::Tree;
+    use iced::widget::text_input;
+
+    type TextInputState =
+        text_input::State<<iced::Renderer as iced::advanced::text::Renderer>::Paragraph>;
 
     fn tab(id: &str, tab_type: TabType, title: &str) -> Tab {
         Tab {
@@ -720,6 +726,38 @@ mod tests {
             is_transient: false,
             is_dirty: false,
         }
+    }
+
+    #[test]
+    fn overlays_preserve_the_focused_workspace_input() {
+        let base = || -> Element<'static, Message> {
+            text_input("Commit message", "draft")
+                .on_input(|_| Message::Noop)
+                .into()
+        };
+        let mut tree = Tree::new(workspace_with_overlays(base(), Vec::new()).as_widget());
+        tree.children[0]
+            .state
+            .downcast_mut::<TextInputState>()
+            .focus();
+
+        let with_toast = workspace_with_overlays(base(), vec![text("Done").into()]);
+        tree.diff(with_toast.as_widget());
+        assert!(
+            tree.children[0]
+                .state
+                .downcast_ref::<TextInputState>()
+                .is_focused()
+        );
+
+        let without_toast = workspace_with_overlays(base(), Vec::new());
+        tree.diff(without_toast.as_widget());
+        assert!(
+            tree.children[0]
+                .state
+                .downcast_ref::<TextInputState>()
+                .is_focused()
+        );
     }
 
     #[test]
