@@ -42,6 +42,22 @@ fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Messa
     content.into()
 }
 
+fn group_progress(members: &[&TaskSnapshot]) -> Option<f32> {
+    (!members.is_empty()).then(|| {
+        members
+            .iter()
+            .map(|member| {
+                if member.is_cancellable {
+                    member.progress.unwrap_or(0.0)
+                } else {
+                    1.0
+                }
+            })
+            .sum::<f32>()
+            / members.len() as f32
+    })
+}
+
 /// Panel background style.
 fn panel_style(_theme: &Theme) -> container::Style {
     container::Style {
@@ -93,6 +109,33 @@ fn close_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
         text_color: color,
         border: Border::default(),
         ..button::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn group_progress_includes_pending_tasks_as_zero_like_bds2() {
+        let complete = TaskSnapshot {
+            id: 1,
+            label: String::new(),
+            group_id: None,
+            group_name: None,
+            status: String::new(),
+            progress: Some(1.0),
+            message: None,
+            is_cancellable: false,
+        };
+        let pending = TaskSnapshot {
+            id: 2,
+            progress: None,
+            is_cancellable: true,
+            ..complete.clone()
+        };
+
+        assert_eq!(group_progress(&[&complete, &pending]), Some(0.5));
     }
 }
 
@@ -219,17 +262,8 @@ pub fn view(
                         .copied()
                         .filter(|member| member.group_id.as_ref() == Some(group_id))
                         .collect::<Vec<_>>();
-                    let progress_values = members
-                        .iter()
-                        .filter_map(|member| member.progress)
-                        .collect::<Vec<_>>();
-                    let progress = (!progress_values.is_empty()).then(|| {
-                        format!(
-                            " ({:.0}%)",
-                            progress_values.iter().sum::<f32>() / progress_values.len() as f32
-                                * 100.0
-                        )
-                    });
+                    let progress = group_progress(&members)
+                        .map(|progress| format!(" ({:.0}%)", progress * 100.0));
                     let collapsed = collapsed_task_groups.contains(group_id);
                     let group_name = snapshot.group_name.as_deref().unwrap_or(group_id);
                     items.push(

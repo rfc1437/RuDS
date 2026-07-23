@@ -11217,6 +11217,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Running, Running, Running, Pending, Pending]
         );
+        assert!(snapshots[..3].iter().all(|task| {
+            task.progress.is_some()
+                && task
+                    .message
+                    .as_deref()
+                    .is_some_and(|message| message.contains("0/"))
+        }));
     }
 
     #[test]

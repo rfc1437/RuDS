@@ -119,6 +119,7 @@ pub fn build_site_render_artifacts(
         false,
         None,
         None,
+        &|_| {},
     )
 }
 
@@ -188,6 +189,7 @@ pub fn build_site_section_render_artifacts(
     metadata: &ProjectMetadata,
     published_posts: &[(Post, String)],
     section: GenerationSection,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
     build_site_render_artifacts_with_mode(
         conn,
@@ -198,6 +200,7 @@ pub fn build_site_section_render_artifacts(
         false,
         Some(section),
         None,
+        on_page_rendered,
     )
 }
 
@@ -209,6 +212,7 @@ pub fn build_targeted_site_section_render_artifacts(
     published_posts: &[(Post, String)],
     section: GenerationSection,
     requested_paths: &HashSet<String>,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
     build_site_render_artifacts_with_mode(
         conn,
@@ -219,7 +223,26 @@ pub fn build_targeted_site_section_render_artifacts(
         false,
         Some(section),
         Some(requested_paths),
+        on_page_rendered,
     )
+}
+
+pub fn estimate_site_render_pages(
+    data_dir: &Path,
+    metadata: &ProjectMetadata,
+    published_posts: &[Post],
+) -> Result<HashMap<GenerationSection, usize>, Box<dyn Error + Send + Sync>> {
+    let mut estimates = GenerationSection::ALL
+        .into_iter()
+        .map(|section| (section, 0))
+        .collect::<HashMap<_, _>>();
+    for page in build_site_route_manifest(data_dir, metadata, published_posts)? {
+        if let Some(section) = classify_generated_path(&page.relative_path, metadata) {
+            *estimates.get_mut(&section).unwrap() += 1;
+        }
+    }
+    *estimates.get_mut(&GenerationSection::Core).unwrap() += render_languages(metadata).len();
+    Ok(estimates)
 }
 
 #[expect(
@@ -235,6 +258,7 @@ fn build_site_render_artifacts_with_mode(
     is_preview: bool,
     section: Option<GenerationSection>,
     requested_paths: Option<&HashSet<String>>,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let main_language = main_language(metadata).to_string();
@@ -316,11 +340,14 @@ fn build_site_render_artifacts_with_mode(
                     &bundle,
                     is_preview,
                 )
-                .map(|html| SitePage {
-                    language: language.clone(),
-                    relative_path: route.relative_path.clone(),
-                    url_path: route.url_path.clone(),
-                    html,
+                .map(|html| {
+                    on_page_rendered(&route.url_path);
+                    SitePage {
+                        language: language.clone(),
+                        relative_path: route.relative_path.clone(),
+                        url_path: route.url_path.clone(),
+                        html,
+                    }
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -343,17 +370,14 @@ fn build_site_render_artifacts_with_mode(
             };
             if requested_paths.is_none_or(|requested| requested.contains(&relative_path)) {
                 let url_path = format!("/{}", relative_path.trim_end_matches(".html"));
+                let html =
+                    render_not_found_route(&bundle, metadata, &language, &url_path, &menu_items)?;
+                on_page_rendered(&url_path);
                 artifacts.pages.push(SitePage {
                     language: language.clone(),
                     relative_path,
                     url_path: url_path.clone(),
-                    html: render_not_found_route(
-                        &bundle,
-                        metadata,
-                        &language,
-                        &url_path,
-                        &menu_items,
-                    )?,
+                    html,
                 });
             }
         }
@@ -410,6 +434,7 @@ fn build_site_render_artifacts_with_mode(
                     &bundle,
                     is_preview,
                 )?;
+                on_page_rendered(&url_path);
                 artifacts.pagefind_documents.push(PagefindDocument {
                     language: language.clone(),
                     relative_path: relative_path.clone(),
@@ -448,6 +473,7 @@ pub fn build_preview_response(
         true,
         None,
         Some(&requested_paths),
+        &|_| {},
     )?;
     if let Some(page) = artifacts
         .pages

@@ -116,6 +116,11 @@ invariant ProgressThrottled {
     -- At most one progress event per 250ms per task
 }
 
+invariant GroupProgressAggregatesChildren {
+    -- Matches bDS2: group progress averages every child task contribution.
+    -- Pending tasks contribute 0 and completed tasks contribute 1.
+}
+
 invariant FinishedTaskRetention {
     -- The status snapshot surfaces only the most recent finished tasks:
     -- completed/failed/cancelled tasks beyond config.recent_finished_limit

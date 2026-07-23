@@ -263,7 +263,8 @@ invariant PanelTabFallback {
 }
 
 -- Tasks tab: last 10 tasks, newest first, with progress/cancel.
---   Tasks with shared group_id are collapsible groups showing aggregate progress.
+--   Tasks with shared group_id are collapsible groups showing bDS2-style
+--   average child progress; pending children contribute zero.
 -- Output tab: log entries with copy-all button.
 --   The panel opens on Output automatically when a blogmark transform fails
 --   or a transform script writes output.

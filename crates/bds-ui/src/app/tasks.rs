@@ -105,6 +105,26 @@ impl BdsApp {
         let project_id = project.id.clone();
         let db_path = self.db_path.clone();
         let data_dir = data_dir.clone();
+        let published_posts = match self.db.as_ref().and_then(|db| {
+            bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id).ok()
+        }) {
+            Some(posts) => posts
+                .into_iter()
+                .filter(engine::generation::has_published_snapshot)
+                .collect::<Vec<_>>(),
+            None => return Task::none(),
+        };
+        let page_estimates = match bds_core::render::estimate_site_render_pages(
+            &data_dir,
+            &metadata,
+            &published_posts,
+        ) {
+            Ok(estimates) => estimates,
+            Err(error) => {
+                self.notify(ToastLevel::Error, &error.to_string());
+                return Task::none();
+            }
+        };
         let group_id = format!("site-generation:{}", Uuid::new_v4());
         let group_name = t(
             self.ui_locale,
@@ -120,9 +140,19 @@ impl BdsApp {
         for section in sections {
             let label = t(self.ui_locale, generation_section_label_key(section));
             self.add_output(&label);
+            let page_work = page_estimates[&section];
             let task_id = self
                 .task_manager
                 .submit_grouped(&label, &group_id, &group_name);
+            self.task_manager.report_progress(
+                task_id,
+                Some(if page_work == 0 { 1.0 } else { 0.0 }),
+                Some(tw(
+                    self.ui_locale,
+                    "engine.renderingPages",
+                    &[("current", "0"), ("total", &page_work.to_string())],
+                )),
+            );
             render_task_ids.push(task_id);
             let task_manager = Arc::clone(&self.task_manager);
             let task_db_path = db_path.clone();
@@ -144,6 +174,7 @@ impl BdsApp {
                             task_validation,
                             force,
                             locale,
+                            page_work,
                         )
                     })
                     .await
@@ -452,10 +483,20 @@ fn run_site_generation_section(
     validation: Option<engine::validate_site::SiteValidationReport>,
     force: bool,
     locale: UiLocale,
+    expected_pages: usize,
 ) -> Result<engine::generation::GenerationReport, String> {
     if !task_manager.wait_until_runnable(task_id) {
         return Err("cancelled".to_string());
     }
+    task_manager.report_progress(
+        task_id,
+        Some(if expected_pages == 0 { 1.0 } else { 0.0 }),
+        Some(tw(
+            locale,
+            "engine.renderingPages",
+            &[("current", "0"), ("total", &expected_pages.to_string())],
+        )),
+    );
     let db = Database::open(&db_path).map_err(|error| error.to_string())?;
     let metadata = engine::meta::read_project_json(&data_dir).map_err(|error| error.to_string())?;
     let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
@@ -476,29 +517,27 @@ fn run_site_generation_section(
     }
     let output_dir = data_dir.join("html");
     std::fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-    let progress_manager = Arc::clone(&task_manager);
+    let render_manager = Arc::clone(&task_manager);
     let cancel_manager = Arc::clone(&task_manager);
-    let progress_key = if validation.is_some() {
-        "engine.rewrotePage"
-    } else {
-        "engine.generatedPage"
-    };
-    let on_page = move |current: usize, total: usize, url: &str| {
-        let progress = if total == 0 {
-            1.0
-        } else {
-            current as f32 / total as f32
-        };
-        progress_manager.report_progress(
+    let rendered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rendered_count = Arc::clone(&rendered);
+    let on_page = |_current: usize, _total: usize, _url: &str| {};
+    let on_rendered = move |url: &str| {
+        let current = rendered_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        render_manager.report_progress(
             task_id,
-            Some(progress),
+            Some(if expected_pages == 0 {
+                1.0
+            } else {
+                current.min(expected_pages) as f32 / expected_pages as f32
+            }),
             Some(tw(
                 locale,
-                progress_key,
+                "engine.renderingPage",
                 &[
                     ("url", url),
                     ("current", &current.to_string()),
-                    ("total", &total.to_string()),
+                    ("total", &expected_pages.to_string()),
                 ],
             )),
         );
@@ -514,6 +553,7 @@ fn run_site_generation_section(
             &validation,
             section,
             on_page,
+            on_rendered,
             is_cancelled,
         ),
         None if force => engine::generation::render_site_section_forced_with_progress(
@@ -524,6 +564,7 @@ fn run_site_generation_section(
             &sources,
             section,
             on_page,
+            on_rendered,
             is_cancelled,
         ),
         None => engine::generation::render_site_section_with_progress(
@@ -534,6 +575,7 @@ fn run_site_generation_section(
             &sources,
             section,
             on_page,
+            on_rendered,
             is_cancelled,
         ),
     }

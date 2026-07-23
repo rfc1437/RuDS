@@ -23,7 +23,7 @@ pub use routes::{
 pub use site::{
     PagefindDocument, PreviewRenderResult, SitePage, SiteRenderArtifacts, build_preview_response,
     build_site_render_artifacts, build_site_route_manifest, build_site_section_render_artifacts,
-    build_targeted_site_section_render_artifacts,
+    build_targeted_site_section_render_artifacts, estimate_site_render_pages,
 };
 pub use template_lookup::{
     RenderCategorySettings, RenderTemplateLookup, TemplateLookupError, resolve_post_template,

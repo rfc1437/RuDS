@@ -15,6 +15,7 @@ use bds_core::model::{
     CategorySettings, Post, PostStatus, PostTranslation, Project, ProjectMetadata, Template,
     TemplateKind, TemplateStatus,
 };
+use bds_core::render::estimate_site_render_pages;
 use tempfile::TempDir;
 
 fn make_project() -> Project {
@@ -435,6 +436,7 @@ fn section_generation_reports_its_urls_and_defers_pagefind() {
         &posts,
         GenerationSection::Single,
         |current, total, url| urls.push((current, total, url.to_string())),
+        |_| {},
         || false,
     )
     .unwrap();
@@ -469,12 +471,50 @@ fn section_generation_reports_its_urls_and_defers_pagefind() {
         &changed_posts,
         GenerationSection::Single,
         |_current, _total, _url| {},
+        |_| {},
         || false,
     )
     .unwrap();
     let rebuilt = build_site_search_index(db.conn(), dir.path(), "p1", &metadata).unwrap();
     assert!(rebuilt.deleted_paths.contains(&old_fragment));
     assert!(!dir.path().join(old_fragment).exists());
+}
+
+#[test]
+fn section_generation_reports_while_html_is_rendered_before_files_are_written() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let posts = vec![PublishedPostSource {
+        post: make_post("hello", 1_710_000_000_000),
+        body_markdown: "Hello **world**".into(),
+    }];
+    let output = dir.path().join("2024/03/09/hello/index.html");
+    let rendered_before_write = std::sync::atomic::AtomicBool::new(false);
+    let rendered = std::sync::atomic::AtomicUsize::new(0);
+    let estimated = estimate_site_render_pages(dir.path(), &metadata, &[posts[0].post.clone()])
+        .unwrap()[&GenerationSection::Single];
+
+    render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        GenerationSection::Single,
+        |_current, _total, _url| {},
+        |_| {
+            rendered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rendered_before_write.store(!output.exists(), std::sync::atomic::Ordering::Relaxed);
+        },
+        || false,
+    )
+    .unwrap();
+
+    assert!(rendered_before_write.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(
+        rendered.load(std::sync::atomic::Ordering::Relaxed),
+        estimated
+    );
 }
 
 #[test]
@@ -508,6 +548,7 @@ fn validation_apply_rewrites_only_the_reported_urls() {
         &validation,
         GenerationSection::Single,
         |current, total, url| urls.push((current, total, url.to_string())),
+        |_| {},
         || false,
     )
     .unwrap();
@@ -599,6 +640,7 @@ fn page_aliases_belong_to_core_while_dated_posts_belong_to_single() {
         &posts,
         GenerationSection::Single,
         |_current, _total, _url| {},
+        |_| {},
         || false,
     )
     .unwrap();
@@ -613,6 +655,7 @@ fn page_aliases_belong_to_core_while_dated_posts_belong_to_single() {
         &posts,
         GenerationSection::Core,
         |_current, _total, _url| {},
+        |_| {},
         || false,
     )
     .unwrap();

@@ -161,6 +161,7 @@ fn generate_starter_site_with_progress_mode(
             posts,
             section,
             force,
+            &|_| {},
             &mut on_page,
             || false,
         )?);
@@ -189,6 +190,7 @@ pub fn render_site_section_with_progress(
     posts: &[PublishedPostSource],
     section: GenerationSection,
     mut on_page: impl FnMut(usize, usize, &str),
+    on_page_rendered: impl Fn(&str) + Sync,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
     render_site_section_with_progress_mode(
@@ -199,6 +201,7 @@ pub fn render_site_section_with_progress(
         posts,
         section,
         false,
+        &on_page_rendered,
         &mut on_page,
         &mut is_cancelled,
     )
@@ -216,6 +219,7 @@ pub fn render_site_section_forced_with_progress(
     posts: &[PublishedPostSource],
     section: GenerationSection,
     mut on_page: impl FnMut(usize, usize, &str),
+    on_page_rendered: impl Fn(&str) + Sync,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
     render_site_section_with_progress_mode(
@@ -226,6 +230,7 @@ pub fn render_site_section_forced_with_progress(
         posts,
         section,
         true,
+        &on_page_rendered,
         &mut on_page,
         &mut is_cancelled,
     )
@@ -243,6 +248,7 @@ fn render_site_section_with_progress_mode(
     posts: &[PublishedPostSource],
     section: GenerationSection,
     force: bool,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
     mut on_page: impl FnMut(usize, usize, &str),
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
@@ -261,6 +267,7 @@ fn render_site_section_with_progress_mode(
         metadata,
         &input_posts,
         section,
+        on_page_rendered,
     )
     .map_err(|error| EngineError::Parse(error.to_string()))?;
     let mut report = GenerationReport::default();
@@ -361,6 +368,7 @@ pub fn apply_validation_sections(
             validation,
             *section,
             |_current, _total, _url| {},
+            |_| {},
             || false,
         )?);
     }
@@ -384,6 +392,7 @@ pub fn apply_validation_section_with_progress(
     validation: &SiteValidationReport,
     section: GenerationSection,
     mut on_page: impl FnMut(usize, usize, &str),
+    on_page_rendered: impl Fn(&str) + Sync,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
     if is_cancelled() {
@@ -414,6 +423,7 @@ pub fn apply_validation_section_with_progress(
             metadata,
             &input_posts,
             section,
+            &on_page_rendered,
         )
     } else {
         build_targeted_site_section_render_artifacts(
@@ -424,6 +434,7 @@ pub fn apply_validation_section_with_progress(
             &input_posts,
             section,
             &requested,
+            &on_page_rendered,
         )
     }
     .map_err(|error| EngineError::Parse(error.to_string()))?;

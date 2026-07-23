@@ -44,6 +44,10 @@ surface GenerationRuntimeSurface {
         -- "Generated" for a full render and "Rewrote" for a validation apply —
         -- and advances the bar by the number of URLs written.
         --
+        -- Before section work begins, generation counts its planned URLs. The
+        -- task reports 0/total immediately and advances once per rendered URL,
+        -- matching bDS2's route-based generation progress.
+        --
         -- Full generation and validation apply share the same structuring: a
         -- task group containing one task per section (Render Site Core, Render
         -- Single Posts, Render Category Archives, Render Tag Archives, Render
