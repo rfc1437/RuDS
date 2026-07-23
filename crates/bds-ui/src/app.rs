@@ -186,6 +186,7 @@ pub enum Message {
         task_id: TaskId,
         result: Result<engine::blogmark::BlogmarkImportResult, String>,
     },
+    WindowCloseRequested,
     MainWindowLoaded(Option<window::Id>),
     EmbeddedPreviewReady(Result<(), String>),
     EmbeddedStylePreviewReady(Result<(), String>),
@@ -1363,6 +1364,11 @@ impl BdsApp {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WindowCloseRequested => {
+                self.persist_project_ui_state();
+                flush_embeddings_and_exit(std::process::exit)
+            }
+
             // ── Menu event dispatch ──
             Message::MenuEvent(id) => {
                 if let Some(action) = self.menu_registry.lookup(&id) {
@@ -3583,6 +3589,7 @@ impl BdsApp {
             }
             _ => None,
         });
+        let window_close_sub = window::close_requests().map(|_| Message::WindowCloseRequested);
 
         // Global mouse tracking for sidebar resize dragging.
         // The 4px drag handle mouse_area only fires on_press; move/release
@@ -3637,6 +3644,7 @@ impl BdsApp {
             domain_event_tick,
             toast_tick,
             file_drop_sub,
+            window_close_sub,
             drag_sub,
             menu_interaction_sub,
             menu_expand_tick,
@@ -10067,6 +10075,14 @@ impl Drop for BdsApp {
     }
 }
 
+fn flush_embeddings_and_exit<F, R>(exit: F) -> R
+where
+    F: FnOnce(i32) -> R,
+{
+    let _ = engine::embedding::EmbeddingService::flush_all();
+    exit(0)
+}
+
 fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
 }
@@ -10125,12 +10141,12 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, active_post_tab_id, dropped_image_target, localize_chat_error,
-        month_abbreviation, persist_media_editor_state_impl,
-        persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
-        remote_error_closes_connection, save_editor_settings_state_impl,
-        save_script_editor_state_impl, save_template_editor_state_impl,
-        should_start_embedded_preview_creation,
+        PostStatus, SettingsMsg, active_post_tab_id, dropped_image_target,
+        flush_embeddings_and_exit, localize_chat_error, month_abbreviation,
+        persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
+        persist_post_editor_state_impl, remote_error_closes_connection,
+        save_editor_settings_state_impl, save_script_editor_state_impl,
+        save_template_editor_state_impl, should_start_embedded_preview_creation,
     };
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
@@ -10160,12 +10176,20 @@ mod tests {
     use bds_core::model::{
         ChatRole, DomainEntity, DomainEvent, NotificationAction, Project, ScriptKind, TemplateKind,
     };
+
     use chrono::{Datelike, TimeZone};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::thread;
     use tempfile::TempDir;
+
+    #[test]
+    fn desktop_shutdown_uses_an_immediate_process_exit() {
+        let exit_code = flush_embeddings_and_exit(|code| code);
+
+        assert_eq!(exit_code, 0);
+    }
 
     fn make_project() -> Project {
         Project {

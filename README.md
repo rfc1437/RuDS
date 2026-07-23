@@ -2,6 +2,8 @@
 
 RuDS is a native Rust blogging desktop application and the successor to bDS2. It manages local projects from authoring through preview, static-site generation, integrity checks, and publishing while preserving the existing bDS filesystem and SQLite formats.
 
+The desktop is a single-window application: closing its window persists UI state and exits RuDS.
+
 The project is under active development. Core blogging workflows are broadly available; remaining core work and optional extensions are tracked separately.
 
 ## Available Features

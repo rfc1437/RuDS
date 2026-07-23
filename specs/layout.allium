@@ -19,6 +19,7 @@ surface LayoutControlSurface {
         TogglePanelRequested()
         ToggleAssistantSidebarRequested()
         ActivityClicked(activity_id)
+        CloseWindowRequested()
 }
 
 surface LayoutRuntimeSurface {
@@ -53,6 +54,13 @@ value AppShell {
     content_area: ContentArea
     assistant_sidebar: ResizableRegion
     status_bar: StatusBar
+}
+
+rule CloseSingleWindow {
+    when: CloseWindowRequested()
+    ensures: ExitApplication()
+    -- bDS2 and RuDS are single-window applications. Closing that window
+    -- persists application-owned state and terminates the process.
 }
 
 surface AppShellSurface {

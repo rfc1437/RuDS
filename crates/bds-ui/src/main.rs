@@ -30,13 +30,18 @@ fn main() -> anyhow::Result<()> {
     iced::application("bDS", BdsApp::update, BdsApp::view)
         .subscription(BdsApp::subscription)
         .theme(|_| inputs::app_theme())
-        .window(iced::window::Settings {
-            size: iced::Size::new(1200.0, 800.0),
-            icon: Some(icon),
-            ..Default::default()
-        })
+        .window(desktop_window_settings(Some(icon)))
         .run_with(BdsApp::new)?;
     Ok(())
+}
+
+fn desktop_window_settings(icon: Option<iced::window::Icon>) -> iced::window::Settings {
+    iced::window::Settings {
+        size: iced::Size::new(1200.0, 800.0),
+        icon,
+        exit_on_close_request: false,
+        ..Default::default()
+    }
 }
 
 fn current_platform() -> Platform {
@@ -48,4 +53,14 @@ fn current_platform() -> Platform {
     return Platform::Unix;
     #[allow(unreachable_code)]
     Platform::Windows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_window_close_is_owned_by_the_application() {
+        assert!(!desktop_window_settings(None).exit_on_close_request);
+    }
 }
