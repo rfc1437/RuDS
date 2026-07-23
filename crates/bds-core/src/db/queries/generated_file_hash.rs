@@ -18,6 +18,18 @@ pub fn get_generated_file_hash(
     })
 }
 
+pub fn list_generated_file_hashes(
+    conn: &DbConnection,
+    project_id: &str,
+) -> QueryResult<Vec<GeneratedFileHash>> {
+    conn.with(|c| {
+        generated_file_hashes::table
+            .filter(generated_file_hashes::project_id.eq(project_id))
+            .select(GeneratedFileHash::as_select())
+            .load(c)
+    })
+}
+
 pub fn upsert_generated_file_hash(
     conn: &DbConnection,
     hash: &GeneratedFileHash,
@@ -36,6 +48,26 @@ pub fn upsert_generated_file_hash(
             ))
             .execute(c)
             .map(|_| ())
+    })
+}
+
+pub fn touch_generated_file_hashes(
+    conn: &DbConnection,
+    project_id: &str,
+    relative_paths: &[String],
+    updated_at: i64,
+) -> QueryResult<usize> {
+    conn.with(|c| {
+        relative_paths.chunks(500).try_fold(0, |updated, paths| {
+            diesel::update(
+                generated_file_hashes::table
+                    .filter(generated_file_hashes::project_id.eq(project_id))
+                    .filter(generated_file_hashes::relative_path.eq_any(paths)),
+            )
+            .set(generated_file_hashes::updated_at.eq(updated_at))
+            .execute(c)
+            .map(|count| updated + count)
+        })
     })
 }
 

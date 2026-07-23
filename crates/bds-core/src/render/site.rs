@@ -122,6 +122,65 @@ pub fn build_site_render_artifacts(
     )
 }
 
+/// Build the sitemap route set without loading templates, media, or rendering HTML.
+pub fn build_site_route_manifest(
+    data_dir: &Path,
+    metadata: &ProjectMetadata,
+    published_posts: &[Post],
+) -> Result<Vec<SitePage>, Box<dyn Error + Send + Sync>> {
+    let main_language = main_language(metadata).to_string();
+    let category_settings = queries_category_settings(data_dir)?;
+    let mut manifest = Vec::new();
+
+    for language in render_languages(metadata) {
+        let posts = published_posts
+            .iter()
+            .filter(|post| language == main_language || !post.do_not_translate)
+            .map(|post| RenderPostRecord {
+                post: post.clone(),
+                source_post_id: post.id.clone(),
+                body_markdown: String::new(),
+            })
+            .collect::<Vec<_>>();
+        let list_posts = filter_posts_for_lists(&posts, &category_settings);
+        manifest.extend(
+            build_language_routes(&list_posts, metadata, &language, &[], &category_settings)
+                .into_iter()
+                .map(|route| SitePage {
+                    language: language.clone(),
+                    relative_path: route.relative_path,
+                    url_path: route.url_path,
+                    html: String::new(),
+                }),
+        );
+
+        for record in posts {
+            let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
+            let mut paths = vec![canonical_path];
+            if record
+                .post
+                .categories
+                .iter()
+                .any(|category| category == "page")
+            {
+                paths.push(if language == main_language {
+                    format!("/{}", record.post.slug)
+                } else {
+                    format!("/{language}/{}", record.post.slug)
+                });
+            }
+            manifest.extend(paths.into_iter().map(|url_path| SitePage {
+                language: language.clone(),
+                relative_path: format!("{}/index.html", url_path.trim_start_matches('/')),
+                url_path,
+                html: String::new(),
+            }));
+        }
+    }
+
+    Ok(manifest)
+}
+
 pub fn build_site_section_render_artifacts(
     conn: &Connection,
     data_dir: &Path,

@@ -1,14 +1,17 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
 use crate::db::queries;
-use crate::engine::{EngineError, EngineResult};
+use crate::engine::EngineResult;
+use crate::engine::generation::has_published_snapshot;
 use crate::model::Post;
-use crate::render::build_site_render_artifacts;
-use crate::util::file_hash;
+use crate::render::{build_canonical_post_path, build_site_route_manifest};
+
+const MTIME_GRANULARITY_TOLERANCE_MS: i64 = 1_000;
 
 #[derive(Debug, Clone, Default)]
 pub struct SiteValidationReport {
@@ -24,85 +27,132 @@ pub fn validate_site(
 ) -> EngineResult<SiteValidationReport> {
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
     let output_dir = generated_output_dir(data_dir);
-    let published_posts = load_published_posts(data_dir, conn, project_id)?;
-    let artifacts =
-        build_site_render_artifacts(conn, data_dir, project_id, &metadata, &published_posts)
-            .map_err(|error| EngineError::Parse(error.to_string()))?;
-
-    let mut expected = artifacts
-        .pages
-        .iter()
-        .map(|page| page.relative_path.clone())
+    let published_posts = load_published_posts(conn, project_id)?;
+    let route_manifest = build_site_route_manifest(data_dir, &metadata, &published_posts)
+        .map_err(|error| crate::engine::EngineError::Parse(error.to_string()))?;
+    crate::engine::generation::refresh_validation_sitemap(
+        conn,
+        &output_dir,
+        project_id,
+        data_dir,
+        &metadata,
+        &published_posts,
+        &route_manifest,
+    )?;
+    let expected = route_manifest
+        .into_iter()
+        .map(|page| page.relative_path)
         .collect::<HashSet<_>>();
-    expected.insert("calendar.json".to_string());
-    for language in render_languages(&metadata) {
-        let prefix = if language
-            == metadata
-                .main_language
-                .clone()
-                .unwrap_or_else(|| "en".to_string())
-        {
-            String::new()
-        } else {
-            format!("{language}/")
-        };
-        expected.insert(format!("{prefix}rss.xml"));
-        expected.insert(format!("{prefix}atom.xml"));
-    }
-    expected.insert("sitemap.xml".to_string());
 
     let mut actual = HashSet::new();
     if output_dir.exists() {
         for entry in WalkDir::new(&output_dir).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
+            if !entry.file_type().is_file() || entry.file_name() != "index.html" {
                 continue;
             }
-            let rel = entry
-                .path()
-                .strip_prefix(&output_dir)
-                .unwrap_or(entry.path())
-                .to_string_lossy()
-                .replace('\\', "/");
-            if rel.starts_with("meta/")
-                || rel.starts_with("posts/")
-                || rel.starts_with("media/")
-                || rel.starts_with("assets/")
-            {
-                continue;
-            }
-            if rel.starts_with("pagefind") || rel.contains("/pagefind/") {
-                continue;
-            }
-            if rel.ends_with(".html") || rel.ends_with(".xml") || rel.ends_with(".json") {
-                actual.insert(rel);
+            if entry.metadata().is_ok_and(|metadata| metadata.len() > 0) {
+                actual.insert(relative_path(&output_dir, entry.path()));
             }
         }
     }
 
     let mut missing_pages = expected.difference(&actual).cloned().collect::<Vec<_>>();
     let mut extra_pages = actual.difference(&expected).cloned().collect::<Vec<_>>();
-
-    let mut stale_pages = Vec::new();
-    for rel in expected.intersection(&actual) {
-        if let Ok(stored) =
-            queries::generated_file_hash::get_generated_file_hash(conn, project_id, rel)
-        {
-            let actual_hash = file_hash(&output_dir.join(rel))?;
-            if actual_hash != stored.content_hash {
-                stale_pages.push(rel.clone());
-            }
-        }
-    }
+    let generated_at = queries::generated_file_hash::list_generated_file_hashes(conn, project_id)?
+        .into_iter()
+        .map(|file| (file.relative_path, file.updated_at))
+        .collect::<HashMap<_, _>>();
+    let mut stale_pages = stale_post_paths(
+        data_dir,
+        &output_dir,
+        &metadata,
+        &published_posts,
+        &expected,
+        &actual,
+        &generated_at,
+    );
 
     missing_pages.sort();
     extra_pages.sort();
     stale_pages.sort();
+    stale_pages.dedup();
 
     Ok(SiteValidationReport {
         missing_pages,
         extra_pages,
         stale_pages,
     })
+}
+
+fn stale_post_paths(
+    data_dir: &Path,
+    output_dir: &Path,
+    metadata: &crate::model::ProjectMetadata,
+    published_posts: &[Post],
+    expected: &HashSet<String>,
+    actual: &HashSet<String>,
+    generated_at: &HashMap<String, i64>,
+) -> Vec<String> {
+    let main_language = metadata.main_language.as_deref().unwrap_or("en");
+    let mut languages = vec![main_language.to_string()];
+    for language in &metadata.blog_languages {
+        if !languages
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(language))
+        {
+            languages.push(language.clone());
+        }
+    }
+    let mut stale = Vec::new();
+
+    for post in published_posts {
+        let Some(source_modified) = modified_ms(&data_dir.join(&post.file_path)) else {
+            continue;
+        };
+        for language in &languages {
+            if language != main_language && post.do_not_translate {
+                continue;
+            }
+            let relative_path = format!(
+                "{}/index.html",
+                build_canonical_post_path(post, language, main_language).trim_start_matches('/')
+            );
+            if !expected.contains(&relative_path) || !actual.contains(&relative_path) {
+                continue;
+            }
+            let Some(output_modified) = modified_ms(&output_dir.join(&relative_path)) else {
+                continue;
+            };
+            let effective_generated = output_modified.max(
+                generated_at
+                    .get(&relative_path)
+                    .copied()
+                    .unwrap_or_default(),
+            );
+            if source_modified > effective_generated + MTIME_GRANULARITY_TOLERANCE_MS {
+                stale.push(relative_path);
+            }
+        }
+    }
+    stale
+}
+
+fn modified_ms(path: &Path) -> Option<i64> {
+    let modified = path.metadata().ok()?.modified().ok()?;
+    Some(system_time_ms(modified))
+}
+
+fn system_time_ms(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn generated_output_dir(data_dir: &Path) -> std::path::PathBuf {
@@ -114,38 +164,9 @@ fn generated_output_dir(data_dir: &Path) -> std::path::PathBuf {
     }
 }
 
-fn load_published_posts(
-    data_dir: &Path,
-    conn: &Connection,
-    project_id: &str,
-) -> EngineResult<Vec<(Post, String)>> {
-    let posts = queries::post::list_posts_by_project(conn, project_id)?;
-    let mut published = Vec::new();
-    for post in posts
+fn load_published_posts(conn: &Connection, project_id: &str) -> EngineResult<Vec<Post>> {
+    Ok(queries::post::list_posts_by_project(conn, project_id)?
         .into_iter()
-        .filter(crate::engine::generation::has_published_snapshot)
-    {
-        if let Some(source) = crate::engine::generation::load_published_post_source(data_dir, post)?
-        {
-            published.push((source.post, source.body_markdown));
-        }
-    }
-    Ok(published)
-}
-
-fn render_languages(metadata: &crate::model::ProjectMetadata) -> Vec<String> {
-    let main = metadata
-        .main_language
-        .clone()
-        .unwrap_or_else(|| "en".to_string());
-    let mut languages = vec![main.clone()];
-    for language in &metadata.blog_languages {
-        if !languages
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(language))
-        {
-            languages.push(language.clone());
-        }
-    }
-    languages
+        .filter(has_published_snapshot)
+        .collect())
 }

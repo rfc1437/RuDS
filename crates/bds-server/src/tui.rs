@@ -2973,6 +2973,7 @@ impl TuiApp {
                     &project_id,
                     &metadata,
                     &posts,
+                    &validation,
                     &sections,
                 )?;
                 self.status = self.tr_with(

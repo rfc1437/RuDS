@@ -262,14 +262,24 @@ rule RenderPage {
 
 rule ValidateSite {
     when: ValidateSiteRequested(project)
-    -- Compares sitemap URLs to HTML files on disk
-    -- Detects: missing pages, extra (stale) pages, sitemap/file mismatches
+    -- Matches bDS2's cheap route comparison without rendering page content:
+    --   sitemap.xml is refreshed from the current route set before comparison
+    --   expected: sitemap-eligible routes derived from published snapshots
+    --   actual: non-empty **/index.html files on disk
+    --   missing: expected routes with no non-empty index.html
+    --   extra: non-empty index.html routes absent from the expected set
+    --   stale: existing post routes whose source mtime is more than one second
+    --          newer than both the output mtime and tracked generation time
+    -- Standalone HTML, XML, JSON, assets, Pagefind files, and content hashes are
+    -- not validation comparison inputs.
     ensures: ValidationReport(missing_pages, extra_pages, stale_pages)
 }
 
 rule ApplyValidation {
     when: ApplyValidationRequested(project_id, sections)
-    -- Targeted re-rendering for affected sections only
+    -- Targeted re-rendering for affected report paths only. Applying an
+    -- unchanged post route refreshes its tracked generation time so the
+    -- automatic follow-up validation does not report it stale again.
     ensures: GenerateSiteRequested(plan_generation(project_id, sections))
 }
 

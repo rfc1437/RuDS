@@ -14,9 +14,8 @@ use crate::engine::{EngineError, EngineResult};
 use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, PostLanguageVariant, build_calendar_json, build_canonical_post_path,
-    build_site_render_artifacts, build_site_section_render_artifacts,
-    build_targeted_site_section_render_artifacts, select_post_language_variant,
-    write_generated_bytes, write_generated_file,
+    build_site_section_render_artifacts, build_targeted_site_section_render_artifacts,
+    select_post_language_variant, write_generated_bytes, write_generated_file,
 };
 
 #[derive(Debug, Clone)]
@@ -248,44 +247,28 @@ pub fn apply_validation_sections(
     project_id: &str,
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
+    validation: &SiteValidationReport,
     sections: &[GenerationSection],
 ) -> EngineResult<GenerationReport> {
     if sections.is_empty() {
         return Ok(GenerationReport::default());
     }
 
-    let section_set = sections.iter().copied().collect::<HashSet<_>>();
-    let data_dir = project_data_dir(output_dir);
-    let input_posts = posts
-        .iter()
-        .map(|source| (source.post.clone(), source.body_markdown.clone()))
-        .collect::<Vec<_>>();
-    let artifacts =
-        build_site_render_artifacts(conn, &data_dir, project_id, metadata, &input_posts)
-            .map_err(|error| EngineError::Parse(error.to_string()))?;
     let mut report = GenerationReport::default();
-    let expected_paths = expected_paths_for_sections(metadata, &artifacts.pages, &section_set);
 
     for section in sections {
-        report.append(render_site_section_with_progress(
+        report.append(apply_validation_section_with_progress(
             conn,
             output_dir,
             project_id,
             metadata,
             posts,
+            validation,
             *section,
             |_current, _total, _url| {},
             || false,
         )?);
     }
-
-    remove_extra_section_paths(
-        output_dir,
-        &expected_paths,
-        metadata,
-        &section_set,
-        &mut report,
-    )?;
     report.append(build_site_search_index(
         conn, output_dir, project_id, metadata,
     )?);
@@ -392,7 +375,29 @@ pub fn apply_validation_section_with_progress(
             report.deleted_paths.push(path.clone());
         }
     }
+    refresh_route_timestamps(conn, project_id, &report)?;
     Ok(report)
+}
+
+fn refresh_route_timestamps(
+    conn: &Connection,
+    project_id: &str,
+    report: &GenerationReport,
+) -> EngineResult<()> {
+    let paths = report
+        .written_paths
+        .iter()
+        .chain(&report.skipped_paths)
+        .filter(|path| *path == "index.html" || path.ends_with("/index.html"))
+        .cloned()
+        .collect::<Vec<_>>();
+    queries::generated_file_hash::touch_generated_file_hashes(
+        conn,
+        project_id,
+        &paths,
+        crate::util::now_unix_ms(),
+    )?;
+    Ok(())
 }
 
 #[expect(
@@ -682,96 +687,6 @@ fn project_data_dir(output_dir: &Path) -> std::path::PathBuf {
     }
 }
 
-fn expected_paths_for_sections(
-    metadata: &ProjectMetadata,
-    pages: &[crate::render::SitePage],
-    sections: &HashSet<GenerationSection>,
-) -> HashSet<String> {
-    let mut expected = pages
-        .iter()
-        .filter(|page| path_matches_sections(&page.relative_path, metadata, sections))
-        .map(|page| page.relative_path.clone())
-        .collect::<HashSet<_>>();
-
-    if sections.contains(&GenerationSection::Core) {
-        expected.insert("calendar.json".to_string());
-        expected.insert("rss.xml".to_string());
-        for language in render_languages(metadata) {
-            let prefix = if language
-                == metadata
-                    .main_language
-                    .clone()
-                    .unwrap_or_else(|| "en".to_string())
-            {
-                String::new()
-            } else {
-                format!("{language}/")
-            };
-            expected.insert(format!("{prefix}rss.xml"));
-            expected.insert(format!("{prefix}atom.xml"));
-        }
-        expected.insert("sitemap.xml".to_string());
-    }
-
-    expected
-}
-
-fn remove_extra_section_paths(
-    output_dir: &Path,
-    expected: &HashSet<String>,
-    metadata: &ProjectMetadata,
-    sections: &HashSet<GenerationSection>,
-    report: &mut GenerationReport,
-) -> EngineResult<()> {
-    if !output_dir.exists() {
-        return Ok(());
-    }
-
-    let mut deleted = Vec::new();
-    for entry in WalkDir::new(output_dir).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let rel = entry
-            .path()
-            .strip_prefix(output_dir)
-            .unwrap_or(entry.path())
-            .to_string_lossy()
-            .replace('\\', "/");
-        if rel.starts_with("meta/")
-            || rel.starts_with("posts/")
-            || rel.starts_with("media/")
-            || rel.starts_with("assets/")
-            || rel.starts_with("pagefind")
-            || rel.contains("/pagefind/")
-        {
-            continue;
-        }
-        if !matches_generated_extension(&rel)
-            || !path_matches_sections(&rel, metadata, sections)
-            || expected.contains(&rel)
-        {
-            continue;
-        }
-        std::fs::remove_file(entry.path()).map_err(EngineError::Io)?;
-        deleted.push(rel);
-    }
-
-    deleted.sort();
-    report.deleted_paths.extend(deleted);
-    Ok(())
-}
-
-fn path_matches_sections(
-    path: &str,
-    metadata: &ProjectMetadata,
-    sections: &HashSet<GenerationSection>,
-) -> bool {
-    classify_generated_path(path, metadata)
-        .map(|section| sections.contains(&section))
-        .unwrap_or(false)
-}
-
 pub(crate) fn classify_generated_path(
     path: &str,
     metadata: &ProjectMetadata,
@@ -839,10 +754,6 @@ fn is_month_segment(value: &str) -> bool {
 
 fn is_day_segment(value: &str) -> bool {
     is_month_segment(value)
-}
-
-fn matches_generated_extension(path: &str) -> bool {
-    path.ends_with(".html") || path.ends_with(".xml") || path.ends_with(".json")
 }
 
 fn all_sections() -> Vec<GenerationSection> {
@@ -973,6 +884,37 @@ fn filter_posts_for_lists(
         })
         .cloned()
         .collect()
+}
+
+pub(crate) fn refresh_validation_sitemap(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    data_dir: &Path,
+    metadata: &ProjectMetadata,
+    posts: &[Post],
+    route_manifest: &[crate::render::SitePage],
+) -> EngineResult<()> {
+    let mut sources = posts
+        .iter()
+        .cloned()
+        .map(|post| PublishedPostSource {
+            post,
+            body_markdown: String::new(),
+        })
+        .collect::<Vec<_>>();
+    sort_published_sources(&mut sources);
+    let list_posts = filter_posts_for_lists(&sources, &load_category_settings(data_dir));
+    let content = build_sitemap_xml(
+        metadata,
+        route_manifest,
+        &sources,
+        &list_posts,
+        metadata.main_language.as_deref().unwrap_or("en"),
+    );
+    write_generated_file(conn, output_dir, project_id, "sitemap.xml", &content)
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    Ok(())
 }
 
 pub(crate) fn build_rss_xml(

@@ -513,6 +513,7 @@ fn render(db: &Database, incremental: bool, force: bool) -> Result<CommandOutput
             &project.id,
             &metadata,
             &posts,
+            &validation,
             &sections,
         )?;
         return Ok(output(
