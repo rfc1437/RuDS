@@ -674,8 +674,10 @@ rule ImportListClick {
 -- The sidebar must surface these capabilities directly.
 
 -- State: not_a_repo
---   Remote URL text input + "Initialize Git" button.
+--   "Initialize Git" button for the current blog project directory.
 --   Init progress with phase/percentage/detail, collapsible transcript.
+--   The remote URL is discovered from the repository and is never editable
+--   from the sidebar.
 
 -- State: active_repo
 value GitActiveView {
@@ -702,6 +704,11 @@ surface GitActiveViewSurface {
 
     provides:
         GitCommitRequested(message)
+
+    @guarantee CurrentProjectRepository
+        -- Git operations always target the current blog project's directory.
+        -- Any origin URL is discovered from that repository and cannot be
+        -- entered or changed in this surface.
 }
 
 value GitStatusFile {

@@ -25,30 +25,14 @@ impl BdsApp {
                 }
                 Task::none()
             }
-            Message::GitRemoteInputChanged(value) => {
-                self.git_state.remote_input = value;
-                Task::none()
-            }
             Message::GitCommitMessageChanged(value) => {
                 self.git_state.commit_message = value;
                 Task::none()
             }
-            Message::GitInitialize => {
-                let remote = self.git_state.remote_input.trim().to_string();
-                self.run_local_git_action(GitOperation::Initialize, move |engine| {
-                    engine.initialize()?;
-                    if !remote.is_empty() {
-                        engine.set_remote(&remote)?;
-                    }
-                    Ok(())
-                })
-            }
-            Message::GitSetRemote => {
-                let remote = self.git_state.remote_input.trim().to_string();
-                self.run_local_git_action(GitOperation::Remote, move |engine| {
-                    engine.set_remote(&remote)
-                })
-            }
+            Message::GitInitialize => self
+                .run_local_git_action(GitOperation::Initialize, |engine| {
+                    engine.initialize().map(|_| ())
+                }),
             Message::GitCommit => {
                 let message = self.git_state.commit_message.clone();
                 self.run_local_git_action(GitOperation::Commit, move |engine| {

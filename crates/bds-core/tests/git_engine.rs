@@ -134,7 +134,10 @@ fn remote_state_history_fetch_and_fast_forward_pull_use_real_refs() {
     git(&local, &["add", "-A"]);
     git(&local, &["commit", "-m", "local one"]);
     let engine = GitEngine::new(&local);
-    engine.set_remote(remote.to_str().unwrap()).unwrap();
+    git(
+        &local,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
     git(&local, &["push", "-u", "origin", "master"]);
 
     git(

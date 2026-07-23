@@ -502,22 +502,6 @@ impl GitEngine {
         })
     }
 
-    pub fn set_remote(&self, remote_url: &str) -> Result<(), GitError> {
-        let remote_url = remote_url.trim();
-        if remote_url.is_empty() {
-            return Err(GitError::Validation("remote URL is required".into()));
-        }
-        let args = if self
-            .optional_output(&["remote", "get-url", "origin"], GitOperation::Remote)?
-            .is_some()
-        {
-            ["remote", "set-url", "origin", remote_url]
-        } else {
-            ["remote", "add", "origin", remote_url]
-        };
-        self.run_local(&args, GitOperation::Remote).map(|_| ())
-    }
-
     pub fn commit_all(&self, message: &str) -> Result<NetworkResult, GitError> {
         let message = message.trim();
         if message.is_empty() {

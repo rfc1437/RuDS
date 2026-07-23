@@ -35,7 +35,6 @@ pub struct GitUiState {
     pub files: Vec<GitFileStatus>,
     pub history: Vec<GitCommit>,
     pub remote: GitRemoteState,
-    pub remote_input: String,
     pub commit_message: String,
     pub loading: bool,
     pub error: Option<String>,
@@ -61,7 +60,6 @@ impl Default for GitUiState {
                 ahead: 0,
                 behind: 0,
             },
-            remote_input: String::new(),
             commit_message: String::new(),
             loading: false,
             error: None,
@@ -72,7 +70,6 @@ impl Default for GitUiState {
 
 impl GitUiState {
     pub fn apply_snapshot(&mut self, snapshot: GitSnapshot) {
-        self.remote_input = snapshot.repository.remote_url.clone().unwrap_or_default();
         self.repository = snapshot.repository;
         self.files = snapshot.files;
         self.history = snapshot.history;
@@ -151,11 +148,6 @@ pub fn sidebar_view(
             text(t(locale, "git.notRepository"))
                 .size(12)
                 .color(Color::from_rgb(0.6, 0.6, 0.65)),
-            text_input(&t(locale, "git.remoteOptional"), &state.remote_input)
-                .on_input(Message::GitRemoteInputChanged)
-                .size(12)
-                .padding([6, 8])
-                .style(inputs::field_style),
             button(text(t(locale, "git.initialize")).size(12))
                 .on_press(Message::GitInitialize)
                 .padding([5, 8])
@@ -209,21 +201,6 @@ pub fn sidebar_view(
                 .into(),
         );
     }
-    content.push(
-        row![
-            text_input(&t(locale, "git.remoteUrl"), &state.remote_input)
-                .on_input(Message::GitRemoteInputChanged)
-                .size(11)
-                .padding([5, 7])
-                .style(inputs::field_style),
-            button(text(t(locale, "git.saveRemote")).size(11))
-                .on_press(Message::GitSetRemote)
-                .padding([5, 7])
-                .style(inputs::secondary_button),
-        ]
-        .spacing(4)
-        .into(),
-    );
     content.push(section_title(
         tw(
             locale,
@@ -529,3 +506,32 @@ impl fmt::Display for PathTitle<'_> {
 }
 
 use std::fmt;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::advanced::widget::{Tree, tree::Tag};
+    use iced::widget::text_input;
+
+    type TextInputState =
+        text_input::State<<iced::Renderer as iced::advanced::text::Renderer>::Paragraph>;
+
+    fn count_text_inputs(tree: &Tree) -> usize {
+        usize::from(tree.tag == Tag::of::<TextInputState>())
+            + tree.children.iter().map(count_text_inputs).sum::<usize>()
+    }
+
+    #[test]
+    fn repository_location_is_never_editable_in_the_git_sidebar() {
+        let not_initialized = GitUiState::default();
+        let inactive_tree =
+            Tree::new(sidebar_view(&not_initialized, false, UiLocale::En).as_widget());
+        assert_eq!(count_text_inputs(&inactive_tree), 0);
+
+        let mut initialized = GitUiState::default();
+        initialized.repository.is_initialized = true;
+        initialized.repository.remote_url = Some("ssh://example.test/blog.git".into());
+        let active_tree = Tree::new(sidebar_view(&initialized, false, UiLocale::En).as_widget());
+        assert_eq!(count_text_inputs(&active_tree), 1);
+    }
+}

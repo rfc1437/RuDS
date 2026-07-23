@@ -87,7 +87,6 @@ surface GitControlSurface {
         GitHistoryRequested(project, branch)
         GitFileHistoryRequested(project, file_path)
         GitRemoteStateRequested(project)
-        GitRemoteSetRequested(project, remote_url)
         GitFetchRequested(project)
         GitPullRequested(project)
         GitPushRequested(project)
@@ -151,12 +150,6 @@ rule GetRemoteState {
     when: GitRemoteStateRequested(project)
     -- A repository without an upstream reports zero ahead/behind counts.
     ensures: GitRemoteStateReport(project, local_branch, upstream_branch, ahead, behind)
-}
-
-rule SetRemote {
-    when: GitRemoteSetRequested(project, remote_url)
-    -- Creates origin when absent and replaces its URL when already configured.
-    ensures: GitRemoteUpdated(project, remote_url)
 }
 
 rule Fetch {

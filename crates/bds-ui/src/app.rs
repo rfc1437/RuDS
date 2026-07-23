@@ -311,10 +311,8 @@ pub enum Message {
         repository_dir: PathBuf,
         result: Result<GitSnapshot, String>,
     },
-    GitRemoteInputChanged(String),
     GitCommitMessageChanged(String),
     GitInitialize,
-    GitSetRemote,
     GitCommit,
     GitFetch,
     GitPull,
@@ -2855,10 +2853,8 @@ impl BdsApp {
             // ── Git ──
             message @ (Message::GitRefresh
             | Message::GitLoaded { .. }
-            | Message::GitRemoteInputChanged(_)
             | Message::GitCommitMessageChanged(_)
             | Message::GitInitialize
-            | Message::GitSetRemote
             | Message::GitCommit
             | Message::GitFetch
             | Message::GitPull
