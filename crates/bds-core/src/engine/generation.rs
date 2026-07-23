@@ -315,6 +315,9 @@ pub fn sections_from_validation_report(
         .chain(report.stale_pages.iter())
     {
         match classify_generated_path(path, metadata) {
+            Some(GenerationSection::Single) => {
+                sections.extend(GenerationSection::ALL);
+            }
             Some(section) => {
                 sections.insert(section);
             }

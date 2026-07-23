@@ -11329,7 +11329,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_apply_queues_only_affected_sections_then_index() {
+    fn validation_apply_queues_post_and_aggregate_sections_then_index() {
         let (db, project, tmp) = setup();
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
@@ -11340,19 +11340,36 @@ mod tests {
 
         let _task = app.queue_site_generation(Some(validation));
         let snapshots = app.task_manager.snapshots();
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].label, "Render Single Posts");
         assert_eq!(
-            snapshots[0].group_name.as_deref(),
-            Some("Apply Site Validation")
+            snapshots
+                .iter()
+                .map(|task| task.label.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Render Site Core",
+                "Render Single Posts",
+                "Render Category Archives",
+                "Render Tag Archives",
+                "Render Date Archives",
+            ]
+        );
+        assert!(
+            snapshots
+                .iter()
+                .all(|task| task.group_name.as_deref() == Some("Apply Site Validation"))
         );
         let group_id = snapshots[0].group_id.clone().unwrap();
+        let render_ids = app.site_generation_workflows[&group_id]
+            .render_task_ids
+            .clone();
 
-        let _task = app.handle_engine_message(Message::SiteGenerationSectionDone {
-            group_id,
-            task_id: snapshots[0].id,
-            result: Ok(GenerationReport::default()),
-        });
+        for task_id in render_ids {
+            let _task = app.handle_engine_message(Message::SiteGenerationSectionDone {
+                group_id: group_id.clone(),
+                task_id,
+                result: Ok(GenerationReport::default()),
+            });
+        }
         assert!(
             app.task_manager
                 .snapshots()

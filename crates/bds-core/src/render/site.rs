@@ -269,6 +269,16 @@ fn build_site_render_artifacts_with_mode(
             &tags,
             &category_settings,
         );
+        let expanded_requested_paths = requested_paths.map(|requested| {
+            expand_requested_aggregate_paths(
+                requested,
+                &localized_posts,
+                &routes,
+                &language,
+                metadata,
+            )
+        });
+        let requested_paths = expanded_requested_paths.as_ref();
         artifacts
             .route_manifest
             .extend(routes.iter().map(|route| SitePage {
@@ -869,6 +879,86 @@ fn paginated_route_specs(
     pages
 }
 
+fn expand_requested_aggregate_paths(
+    requested: &HashSet<String>,
+    posts: &[RenderPostRecord],
+    routes: &[RouteSpec],
+    language: &str,
+    metadata: &ProjectMetadata,
+) -> HashSet<String> {
+    let mut expanded = requested.clone();
+    let root = language_root_prefix(language, metadata)
+        .trim_matches('/')
+        .to_string();
+    let prefixed = |suffix: String| {
+        if root.is_empty() {
+            suffix
+        } else {
+            format!("{root}/{suffix}")
+        }
+    };
+
+    for record in posts {
+        let post_path = format!(
+            "{}/index.html",
+            build_canonical_post_path(&record.post, language, main_language(metadata))
+                .trim_start_matches('/')
+        );
+        if !requested.contains(&post_path) {
+            continue;
+        }
+
+        let mut families = vec![root.clone()];
+        families.extend(
+            record
+                .post
+                .categories
+                .iter()
+                .map(|category| prefixed(format!("category/{}", slugify(category)))),
+        );
+        families.extend(
+            record
+                .post
+                .tags
+                .iter()
+                .map(|tag| prefixed(format!("tag/{}", slugify(tag)))),
+        );
+        if let Some(date) = Local.timestamp_millis_opt(record.post.created_at).single() {
+            families.extend([
+                prefixed(format!("{:04}", date.year())),
+                prefixed(format!("{:04}/{:02}", date.year(), date.month())),
+                prefixed(format!(
+                    "{:04}/{:02}/{:02}",
+                    date.year(),
+                    date.month(),
+                    date.day()
+                )),
+            ]);
+        }
+
+        expanded.extend(
+            routes
+                .iter()
+                .filter(|route| {
+                    families
+                        .iter()
+                        .any(|family| route_belongs_to_family(&route.relative_path, family))
+                })
+                .map(|route| route.relative_path.clone()),
+        );
+    }
+
+    expanded
+}
+
+fn route_belongs_to_family(path: &str, family: &str) -> bool {
+    if family.is_empty() {
+        path == "index.html" || path.starts_with("page/")
+    } else {
+        path == format!("{family}/index.html") || path.starts_with(&format!("{family}/page/"))
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "render inputs are existing domain data with distinct lifetimes"
@@ -1276,7 +1366,7 @@ fn should_show_list_title(
         category_settings
             .get(category)
             .map(|settings| !settings.show_title)
-            .unwrap_or(false)
+            .unwrap_or(category == "aside")
     })
 }
 

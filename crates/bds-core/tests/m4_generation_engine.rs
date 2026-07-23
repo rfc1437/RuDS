@@ -312,6 +312,7 @@ fn mixed_source_languages_use_the_main_language_at_canonical_urls() {
     let mut german_source = make_post("german-source", 1_710_086_400_000);
     german_source.language = Some("de".into());
     german_source.title = "Deutsche Quelle".into();
+    german_source.categories = vec!["aside".into()];
     write_published_snapshot(&dir, &mut german_source, "Deutscher Quelltext");
     bds_core::db::queries::post::insert_post(db.conn(), &german_source).unwrap();
     let english_translation = PostTranslation {
@@ -386,6 +387,9 @@ fn mixed_source_languages_use_the_main_language_at_canonical_urls() {
     assert!(canonical_german_source.contains("Deutscher Quelltext"));
     assert!(localized_german_source.contains("English translation body"));
     assert!(localized_fallback.contains("Unübersetzter Quelltext"));
+    let english_index = std::fs::read_to_string(output.join("en/index.html")).unwrap();
+    assert!(english_index.contains("English translation body"));
+    assert!(!english_index.contains(">English translation</a></h2>"));
     assert!(
         output
             .join("2024/03/12/german-private/index.html")
@@ -995,6 +999,87 @@ fn validation_apply_clears_unchanged_touched_post_routes() {
 
     assert!(applied.skipped_paths.contains(&relative_path.to_string()));
     assert!(repaired.stale_pages.is_empty());
+}
+
+#[test]
+fn validation_apply_expands_a_missing_post_to_its_aggregates() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.max_posts_per_page = 1;
+    let first = make_post("first", 1_710_000_000_000);
+    let second = make_post("second", 1_710_000_001_000);
+
+    generate_starter_site(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &[PublishedPostSource {
+            post: first.clone(),
+            body_markdown: "First body".into(),
+        }],
+        "en",
+    )
+    .unwrap();
+
+    let posts = vec![
+        PublishedPostSource {
+            post: first,
+            body_markdown: "First body".into(),
+        },
+        PublishedPostSource {
+            post: second,
+            body_markdown: "Second body".into(),
+        },
+    ];
+    let validation = bds_core::engine::validate_site::SiteValidationReport {
+        missing_pages: vec!["2024/03/09/second/index.html".into()],
+        extra_pages: Vec::new(),
+        stale_pages: Vec::new(),
+    };
+    let sections = sections_from_validation_report(&validation, &metadata);
+
+    apply_validation_sections(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        &validation,
+        &sections,
+    )
+    .unwrap();
+
+    for path in [
+        "index.html",
+        "category/article/index.html",
+        "tag/rust/index.html",
+        "2024/index.html",
+        "2024/03/index.html",
+        "2024/03/09/index.html",
+    ] {
+        assert!(
+            std::fs::read_to_string(dir.path().join(path))
+                .unwrap()
+                .contains("second"),
+            "aggregate {path} was not refreshed"
+        );
+    }
+    for path in [
+        "page/2/index.html",
+        "category/article/page/2/index.html",
+        "tag/rust/page/2/index.html",
+        "2024/page/2/index.html",
+        "2024/03/page/2/index.html",
+        "2024/03/09/page/2/index.html",
+    ] {
+        assert!(
+            std::fs::read_to_string(dir.path().join(path))
+                .unwrap()
+                .contains("first"),
+            "aggregate pagination {path} was not refreshed"
+        );
+    }
 }
 
 #[test]

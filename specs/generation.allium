@@ -300,7 +300,9 @@ rule ValidateSite {
 
 rule ApplyValidation {
     when: ApplyValidationRequested(project_id, sections)
-    -- Targeted re-rendering for affected report paths only. Applying an
+    -- Targeted re-rendering for affected report paths. A missing or stale post
+    -- route also re-renders every affected root, category, tag, year, month,
+    -- and day aggregate, including each aggregate's pagination. Applying an
     -- unchanged post route refreshes its tracked generation time so the
     -- automatic follow-up validation does not report it stale again.
     ensures: GenerateSiteRequested(plan_generation(project_id, sections))
@@ -310,6 +312,12 @@ rule ApplyValidation {
 invariant ArchiveDayBlocks {
     -- Archive/list pages group posts by day
     -- Each day block has a date header and the posts for that day
+}
+
+invariant CategoryListTitleVisibility {
+    -- A post title is hidden on every language's aggregate pages when any of
+    -- the post's categories has show_title disabled. The built-in aside
+    -- category defaults to title-hidden when no explicit setting exists.
 }
 
 -- ============================================================================
