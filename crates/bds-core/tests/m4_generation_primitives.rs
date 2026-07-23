@@ -6,6 +6,7 @@ use bds_core::db::queries::project::insert_project;
 use bds_core::model::{Post, PostStatus, Project};
 use bds_core::render::{
     GeneratedWriteOutcome, build_calendar_json, build_core_generation_paths, write_generated_file,
+    write_generated_file_forced,
 };
 use tempfile::TempDir;
 
@@ -95,7 +96,7 @@ fn generated_write_rewrites_missing_file_even_when_hash_matches() {
 }
 
 #[test]
-fn generated_write_rewrites_stale_file_even_when_db_hash_matches() {
+fn generated_write_trusts_the_cached_hash_like_bds2() {
     let (db, dir) = setup();
 
     let first = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
@@ -103,7 +104,23 @@ fn generated_write_rewrites_stale_file_even_when_db_hash_matches() {
     let second = write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
 
     assert_eq!(first, GeneratedWriteOutcome::Written);
-    assert_eq!(second, GeneratedWriteOutcome::Written);
+    assert_eq!(second, GeneratedWriteOutcome::SkippedUnchanged);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "tampered"
+    );
+}
+
+#[test]
+fn forced_generated_write_ignores_the_cached_hash() {
+    let (db, dir) = setup();
+
+    write_generated_file(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+    fs::write(dir.path().join("index.html"), "tampered").unwrap();
+    let forced =
+        write_generated_file_forced(db.conn(), dir.path(), "p1", "index.html", "hello").unwrap();
+
+    assert_eq!(forced, GeneratedWriteOutcome::Written);
     assert_eq!(
         fs::read_to_string(dir.path().join("index.html")).unwrap(),
         "hello"

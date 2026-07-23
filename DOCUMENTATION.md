@@ -468,13 +468,14 @@ Templates are stored as files with frontmatter metadata in the project data dire
 
 Publishing in RuDS is a staged process: publish content locally, generate or validate-and-apply site changes, commit the result, then deploy when ready.
 
-Full generation builds the entire static site. Site validation detects missing, extra, and updated routes so RuDS can re-render only what changed. This is the practical incremental workflow for most daily editorial changes.
+Full generation builds the entire static site and skips files whose tracked content hash is unchanged. Use **Blog → Force Render Site** (Command/Ctrl+Shift+R) when every generated file must be rewritten regardless of its stored hash. Site validation detects missing, extra, and updated routes so RuDS can re-render only what changed. This is the practical incremental workflow for most daily editorial changes.
 
 When blog languages are configured, generation produces language-aware route trees, per-language feeds, and alternate language metadata.
 
 ### Key takeaways
 
 - Full generation produces the complete site.
+- Force Render Site rewrites the complete site and search index without relying on stored hashes.
 - Validate and Apply is the efficient daily workflow for incremental publishing.
 - Public Base URL must be set before generation.
 - Commit generated output before deploying for recoverability.

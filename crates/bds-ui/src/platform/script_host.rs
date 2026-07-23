@@ -128,6 +128,14 @@ mod tests {
             &[serde_json::json!("new_post")],
         )
         .unwrap();
-        assert_eq!(queued.lock().unwrap().as_slice(), &[MenuAction::NewPost]);
+        handler(Arc::clone(&queued), String::new())(
+            "trigger_menu_action",
+            &[serde_json::json!("force_render_site")],
+        )
+        .unwrap();
+        assert_eq!(
+            queued.lock().unwrap().as_slice(),
+            &[MenuAction::NewPost, MenuAction::ForceRenderSite]
+        );
     }
 }

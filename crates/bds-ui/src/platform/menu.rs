@@ -8,6 +8,13 @@ use crate::app::Message;
 use crate::state::tabs::TabType;
 use bds_core::i18n::{UiLocale, translate};
 
+const BLOG_SITE_ACTIONS: [MenuAction; 4] = [
+    MenuAction::GenerateSitemap,
+    MenuAction::ForceRenderSite,
+    MenuAction::ValidateSite,
+    MenuAction::UploadSite,
+];
+
 /// Every custom menu item that the application handles.
 ///
 /// Edit commands are custom actions because Iced widgets are not native Cocoa
@@ -51,6 +58,7 @@ pub enum MenuAction {
     ValidateTranslations,
     FillMissingTranslations,
     GenerateSitemap,
+    ForceRenderSite,
     ValidateSite,
     UploadSite,
     // Help
@@ -98,6 +106,7 @@ impl MenuAction {
         MenuAction::ValidateTranslations,
         MenuAction::FillMissingTranslations,
         MenuAction::GenerateSitemap,
+        MenuAction::ForceRenderSite,
         MenuAction::ValidateSite,
         MenuAction::UploadSite,
         MenuAction::About,
@@ -142,7 +151,8 @@ impl MenuAction {
             "regenerate_calendar" => Self::RegenerateCalendar,
             "validate_translations" => Self::ValidateTranslations,
             "fill_missing_translations" => Self::FillMissingTranslations,
-            "generate_sitemap" | "force_render_site" => Self::GenerateSitemap,
+            "generate_sitemap" => Self::GenerateSitemap,
+            "force_render_site" => Self::ForceRenderSite,
             "validate_site" => Self::ValidateSite,
             "upload_site" => Self::UploadSite,
             "about" => Self::About,
@@ -189,6 +199,7 @@ impl MenuAction {
             Self::ValidateTranslations => "menu.item.validateTranslations",
             Self::FillMissingTranslations => "menu.item.fillMissingTranslations",
             Self::GenerateSitemap => "menu.item.generateSitemap",
+            Self::ForceRenderSite => "menu.item.forceRenderSite",
             Self::ValidateSite => "menu.item.validateSite",
             Self::UploadSite => "menu.item.uploadSite",
             Self::About => "menu.item.about",
@@ -231,6 +242,7 @@ pub(crate) fn action_enabled(
                 | MenuAction::ValidateTranslations
                 | MenuAction::FillMissingTranslations
                 | MenuAction::GenerateSitemap
+                | MenuAction::ForceRenderSite
                 | MenuAction::ValidateSite
                 | MenuAction::UploadSite
         );
@@ -264,6 +276,7 @@ pub(crate) fn action_enabled(
         | MenuAction::ValidateTranslations
         | MenuAction::FillMissingTranslations
         | MenuAction::GenerateSitemap
+        | MenuAction::ForceRenderSite
         | MenuAction::ValidateSite => has_project,
         _ => true,
     }
@@ -531,30 +544,22 @@ pub fn build_menu_bar(locale: UiLocale) -> (Menu, MenuRegistry) {
         None,
     ));
     let _ = blog_menu.append(&PredefinedMenuItem::separator());
-    let _ = blog_menu.append(&item(
-        &mut reg,
-        MenuAction::GenerateSitemap,
-        locale,
-        Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyR)),
-    ));
-    let _ = blog_menu.append(&item(
-        &mut reg,
-        MenuAction::ValidateSite,
-        locale,
-        Some(Accelerator::new(
-            Some(CMD_OR_CTRL | Modifiers::SHIFT),
-            Code::KeyL,
-        )),
-    ));
-    let _ = blog_menu.append(&item(
-        &mut reg,
-        MenuAction::UploadSite,
-        locale,
-        Some(Accelerator::new(
-            Some(CMD_OR_CTRL | Modifiers::SHIFT),
-            Code::KeyU,
-        )),
-    ));
+    for action in BLOG_SITE_ACTIONS {
+        let accelerator = match action {
+            MenuAction::GenerateSitemap => Accelerator::new(Some(CMD_OR_CTRL), Code::KeyR),
+            MenuAction::ForceRenderSite => {
+                Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyR)
+            }
+            MenuAction::ValidateSite => {
+                Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyL)
+            }
+            MenuAction::UploadSite => {
+                Accelerator::new(Some(CMD_OR_CTRL | Modifiers::SHIFT), Code::KeyU)
+            }
+            _ => unreachable!("site action list contains only site actions"),
+        };
+        let _ = blog_menu.append(&item(&mut reg, action, locale, Some(accelerator)));
+    }
 
     // -- Help --
     let help_menu = Submenu::new(translate(locale, "menu.group.help"), true);
@@ -678,6 +683,24 @@ mod tests {
             let key = action.i18n_key();
             assert!(seen.insert(key), "duplicate i18n key: {key}");
         }
+    }
+
+    #[test]
+    fn force_render_script_action_is_distinct_from_normal_render() {
+        assert_eq!(
+            MenuAction::from_script_name("force_render_site"),
+            Some(MenuAction::ForceRenderSite)
+        );
+    }
+
+    #[test]
+    fn force_render_is_immediately_below_normal_render_in_the_blog_menu() {
+        let normal = BLOG_SITE_ACTIONS
+            .iter()
+            .position(|action| *action == MenuAction::GenerateSitemap)
+            .unwrap();
+
+        assert_eq!(BLOG_SITE_ACTIONS[normal + 1], MenuAction::ForceRenderSite);
     }
 
     #[test]

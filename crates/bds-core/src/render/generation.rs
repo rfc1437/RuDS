@@ -30,12 +30,69 @@ pub fn write_generated_file(
     relative_path: &str,
     content: &str,
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    write_generated_file_with_mode(
+        conn,
+        output_dir,
+        project_id,
+        relative_path,
+        content,
+        false,
+        false,
+    )
+}
+
+pub fn write_generated_file_verified(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &str,
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    write_generated_file_with_mode(
+        conn,
+        output_dir,
+        project_id,
+        relative_path,
+        content,
+        false,
+        true,
+    )
+}
+
+pub fn write_generated_file_forced(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &str,
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    write_generated_file_with_mode(
+        conn,
+        output_dir,
+        project_id,
+        relative_path,
+        content,
+        true,
+        false,
+    )
+}
+
+fn write_generated_file_with_mode(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &str,
+    force: bool,
+    verify_output: bool,
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content.as_bytes());
     let target_path = output_dir.join(relative_path);
-    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
+    if !force
+        && let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
         && existing.content_hash == hash
         && target_path.exists()
-        && file_hash(&target_path)? == hash
+        && (!verify_output || file_hash(&target_path)? == hash)
     {
         return Ok(GeneratedWriteOutcome::SkippedUnchanged);
     }
@@ -65,12 +122,33 @@ pub fn write_generated_bytes(
     relative_path: &str,
     content: &[u8],
 ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    write_generated_bytes_with_force(conn, output_dir, project_id, relative_path, content, false)
+}
+
+pub fn write_generated_bytes_forced(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &[u8],
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    write_generated_bytes_with_force(conn, output_dir, project_id, relative_path, content, true)
+}
+
+fn write_generated_bytes_with_force(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    relative_path: &str,
+    content: &[u8],
+    force: bool,
+) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
     let hash = content_hash(content);
     let target_path = output_dir.join(relative_path);
-    if let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
+    if !force
+        && let Ok(existing) = qhash::get_generated_file_hash(conn, project_id, relative_path)
         && existing.content_hash == hash
         && target_path.exists()
-        && file_hash(&target_path)? == hash
     {
         return Ok(GeneratedWriteOutcome::SkippedUnchanged);
     }

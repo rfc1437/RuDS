@@ -144,6 +144,7 @@ impl BdsApp {
                 )
             }
             Message::GenerateSite => self.queue_site_generation(None),
+            Message::ForceGenerateSite => self.queue_forced_site_generation(),
             Message::RunMetadataDiff => {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 self.start_metadata_diff()
@@ -311,19 +312,22 @@ impl BdsApp {
                     Err(error) => {
                         self.task_manager.fail(task_id, error.clone());
                         self.task_manager.cancel_group(&group_id);
-                        if let Some(workflow) = self.site_generation_workflows.remove(&group_id)
-                            && workflow.kind == SiteGenerationKind::Validation
+                        let workflow = self.site_generation_workflows.remove(&group_id);
+                        if workflow
+                            .as_ref()
+                            .is_some_and(|workflow| workflow.kind == SiteGenerationKind::Validation)
                         {
                             self.site_validation_state.is_applying = false;
                             self.site_validation_state.error_message = Some(error.clone());
                         }
+                        let operation = workflow.map_or_else(
+                            || t(self.ui_locale, "engine.renderSiteGroup"),
+                            |workflow| workflow.group_name,
+                        );
                         let message = tw(
                             self.ui_locale,
                             "common.operationFailed",
-                            &[
-                                ("operation", &t(self.ui_locale, "engine.renderSiteGroup")),
-                                ("error", &error),
-                            ],
+                            &[("operation", &operation), ("error", &error)],
                         );
                         self.notify(ToastLevel::Error, &message);
                         self.refresh_task_snapshots();

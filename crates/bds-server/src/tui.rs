@@ -2843,7 +2843,7 @@ impl TuiApp {
                     let db = Database::open(&database_path)?;
                     let metadata = engine::meta::read_project_json(&data_dir)?;
                     let posts = published_sources(db.conn(), &data_dir, &project_id)?;
-                    let report = engine::generation::generate_starter_site(
+                    let report = engine::generation::generate_starter_site_forced(
                         db.conn(),
                         &data_dir.join("html"),
                         &project_id,

@@ -521,17 +521,26 @@ fn render(db: &Database, incremental: bool, force: bool) -> Result<CommandOutput
             json!({"written": report.written_paths.len(), "skipped": report.skipped_paths.len(), "deleted": report.deleted_paths.len()}),
         ));
     }
-    if force {
-        engine::generation::clear_generation_cache(db.conn(), &project.id)?;
-    }
-    let report = engine::generation::generate_starter_site(
-        db.conn(),
-        &output_dir,
-        &project.id,
-        &metadata,
-        &posts,
-        metadata.main_language.as_deref().unwrap_or("en"),
-    )?;
+    let language = metadata.main_language.as_deref().unwrap_or("en");
+    let report = if force {
+        engine::generation::generate_starter_site_forced(
+            db.conn(),
+            &output_dir,
+            &project.id,
+            &metadata,
+            &posts,
+            language,
+        )?
+    } else {
+        engine::generation::generate_starter_site(
+            db.conn(),
+            &output_dir,
+            &project.id,
+            &metadata,
+            &posts,
+            language,
+        )?
+    };
     Ok(output(
         "Site rendered",
         json!({"written": report.written_paths.len(), "skipped": report.skipped_paths.len(), "deleted": report.deleted_paths.len(), "force": force}),
@@ -1538,7 +1547,29 @@ mod tests {
         metadata.semantic_similarity_enabled = false;
         engine::meta::write_project_json(&fixture.project_dir, &metadata).unwrap();
         fixture.run(&["render"], "").unwrap();
+        let db = open_database(&fixture.database_path).unwrap();
+        let (project, _) = active_project(&db).unwrap();
+        bds_core::db::queries::generated_file_hash::upsert_generated_file_hash(
+            db.conn(),
+            &bds_core::model::GeneratedFileHash {
+                project_id: project.id.clone(),
+                relative_path: "legacy-output.txt".into(),
+                content_hash: "legacy".into(),
+                updated_at: 42,
+            },
+        )
+        .unwrap();
+        drop(db);
         fixture.run(&["render", "--force"], "").unwrap();
+        let db = open_database(&fixture.database_path).unwrap();
+        assert!(
+            bds_core::db::queries::generated_file_hash::get_generated_file_hash(
+                db.conn(),
+                &project.id,
+                "legacy-output.txt",
+            )
+            .is_ok()
+        );
         fixture.run(&["render", "--incremental"], "").unwrap();
         assert!(fixture.project_dir.join("html/index.html").is_file());
 

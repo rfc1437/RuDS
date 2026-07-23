@@ -37,8 +37,22 @@ impl BdsApp {
         &mut self,
         validation: Option<engine::validate_site::SiteValidationReport>,
     ) -> Task<Message> {
+        self.queue_site_generation_mode(validation, false)
+    }
+
+    pub(super) fn queue_forced_site_generation(&mut self) -> Task<Message> {
+        self.queue_site_generation_mode(None, true)
+    }
+
+    fn queue_site_generation_mode(
+        &mut self,
+        validation: Option<engine::validate_site::SiteValidationReport>,
+        force: bool,
+    ) -> Task<Message> {
         let kind = if validation.is_some() {
             SiteGenerationKind::Validation
+        } else if force {
+            SiteGenerationKind::Forced
         } else {
             SiteGenerationKind::Full
         };
@@ -94,10 +108,10 @@ impl BdsApp {
         let group_id = format!("site-generation:{}", Uuid::new_v4());
         let group_name = t(
             self.ui_locale,
-            if kind == SiteGenerationKind::Full {
-                "engine.renderSiteGroup"
-            } else {
-                "engine.applyValidationGroup"
+            match kind {
+                SiteGenerationKind::Full => "engine.renderSiteGroup",
+                SiteGenerationKind::Forced => "engine.forceRenderSiteGroup",
+                SiteGenerationKind::Validation => "engine.applyValidationGroup",
             },
         );
         let mut render_task_ids = Vec::new();
@@ -128,6 +142,7 @@ impl BdsApp {
                             task_id,
                             section,
                             task_validation,
+                            force,
                             locale,
                         )
                     })
@@ -189,33 +204,46 @@ impl BdsApp {
                     let output_dir = workflow.data_dir.join("html");
                     let progress_manager = Arc::clone(&task_manager);
                     let cancel_manager = Arc::clone(&task_manager);
-                    engine::generation::build_site_search_index_with_progress(
-                        db.conn(),
-                        &output_dir,
-                        &workflow.project_id,
-                        &metadata,
-                        move |current, total, path| {
-                            let progress = if total == 0 {
-                                1.0
-                            } else {
-                                current as f32 / total as f32
-                            };
-                            progress_manager.report_progress(
-                                task_id,
-                                Some(progress),
-                                Some(tw(
-                                    locale,
-                                    "engine.builtSearchFile",
-                                    &[
-                                        ("path", path),
-                                        ("current", &current.to_string()),
-                                        ("total", &total.to_string()),
-                                    ],
-                                )),
-                            );
-                        },
-                        move || cancel_manager.is_cancelled(task_id),
-                    )
+                    let on_file = move |current: usize, total: usize, path: &str| {
+                        let progress = if total == 0 {
+                            1.0
+                        } else {
+                            current as f32 / total as f32
+                        };
+                        progress_manager.report_progress(
+                            task_id,
+                            Some(progress),
+                            Some(tw(
+                                locale,
+                                "engine.builtSearchFile",
+                                &[
+                                    ("path", path),
+                                    ("current", &current.to_string()),
+                                    ("total", &total.to_string()),
+                                ],
+                            )),
+                        );
+                    };
+                    let is_cancelled = move || cancel_manager.is_cancelled(task_id);
+                    if workflow.kind == SiteGenerationKind::Forced {
+                        engine::generation::build_site_search_index_forced_with_progress(
+                            db.conn(),
+                            &output_dir,
+                            &workflow.project_id,
+                            &metadata,
+                            on_file,
+                            is_cancelled,
+                        )
+                    } else {
+                        engine::generation::build_site_search_index_with_progress(
+                            db.conn(),
+                            &output_dir,
+                            &workflow.project_id,
+                            &metadata,
+                            on_file,
+                            is_cancelled,
+                        )
+                    }
                     .map_err(|error| error.to_string())
                 })
                 .await
@@ -422,6 +450,7 @@ fn run_site_generation_section(
     task_id: TaskId,
     section: engine::generation::GenerationSection,
     validation: Option<engine::validate_site::SiteValidationReport>,
+    force: bool,
     locale: UiLocale,
 ) -> Result<engine::generation::GenerationReport, String> {
     if !task_manager.wait_until_runnable(task_id) {
@@ -483,6 +512,16 @@ fn run_site_generation_section(
             &metadata,
             &sources,
             &validation,
+            section,
+            on_page,
+            is_cancelled,
+        ),
+        None if force => engine::generation::render_site_section_forced_with_progress(
+            db.conn(),
+            &output_dir,
+            &project_id,
+            &metadata,
+            &sources,
             section,
             on_page,
             is_cancelled,

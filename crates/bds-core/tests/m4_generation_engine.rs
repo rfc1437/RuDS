@@ -6,7 +6,8 @@ use bds_core::db::queries::template::insert_template;
 use bds_core::engine::generation::{
     GenerationSection, PublishedPostSource, apply_validation_section_with_progress,
     apply_validation_sections, build_site_search_index, generate_starter_site,
-    load_published_post_source, render_site_section_with_progress, sections_from_validation_report,
+    generate_starter_site_forced, load_published_post_source, render_site_section_with_progress,
+    sections_from_validation_report,
 };
 use bds_core::engine::meta::write_category_meta_json;
 use bds_core::engine::validate_site::validate_site;
@@ -739,6 +740,61 @@ fn generation_engine_skips_unchanged_outputs_on_second_run() {
         second
             .skipped_paths
             .contains(&"assets/pico.min.css".to_string())
+    );
+}
+
+#[test]
+fn forced_generation_rewrites_unchanged_outputs_without_erasing_unrelated_cache_records() {
+    let (db, dir) = setup();
+    let metadata = make_metadata();
+    let posts = vec![PublishedPostSource {
+        post: make_post("hello", 1_710_000_000_000),
+        body_markdown: "Hello **world**".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    let unchanged =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    assert!(unchanged.skipped_paths.contains(&"index.html".to_string()));
+    std::fs::write(dir.path().join("index.html"), "tampered").unwrap();
+    let normal_after_drift =
+        generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+    assert!(
+        normal_after_drift
+            .skipped_paths
+            .contains(&"index.html".to_string())
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "tampered"
+    );
+    bds_core::db::queries::generated_file_hash::upsert_generated_file_hash(
+        db.conn(),
+        &bds_core::model::GeneratedFileHash {
+            project_id: "p1".into(),
+            relative_path: "legacy-output.txt".into(),
+            content_hash: "legacy".into(),
+            updated_at: 42,
+        },
+    )
+    .unwrap();
+
+    let forced =
+        generate_starter_site_forced(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+
+    assert!(forced.written_paths.contains(&"index.html".to_string()));
+    assert!(forced.skipped_paths.is_empty());
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "tampered"
+    );
+    assert!(
+        bds_core::db::queries::generated_file_hash::get_generated_file_hash(
+            db.conn(),
+            "p1",
+            "legacy-output.txt",
+        )
+        .is_ok()
     );
 }
 

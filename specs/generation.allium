@@ -17,6 +17,13 @@ surface GenerationControlSurface {
         GenerateSiteRequested(generation)
         ValidateSiteRequested(project)
         ApplyValidationRequested(project_id, sections)
+
+    @guarantee FullRenderCommands
+        -- Blog > Render Site (Ctrl/Cmd+R) performs a change-aware full render.
+        -- Force Render Site is immediately below it (Ctrl/Cmd+Shift+R) and
+        -- performs the same five sections plus Pagefind with force=true.
+        -- The headless CLI `render [--force]` and TUI `force-render` command
+        -- use the same shared generation behavior.
 }
 
 surface GenerationRuntimeSurface {
@@ -65,6 +72,7 @@ entity SiteGeneration {
     max_posts_per_page: Integer
     pico_theme: String?
     sections: Set<GenerationSection>
+    force: Boolean
 
     -- Output tracking
     generated_files: GeneratedFile with project_id = this.project_id
@@ -102,9 +110,23 @@ invariant GenerationPublishedOnly {
 }
 
 invariant IncrementalByContentHash {
-    -- Files are only written when content_hash changes
-    -- generatedFileHashes table tracks (projectId, relativePath, contentHash)
-    -- A file with unchanged hash is skipped on regeneration
+    -- For a normal full render, files are only written when content_hash
+    -- changes or the output file is missing. generatedFileHashes tracks
+    -- (projectId, relativePath, contentHash). A matching stored hash and an
+    -- existing output file skip the write without hashing or reading output.
+}
+
+invariant ForcedFullRender {
+    -- force=true renders the same complete section set and Pagefind index as
+    -- normal full render, but ignores stored hashes and atomically rewrites
+    -- every output. Each rewritten output upserts its current hash and time;
+    -- unrelated cache records are not deleted as a shortcut.
+}
+
+rule SelectFullRenderWriteMode {
+    when: GenerateSiteRequested(generation)
+    requires: generation.force
+    ensures: StoredContentHashesIgnored(generation.project_id)
 }
 
 invariant MultiLanguageRoutes {

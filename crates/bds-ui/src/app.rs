@@ -258,6 +258,7 @@ pub enum Message {
     ),
     ValidateMedia,
     GenerateSite,
+    ForceGenerateSite,
     RunMetadataDiff,
     MetadataDiffLoaded(Result<engine::metadata_diff::DiffReport, String>),
     RepairMetadataDiffItem {
@@ -428,6 +429,7 @@ pub enum Message {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SiteGenerationKind {
     Full,
+    Forced,
     Validation,
 }
 
@@ -2839,6 +2841,7 @@ impl BdsApp {
             | Message::TranslationValidationLoaded(_)
             | Message::ValidateMedia
             | Message::GenerateSite
+            | Message::ForceGenerateSite
             | Message::RunMetadataDiff
             | Message::MetadataDiffLoaded(_)
             | Message::RepairMetadataDiffItem { .. }
@@ -4444,6 +4447,7 @@ impl BdsApp {
                 )
             }
             MenuAction::GenerateSitemap => Task::done(Message::GenerateSite),
+            MenuAction::ForceRenderSite => Task::done(Message::ForceGenerateSite),
             MenuAction::ValidateSite => {
                 self.open_singleton_tab(TabType::SiteValidation, "tabBar.siteValidation");
                 self.start_site_validation()
@@ -10137,7 +10141,7 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, active_post_tab_id, dropped_image_target,
+        PostStatus, SettingsMsg, SiteGenerationKind, active_post_tab_id, dropped_image_target,
         flush_embeddings_and_exit, localize_chat_error, month_abbreviation,
         persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
         persist_post_editor_state_impl, remote_error_closes_connection,
@@ -11212,6 +11216,28 @@ mod tests {
                 .map(|task| task.status.clone())
                 .collect::<Vec<_>>(),
             vec![Running, Running, Running, Pending, Pending]
+        );
+    }
+
+    #[test]
+    fn forced_generation_uses_its_own_full_site_task_group() {
+        let (db, project, tmp) = setup();
+        enable_generation(&tmp);
+        let mut app = make_app(db, project, &tmp);
+
+        let _task = app.handle_engine_message(Message::ForceGenerateSite);
+        let snapshots = app.task_manager.snapshots();
+
+        assert_eq!(snapshots.len(), 5);
+        assert!(
+            snapshots
+                .iter()
+                .all(|task| { task.group_name.as_deref() == Some("Force Render Site") })
+        );
+        let group_id = snapshots[0].group_id.as_ref().unwrap();
+        assert_eq!(
+            app.site_generation_workflows[group_id].kind,
+            SiteGenerationKind::Forced
         );
     }
 

@@ -15,7 +15,8 @@ use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
     GeneratedWriteOutcome, PostLanguageVariant, build_calendar_json, build_canonical_post_path,
     build_site_section_render_artifacts, build_targeted_site_section_render_artifacts,
-    select_post_language_variant, write_generated_bytes, write_generated_file,
+    select_post_language_variant, write_generated_bytes, write_generated_bytes_forced,
+    write_generated_file, write_generated_file_forced, write_generated_file_verified,
 };
 
 #[derive(Debug, Clone)]
@@ -102,18 +103,24 @@ pub fn generate_starter_site(
     )
 }
 
-/// Forget stored generated-file hashes so the next render writes every
-/// artifact while repopulating the cache with its current content hash.
-pub fn clear_generation_cache(conn: &Connection, project_id: &str) -> EngineResult<usize> {
-    use crate::db::schema::generated_file_hashes;
-    use diesel::prelude::*;
-
-    Ok(conn.with(|connection| {
-        diesel::delete(
-            generated_file_hashes::table.filter(generated_file_hashes::project_id.eq(project_id)),
-        )
-        .execute(connection)
-    })?)
+pub fn generate_starter_site_forced(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    language: &str,
+) -> EngineResult<GenerationReport> {
+    generate_starter_site_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        posts,
+        language,
+        true,
+        |_current, _total, _path| {},
+    )
 }
 
 pub fn generate_starter_site_with_progress(
@@ -123,23 +130,49 @@ pub fn generate_starter_site_with_progress(
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
     _language: &str,
+    on_page: impl FnMut(usize, usize, &str),
+) -> EngineResult<GenerationReport> {
+    generate_starter_site_with_progress_mode(
+        conn, output_dir, project_id, metadata, posts, _language, false, on_page,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "full generation adds write mode to the existing generation context"
+)]
+fn generate_starter_site_with_progress_mode(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    _language: &str,
+    force: bool,
     mut on_page: impl FnMut(usize, usize, &str),
 ) -> EngineResult<GenerationReport> {
     let mut report = GenerationReport::default();
     for section in GenerationSection::ALL {
-        report.append(render_site_section_with_progress(
+        report.append(render_site_section_with_progress_mode(
             conn,
             output_dir,
             project_id,
             metadata,
             posts,
             section,
+            force,
             &mut on_page,
             || false,
         )?);
     }
-    report.append(build_site_search_index(
-        conn, output_dir, project_id, metadata,
+    report.append(build_site_search_index_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        force,
+        |_current, _total, _path| {},
+        || false,
     )?);
     Ok(report)
 }
@@ -155,6 +188,61 @@ pub fn render_site_section_with_progress(
     metadata: &ProjectMetadata,
     posts: &[PublishedPostSource],
     section: GenerationSection,
+    mut on_page: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    render_site_section_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        posts,
+        section,
+        false,
+        &mut on_page,
+        &mut is_cancelled,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "forced section rendering adds write mode to the existing generation context"
+)]
+pub fn render_site_section_forced_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    section: GenerationSection,
+    mut on_page: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    render_site_section_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        posts,
+        section,
+        true,
+        &mut on_page,
+        &mut is_cancelled,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "section rendering uses the existing generation context, write mode, and callbacks"
+)]
+fn render_site_section_with_progress_mode(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    posts: &[PublishedPostSource],
+    section: GenerationSection,
+    force: bool,
     mut on_page: impl FnMut(usize, usize, &str),
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
@@ -188,6 +276,8 @@ pub fn render_site_section_with_progress(
             &page.relative_path,
             &page.html,
             &mut report,
+            force,
+            false,
         )?;
         on_page(index + 1, total_pages, &page.url_path);
     }
@@ -204,6 +294,8 @@ pub fn render_site_section_with_progress(
             None,
             &mut report,
             &mut is_cancelled,
+            force,
+            false,
         )?;
     }
     Ok(report)
@@ -345,6 +437,8 @@ pub fn apply_validation_section_with_progress(
             &page.relative_path,
             &page.html,
             &mut report,
+            false,
+            true,
         )?;
         on_page(index + 1, total_pages, &page.url_path);
     }
@@ -361,6 +455,8 @@ pub fn apply_validation_section_with_progress(
             (!fallback).then_some(&requested),
             &mut report,
             &mut is_cancelled,
+            false,
+            true,
         )?;
     }
 
@@ -415,9 +511,11 @@ fn write_core_outputs(
     requested: Option<&HashSet<String>>,
     report: &mut GenerationReport,
     is_cancelled: &mut impl FnMut() -> bool,
+    force: bool,
+    verify_output: bool,
 ) -> EngineResult<()> {
     if requested.is_none() {
-        write_bundled_site_assets(conn, output_dir, project_id, report)?;
+        write_bundled_site_assets(conn, output_dir, project_id, report, force)?;
     }
     let mut outputs = vec![(
         "calendar.json".to_string(),
@@ -483,12 +581,25 @@ fn write_core_outputs(
             return Err(EngineError::Validation("cancelled".to_string()));
         }
         if requested.is_none_or(|requested| requested.contains(&path)) {
-            write_out(conn, output_dir, project_id, &path, &content, report)?;
+            write_out(
+                conn,
+                output_dir,
+                project_id,
+                &path,
+                &content,
+                report,
+                force,
+                verify_output,
+            )?;
         }
     }
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "generated output needs its render context, report, and write mode"
+)]
 fn write_out(
     conn: &Connection,
     output_dir: &Path,
@@ -496,10 +607,18 @@ fn write_out(
     relative_path: &str,
     content: &str,
     report: &mut GenerationReport,
+    force: bool,
+    verify_output: bool,
 ) -> EngineResult<()> {
-    match write_generated_file(conn, output_dir, project_id, relative_path, content)
-        .map_err(|error| EngineError::Parse(error.to_string()))?
-    {
+    let outcome = if force {
+        write_generated_file_forced(conn, output_dir, project_id, relative_path, content)
+    } else if verify_output {
+        write_generated_file_verified(conn, output_dir, project_id, relative_path, content)
+    } else {
+        write_generated_file(conn, output_dir, project_id, relative_path, content)
+    }
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
+    match outcome {
         GeneratedWriteOutcome::Written => report.written_paths.push(relative_path.to_string()),
         GeneratedWriteOutcome::SkippedUnchanged => {
             report.skipped_paths.push(relative_path.to_string())
@@ -524,11 +643,50 @@ pub fn build_site_search_index(
     )
 }
 
+pub fn build_site_search_index_forced_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    on_file: impl FnMut(usize, usize, &str),
+    is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    build_site_search_index_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        true,
+        on_file,
+        is_cancelled,
+    )
+}
+
 pub fn build_site_search_index_with_progress(
     conn: &Connection,
     output_dir: &Path,
     project_id: &str,
     metadata: &ProjectMetadata,
+    mut on_file: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    build_site_search_index_with_progress_mode(
+        conn,
+        output_dir,
+        project_id,
+        metadata,
+        false,
+        &mut on_file,
+        &mut is_cancelled,
+    )
+}
+
+fn build_site_search_index_with_progress_mode(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    force: bool,
     mut on_file: impl FnMut(usize, usize, &str),
     mut is_cancelled: impl FnMut() -> bool,
 ) -> EngineResult<GenerationReport> {
@@ -639,9 +797,13 @@ pub fn build_site_search_index_with_progress(
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        match write_generated_bytes(conn, output_dir, project_id, &relative, &contents)
-            .map_err(|error| EngineError::Parse(error.to_string()))?
-        {
+        let outcome = if force {
+            write_generated_bytes_forced(conn, output_dir, project_id, &relative, &contents)
+        } else {
+            write_generated_bytes(conn, output_dir, project_id, &relative, &contents)
+        }
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+        match outcome {
             GeneratedWriteOutcome::Written => report.written_paths.push(relative.clone()),
             GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative.clone()),
         }

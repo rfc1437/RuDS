@@ -257,17 +257,28 @@ pub(crate) fn write_bundled_site_assets(
     output_dir: &Path,
     project_id: &str,
     report: &mut crate::engine::generation::GenerationReport,
+    force: bool,
 ) -> EngineResult<()> {
     for asset in BUNDLED_SITE_ASSETS {
-        match write_generated_bytes(
-            conn,
-            output_dir,
-            project_id,
-            asset.relative_path,
-            asset.bytes,
-        )
-        .map_err(|error| EngineError::Parse(error.to_string()))?
-        {
+        let outcome = if force {
+            crate::render::write_generated_bytes_forced(
+                conn,
+                output_dir,
+                project_id,
+                asset.relative_path,
+                asset.bytes,
+            )
+        } else {
+            write_generated_bytes(
+                conn,
+                output_dir,
+                project_id,
+                asset.relative_path,
+                asset.bytes,
+            )
+        }
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+        match outcome {
             GeneratedWriteOutcome::Written => {
                 report.written_paths.push(asset.relative_path.to_string())
             }

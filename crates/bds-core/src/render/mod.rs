@@ -8,7 +8,8 @@ mod template_lookup;
 
 pub use generation::{
     CalendarArchiveData, GeneratedWriteOutcome, build_calendar_json, build_core_generation_paths,
-    write_generated_bytes, write_generated_file,
+    write_generated_bytes, write_generated_bytes_forced, write_generated_file,
+    write_generated_file_forced, write_generated_file_verified,
 };
 pub use markdown::render_markdown_to_html;
 pub use page_renderer::{RenderError, render_liquid_template};
