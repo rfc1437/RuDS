@@ -1,5 +1,18 @@
 use super::*;
 
+const TASK_URL_MAX_CHARS: usize = 60;
+
+fn shorten_task_url(url: &str) -> String {
+    if url.chars().count() <= TASK_URL_MAX_CHARS {
+        url.to_string()
+    } else {
+        format!(
+            "{}…",
+            url.chars().take(TASK_URL_MAX_CHARS - 1).collect::<String>()
+        )
+    }
+}
+
 impl BdsApp {
     pub(super) fn refresh_task_snapshots(&mut self) {
         self.task_snapshots = self
@@ -524,6 +537,7 @@ fn run_site_generation_section(
     let on_page = |_current: usize, _total: usize, _url: &str| {};
     let on_rendered = move |url: &str| {
         let current = rendered_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let url = shorten_task_url(url);
         render_manager.report_progress(
             task_id,
             Some(if expected_pages == 0 {
@@ -535,7 +549,7 @@ fn run_site_generation_section(
                 locale,
                 "engine.renderingPage",
                 &[
-                    ("url", url),
+                    ("url", &url),
                     ("current", &current.to_string()),
                     ("total", &expected_pages.to_string()),
                 ],
@@ -580,4 +594,17 @@ fn run_site_generation_section(
         ),
     }
     .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shorten_task_url;
+
+    #[test]
+    fn task_urls_stay_single_line_without_splitting_unicode() {
+        assert_eq!(shorten_task_url("/short"), "/short");
+        let shortened = shorten_task_url(&format!("/{}", "ä".repeat(80)));
+        assert_eq!(shortened.chars().count(), 60);
+        assert!(shortened.ends_with('…'));
+    }
 }
