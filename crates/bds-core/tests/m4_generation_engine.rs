@@ -782,12 +782,16 @@ fn site_validation_detects_missing_zero_byte_and_extra_index_routes() {
     std::fs::write(dir.path().join("index.html"), "").unwrap();
     let extra = dir.path().join("ghost/index.html");
     std::fs::create_dir_all(extra.parent().unwrap()).unwrap();
-    std::fs::write(extra, "ghost").unwrap();
+    std::fs::write(&extra, "ghost").unwrap();
+    let zero_byte_extra = dir.path().join("empty/index.html");
+    std::fs::create_dir_all(zero_byte_extra.parent().unwrap()).unwrap();
+    std::fs::write(&zero_byte_extra, "").unwrap();
 
     let report = validate_site(db.conn(), dir.path(), "p1").unwrap();
 
     assert!(report.missing_pages.contains(&"index.html".to_string()));
     assert!(report.extra_pages.contains(&"ghost/index.html".to_string()));
+    assert!(report.extra_pages.contains(&"empty/index.html".to_string()));
 }
 
 #[test]

@@ -45,19 +45,24 @@ pub fn validate_site(
         .collect::<HashSet<_>>();
 
     let mut actual = HashSet::new();
+    let mut zero_byte = HashSet::new();
     if output_dir.exists() {
         for entry in WalkDir::new(&output_dir).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file() || entry.file_name() != "index.html" {
                 continue;
             }
+            let path = relative_path(&output_dir, entry.path());
             if entry.metadata().is_ok_and(|metadata| metadata.len() > 0) {
-                actual.insert(relative_path(&output_dir, entry.path()));
+                actual.insert(path);
+            } else {
+                zero_byte.insert(path);
             }
         }
     }
 
     let mut missing_pages = expected.difference(&actual).cloned().collect::<Vec<_>>();
     let mut extra_pages = actual.difference(&expected).cloned().collect::<Vec<_>>();
+    extra_pages.extend(zero_byte.difference(&expected).cloned());
     let generated_at = queries::generated_file_hash::list_generated_file_hashes(conn, project_id)?
         .into_iter()
         .map(|file| (file.relative_path, file.updated_at))
@@ -74,6 +79,7 @@ pub fn validate_site(
 
     missing_pages.sort();
     extra_pages.sort();
+    extra_pages.dedup();
     stale_pages.sort();
     stale_pages.dedup();
 

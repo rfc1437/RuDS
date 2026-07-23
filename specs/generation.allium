@@ -267,7 +267,8 @@ rule ValidateSite {
     --   expected: sitemap-eligible routes derived from published snapshots
     --   actual: non-empty **/index.html files on disk
     --   missing: expected routes with no non-empty index.html
-    --   extra: non-empty index.html routes absent from the expected set
+    --   extra: index.html routes absent from the expected set, including
+    --          zero-byte files
     --   stale: existing post routes whose source mtime is more than one second
     --          newer than both the output mtime and tracked generation time
     -- Standalone HTML, XML, JSON, assets, Pagefind files, and content hashes are

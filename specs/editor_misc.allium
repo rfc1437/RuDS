@@ -450,7 +450,8 @@ surface SiteValidationSurface {
 rule SiteValidationScan {
     when: SiteValidationScanRequested()
     -- Parses <loc> entries from sitemap.xml into expected URL set
-    -- Scans HTML output dir for index.html files (zero-byte = missing)
+    -- Scans HTML output dir for index.html files (an expected zero-byte route
+    -- is missing; an unexpected zero-byte route is extra)
     -- Compares source .md mtime against generated HTML mtime
     ensures: SiteValidationReport
 }
