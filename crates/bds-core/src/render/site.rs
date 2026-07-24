@@ -921,9 +921,7 @@ fn build_language_routes(
         let slug = slugify(&category);
         let display_name = category_settings
             .get(&category)
-            .and_then(|settings| settings.title.as_deref())
-            .map(str::trim)
-            .filter(|title| !title.is_empty())
+            .and_then(|settings| settings.title_for(language, main_language(metadata)))
             .unwrap_or(&category);
         routes.extend(paginated_route_specs(
             &records,

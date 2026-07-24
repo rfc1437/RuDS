@@ -1234,7 +1234,6 @@ pub fn view(
             let sections: &[(&str, Option<SettingsSection>)] = &[
                 ("settings.nav.project", Some(SettingsSection::Project)),
                 ("settings.nav.editor", Some(SettingsSection::Editor)),
-                ("settings.nav.content", Some(SettingsSection::Content)),
                 ("settings.nav.ai", Some(SettingsSection::AI)),
                 ("settings.nav.technology", Some(SettingsSection::Technology)),
                 ("settings.nav.publishing", Some(SettingsSection::Publishing)),
@@ -1269,21 +1268,31 @@ pub fn view(
             iced::widget::Column::with_children(items).spacing(1).into()
         }
         SidebarView::Tags => {
-            // Per sidebar_views.allium TagsNav: 3 fixed-order sections
-            let sections = ["tags.nav.cloud", "tags.nav.manage", "tags.nav.merge"];
+            let sections = [
+                (
+                    "tags.nav.cloud",
+                    crate::views::tags_view::TagsSection::Cloud,
+                ),
+                (
+                    "tags.nav.manage",
+                    crate::views::tags_view::TagsSection::Manage,
+                ),
+                (
+                    "tags.nav.merge",
+                    crate::views::tags_view::TagsSection::Merge,
+                ),
+                (
+                    "tags.nav.categories",
+                    crate::views::tags_view::TagsSection::Categories,
+                ),
+            ];
             let items: Vec<Element<'static, Message>> = sections
                 .iter()
-                .map(|key| {
+                .map(|(key, section)| {
                     let label = t(locale, key);
                     let label_text = text(label).size(12).shaping(Shaping::Advanced);
                     button(container(label_text).width(Length::Fill))
-                        .on_press(Message::OpenTab(Tab {
-                            id: "tags".to_string(),
-                            tab_type: TabType::Tags,
-                            title: t(locale, "tabBar.tags"),
-                            is_transient: false,
-                            is_dirty: false,
-                        }))
+                        .on_press(Message::OpenTagsSection(*section))
                         .padding([5, 8])
                         .width(Length::Fill)
                         .style(item_style)

@@ -159,7 +159,7 @@ pub fn text_editor_style(_theme: &Theme, status: text_editor::Status) -> text_ed
     }
 }
 
-fn select_style(_theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+pub(crate) fn select_style(_theme: &Theme, status: pick_list::Status) -> pick_list::Style {
     let border_color = match status {
         pick_list::Status::Hovered | pick_list::Status::Opened => FOCUS_COLOR,
         pick_list::Status::Active => BORDER_COLOR,

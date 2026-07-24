@@ -447,16 +447,15 @@ value SettingsNavEntry {
 }
 
 invariant SettingsNavSections {
-    -- Settings navigation has exactly 9 entries in this fixed order:
+    -- Settings navigation has exactly 8 entries in this fixed order:
     -- 1. section="project",     icon="folder",     label_key="settings.nav.project"
     -- 2. section="editor",      icon="notepad",    label_key="settings.nav.editor"
-    -- 3. section="content",     icon="clipboard",  label_key="settings.nav.content"
-    -- 4. section="ai",          icon="robot",      label_key="settings.nav.ai"
-    -- 5. section="technology",  icon="gear",       label_key="settings.nav.technology"
-    -- 6. section="publishing",  icon="rocket",     label_key="settings.nav.publishing"
-    -- 7. section="data",        icon="database",   label_key="settings.nav.data"
-    -- 8. section="mcp",         icon="plug",       label_key="settings.nav.mcp"
-    -- 9. section="style",       icon="palette",    label_key="settings.nav.style"
+    -- 3. section="ai",          icon="robot",      label_key="settings.nav.ai"
+    -- 4. section="technology",  icon="gear",       label_key="settings.nav.technology"
+    -- 5. section="publishing",  icon="rocket",     label_key="settings.nav.publishing"
+    -- 6. section="data",        icon="database",   label_key="settings.nav.data"
+    -- 7. section="mcp",         icon="plug",       label_key="settings.nav.mcp"
+    -- 8. section="style",       icon="palette",    label_key="settings.nav.style"
     -- Labels are localised via their label_key through i18n.
 }
 
@@ -513,10 +512,11 @@ value TagsNavEntry {
 }
 
 invariant TagsNavSections {
-    -- Tags navigation has exactly 3 entries in this fixed order:
+    -- Tags navigation has exactly 4 entries in this fixed order:
     -- 1. section="cloud",   icon="cloud",   label_key="tags.nav.cloud"     -- tag cloud visualisation
     -- 2. section="manage",  icon="pencil",  label_key="tags.nav.manage"    -- create/edit tags
     -- 3. section="merge",   icon="merge",   label_key="tags.nav.merge"     -- merge duplicate tags
+    -- 4. section="categories", icon="list",  label_key="tags.nav.categories" -- edit categories
     -- Labels are localised via their label_key through i18n.
 }
 
@@ -557,6 +557,39 @@ rule TagsNavClick {
     ensures: ScrollToSection(section)
     ensures: active_section = section
     -- Active section is persisted across sidebar switches
+}
+
+value CategoryEditor {
+    main_language: String
+    translation_languages: List<String>
+    rows: List<CategoryEditorRow>
+}
+
+value CategoryEditorRow {
+    name: String
+    titles: Map<String, String>
+    render_in_lists: Boolean
+    show_title: Boolean
+    post_template_slug: String?
+    list_template_slug: String?
+    is_protected: Boolean
+}
+
+surface CategoryEditorSurface {
+    context editor: CategoryEditor
+
+    exposes:
+        editor.main_language
+        editor.translation_languages
+        editor.rows.count
+
+    @guarantee TableLayout
+        -- Category settings render as one table. Its first title column is the
+        -- main language and every configured translation language adds one
+        -- further title column.
+
+    @guarantee ProtectedCategories
+        -- article, aside, page, and picture cannot be removed.
 }
 
 -- ─── 8. Chat view ─────────────────────────────────────────────

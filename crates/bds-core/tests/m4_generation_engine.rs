@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bds_core::db::Database;
 use bds_core::db::queries::project::insert_project;
@@ -254,6 +254,21 @@ fn mixed_source_languages_use_the_main_language_at_canonical_urls() {
     metadata.main_language = Some("de".into());
     metadata.blog_languages = vec!["de".into(), "en".into()];
     bds_core::engine::meta::write_project_json(dir.path(), &metadata).unwrap();
+    write_category_meta_json(
+        dir.path(),
+        &HashMap::from([(
+            "article".into(),
+            CategorySettings {
+                title: Some("Artikel".into()),
+                titles: BTreeMap::from([("en".into(), "Articles".into())]),
+                render_in_lists: true,
+                show_title: true,
+                post_template_slug: None,
+                list_template_slug: None,
+            },
+        )]),
+    )
+    .unwrap();
     insert_template(
         db.conn(),
         &Template {
@@ -391,6 +406,12 @@ fn mixed_source_languages_use_the_main_language_at_canonical_urls() {
     let english_index = std::fs::read_to_string(output.join("en/index.html")).unwrap();
     assert!(english_index.contains("English translation body"));
     assert!(!english_index.contains(">English translation</a></h2>"));
+    let german_category =
+        std::fs::read_to_string(output.join("category/article/index.html")).unwrap();
+    let english_category =
+        std::fs::read_to_string(output.join("en/category/article/index.html")).unwrap();
+    assert!(german_category.contains("<h1 class=\"archive-heading\">Artikel</h1>"));
+    assert!(english_category.contains("<h1 class=\"archive-heading\">Articles</h1>"));
     assert!(
         output
             .join("2024/03/12/german-private/index.html")
@@ -725,6 +746,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
                 "hidden".to_string(),
                 CategorySettings {
                     title: None,
+                    titles: BTreeMap::new(),
                     render_in_lists: false,
                     show_title: true,
                     post_template_slug: None,
@@ -735,6 +757,7 @@ fn generation_respects_category_list_settings_and_writes_bundled_images() {
                 "featured".to_string(),
                 CategorySettings {
                     title: Some("Featured Archive".to_string()),
+                    titles: BTreeMap::from([("de".into(), "Ausgewählt".into())]),
                     render_in_lists: true,
                     show_title: false,
                     post_template_slug: None,

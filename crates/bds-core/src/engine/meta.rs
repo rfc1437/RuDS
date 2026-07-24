@@ -446,6 +446,7 @@ pub fn add_category(
             category.to_string(),
             CategorySettings {
                 title: None,
+                titles: BTreeMap::new(),
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,
@@ -642,6 +643,7 @@ mod tests {
             "article".to_string(),
             CategorySettings {
                 title: None,
+                titles: BTreeMap::new(),
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,
@@ -662,6 +664,7 @@ mod tests {
             "news".to_string(),
             CategorySettings {
                 title: Some("News Archive".to_string()),
+                titles: BTreeMap::from([("de".into(), "Nachrichten".into())]),
                 render_in_lists: false,
                 show_title: true,
                 post_template_slug: Some("article".to_string()),
@@ -674,11 +677,13 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("meta/category-meta.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["news"]["title"], "News Archive");
+        assert_eq!(json["news"]["titles"]["de"], "Nachrichten");
         assert_eq!(json["news"]["renderInLists"], false);
         assert_eq!(json["news"]["showTitle"], true);
 
         let read = read_category_meta_json(dir.path()).unwrap();
         assert_eq!(read["news"].title.as_deref(), Some("News Archive"));
+        assert_eq!(read["news"].title_for("de", "en"), Some("Nachrichten"));
     }
 
     #[test]
@@ -689,6 +694,7 @@ mod tests {
             "zebra".to_string(),
             CategorySettings {
                 title: Some("Zebra".into()),
+                titles: BTreeMap::new(),
                 render_in_lists: true,
                 show_title: false,
                 post_template_slug: Some("post".into()),
@@ -699,6 +705,7 @@ mod tests {
             "alpha".to_string(),
             CategorySettings {
                 title: None,
+                titles: BTreeMap::new(),
                 render_in_lists: false,
                 show_title: true,
                 post_template_slug: None,
@@ -903,6 +910,7 @@ mod tests {
             "article".to_string(),
             CategorySettings {
                 title: None,
+                titles: BTreeMap::new(),
                 render_in_lists: true,
                 show_title: true,
                 post_template_slug: None,

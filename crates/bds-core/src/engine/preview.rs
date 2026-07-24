@@ -1546,6 +1546,7 @@ mod tests {
                     "hidden".to_string(),
                     crate::model::CategorySettings {
                         title: None,
+                        titles: std::collections::BTreeMap::new(),
                         render_in_lists: false,
                         show_title: true,
                         post_template_slug: None,
@@ -1556,6 +1557,7 @@ mod tests {
                     "featured".to_string(),
                     crate::model::CategorySettings {
                         title: None,
+                        titles: std::collections::BTreeMap::new(),
                         render_in_lists: true,
                         show_title: false,
                         post_template_slug: None,

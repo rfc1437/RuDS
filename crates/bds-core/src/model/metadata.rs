@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 pub const SUPPORTED_PICO_THEMES: [&str; 20] = [
@@ -107,6 +109,23 @@ pub struct CategorySettings {
     pub show_title: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub titles: BTreeMap<String, String>,
+}
+
+impl CategorySettings {
+    pub fn title_for(&self, language: &str, main_language: &str) -> Option<&str> {
+        if language.eq_ignore_ascii_case(main_language) {
+            self.title.as_deref()
+        } else {
+            self.titles
+                .iter()
+                .find(|(candidate, _)| candidate.eq_ignore_ascii_case(language))
+                .map(|(_, title)| title.as_str())
+        }
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +196,7 @@ mod tests {
     fn category_settings_camel_case() {
         let settings = CategorySettings {
             title: Some("Article".into()),
+            titles: BTreeMap::new(),
             render_in_lists: false,
             show_title: true,
             post_template_slug: Some("article-tpl".into()),
@@ -187,6 +207,22 @@ mod tests {
         assert!(json.contains("renderInLists"));
         assert!(json.contains("showTitle"));
         assert!(json.contains("postTemplateSlug"));
+    }
+
+    #[test]
+    fn category_settings_select_title_for_render_language() {
+        let settings = CategorySettings {
+            title: Some("Artikel".into()),
+            titles: std::collections::BTreeMap::from([("en".into(), "Articles".into())]),
+            render_in_lists: true,
+            show_title: true,
+            post_template_slug: None,
+            list_template_slug: None,
+        };
+
+        assert_eq!(settings.title_for("de", "de"), Some("Artikel"));
+        assert_eq!(settings.title_for("en", "de"), Some("Articles"));
+        assert_eq!(settings.title_for("fr", "de"), None);
     }
 
     #[test]

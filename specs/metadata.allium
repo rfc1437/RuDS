@@ -29,6 +29,7 @@ surface PublishingPreferencesSurface {
 
 value CategoryRenderSettings {
     title: String?
+    titles: Map<String, String>         -- translated titles keyed by language
     render_in_lists: Boolean
     show_title: Boolean
     post_template_slug: String?
@@ -78,7 +79,9 @@ invariant MetadataPersistedAsFiles {
     -- sshMode, sshRemotePath, sshUser (nil keys absent; sshMode defaults to scp).
     -- Category names and per-category keys are byte-order sorted; per-category
     -- keys are listTemplateSlug, postTemplateSlug, renderInLists, showTitle,
-    -- title. categories.json uses case-sensitive byte-order sorting. tags.json
+    -- title, titles. The title is for the main language; titles contains
+    -- configured translations keyed by language. categories.json uses
+    -- case-sensitive byte-order sorting. tags.json
     -- remains case-insensitively name-sorted; entry keys are color, name,
     -- postTemplateSlug and blank optional values are absent.
 }

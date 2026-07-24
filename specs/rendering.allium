@@ -222,6 +222,13 @@ rule BuildListAssigns {
     ensures: ListRenderAssigns
 }
 
+invariant CategoryArchiveTitleLanguage {
+    -- A category archive uses the title configured for its render language.
+    -- The main-language archive uses title; translated archives use the entry
+    -- in titles keyed by their language; a missing title falls back to the
+    -- category name.
+}
+
 invariant SharedRenderPathForPreviewAndGeneration {
     -- Preview and generation produce identical HTML for the same input because
     -- both build assigns through this subsystem and render via the same Liquid

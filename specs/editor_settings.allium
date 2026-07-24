@@ -14,7 +14,6 @@ value SettingsView {
     active_sections: List<String>       -- visible sections after search filter
     project_section: SettingsProjectSection?
     editor_section: SettingsEditorSection?
-    categories: List<SettingsCategoryRow>
     ai_section: SettingsAISection?
     technology_section: SettingsTechnologySection?
     publishing_section: SettingsPublishingSection?
@@ -40,16 +39,6 @@ value SettingsEditorSection {
     diff_view_style: String             -- select: inline | side-by-side
     wrap_long_lines: Boolean            -- checkbox
     hide_unchanged_regions: Boolean     -- checkbox
-}
-
-value SettingsCategoryRow {
-    name: String                        -- read-only for protected categories
-    title: String                       -- editable
-    render_in_lists: Boolean            -- checkbox
-    show_titles: Boolean                -- checkbox
-    post_template_slug: String?         -- select
-    list_template_slug: String?         -- select
-    is_protected: Boolean               -- true for: article, aside, page, picture
 }
 
 value SettingsAISection {
@@ -95,11 +84,6 @@ value MCPAgentRow {
 value SettingsDataSection {
     -- Action-only section: rebuild buttons + Open Data Folder. No persisted fields.
     rebuild_targets: List<String>       -- posts | media | scripts | templates | links | thumbnails | embedding
-}
-
-invariant SettingsProtectedCategories {
-    -- Protected categories (article, aside, page, picture) cannot be deleted.
-    -- Their Remove button is disabled.
 }
 
 invariant SettingsMCPAgents {

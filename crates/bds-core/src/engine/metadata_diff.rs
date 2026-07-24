@@ -1427,6 +1427,7 @@ mod tests {
             "news".to_string(),
             crate::model::metadata::CategorySettings {
                 title: Some("News".into()),
+                titles: std::collections::BTreeMap::new(),
                 render_in_lists: false,
                 show_title: true,
                 post_template_slug: Some("article".into()),

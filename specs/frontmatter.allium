@@ -314,6 +314,8 @@ value CategoryMetaJson {
 value CategorySettings {
     renderInLists: Boolean
     showTitle: Boolean
+    title: String?
+    titles: Map<String, String>
     postTemplateSlug: String?
     listTemplateSlug: String?
 }

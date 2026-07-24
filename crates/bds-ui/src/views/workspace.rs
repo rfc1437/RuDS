@@ -506,8 +506,8 @@ fn route_content_area<'a>(
             }
         }
         ContentRoute::Tags => {
-            if let Some(state) = tags_view_state {
-                tags_view::view(state, locale)
+            if let (Some(state), Some(settings)) = (tags_view_state, settings_state) {
+                tags_view::view(state, settings, locale)
             } else {
                 loading_view(locale)
             }
@@ -646,7 +646,7 @@ fn route_kind<'a>(
         }
         TabType::Chat => ContentRoute::Chat(tab_id),
         TabType::Tags => {
-            if tags_view_state.is_some() {
+            if tags_view_state.is_some() && settings_state.is_some() {
                 ContentRoute::Tags
             } else {
                 ContentRoute::Loading

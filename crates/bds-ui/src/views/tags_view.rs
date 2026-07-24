@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+};
 use iced::{Alignment, Background, Color, Element, Length, Theme};
 
 use bds_core::i18n::UiLocale;
@@ -9,6 +11,7 @@ use bds_core::model::Tag;
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::{t, tw};
+use crate::views::settings_view::{SettingsMsg, SettingsViewState};
 
 const DEFAULT_TAG_COLOR: &str = "#6495ed";
 const COLOR_PRESETS: [&str; 17] = [
@@ -24,6 +27,7 @@ pub enum TagsSection {
     Manage,
     Merge,
     Discover,
+    Categories,
 }
 
 /// State for the tags view.
@@ -116,7 +120,11 @@ pub enum TagsMsg {
 }
 
 /// Render the tags management view.
-pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Message> {
+pub fn view<'a>(
+    state: &'a TagsViewState,
+    settings: &'a SettingsViewState,
+    locale: UiLocale,
+) -> Element<'a, Message> {
     let section_nav = inputs::card(
         row![
             section_tab(
@@ -139,6 +147,11 @@ pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Messa
                 state.section == TagsSection::Discover,
                 TagsSection::Discover
             ),
+            section_tab(
+                &t(locale, "tags.nav.categories"),
+                state.section == TagsSection::Categories,
+                TagsSection::Categories
+            ),
         ]
         .spacing(6),
     )
@@ -149,6 +162,7 @@ pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Messa
         TagsSection::Manage => view_manage(state, locale),
         TagsSection::Merge => view_merge(state, locale),
         TagsSection::Discover => view_discover(state, locale),
+        TagsSection::Categories => view_categories(settings, locale),
     };
 
     column![section_nav, content]
@@ -156,6 +170,215 @@ pub fn view<'a>(state: &'a TagsViewState, locale: UiLocale) -> Element<'a, Messa
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn view_categories<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
+    const NAME_WIDTH: f32 = 120.0;
+    const TITLE_WIDTH: f32 = 170.0;
+    const TOGGLE_WIDTH: f32 = 110.0;
+    const TEMPLATE_WIDTH: f32 = 150.0;
+    const ACTION_WIDTH: f32 = 150.0;
+
+    let mut languages = vec![state.main_language.clone()];
+    for language in &state.blog_languages {
+        if !languages
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(language))
+        {
+            languages.push(language.clone());
+        }
+    }
+
+    let header_cell = |label: String, width| {
+        container(text(label).size(12).color(inputs::LABEL_COLOR))
+            .width(Length::Fixed(width))
+            .into()
+    };
+    let mut header: Vec<Element<'a, Message>> =
+        vec![header_cell(t(locale, "tags.name"), NAME_WIDTH)];
+    header.extend(languages.iter().map(|language| {
+        header_cell(
+            tw(locale, "categories.title", &[("language", language)]),
+            TITLE_WIDTH,
+        )
+    }));
+    header.extend([
+        header_cell(t(locale, "settings.categoryRenderInLists"), TOGGLE_WIDTH),
+        header_cell(t(locale, "settings.categoryShowTitles"), TOGGLE_WIDTH),
+        header_cell(t(locale, "settings.categoryPostTemplate"), TEMPLATE_WIDTH),
+        header_cell(t(locale, "settings.categoryListTemplate"), TEMPLATE_WIDTH),
+        header_cell(t(locale, "categories.actions"), ACTION_WIDTH),
+    ]);
+
+    let template_options = std::iter::once(String::new())
+        .chain(state.template_options.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut table = column![iced::widget::Row::with_children(header).spacing(8)].spacing(8);
+    for category in &state.categories {
+        let mut cells: Vec<Element<'a, Message>> = vec![
+            container(text(category.name.clone()).size(13))
+                .width(Length::Fixed(NAME_WIDTH))
+                .into(),
+        ];
+        cells.extend(languages.iter().map(|language| {
+            let value = if language.eq_ignore_ascii_case(&state.main_language) {
+                &category.title
+            } else {
+                category
+                    .translated_titles
+                    .get(language)
+                    .map(String::as_str)
+                    .unwrap_or("")
+            };
+            let name = category.name.clone();
+            let language = language.clone();
+            text_input("", value)
+                .on_input(move |value| {
+                    Message::Settings(SettingsMsg::CategoryTitleChanged(
+                        name.clone(),
+                        language.clone(),
+                        value,
+                    ))
+                })
+                .padding([7, 9])
+                .style(inputs::field_style)
+                .width(Length::Fixed(TITLE_WIDTH))
+                .into()
+        }));
+        let name = category.name.clone();
+        cells.push(
+            container(
+                checkbox("", category.render_in_lists).on_toggle(move |value| {
+                    Message::Settings(SettingsMsg::CategoryRenderInListsChanged(
+                        name.clone(),
+                        value,
+                    ))
+                }),
+            )
+            .width(Length::Fixed(TOGGLE_WIDTH))
+            .into(),
+        );
+        let name = category.name.clone();
+        cells.push(
+            container(checkbox("", category.show_title).on_toggle(move |value| {
+                Message::Settings(SettingsMsg::CategoryShowTitleChanged(name.clone(), value))
+            }))
+            .width(Length::Fixed(TOGGLE_WIDTH))
+            .into(),
+        );
+        let name = category.name.clone();
+        cells.push(
+            pick_list(
+                template_options.clone(),
+                Some(category.post_template_slug.clone()),
+                move |value| {
+                    Message::Settings(SettingsMsg::CategoryPostTemplateChanged(
+                        name.clone(),
+                        value,
+                    ))
+                },
+            )
+            .padding([7, 9])
+            .style(inputs::select_style)
+            .width(Length::Fixed(TEMPLATE_WIDTH))
+            .into(),
+        );
+        let name = category.name.clone();
+        cells.push(
+            pick_list(
+                template_options.clone(),
+                Some(category.list_template_slug.clone()),
+                move |value| {
+                    Message::Settings(SettingsMsg::CategoryListTemplateChanged(
+                        name.clone(),
+                        value,
+                    ))
+                },
+            )
+            .padding([7, 9])
+            .style(inputs::select_style)
+            .width(Length::Fixed(TEMPLATE_WIDTH))
+            .into(),
+        );
+        cells.push(
+            container(
+                row![
+                    button(text(t(locale, "common.save")).size(12))
+                        .on_press(Message::Settings(SettingsMsg::SaveCategory(
+                            category.name.clone(),
+                        )))
+                        .style(inputs::primary_button)
+                        .padding([6, 10]),
+                    button(text(t(locale, "common.remove")).size(12))
+                        .on_press_maybe((!category.is_protected).then(|| Message::Settings(
+                            SettingsMsg::RemoveCategory(category.name.clone()),
+                        )))
+                        .style(inputs::danger_button)
+                        .padding([6, 10]),
+                ]
+                .spacing(6),
+            )
+            .width(Length::Fixed(ACTION_WIDTH))
+            .into(),
+        );
+        table = table.push(
+            iced::widget::Row::with_children(cells)
+                .spacing(8)
+                .align_y(Alignment::Center),
+        );
+    }
+
+    let add = inputs::card(
+        row![
+            inputs::labeled_input(
+                &t(locale, "settings.addCategory"),
+                "news",
+                &state.new_category_name,
+                |value| Message::Settings(SettingsMsg::AddCategoryNameChanged(value)),
+            ),
+            button(text(t(locale, "common.add")).size(13))
+                .on_press(Message::Settings(SettingsMsg::AddCategory))
+                .style(inputs::primary_button)
+                .padding([6, 12]),
+            button(text(t(locale, "settings.resetCategories")).size(13))
+                .on_press(Message::Settings(SettingsMsg::ResetCategoriesToDefaults))
+                .style(inputs::secondary_button)
+                .padding([6, 12]),
+        ]
+        .spacing(8)
+        .align_y(Alignment::End),
+    );
+    let table_width = NAME_WIDTH
+        + TITLE_WIDTH * languages.len() as f32
+        + TOGGLE_WIDTH * 2.0
+        + TEMPLATE_WIDTH * 2.0
+        + ACTION_WIDTH
+        + 8.0 * (languages.len() + 5) as f32
+        + 24.0;
+    let table = scrollable(
+        inputs::card(table)
+            .padding(12)
+            .width(Length::Fixed(table_width)),
+    )
+    .direction(scrollable::Direction::Horizontal(
+        inputs::compact_scrollbar(),
+    ))
+    .style(inputs::scrollable_style)
+    .width(Length::Fill);
+
+    scrollable(
+        column![
+            inputs::card(text(t(locale, "categories.section")).size(18)).padding(16),
+            add,
+            table,
+        ]
+        .spacing(12)
+        .padding(16),
+    )
+    .direction(scrollable::Direction::Vertical(inputs::compact_scrollbar()))
+    .style(inputs::scrollable_style)
+    .height(Length::Fill)
+    .into()
 }
 
 fn section_tab<'a>(label: &str, active: bool, section: TagsSection) -> Element<'a, Message> {

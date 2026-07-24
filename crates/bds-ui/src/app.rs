@@ -89,6 +89,7 @@ pub enum Message {
     ToggleSidebar,
     TogglePanel,
     OpenSettingsSection(crate::views::settings_view::SettingsSection),
+    OpenTagsSection(TagsSection),
 
     // Sidebar resize
     SidebarResizeStart,
@@ -1674,6 +1675,22 @@ impl BdsApp {
                 }
                 if let Some(state) = self.settings_state.as_mut() {
                     state.focus_section(section);
+                }
+                self.sync_menu_state();
+                Task::none()
+            }
+            Message::OpenTagsSection(section) => {
+                self.sidebar_view = SidebarView::Tags;
+                self.sidebar_visible = true;
+                self.open_singleton_tab(TabType::Tags, "tabBar.tags");
+                if self.settings_state.is_none() {
+                    self.settings_state = Some(self.hydrate_settings_state());
+                }
+                if self.tags_view_state.is_none() {
+                    self.reload_tags_state();
+                }
+                if let Some(state) = self.tags_view_state.as_mut() {
+                    state.section = section;
                 }
                 self.sync_menu_state();
                 Task::none()
@@ -7582,6 +7599,9 @@ impl BdsApp {
                         title: meta
                             .and_then(|value| value.title.clone())
                             .unwrap_or_else(|| name.clone()),
+                        translated_titles: meta
+                            .map(|value| value.titles.clone())
+                            .unwrap_or_default(),
                         render_in_lists: meta.map(|value| value.render_in_lists).unwrap_or(true),
                         show_title: meta.map(|value| value.show_title).unwrap_or(true),
                         post_template_slug: meta
@@ -8225,9 +8245,13 @@ impl BdsApp {
                     }
                 }
             }
-            SettingsMsg::CategoryTitleChanged(name, value) => {
+            SettingsMsg::CategoryTitleChanged(name, language, value) => {
                 if let Some(row) = state.categories.iter_mut().find(|row| row.name == name) {
-                    row.title = value;
+                    if language.eq_ignore_ascii_case(&state.main_language) {
+                        row.title = value;
+                    } else {
+                        row.translated_titles.insert(language, value);
+                    }
                 }
             }
             SettingsMsg::CategoryRenderInListsChanged(name, value) => {
@@ -8261,6 +8285,15 @@ impl BdsApp {
                         row.name.clone(),
                         bds_core::model::metadata::CategorySettings {
                             title: Some(row.title.clone()).filter(|title| !title.trim().is_empty()),
+                            titles: row
+                                .translated_titles
+                                .iter()
+                                .filter(|(language, title)| {
+                                    !language.eq_ignore_ascii_case(&state.main_language)
+                                        && !title.trim().is_empty()
+                                })
+                                .map(|(language, title)| (language.clone(), title.clone()))
+                                .collect(),
                             render_in_lists: row.render_in_lists,
                             show_title: row.show_title,
                             post_template_slug: (!row.post_template_slug.is_empty())
@@ -8313,6 +8346,7 @@ impl BdsApp {
                                 bds_core::model::metadata::CategorySettings {
                                     title: Some(row.title.clone())
                                         .filter(|title| !title.trim().is_empty()),
+                                    titles: std::collections::BTreeMap::new(),
                                     render_in_lists: row.render_in_lists,
                                     show_title: row.show_title,
                                     post_template_slug: None,
@@ -9047,6 +9081,9 @@ impl BdsApp {
                 }
             }
             TabType::Tags => {
+                if self.settings_state.is_none() {
+                    self.settings_state = Some(self.hydrate_settings_state());
+                }
                 if self.tags_view_state.is_none() {
                     let project_id = self
                         .active_project
@@ -13046,6 +13083,35 @@ mod tests {
         );
         assert_eq!(meta.blogmark_category.as_deref(), Some("article"));
         assert!(meta.semantic_similarity_enabled);
+    }
+
+    #[test]
+    fn save_category_persists_main_and_translated_titles() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let mut state = app.hydrate_settings_state();
+        state.main_language = "de".into();
+        state.blog_languages = vec!["de".into(), "en".into()];
+        app.settings_state = Some(state);
+
+        let _ = app.handle_settings_msg(SettingsMsg::CategoryTitleChanged(
+            "article".into(),
+            "de".into(),
+            "Artikel".into(),
+        ));
+        let _ = app.handle_settings_msg(SettingsMsg::CategoryTitleChanged(
+            "article".into(),
+            "en".into(),
+            "Articles".into(),
+        ));
+        let _ = app.handle_settings_msg(SettingsMsg::SaveCategory("article".into()));
+
+        let categories = bds_core::engine::meta::read_category_meta_json(tmp.path()).unwrap();
+        assert_eq!(categories["article"].title.as_deref(), Some("Artikel"));
+        assert_eq!(
+            categories["article"].title_for("en", "de"),
+            Some("Articles")
+        );
     }
 
     #[test]

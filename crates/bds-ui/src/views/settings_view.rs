@@ -1,13 +1,14 @@
 use iced::widget::text::Shaping;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
 use iced::{Alignment, Color, Element, Length};
+use std::collections::BTreeMap;
 
 use bds_core::engine::ai::AiEndpointKind;
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
 use crate::components::inputs;
-use crate::i18n::{t, tw};
+use crate::i18n::t;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiModelOption {
@@ -41,7 +42,6 @@ pub struct AiModeViewState {
 pub enum SettingsSection {
     Project,
     Editor,
-    Content,
     AI,
     Technology,
     Publishing,
@@ -53,6 +53,7 @@ pub enum SettingsSection {
 pub struct SettingsCategoryRow {
     pub name: String,
     pub title: String,
+    pub translated_titles: BTreeMap<String, String>,
     pub render_in_lists: bool,
     pub show_title: bool,
     pub post_template_slug: String,
@@ -82,6 +83,7 @@ pub fn default_category_rows() -> Vec<SettingsCategoryRow> {
         .map(|name| SettingsCategoryRow {
             name: (*name).to_string(),
             title: (*name).to_string(),
+            translated_titles: BTreeMap::new(),
             render_in_lists: true,
             show_title: true,
             post_template_slug: String::new(),
@@ -96,7 +98,6 @@ impl SettingsSection {
         &[
             Self::Project,
             Self::Editor,
-            Self::Content,
             Self::AI,
             Self::Technology,
             Self::Publishing,
@@ -109,7 +110,6 @@ impl SettingsSection {
         match self {
             Self::Project => "settings.nav.project",
             Self::Editor => "settings.nav.editor",
-            Self::Content => "settings.nav.content",
             Self::AI => "settings.nav.ai",
             Self::Technology => "settings.nav.technology",
             Self::Publishing => "settings.nav.publishing",
@@ -141,7 +141,7 @@ pub struct SettingsViewState {
     pub diff_view_style: String,
     pub wrap_long_lines: bool,
     pub hide_unchanged_regions: bool,
-    // Content
+    // Categories (Tags workspace)
     pub categories: Vec<SettingsCategoryRow>,
     pub new_category_name: String,
     pub template_options: Vec<String>,
@@ -312,7 +312,7 @@ pub enum SettingsMsg {
     // Content
     AddCategoryNameChanged(String),
     AddCategory,
-    CategoryTitleChanged(String, String),
+    CategoryTitleChanged(String, String, String),
     CategoryRenderInListsChanged(String, bool),
     CategoryShowTitleChanged(String, bool),
     CategoryPostTemplateChanged(String, String),
@@ -445,7 +445,6 @@ fn render_section<'a>(
     let content: Element<'a, Message> = match section {
         SettingsSection::Project => section_project(state, locale),
         SettingsSection::Editor => section_editor(state, locale),
-        SettingsSection::Content => section_content(state, locale),
         SettingsSection::AI => section_ai(state, locale),
         SettingsSection::Technology => section_technology(state, locale),
         SettingsSection::Publishing => section_publishing(state, locale),
@@ -627,143 +626,6 @@ fn section_editor<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element
 
     column![mode, diff, wrap, hide, save]
         .spacing(8)
-        .padding([0, 16])
-        .into()
-}
-
-fn section_content<'a>(state: &'a SettingsViewState, locale: UiLocale) -> Element<'a, Message> {
-    let template_options = std::iter::once(String::new())
-        .chain(state.template_options.iter().cloned())
-        .collect::<Vec<_>>();
-
-    let category_rows = state
-        .categories
-        .iter()
-        .fold(column![].spacing(8), |column, category| {
-            let title = inputs::labeled_input(
-                &tw(
-                    locale,
-                    "settings.categoryTitle",
-                    &[("category", &category.name)],
-                ),
-                "",
-                &category.title,
-                {
-                    let name = category.name.clone();
-                    move |value| {
-                        Message::Settings(SettingsMsg::CategoryTitleChanged(name.clone(), value))
-                    }
-                },
-            );
-            let post_template = inputs::labeled_select(
-                &t(locale, "settings.categoryPostTemplate"),
-                &template_options,
-                Some(&category.post_template_slug),
-                {
-                    let name = category.name.clone();
-                    move |value| {
-                        Message::Settings(SettingsMsg::CategoryPostTemplateChanged(
-                            name.clone(),
-                            value,
-                        ))
-                    }
-                },
-            );
-            let list_template = inputs::labeled_select(
-                &t(locale, "settings.categoryListTemplate"),
-                &template_options,
-                Some(&category.list_template_slug),
-                {
-                    let name = category.name.clone();
-                    move |value| {
-                        Message::Settings(SettingsMsg::CategoryListTemplateChanged(
-                            name.clone(),
-                            value,
-                        ))
-                    }
-                },
-            );
-            let toggles = column![
-                inputs::labeled_checkbox(
-                    &t(locale, "settings.categoryRenderInLists"),
-                    category.render_in_lists,
-                    {
-                        let name = category.name.clone();
-                        move |value| {
-                            Message::Settings(SettingsMsg::CategoryRenderInListsChanged(
-                                name.clone(),
-                                value,
-                            ))
-                        }
-                    },
-                ),
-                inputs::labeled_checkbox(
-                    &t(locale, "settings.categoryShowTitles"),
-                    category.show_title,
-                    {
-                        let name = category.name.clone();
-                        move |value| {
-                            Message::Settings(SettingsMsg::CategoryShowTitleChanged(
-                                name.clone(),
-                                value,
-                            ))
-                        }
-                    },
-                ),
-            ]
-            .spacing(6);
-            let actions = row![
-                button(text(t(locale, "common.save")).size(13))
-                    .on_press(Message::Settings(SettingsMsg::SaveCategory(
-                        category.name.clone()
-                    )))
-                    .style(inputs::primary_button)
-                    .padding([6, 12]),
-                button(text(t(locale, "common.remove")).size(13))
-                    .on_press_maybe((!category.is_protected).then(|| Message::Settings(
-                        SettingsMsg::RemoveCategory(category.name.clone())
-                    )))
-                    .style(inputs::danger_button)
-                    .padding([6, 12]),
-            ]
-            .spacing(8);
-
-            column.push(
-                inputs::card(
-                    column![
-                        text(category.name.clone()).size(15).color(Color::WHITE),
-                        title,
-                        toggles,
-                        row![post_template, list_template].spacing(12),
-                        actions,
-                    ]
-                    .spacing(8),
-                )
-                .padding(12),
-            )
-        });
-
-    let add_row = row![
-        inputs::labeled_input(
-            &t(locale, "settings.addCategory"),
-            "news",
-            &state.new_category_name,
-            |value| Message::Settings(SettingsMsg::AddCategoryNameChanged(value)),
-        ),
-        button(text(t(locale, "common.add")).size(13))
-            .on_press(Message::Settings(SettingsMsg::AddCategory))
-            .style(inputs::primary_button)
-            .padding([6, 12]),
-        button(text(t(locale, "settings.resetCategories")).size(13))
-            .on_press(Message::Settings(SettingsMsg::ResetCategoriesToDefaults))
-            .style(inputs::secondary_button)
-            .padding([6, 12]),
-    ]
-    .spacing(8)
-    .align_y(Alignment::End);
-
-    column![category_rows, add_row]
-        .spacing(12)
         .padding([0, 16])
         .into()
 }
