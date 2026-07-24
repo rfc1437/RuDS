@@ -70,8 +70,27 @@ pub fn compute_metadata_diff(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<DiffReport> {
+    compute_metadata_diff_with_progress(conn, data_dir, project_id, |_, _| true)
+}
+
+pub fn compute_metadata_diff_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    mut on_progress: impl FnMut(usize, usize) -> bool,
+) -> EngineResult<DiffReport> {
+    const PHASES: usize = 8;
+    let mut phase = 0;
+    let mut next_phase = || -> EngineResult<()> {
+        if !on_progress(phase, PHASES) {
+            return Err(crate::engine::EngineError::Cancelled);
+        }
+        phase += 1;
+        Ok(())
+    };
     let mut report = DiffReport::default();
 
+    next_phase()?;
     if let Ok(project) = qproject::get_project_by_id(conn, project_id) {
         match diff_project(conn, data_dir, &project) {
             Ok(Some(diff)) => report.diffs.push(diff),
@@ -94,6 +113,7 @@ pub fn compute_metadata_diff(
     }
 
     // 1. Diff posts
+    next_phase()?;
     let posts = qp::list_posts_by_project(conn, project_id)?;
     for post in &posts {
         if post.file_path.is_empty() {
@@ -107,6 +127,7 @@ pub fn compute_metadata_diff(
     }
 
     // 2. Diff translations
+    next_phase()?;
     for post in &posts {
         let translations = qt::list_post_translations_by_post(conn, &post.id)?;
         for t in &translations {
@@ -122,6 +143,7 @@ pub fn compute_metadata_diff(
     }
 
     // 3. Diff media
+    next_phase()?;
     let media_items = qm::list_media_by_project(conn, project_id)?;
     for m in &media_items {
         if m.sidecar_path.is_empty() {
@@ -146,6 +168,7 @@ pub fn compute_metadata_diff(
     }
 
     // 4. Diff templates
+    next_phase()?;
     let templates = qtpl::list_templates_by_project(conn, project_id)?;
     for t in &templates {
         if t.file_path.is_empty() {
@@ -159,6 +182,7 @@ pub fn compute_metadata_diff(
     }
 
     // 5. Diff scripts
+    next_phase()?;
     let scripts = qs::list_scripts_by_project(conn, project_id)?;
     for s in &scripts {
         if s.file_path.is_empty() {
@@ -172,6 +196,7 @@ pub fn compute_metadata_diff(
     }
 
     // 6. Detect orphans
+    next_phase()?;
     if crate::engine::meta::read_project_json(data_dir)
         .is_ok_and(|metadata| metadata.semantic_similarity_enabled)
     {
@@ -215,8 +240,13 @@ pub fn compute_metadata_diff(
     }
 
     // 7. Detect orphans
+    next_phase()?;
     let orphans = detect_orphan_files(conn, data_dir, project_id)?;
     report.orphans = orphans;
+
+    if !on_progress(PHASES, PHASES) {
+        return Err(crate::engine::EngineError::Cancelled);
+    }
 
     Ok(report)
 }

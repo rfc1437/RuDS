@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::db::DbConnection as Connection;
 
 use crate::db::queries::{post as post_q, post_translation};
-use crate::engine::EngineResult;
+use crate::engine::{EngineError, EngineResult};
 use crate::model::PostStatus;
 
 /// Normalize a language code for comparison (lowercase, strip region).
@@ -53,7 +53,7 @@ pub struct TranslationValidationReport {
 }
 
 /// Per-item progress callback: (current_item, total_items, item_description).
-pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) -> bool + Send>;
 
 /// Validate all translations with optional per-item progress.
 pub fn validate_translations_with_progress(
@@ -75,8 +75,10 @@ pub fn validate_translations_with_progress(
     let post_count = posts.len();
 
     for (i, post) in posts.iter().enumerate() {
-        if let Some(ref cb) = on_item {
-            cb(i + 1, post_count, &post.title);
+        if let Some(ref cb) = on_item
+            && !cb(i + 1, post_count, &post.title)
+        {
+            return Err(EngineError::Cancelled);
         }
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
 
@@ -170,8 +172,10 @@ pub fn validate_translations_with_progress(
             let path = entry.path();
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-            if let Some(ref cb) = on_item {
-                cb(i + 1, fs_total, stem);
+            if let Some(ref cb) = on_item
+                && !cb(i + 1, fs_total, stem)
+            {
+                return Err(EngineError::Cancelled);
             }
 
             checked_fs_files += 1;

@@ -44,9 +44,10 @@ surface GenerationRuntimeSurface {
         -- "Generated" for a full render and "Rewrote" for a validation apply —
         -- and advances the bar by the number of URLs written.
         --
-        -- Before section work begins, generation counts its planned URLs. The
-        -- task reports 0/total immediately and advances once per rendered URL,
-        -- matching bDS2's route-based generation progress.
+        -- Route preparation and counting happen in background work before
+        -- section rendering. Validation totals count only prepared URLs
+        -- selected by the validation report, not the whole section. The task
+        -- reports 0/total immediately and advances once per rendered URL.
         --
         -- Full generation and validation apply share the same structuring: a
         -- task group containing one task per section (Render Site Core, Render
@@ -310,6 +311,9 @@ rule ApplyValidation {
     -- unchanged post route refreshes its tracked generation time so the
     -- automatic follow-up validation does not report it stale again.
     ensures: GenerateSiteRequested(plan_generation(project_id, sections))
+    -- Observable phases are prepare, affected render sections, optional
+    -- calendar regeneration, search indexing, and final validation. Failure or
+    -- cancellation stops every dependent phase.
 }
 
 -- Day-block grouping for archives

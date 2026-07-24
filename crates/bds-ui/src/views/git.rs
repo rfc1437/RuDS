@@ -386,7 +386,10 @@ fn network_output(run: &GitNetworkRunState, locale: UiLocale) -> Element<'static
         )
         .padding(6),
         button(text(t(locale, "common.cancel")).size(11))
-            .on_press(Message::CancelTask(run.task_id))
+            .on_press(Message::CancelTask(
+                crate::state::navigation::TaskSource::Local,
+                run.task_id,
+            ))
             .padding([4, 7])
             .style(inputs::secondary_button),
     ]

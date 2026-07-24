@@ -101,19 +101,33 @@ pub fn view<'a>(state: &'a MetadataDiffState, locale: UiLocale) -> Element<'a, M
             ));
         }
         if !report.orphans.is_empty() {
-            let rows = report
-                .orphans
-                .iter()
-                .fold(column!().spacing(4), |column, orphan| {
-                    column.push(
+            let rows = report.orphans.iter().enumerate().fold(
+                column!().spacing(8),
+                |column, (index, orphan)| {
+                    let mut item = row![
                         text(tw(
                             locale,
                             "metadataDiff.orphan",
                             &[("reason", &orphan.reason), ("path", &orphan.file_path)],
                         ))
                         .size(12),
-                    )
-                });
+                        Space::with_width(Length::Fill),
+                    ]
+                    .align_y(iced::Alignment::Center);
+                    if orphan.reason == "file_without_db_entry" {
+                        item = item.push(
+                            button(text(t(locale, "metadataDiff.importOrphan")).size(12))
+                                .on_press_maybe(
+                                    (!state.is_repairing)
+                                        .then_some(Message::ImportMetadataOrphan(index)),
+                                )
+                                .style(inputs::secondary_button)
+                                .padding([5, 10]),
+                        );
+                    }
+                    column.push(item)
+                },
+            );
             content = content.push(inputs::card(
                 column![text(t(locale, "metadataDiff.orphans")).size(16), rows].spacing(8),
             ));

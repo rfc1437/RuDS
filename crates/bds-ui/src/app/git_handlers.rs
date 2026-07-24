@@ -259,10 +259,11 @@ impl BdsApp {
 
         Task::perform(
             async move {
+                let Some(worker) = task_manager.admit(task_id).await else {
+                    return Err("cancelled".to_string());
+                };
                 tokio::task::spawn_blocking(move || {
-                    if !task_manager.wait_until_runnable(task_id) {
-                        return Err("cancelled".to_string());
-                    }
+                    let _worker = worker;
                     let engine = GitEngine::new(&data_dir);
                     let old_head = (operation == GitOperation::Pull)
                         .then(|| engine.head())

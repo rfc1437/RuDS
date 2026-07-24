@@ -3687,6 +3687,10 @@ local result = bds.publish.upload_site({ host = "example.com", username = "autho
 
 ```lua
 {
+  cancellable = true,
+  cancellation_requested = true,
+  group_id = "example-id",
+  group_name = "example",
   id = "example-id",
   message = "Working",
   name = "Example",
@@ -4705,6 +4709,10 @@ local result = bds.tasks.get("example-id")
 
 ```lua
 {
+  cancellable = true,
+  cancellation_requested = true,
+  group_id = "example-id",
+  group_name = "example",
   id = "example-id",
   message = "Working",
   name = "Example",
@@ -4746,6 +4754,10 @@ local result = bds.tasks.status_snapshot()
   running_count = 1,
   tasks = {
   {
+    cancellable = true,
+    cancellation_requested = true,
+    group_id = "example-id",
+    group_name = "example",
     id = "example-id",
     message = "Working",
     name = "Example",
@@ -4817,6 +4829,10 @@ local result = bds.tasks.get_all()
 ```lua
 {
   {
+    cancellable = true,
+    cancellation_requested = true,
+    group_id = "example-id",
+    group_name = "example",
     id = "example-id",
     message = "Working",
     name = "Example",
@@ -4855,6 +4871,10 @@ local result = bds.tasks.get_running()
 ```lua
 {
   {
+    cancellable = true,
+    cancellation_requested = true,
+    group_id = "example-id",
+    group_name = "example",
     id = "example-id",
     message = "Working",
     name = "Example",

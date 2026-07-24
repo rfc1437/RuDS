@@ -67,7 +67,7 @@ pub struct ReindexReport {
 }
 
 /// Per-item progress callback: (current_item, total_items, item_description).
-pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) -> bool + Send>;
 
 /// Repair a missing or previously deployed FTS schema and report whether its
 /// derived content still needs to be rebuilt.
@@ -215,8 +215,10 @@ fn index_project(
 
     for post in post_q::list_posts_by_project(conn, project_id)? {
         *current += 1;
-        if let Some(callback) = on_item {
-            callback(*current, total, &post.title);
+        if let Some(callback) = on_item
+            && !callback(*current, total, &post.title)
+        {
+            return Err(EngineError::Cancelled);
         }
         let translations = post_translation::list_post_translations_by_post(conn, &post.id)?;
         let translation_data = translations
@@ -255,8 +257,10 @@ fn index_project(
 
     for media in media_q::list_media_by_project(conn, project_id)? {
         *current += 1;
-        if let Some(callback) = on_item {
-            callback(*current, total, &media.original_name);
+        if let Some(callback) = on_item
+            && !callback(*current, total, &media.original_name)
+        {
+            return Err(EngineError::Cancelled);
         }
         let translations = media_translation::list_media_translations_by_media(conn, &media.id)?;
         let translation_data = translations
@@ -372,6 +376,29 @@ mod tests {
         // Verify searchable
         let results = crate::db::fts::search_posts(db.conn(), "test", "en").unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn cancellation_rolls_back_shared_index_rebuild() {
+        let (db, project_id) = setup();
+        let dir = tempfile::tempdir().unwrap();
+        engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            &project_id,
+            "Cancel Me",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let result = rebuild_search_index(db.conn(), Some(Box::new(|_, _, _| false)));
+
+        assert!(matches!(result, Err(EngineError::Cancelled)));
     }
 
     #[test]

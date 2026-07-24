@@ -3,17 +3,28 @@ use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use bds_core::engine::git::GitCommit;
+use bds_core::engine::task::TaskStatus;
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
 use crate::components::inputs;
-use crate::i18n::t;
+use crate::i18n::{t, tw};
 use crate::state::navigation::{OutputEntry, PanelTab, TaskSnapshot};
 use crate::state::tabs::{Tab, TabType};
 use crate::views::post_editor::ResolvedPostLink;
 use std::collections::HashSet;
 
 fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Message> {
+    let status = match &snapshot.status {
+        TaskStatus::Pending => t(locale, "tasks.statusPending"),
+        TaskStatus::Running if snapshot.cancellation_requested => {
+            t(locale, "tasks.statusCancelling")
+        }
+        TaskStatus::Running => t(locale, "tasks.statusRunning"),
+        TaskStatus::Completed => t(locale, "tasks.statusCompleted"),
+        TaskStatus::Failed(error) => tw(locale, "tasks.statusFailed", &[("error", error)]),
+        TaskStatus::Cancelled => t(locale, "tasks.statusCancelled"),
+    };
     let progress = snapshot
         .progress
         .map(|value| format!(" ({:.0}%)", value * 100.0))
@@ -25,7 +36,7 @@ fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Messa
         .unwrap_or_default();
     let label = text(format!(
         "{} — {}{}{}",
-        snapshot.label, snapshot.status, progress, phase
+        snapshot.label, status, progress, phase
     ))
     .size(11)
     .shaping(Shaping::Advanced)
@@ -34,7 +45,7 @@ fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Messa
     if snapshot.is_cancellable {
         content = content.push(Space::with_width(Length::Fill)).push(
             button(text(t(locale, "tasks.cancelTask")).size(11))
-                .on_press(Message::CancelTask(snapshot.id))
+                .on_press(Message::CancelTask(snapshot.source, snapshot.id))
                 .padding([3, 8])
                 .style(inputs::secondary_button),
         );
@@ -46,12 +57,9 @@ fn group_progress(members: &[&TaskSnapshot]) -> Option<f32> {
     (!members.is_empty()).then(|| {
         members
             .iter()
-            .map(|member| {
-                if member.is_cancellable {
-                    member.progress.unwrap_or(0.0)
-                } else {
-                    1.0
-                }
+            .map(|member| match member.status {
+                TaskStatus::Completed | TaskStatus::Failed(_) | TaskStatus::Cancelled => 1.0,
+                TaskStatus::Pending | TaskStatus::Running => member.progress.unwrap_or(0.0),
             })
             .sum::<f32>()
             / members.len() as f32
@@ -219,7 +227,7 @@ pub fn view(
                 .padding(8)
                 .into()
             } else {
-                let visible = task_snapshots.iter().rev().take(10).collect::<Vec<_>>();
+                let visible = task_snapshots.iter().collect::<Vec<_>>();
                 let mut rendered_groups = HashSet::new();
                 let mut items: Vec<Element<'static, Message>> = Vec::new();
                 for snapshot in &visible {
@@ -441,16 +449,19 @@ mod progress_tests {
     fn group_progress_includes_pending_tasks_as_zero_like_bds2() {
         let complete = TaskSnapshot {
             id: 1,
+            source: crate::state::navigation::TaskSource::Local,
             label: String::new(),
             group_id: None,
             group_name: None,
-            status: String::new(),
+            status: TaskStatus::Completed,
             progress: Some(1.0),
             message: None,
+            cancellation_requested: false,
             is_cancellable: false,
         };
         let pending = TaskSnapshot {
             id: 2,
+            status: TaskStatus::Pending,
             progress: None,
             is_cancellable: true,
             ..complete.clone()

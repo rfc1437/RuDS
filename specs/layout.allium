@@ -262,7 +262,9 @@ invariant PanelTabFallback {
     -- git_log unavailable when neither post nor media tab is active
 }
 
--- Tasks tab: last 10 tasks, newest first, with progress/cancel.
+-- Tasks tab: every active task plus the 10 newest finished tasks, with
+-- progress/cancel. Active groups always include every child needed to show a
+-- complete group even when this exceeds the finished-history limit.
 --   Tasks with shared group_id are collapsible groups showing bDS2-style
 --   average child progress; pending children contribute zero.
 -- Output tab: log entries with copy-all button.
@@ -285,6 +287,12 @@ value StatusBarLeft {
     -- Project selector dropdown to switch active project
     running_task_message: String?       -- spinner + message when tasks running
     running_task_overflow: Integer?     -- "+N more" count when multiple running
+}
+
+invariant StatusBarTaskSelection {
+    -- The indicator selects the first running task, otherwise the first
+    -- pending task. Overflow counts every other running or pending task.
+    -- Status remains typed until its display label is localized.
 }
 
 value StatusBarRight {

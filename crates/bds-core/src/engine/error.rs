@@ -15,6 +15,8 @@ pub enum EngineError {
     Conflict(String),
     #[error("validation error: {0}")]
     Validation(String),
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 impl From<crate::db::DatabaseError> for EngineError {

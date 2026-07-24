@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -125,6 +128,26 @@ pub fn upload_site(
     preferences: &PublishingPreferences,
     mut on_progress: impl FnMut(usize, usize, UploadTargetKind),
 ) -> EngineResult<PublishJob> {
+    let cancelled = AtomicBool::new(false);
+    upload_site_cancellable(
+        data_dir,
+        private_cache_dir,
+        preferences,
+        &cancelled,
+        move |current, total, kind| {
+            on_progress(current, total, kind);
+            true
+        },
+    )
+}
+
+pub fn upload_site_cancellable(
+    data_dir: &Path,
+    private_cache_dir: &Path,
+    preferences: &PublishingPreferences,
+    cancel_flag: &AtomicBool,
+    mut on_progress: impl FnMut(usize, usize, UploadTargetKind) -> bool,
+) -> EngineResult<PublishJob> {
     if std::env::var_os("SSH_AUTH_SOCK").is_none() {
         return Err(EngineError::Validation(
             "SSH agent is unavailable (SSH_AUTH_SOCK is not set)".into(),
@@ -134,7 +157,7 @@ pub fn upload_site(
         data_dir,
         private_cache_dir,
         preferences,
-        &mut |program, args| run_command(program, args),
+        &mut |program, args| run_command_cancellable(program, args, cancel_flag),
         &mut on_progress,
     )
 }
@@ -144,7 +167,7 @@ fn upload_site_with_runner(
     private_cache_dir: &Path,
     preferences: &PublishingPreferences,
     runner: &mut CommandRunner<'_>,
-    on_progress: &mut dyn FnMut(usize, usize, UploadTargetKind),
+    on_progress: &mut dyn FnMut(usize, usize, UploadTargetKind) -> bool,
 ) -> EngineResult<PublishJob> {
     let credentials = Credentials::from_preferences(preferences)?;
     let targets = build_upload_targets(data_dir, &credentials);
@@ -162,7 +185,9 @@ fn upload_site_with_runner(
     let cache_path = private_cache_dir.join("publishing-scp-mtimes.json");
     let mut cache = read_cache(&cache_path);
     for (index, target) in targets.iter().enumerate() {
-        on_progress(index + 1, targets.len(), target.kind);
+        if !on_progress(index + 1, targets.len(), target.kind) {
+            return Err(EngineError::Cancelled);
+        }
         let result = match credentials.mode {
             SshMode::Rsync => upload_rsync(target, &credentials, runner),
             SshMode::Scp => upload_scp(target, &credentials, &mut cache, runner),
@@ -328,21 +353,49 @@ fn write_cache(path: &Path, cache: &ScpMtimeCache) -> EngineResult<()> {
     Ok(())
 }
 
-fn run_command(program: &str, args: &[String]) -> Result<(), String> {
-    let output = Command::new(program)
+fn run_command_cancellable(
+    program: &str,
+    args: &[String],
+    cancel_flag: &AtomicBool,
+) -> Result<(), String> {
+    let mut child = Command::new(program)
         .args(args)
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("failed to start {program}: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if stderr.is_empty() {
-            format!("{program} exited with {}", output.status)
-        } else {
-            stderr
-        })
+    let stderr = child.stderr.take();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        if let Some(mut stderr) = stderr {
+            let _ = stderr.read_to_string(&mut output);
+        }
+        output
+    });
+    let status = loop {
+        if cancel_flag.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_reader.join();
+            return Err("operation cancelled".into());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("failed to wait for {program}: {error}"))?
+        {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let stderr = stderr_reader.join().unwrap_or_default().trim().to_string();
+    if status.success() {
+        return Ok(());
     }
+    Err(if stderr.is_empty() {
+        format!("{program} exited with {status}")
+    } else {
+        stderr
+    })
 }
 
 #[cfg(test)]
@@ -376,7 +429,7 @@ mod tests {
                 commands.push((program.to_owned(), args.to_vec()));
                 Ok(())
             },
-            &mut |_, _, _| {},
+            &mut |_, _, _| true,
         )
         .unwrap();
 
@@ -398,6 +451,28 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_stops_before_starting_the_next_target() {
+        let dir = TempDir::new().unwrap();
+        let cache = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("html")).unwrap();
+        let mut commands = 0;
+
+        let result = upload_site_with_runner(
+            dir.path(),
+            cache.path(),
+            &preferences(SshMode::Rsync),
+            &mut |_, _| {
+                commands += 1;
+                Ok(())
+            },
+            &mut |_, _, _| false,
+        );
+
+        assert!(matches!(result, Err(EngineError::Cancelled)));
+        assert_eq!(commands, 0);
+    }
+
+    #[test]
     fn scp_excludes_sidecars_and_skips_unchanged_files() {
         let dir = TempDir::new().unwrap();
         let cache = TempDir::new().unwrap();
@@ -415,7 +490,7 @@ mod tests {
                 first.push((program.to_owned(), args.to_vec()));
                 Ok(())
             },
-            &mut |_, _, _| {},
+            &mut |_, _, _| true,
         )
         .unwrap();
         assert_eq!(
@@ -437,7 +512,7 @@ mod tests {
                 second.push(program.to_owned());
                 Ok(())
             },
-            &mut |_, _, _| {},
+            &mut |_, _, _| true,
         )
         .unwrap();
         assert!(second.is_empty());
@@ -454,7 +529,7 @@ mod tests {
             cache.path(),
             &preferences(SshMode::Rsync),
             &mut |_, _| Err("network down".into()),
-            &mut |_, _, _| {},
+            &mut |_, _, _| true,
         )
         .unwrap_err();
         assert!(error.to_string().contains("network down"));

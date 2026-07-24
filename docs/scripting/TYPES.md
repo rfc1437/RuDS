@@ -269,6 +269,10 @@ Public task snapshot returned by the task manager.
 
 ```lua
 {
+  cancellable = true,
+  cancellation_requested = true,
+  group_id = "example-id",
+  group_name = "example",
   id = "example-id",
   message = "Working",
   name = "Example",
@@ -279,6 +283,10 @@ Public task snapshot returned by the task manager.
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
+| `cancellable` | `boolean` | Yes | Whether a cancellation request can still be submitted. |
+| `cancellation_requested` | `boolean` | Yes | Whether cooperative cancellation is in progress. |
+| `group_id` | `string \| nil` | No | Identifier shared by tasks in one workflow. |
+| `group_name` | `string \| nil` | No | Human-readable workflow name. |
 | `id` | `string` | Yes | Stable record identifier. |
 | `message` | `string \| nil` | No | Latest user-facing task message. |
 | `name` | `string` | Yes | Human-readable name. |
@@ -298,6 +306,10 @@ Aggregate task status snapshot.
   running_count = 1,
   tasks = {
   {
+    cancellable = true,
+    cancellation_requested = true,
+    group_id = "example-id",
+    group_name = "example",
     id = "example-id",
     message = "Working",
     name = "Example",

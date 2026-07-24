@@ -6,6 +6,9 @@
 entity Task {
     name: String
     status: pending | running | completed | failed | cancelled
+    source: local | remote
+    cancellable: Boolean
+    cancellation_requested: Boolean
     progress: Decimal?              -- 0.0..1.0
     message: String?
     group_id: String?               -- Optional task grouping
@@ -28,6 +31,7 @@ surface TaskControlSurface {
         SubmitTaskRequested(name, work)
         CancelTaskRequested(task)
         RegisterExternalTaskRequested(name)
+        TaskStateRequested()
 }
 
 surface TaskRuntimeSurface {
@@ -38,6 +42,8 @@ surface TaskRuntimeSurface {
         TaskWorkFailed(task, error_message)
         ProgressReported(task, value, message)
         FinishedTaskEvictionDue()
+        WorkerCapacityAvailable()
+        TaskWorkStopped(task)
 }
 
 surface TaskSurface {
@@ -46,6 +52,7 @@ surface TaskSurface {
     exposes:
         task.name
         task.status
+        task.source
         task.progress when task.progress != null
         task.message when task.message != null
         task.group_id when task.group_id != null
@@ -74,13 +81,23 @@ invariant FifoQueue {
 
 rule SubmitTask {
     when: SubmitTaskRequested(name, work)
-    let running_tasks = Tasks where status = running
     ensures:
-        let task = Task.created(name: name, status: pending)
+        let task = Task.created(
+            name: name,
+            status: pending,
+            source: local,
+            cancellable: true,
+            cancellation_requested: false
+        )
         task.status = pending
-        if running_tasks.count < config.max_concurrent:
-            task.status = running
-            TaskStarted(task, work)
+}
+
+rule StartNextTask {
+    when: WorkerCapacityAvailable()
+    let pending_tasks = Tasks where status = pending
+    requires: pending_tasks.count > 0
+    ensures: pending_tasks.first.status = running
+    ensures: TaskStarted(pending_tasks.first)
 }
 
 rule CompleteTask {
@@ -99,8 +116,28 @@ rule FailTask {
 
 rule CancelTask {
     when: CancelTaskRequested(task)
-    requires: task.status = running or task.status = pending
-    -- Cancellation uses a runtime-specific cancellation mechanism
+    requires: task.status = pending
+    ensures: task.status = cancelled
+    ensures: NextQueuedTaskStarted()
+}
+
+rule RequestRunningTaskCancellation {
+    when: CancelTaskRequested(task)
+    requires: task.status = running
+    requires: task.cancellable
+    ensures: task.cancellation_requested = true
+    ensures: StopTaskWorkRequested(task)
+    @guidance
+        -- Long operations observe the request at phase or item boundaries.
+        -- Owned child processes are terminated when the platform permits it.
+        -- The task remains running and occupies its worker slot until work
+        -- actually stops; status surfaces expose cancellation_requested.
+}
+
+rule FinishRunningTaskCancellation {
+    when: TaskWorkStopped(task)
+    requires: task.status = running
+    requires: task.cancellation_requested
     ensures: task.status = cancelled
     ensures: NextQueuedTaskStarted()
 }
@@ -110,6 +147,9 @@ rule ReportProgress {
     -- Progress events throttled to 250ms
     ensures: task.progress = value
     ensures: task.message = message
+    @guidance
+        -- A report whose value is 1.0 is always accepted so the terminal
+        -- localized phase text cannot be dropped by throttling.
 }
 
 invariant ProgressThrottled {
@@ -139,11 +179,24 @@ rule EvictFinishedTasks {
             ensures: not exists task
 }
 
+rule PruneFinishedTasksOnAccess {
+    when: TaskStateRequested()
+    for task in Tasks where status in {completed, failed, cancelled}:
+        if now - task.finished_at >= config.finished_task_ttl:
+            ensures: not exists task
+}
+
 -- External tasks: lifecycle controlled by caller (e.g., renderer-side scripts)
 rule RegisterExternalTask {
     when: RegisterExternalTaskRequested(name)
     ensures:
-        let task = Task.created(name: name, status: running)
+        let task = Task.created(
+            name: name,
+            status: running,
+            source: remote,
+            cancellable: true,
+            cancellation_requested: false
+        )
         task.status = running
     @guidance
         -- External tasks are not managed by the queue

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::Engine as _;
 use chrono::{SecondsFormat, TimeZone, Utc};
@@ -1215,33 +1216,39 @@ impl CoreHost {
             "get" => {
                 let id = task_id_arg(args, 0)?;
                 manager
-                    .snapshots()
-                    .into_iter()
-                    .find(|task| task.id == id)
+                    .get(id)
                     .map(public_task)
                     .transpose()
                     .map(|value| value.unwrap_or(Value::Null))
             }
-            "get_all" => public_tasks(manager.snapshots()),
-            "get_running" => public_tasks(
-                manager
-                    .snapshots()
-                    .into_iter()
-                    .filter(|task| task.status == TaskStatus::Running)
-                    .collect(),
-            ),
+            "get_all" => public_tasks(manager.all()),
+            "get_running" => public_tasks(manager.running()),
             "status_snapshot" => {
                 let tasks = manager.snapshots();
+                let active = tasks
+                    .iter()
+                    .filter(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Running))
+                    .collect::<Vec<_>>();
+                let running_task_message = active.first().map(|task| {
+                    if task.status == TaskStatus::Pending {
+                        format!("Queued: {}", task.label)
+                    } else if let Some(message) =
+                        task.message.as_deref().filter(|value| !value.is_empty())
+                    {
+                        format!("{}: {message}", task.label)
+                    } else {
+                        task.label.clone()
+                    }
+                });
                 Ok(json!({
-                    "active_count": tasks.iter().filter(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Running)).count(),
+                    "active_count": active.len(),
                     "running_count": manager.running_count(), "pending_count": manager.pending_count(),
+                    "running_task_message": running_task_message,
+                    "running_task_overflow": active.len().saturating_sub(1),
                     "tasks": public_tasks(tasks)?,
                 }))
             }
-            "cancel" => {
-                manager.cancel(task_id_arg(args, 0)?);
-                Ok(Value::Bool(true))
-            }
+            "cancel" => Ok(Value::Bool(manager.cancel(task_id_arg(args, 0)?))),
             "clear_completed" => {
                 manager.clear_completed();
                 Ok(Value::Bool(true))
@@ -1355,10 +1362,17 @@ impl CoreHost {
         }
         let manager = self.task_manager.clone();
         let task_id = self.task_id;
-        engine::publishing::upload_site(
+        let cancel_flag = manager
+            .as_ref()
+            .zip(task_id)
+            .and_then(|(manager, task_id)| manager.cancellation_flag(task_id))
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let progress_cancel_flag = Arc::clone(&cancel_flag);
+        engine::publishing::upload_site_cancellable(
             &self.data_dir,
             &self.private_cache_dir,
             &preferences,
+            cancel_flag.as_ref(),
             move |current, total, _| {
                 if let (Some(manager), Some(task_id)) = (&manager, task_id) {
                     manager.report_progress(
@@ -1367,6 +1381,7 @@ impl CoreHost {
                         Some("uploading site".into()),
                     );
                 }
+                !progress_cancel_flag.load(Ordering::Acquire)
             },
         )?;
         match (&self.task_manager, self.task_id) {
@@ -1659,6 +1674,8 @@ fn public_tag(value: Tag) -> HostResult<Value> {
 }
 
 fn public_task(value: TaskSnapshot) -> HostResult<Value> {
+    let cancellable = matches!(value.status, TaskStatus::Pending | TaskStatus::Running)
+        && !value.cancellation_requested;
     let (status, error) = match value.status {
         TaskStatus::Pending => ("pending", None),
         TaskStatus::Running => ("running", None),
@@ -1668,6 +1685,9 @@ fn public_task(value: TaskSnapshot) -> HostResult<Value> {
     };
     Ok(
         json!({"id":value.id.to_string(),"name":value.label,"status":status,
+        "group_id":value.group_id,"group_name":value.group_name,
+        "cancellable":cancellable,
+        "cancellation_requested":value.cancellation_requested,
         "progress":value.progress,"message":value.message.or(error)}),
     )
 }

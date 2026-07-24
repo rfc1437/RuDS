@@ -2,10 +2,11 @@ use iced::widget::text::Shaping;
 use iced::widget::{Space, button, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
+use bds_core::engine::task::TaskStatus;
 use bds_core::i18n::UiLocale;
 
 use crate::app::Message;
-use crate::i18n::tw;
+use crate::i18n::{t, tw};
 use crate::state::navigation::TaskSnapshot;
 use crate::views::project_selector;
 
@@ -131,23 +132,38 @@ pub fn view(
     let project_name = active_project_name.unwrap_or("\u{2014}");
     let project_trigger = project_selector::trigger_button(project_name);
 
-    let running: Vec<&TaskSnapshot> = task_snapshots
+    let active: Vec<&TaskSnapshot> = task_snapshots
         .iter()
-        .filter(|t| t.status == "running")
+        .filter(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Running))
         .collect();
-    let task_indicator: Element<'static, Message> = if !running.is_empty() {
-        let first = &running[0];
+    let first = active
+        .iter()
+        .find(|task| task.status == TaskStatus::Running)
+        .or_else(|| active.first());
+    let task_indicator: Element<'static, Message> = if let Some(first) = first {
         let progress_str = first
             .progress
             .map(|p| format!(" {:.0}%", p * 100.0))
             .unwrap_or_default();
         let phase_str = first.message.as_deref().unwrap_or("");
-        let extra = if running.len() > 1 {
-            format!(" (+{})", running.len() - 1)
+        let extra = if active.len() > 1 {
+            format!(" (+{})", active.len() - 1)
         } else {
             String::new()
         };
-        let display = if phase_str.is_empty() {
+        let display = if first.cancellation_requested {
+            format!(
+                "{}: {}{progress_str}{extra}",
+                t(locale, "tasks.statusCancelling"),
+                first.label
+            )
+        } else if first.status == TaskStatus::Pending {
+            format!(
+                "{}: {}{extra}",
+                t(locale, "tasks.statusPending"),
+                first.label
+            )
+        } else if phase_str.is_empty() {
             format!("{}{progress_str}{extra}", first.label)
         } else {
             format!("{phase_str}{progress_str}{extra}")

@@ -391,12 +391,7 @@ pub fn prepare_site_render_context(
         let linked_media_by_post_id =
             build_linked_media_by_post_id(&posts, &linked_media_by_source_post);
         let post_data_json_by_id = build_post_data_json_by_id(&posts, &linked_media_by_post_id);
-        let menu_items = build_menu_items(
-            data_dir,
-            &language,
-            &main_language,
-            &category_settings,
-        )?;
+        let menu_items = build_menu_items(data_dir, &language, &main_language, &category_settings)?;
         let canonical_post_path_by_slug =
             canonical_post_path_by_slug(&posts, &language, &main_language);
         let taxonomy = build_taxonomy_context(&posts, &tags);
@@ -588,6 +583,39 @@ pub fn build_site_render_artifacts_from_context(
     }
 
     Ok(artifacts)
+}
+
+pub(crate) fn count_site_render_pages_from_context(
+    context: &SiteRenderContext,
+    section: GenerationSection,
+    requested_paths: Option<&HashSet<String>>,
+) -> usize {
+    context
+        .languages
+        .iter()
+        .map(|language_context| {
+            let expanded = requested_paths.map(|requested| {
+                expand_requested_aggregate_paths(
+                    requested,
+                    &language_context.posts,
+                    &language_context.routes,
+                    &language_context.language,
+                    &context.metadata,
+                )
+            });
+            language_context
+                .routes
+                .iter()
+                .filter(|route| {
+                    classify_generated_path(&route.relative_path, &context.metadata)
+                        == Some(section)
+                        && expanded
+                            .as_ref()
+                            .is_none_or(|requested| requested.contains(&route.relative_path))
+                })
+                .count()
+        })
+        .sum()
 }
 
 pub fn build_preview_response(

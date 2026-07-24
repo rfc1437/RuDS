@@ -135,6 +135,11 @@ surface ScriptRuntimeSurface {
         -- sync_from_posts.
         -- bds.tasks: get, status_snapshot, cancel, get_all, get_running,
         -- clear_completed.
+        -- get and get_all inspect every retained task rather than the
+        -- status-snapshot history cap; get_all is newest first. get_running
+        -- contains only running tasks. cancel succeeds only for a pending or
+        -- running task. clear_completed removes completed tasks while keeping
+        -- failed and cancelled results.
         -- bds.sync: check_availability, get_repo_state, get_status,
         -- get_history, get_remote_state, fetch, pull, push, commit_all.
         -- bds.publish: upload_site.

@@ -21,6 +21,7 @@ pub use routes::{
     render_starter_list_page_with_media_map, render_starter_single_post_page,
     render_starter_single_post_page_with_media_map,
 };
+pub(crate) use site::count_site_render_pages_from_context;
 pub use site::{
     PagefindDocument, PreviewRenderResult, SitePage, SiteRenderArtifacts, SiteRenderContext,
     build_preview_response, build_site_render_artifacts, build_site_render_artifacts_from_context,

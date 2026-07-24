@@ -355,7 +355,7 @@ fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
 
     let progress = Arc::new(Mutex::new(Vec::new()));
     let progress_sink = Arc::clone(&progress);
-    let (report, thumbnails) = cli_sync::run_cli_mutation(db.conn(), || {
+    let report = cli_sync::run_cli_mutation(db.conn(), || {
         let report = engine::rebuild::rebuild_from_filesystem_with_progress(
             db.conn(),
             &data_dir,
@@ -369,12 +369,11 @@ fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
                 if progress.last() != Some(&line) {
                     progress.push(line);
                 }
+                true
             })),
         )?;
-        let thumbnails =
-            engine::media::regenerate_missing_thumbnails(db.conn(), &data_dir, &project.id)?;
         emit_bulk(&project.id);
-        Ok((report, thumbnails))
+        Ok(report)
     })?;
     let mut result = output(
         "Rebuild complete",
@@ -389,8 +388,8 @@ fn rebuild(db: &Database, incremental: bool) -> Result<CommandOutput> {
             "templates_updated": report.templates_updated,
             "scripts_created": report.scripts_created,
             "scripts_updated": report.scripts_updated,
-            "thumbnails_generated": thumbnails.thumbnails_generated,
-            "thumbnail_media_failed": thumbnails.media_failed,
+            "thumbnails_generated": report.thumbnails_generated,
+            "thumbnail_media_failed": report.thumbnail_media_failed,
         }),
     );
     result.progress = progress

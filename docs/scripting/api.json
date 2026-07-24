@@ -1833,6 +1833,10 @@
     {
       "description": "Public task snapshot returned by the task manager.",
       "fields": {
+        "cancellable": "boolean",
+        "cancellation_requested": "boolean",
+        "group_id": "string | nil",
+        "group_name": "string | nil",
         "id": "string",
         "message": "string | nil",
         "name": "string",

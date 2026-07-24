@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use bds_core::db::Database;
 use bds_core::engine::ai::{AiEndpointConfig, AiEndpointKind};
+use bds_core::engine::task::{TaskId, TaskManager};
 use bds_core::engine::{self, domain_events};
 use bds_core::i18n::{UiLocale, normalize_language};
 use bds_core::model::metadata::ProjectMetadata;
@@ -600,7 +602,7 @@ impl TuiApp {
     fn queue_task(
         &mut self,
         label: &str,
-        work: impl FnOnce() -> Result<BackgroundResult> + Send + 'static,
+        work: impl FnOnce(Arc<TaskManager>, TaskId) -> Result<BackgroundResult> + Send + 'static,
     ) {
         let tasks = self.host.tasks();
         let task_id = tasks.submit(label);
@@ -608,22 +610,32 @@ impl TuiApp {
         self.started_task_ids.insert(task_id);
         self.status = self.tr_with("tui.taskRunning", &[("label", label)]);
         std::thread::spawn(move || {
-            if !tasks.wait_until_runnable(task_id) {
+            let Some(worker) = tasks.admit_blocking(task_id) else {
                 return;
-            }
-            match work() {
+            };
+            let work_tasks = Arc::clone(&tasks);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                work(work_tasks, task_id)
+            }))
+            .map_err(|_| anyhow!("background task panicked"))
+            .and_then(|result| result);
+            drop(worker);
+            match result {
                 Ok(result) => {
                     tasks.complete(task_id);
                     let _ = sender.send(result);
                 }
                 Err(error) => {
+                    let cancelled = tasks.is_cancelled(task_id);
                     let message = error.to_string();
                     tasks.fail(task_id, message.clone());
-                    let _ = sender.send(BackgroundResult {
-                        status: message,
-                        panel: None,
-                        reload: false,
-                    });
+                    if !cancelled {
+                        let _ = sender.send(BackgroundResult {
+                            status: message,
+                            panel: None,
+                            reload: false,
+                        });
+                    }
                 }
             }
         });
@@ -636,15 +648,19 @@ impl TuiApp {
             }
             match task.status {
                 engine::task::TaskStatus::Pending | engine::task::TaskStatus::Running => {
-                    self.status = match task.progress {
-                        Some(progress) => self.tr_with(
-                            "tui.taskProgress",
-                            &[
-                                ("label", &task.label),
-                                ("percent", &format!("{:.0}", progress * 100.0)),
-                            ],
-                        ),
-                        None => task.label,
+                    self.status = if task.cancellation_requested {
+                        self.tr_with("tui.taskCancelling", &[("label", &task.label)])
+                    } else {
+                        match task.progress {
+                            Some(progress) => self.tr_with(
+                                "tui.taskProgress",
+                                &[
+                                    ("label", &task.label),
+                                    ("percent", &format!("{:.0}", progress * 100.0)),
+                                ],
+                            ),
+                            None => task.label,
+                        }
                     };
                 }
                 engine::task::TaskStatus::Completed if self.completed_task_ids.insert(task.id) => {
@@ -1550,7 +1566,10 @@ impl TuiApp {
                     let message = prompt.value;
                     let locale = self.locale;
                     let label = self.tr("tui.taskGitCommit");
-                    self.queue_task(&label, move || {
+                    self.queue_task(&label, move |tasks, task_id| {
+                        if tasks.is_cancelled(task_id) {
+                            return Err(anyhow!("operation cancelled"));
+                        }
                         let output = engine::git::GitEngine::new(&data_dir)
                             .commit_all(&message)?
                             .output;
@@ -2730,10 +2749,12 @@ impl TuiApp {
         let data_dir = self.data_dir()?.to_owned();
         let locale = self.locale;
         let label = self.tr("tui.taskGitPull");
-        self.queue_task(&label, move || {
+        self.queue_task(&label, move |tasks, task_id| {
             let mut output = Vec::new();
-            let result = engine::git::GitEngine::new(&data_dir)
-                .pull(|| false, |line| output.push(line.text))?;
+            let result = engine::git::GitEngine::new(&data_dir).pull(
+                || tasks.is_cancelled(task_id),
+                |line| output.push(line.text),
+            )?;
             output.push(result.output);
             Ok(BackgroundResult {
                 status: bds_core::i18n::translate_with(
@@ -2759,10 +2780,12 @@ impl TuiApp {
         let data_dir = self.data_dir()?.to_owned();
         let locale = self.locale;
         let label = self.tr("tui.taskGitPush");
-        self.queue_task(&label, move || {
+        self.queue_task(&label, move |tasks, task_id| {
             let mut output = Vec::new();
-            let result = engine::git::GitEngine::new(&data_dir)
-                .push(|| false, |line| output.push(line.text))?;
+            let result = engine::git::GitEngine::new(&data_dir).push(
+                || tasks.is_cancelled(task_id),
+                |line| output.push(line.text),
+            )?;
             output.push(result.output);
             Ok(BackgroundResult {
                 status: bds_core::i18n::translate_with(
@@ -2807,13 +2830,26 @@ impl TuiApp {
             "metadata-diff" => {
                 let locale = self.locale;
                 let label = self.tr("tui.commandMetadataDiff");
-                self.queue_task(&label, move || {
+                self.queue_task(&label, move |tasks, task_id| {
                     let db = Database::open(&database_path)?;
+                    let report = engine::metadata_diff::compute_metadata_diff_with_progress(
+                        db.conn(),
+                        &data_dir,
+                        &project_id,
+                        |current, total| {
+                            tasks.report_progress(
+                                task_id,
+                                Some(current as f32 / total.max(1) as f32),
+                                Some(bds_core::i18n::translate(locale, "tui.commandMetadataDiff")),
+                            );
+                            !tasks.is_cancelled(task_id)
+                        },
+                    )?;
                     Ok(BackgroundResult {
                         status: bds_core::i18n::translate(locale, "tui.metadataDiffComplete"),
                         panel: Some(Panel::Report {
                             title: bds_core::i18n::translate(locale, "menu.item.metadataDiff"),
-                            body: metadata_report_body(db.conn(), &data_dir, &project_id, locale)?,
+                            body: metadata_report_body_from_report(&report, locale),
                             action: ReportAction::MetadataDiff,
                         }),
                         reload: false,
@@ -2823,13 +2859,26 @@ impl TuiApp {
             "validate-site" => {
                 let locale = self.locale;
                 let label = self.tr("tui.commandValidateSite");
-                self.queue_task(&label, move || {
+                self.queue_task(&label, move |tasks, task_id| {
                     let db = Database::open(&database_path)?;
+                    let report = engine::validate_site::validate_site_with_progress(
+                        db.conn(),
+                        &data_dir,
+                        &project_id,
+                        |current, total| {
+                            tasks.report_progress(
+                                task_id,
+                                Some(current as f32 / total.max(1) as f32),
+                                Some(bds_core::i18n::translate(locale, "tui.commandValidateSite")),
+                            );
+                            !tasks.is_cancelled(task_id)
+                        },
+                    )?;
                     Ok(BackgroundResult {
                         status: bds_core::i18n::translate(locale, "tui.siteValidationComplete"),
                         panel: Some(Panel::Report {
                             title: bds_core::i18n::translate(locale, "menu.item.validateSite"),
-                            body: site_validation_body(db.conn(), &data_dir, &project_id, locale)?,
+                            body: site_validation_body_from_report(&report, locale),
                             action: ReportAction::SiteValidation,
                         }),
                         reload: false,
@@ -2839,18 +2888,86 @@ impl TuiApp {
             "force-render" => {
                 let locale = self.locale;
                 let label = self.tr("tui.commandForceRender");
-                self.queue_task(&label, move || {
+                self.queue_task(&label, move |tasks, task_id| {
                     let db = Database::open(&database_path)?;
                     let metadata = engine::meta::read_project_json(&data_dir)?;
-                    let posts = published_sources(db.conn(), &data_dir, &project_id)?;
-                    let report = engine::generation::generate_starter_site_forced(
+                    let posts =
+                        bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)?;
+                    let total_posts = posts.len();
+                    let mut sources = Vec::new();
+                    for (index, post) in posts.into_iter().enumerate() {
+                        tasks.report_progress(
+                            task_id,
+                            Some((index + 1) as f32 / total_posts.max(1) as f32 * 0.1),
+                            Some(post.title.clone()),
+                        );
+                        if tasks.is_cancelled(task_id) {
+                            return Err(anyhow!("operation cancelled"));
+                        }
+                        if let Some(source) =
+                            engine::generation::load_published_post_source(&data_dir, post)?
+                        {
+                            sources.push(source);
+                        }
+                    }
+                    let prepared = engine::generation::prepare_site_generation(
                         db.conn(),
-                        &data_dir.join("html"),
+                        &data_dir,
                         &project_id,
                         &metadata,
-                        &posts,
-                        metadata.main_language.as_deref().unwrap_or("en"),
+                        &sources,
                     )?;
+                    let output_dir = data_dir.join("html");
+                    let mut report = engine::generation::GenerationReport::default();
+                    for (index, section) in engine::generation::GenerationSection::ALL
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let progress_tasks = Arc::clone(&tasks);
+                        let cancel_tasks = Arc::clone(&tasks);
+                        report.append(
+                            engine::generation::render_prepared_site_section_with_progress(
+                                db.conn(),
+                                &output_dir,
+                                &project_id,
+                                &prepared,
+                                section,
+                                true,
+                                &|_| {},
+                                move |current, total, path| {
+                                    progress_tasks.report_progress(
+                                        task_id,
+                                        Some(
+                                            0.1 + (index as f32
+                                                + current as f32 / total.max(1) as f32)
+                                                / 6.0
+                                                * 0.9,
+                                        ),
+                                        Some(path.to_string()),
+                                    );
+                                },
+                                move || cancel_tasks.is_cancelled(task_id),
+                            )?,
+                        );
+                    }
+                    let progress_tasks = Arc::clone(&tasks);
+                    let cancel_tasks = Arc::clone(&tasks);
+                    report.append(
+                        engine::generation::build_site_search_index_forced_with_progress(
+                            db.conn(),
+                            &output_dir,
+                            &project_id,
+                            &metadata,
+                            move |current, total, path| {
+                                progress_tasks.report_progress(
+                                    task_id,
+                                    Some(0.85 + current as f32 / total.max(1) as f32 * 0.15),
+                                    Some(path.to_string()),
+                                );
+                            },
+                            move || cancel_tasks.is_cancelled(task_id),
+                        )?,
+                    );
                     Ok(BackgroundResult {
                         status: bds_core::i18n::translate_with(
                             locale,
@@ -2865,12 +2982,21 @@ impl TuiApp {
             "rebuild-database" => {
                 let locale = self.locale;
                 let label = self.tr("tui.commandRebuildDatabase");
-                self.queue_task(&label, move || {
+                self.queue_task(&label, move |tasks, task_id| {
                     let db = Database::open(&database_path)?;
-                    let report = engine::rebuild::rebuild_from_filesystem(
+                    let progress_tasks = Arc::clone(&tasks);
+                    let report = engine::rebuild::rebuild_from_filesystem_with_progress(
                         db.conn(),
                         &data_dir,
                         &project_id,
+                        Some(Arc::new(move |progress, event| {
+                            progress_tasks.report_progress(
+                                task_id,
+                                Some(progress),
+                                Some(event.localized(locale)),
+                            );
+                            !progress_tasks.is_cancelled(task_id)
+                        })),
                     )?;
                     let count = report.posts_created
                         + report.posts_updated
@@ -2894,9 +3020,21 @@ impl TuiApp {
             "reindex-search" => {
                 let locale = self.locale;
                 let label = self.tr("tui.commandReindexSearch");
-                self.queue_task(&label, move || {
+                self.queue_task(&label, move |tasks, task_id| {
                     let db = Database::open(&database_path)?;
-                    let report = engine::search::reindex_project(db.conn(), &project_id, None)?;
+                    let progress_tasks = Arc::clone(&tasks);
+                    let report = engine::search::reindex_project(
+                        db.conn(),
+                        &project_id,
+                        Some(Box::new(move |current, total, name| {
+                            progress_tasks.report_progress(
+                                task_id,
+                                Some(current as f32 / total.max(1) as f32),
+                                Some(name.to_string()),
+                            );
+                            !progress_tasks.is_cancelled(task_id)
+                        })),
+                    )?;
                     Ok(BackgroundResult {
                         status: bds_core::i18n::translate_with(
                             locale,
@@ -3027,6 +3165,13 @@ fn metadata_report_body(
     locale: UiLocale,
 ) -> Result<String> {
     let report = engine::metadata_diff::compute_metadata_diff(conn, data_dir, project_id)?;
+    Ok(metadata_report_body_from_report(&report, locale))
+}
+
+fn metadata_report_body_from_report(
+    report: &engine::metadata_diff::DiffReport,
+    locale: UiLocale,
+) -> String {
     let mut lines = report
         .diffs
         .iter()
@@ -3058,7 +3203,7 @@ fn metadata_report_body(
             "tui.noMetadataDifferences",
         ));
     }
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 fn site_validation_body(
@@ -3068,7 +3213,14 @@ fn site_validation_body(
     locale: UiLocale,
 ) -> Result<String> {
     let report = engine::validate_site::validate_site(conn, data_dir, project_id)?;
-    Ok(bds_core::i18n::translate_with(
+    Ok(site_validation_body_from_report(&report, locale))
+}
+
+fn site_validation_body_from_report(
+    report: &engine::validate_site::SiteValidationReport,
+    locale: UiLocale,
+) -> String {
+    bds_core::i18n::translate_with(
         locale,
         "tui.siteValidationReport",
         &[
@@ -3076,7 +3228,7 @@ fn site_validation_body(
             ("extra", &report.extra_pages.join("\n")),
             ("stale", &report.stale_pages.join("\n")),
         ],
-    ))
+    )
 }
 
 impl TuiApp {

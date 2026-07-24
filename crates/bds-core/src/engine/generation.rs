@@ -63,6 +63,15 @@ pub struct PreparedSiteGeneration {
     generated_hashes: Arc<HashMap<String, String>>,
 }
 
+impl std::fmt::Debug for PreparedSiteGeneration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedSiteGeneration")
+            .field("source_count", &self.sources.len())
+            .finish_non_exhaustive()
+    }
+}
+
 pub fn prepare_site_generation(
     conn: &Connection,
     data_dir: &Path,
@@ -89,6 +98,34 @@ pub fn prepare_site_generation(
         render,
         generated_hashes,
     })
+}
+
+pub fn prepared_section_page_count(
+    prepared: &PreparedSiteGeneration,
+    validation: Option<&SiteValidationReport>,
+    section: GenerationSection,
+) -> usize {
+    let requested = validation.map(|validation| {
+        validation
+            .missing_pages
+            .iter()
+            .chain(validation.stale_pages.iter())
+            .cloned()
+            .collect::<HashSet<_>>()
+    });
+    let fallback = validation.is_some_and(|validation| {
+        validation
+            .missing_pages
+            .iter()
+            .chain(validation.extra_pages.iter())
+            .chain(validation.stale_pages.iter())
+            .any(|path| classify_generated_path(path, &prepared.metadata).is_none())
+    });
+    crate::render::count_site_render_pages_from_context(
+        &prepared.render,
+        section,
+        (!fallback).then_some(requested.as_ref()).flatten(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

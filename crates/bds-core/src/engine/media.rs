@@ -54,8 +54,17 @@ pub fn rebuild_media_links(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<MediaLinkRebuildReport> {
+    rebuild_media_links_with_progress(conn, data_dir, project_id, None)
+}
+
+pub fn rebuild_media_links_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<MediaLinkRebuildReport> {
     conn.begin_savepoint()?;
-    match rebuild_media_links_inner(conn, data_dir, project_id) {
+    match rebuild_media_links_inner(conn, data_dir, project_id, on_item.as_ref()) {
         Ok(report) => {
             conn.release_savepoint()?;
             Ok(report)
@@ -71,9 +80,16 @@ fn rebuild_media_links_inner(
     conn: &Connection,
     data_dir: &Path,
     project_id: &str,
+    on_item: Option<&ItemProgressFn>,
 ) -> EngineResult<MediaLinkRebuildReport> {
     let mut report = MediaLinkRebuildReport::default();
-    for item in qm::list_media_by_project(conn, project_id)? {
+    let items = qm::list_media_by_project(conn, project_id)?;
+    for (index, item) in items.iter().enumerate() {
+        if let Some(callback) = on_item
+            && !callback(index + 1, items.len(), &item.original_name)
+        {
+            return Err(EngineError::Cancelled);
+        }
         let sidecar = read_sidecar(&fs::read_to_string(data_dir.join(&item.sidecar_path))?)
             .map_err(EngineError::Parse)?;
         for link in qpm::list_post_media_by_media(conn, &item.id)? {
@@ -111,8 +127,21 @@ pub fn regenerate_missing_thumbnails(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<ThumbnailRepairReport> {
+    regenerate_missing_thumbnails_with_progress(conn, data_dir, project_id, |_, _, _| true)
+}
+
+pub fn regenerate_missing_thumbnails_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    mut on_item: impl FnMut(usize, usize, &str) -> bool,
+) -> EngineResult<ThumbnailRepairReport> {
     let mut report = ThumbnailRepairReport::default();
-    for item in qm::list_media_by_project(conn, project_id)? {
+    let items = qm::list_media_by_project(conn, project_id)?;
+    for (index, item) in items.iter().enumerate() {
+        if !on_item(index + 1, items.len(), &item.original_name) {
+            return Err(EngineError::Cancelled);
+        }
         if !item.mime_type.starts_with("image/") || item.mime_type.contains("svg") {
             continue;
         }
@@ -653,7 +682,7 @@ pub fn rebuild_media_from_filesystem(
 }
 
 /// Per-item progress callback: (current_item, total_items, item_description).
-pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) -> bool + Send>;
 
 /// Like `rebuild_media_from_filesystem` but with optional per-item progress.
 pub fn rebuild_media_from_filesystem_with_progress(
@@ -699,7 +728,9 @@ pub fn rebuild_media_from_filesystem_with_progress(
     for (i, path) in canonical_sidecars.iter().enumerate() {
         if let Some(ref cb) = on_item {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-            cb(i + 1, total, name);
+            if !cb(i + 1, total, name) {
+                return Err(EngineError::Cancelled);
+            }
         }
         match rebuild_canonical_media(conn, data_dir, project_id, path) {
             Ok(created) => {
@@ -720,7 +751,9 @@ pub fn rebuild_media_from_filesystem_with_progress(
     for (i, path) in translation_sidecars.iter().enumerate() {
         if let Some(ref cb) = on_item {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-            cb(offset + i + 1, total, name);
+            if !cb(offset + i + 1, total, name) {
+                return Err(EngineError::Cancelled);
+            }
         }
         match rebuild_translation_sidecar(conn, data_dir, project_id, path) {
             Ok(created) => {

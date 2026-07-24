@@ -27,6 +27,8 @@ pub struct FullRebuildReport {
     pub templates_updated: usize,
     pub scripts_created: usize,
     pub scripts_updated: usize,
+    pub thumbnails_generated: usize,
+    pub thumbnail_media_failed: usize,
     pub errors: Vec<String>,
 }
 
@@ -91,8 +93,19 @@ pub enum RebuildProgress {
         name: String,
     },
     RebuildingTemplates,
+    TemplateItem {
+        current: usize,
+        total: usize,
+        name: String,
+    },
     RebuildingScripts,
+    ScriptItem {
+        current: usize,
+        total: usize,
+        name: String,
+    },
     ImportingTags,
+    RebuildingThumbnails,
     RefreshingSemanticIndex,
     Complete,
 }
@@ -116,8 +129,19 @@ impl RebuildProgress {
                 name,
             } => localize_item(locale, "engine.progress.mediaItem", *current, *total, name),
             Self::RebuildingTemplates => translate(locale, "engine.progress.rebuildingTemplates"),
+            Self::TemplateItem {
+                current,
+                total,
+                name,
+            } => localize_item(locale, "engine.checkingItem", *current, *total, name),
             Self::RebuildingScripts => translate(locale, "engine.progress.rebuildingScripts"),
+            Self::ScriptItem {
+                current,
+                total,
+                name,
+            } => localize_item(locale, "engine.checkingItem", *current, *total, name),
             Self::ImportingTags => translate(locale, "engine.progress.importingTags"),
+            Self::RebuildingThumbnails => translate(locale, "engine.progress.rebuildingThumbnails"),
             Self::RefreshingSemanticIndex => {
                 translate(locale, "engine.progress.refreshingSemanticIndex")
             }
@@ -137,7 +161,7 @@ fn localize_item(locale: UiLocale, key: &str, current: usize, total: usize, name
 }
 
 /// Progress callback: (percent 0.0..1.0, semantic progress event).
-pub type ProgressFn = Arc<dyn Fn(f32, &RebuildProgress) + Send + Sync>;
+pub type ProgressFn = Arc<dyn Fn(f32, &RebuildProgress) -> bool + Send + Sync>;
 
 /// Orchestrate a full rebuild from filesystem into the database.
 ///
@@ -178,23 +202,26 @@ fn rebuild_from_filesystem_inner(
     on_progress: Option<ProgressFn>,
 ) -> EngineResult<FullRebuildReport> {
     let mut report = FullRebuildReport::default();
-    let progress = |pct: f32, event: RebuildProgress| {
-        if let Some(ref f) = on_progress {
-            f(pct, &event);
+    let progress = |pct: f32, event: RebuildProgress| -> EngineResult<()> {
+        if let Some(ref f) = on_progress
+            && !f(pct, &event)
+        {
+            return Err(crate::engine::EngineError::Cancelled);
         }
+        Ok(())
     };
 
     // Phase weights: posts 0.0..0.35, media 0.35..0.70, templates 0.70..0.85, scripts 0.85..1.0
 
     // 1. Load portable project metadata and clear all reconstructible rows.
-    progress(0.0, RebuildProgress::LoadingProjectMetadata);
+    progress(0.0, RebuildProgress::LoadingProjectMetadata)?;
     fts::ensure_fts_tables(conn)?;
     crate::engine::meta::startup_sync(data_dir)?;
     crate::engine::meta::sync_metadata_from_filesystem(conn, data_dir, project_id)?;
     clear_project_rows(conn, project_id)?;
 
     // 2. Rebuild posts  (0.00 .. 0.35)
-    progress(0.01, RebuildProgress::ScanningPosts);
+    progress(0.01, RebuildProgress::ScanningPosts)?;
     let post_item_cb: Option<post::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: post::ItemProgressFn = Box::new(move |current, total, name| {
@@ -211,7 +238,7 @@ fn rebuild_from_filesystem_inner(
                     total,
                     name: name.to_string(),
                 },
-            );
+            )
         });
         f
     });
@@ -228,7 +255,7 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(post_report.errors);
 
     // 3. Rebuild media  (0.35 .. 0.70)
-    progress(0.35, RebuildProgress::ScanningMedia);
+    progress(0.35, RebuildProgress::ScanningMedia)?;
     let media_item_cb: Option<media::ItemProgressFn> = on_progress.as_ref().map(|cb| {
         let cb = Arc::clone(cb);
         let f: media::ItemProgressFn = Box::new(move |current, total, name| {
@@ -245,7 +272,7 @@ fn rebuild_from_filesystem_inner(
                     total,
                     name: name.to_string(),
                 },
-            );
+            )
         });
         f
     });
@@ -262,26 +289,87 @@ fn rebuild_from_filesystem_inner(
     report.errors.extend(media_report.errors);
 
     // 4. Rebuild templates  (0.70 .. 0.85)
-    progress(0.70, RebuildProgress::RebuildingTemplates);
-    let tpl_report =
-        template_rebuild::rebuild_templates_from_filesystem(conn, data_dir, project_id)?;
+    progress(0.70, RebuildProgress::RebuildingTemplates)?;
+    let template_progress = on_progress.as_ref().map(|callback| {
+        let callback = Arc::clone(callback);
+        Box::new(move |current: usize, total: usize, name: &str| {
+            callback(
+                0.70 + current as f32 / total.max(1) as f32 * 0.15,
+                &RebuildProgress::TemplateItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            )
+        }) as template_rebuild::ItemProgressFn
+    });
+    let tpl_report = template_rebuild::rebuild_templates_from_filesystem_with_progress(
+        conn,
+        data_dir,
+        project_id,
+        template_progress,
+    )?;
     report.templates_created = tpl_report.created;
     report.templates_updated = tpl_report.updated;
     report.errors.extend(tpl_report.errors);
 
     // 5. Rebuild scripts  (0.85 .. 0.95)
-    progress(0.85, RebuildProgress::RebuildingScripts);
-    let script_report =
-        script_rebuild::rebuild_scripts_from_filesystem(conn, data_dir, project_id)?;
+    progress(0.85, RebuildProgress::RebuildingScripts)?;
+    let script_progress = on_progress.as_ref().map(|callback| {
+        let callback = Arc::clone(callback);
+        Box::new(move |current: usize, total: usize, name: &str| {
+            callback(
+                0.85 + current as f32 / total.max(1) as f32 * 0.10,
+                &RebuildProgress::ScriptItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            )
+        }) as script_rebuild::ItemProgressFn
+    });
+    let script_report = script_rebuild::rebuild_scripts_from_filesystem_with_progress(
+        conn,
+        data_dir,
+        project_id,
+        script_progress,
+    )?;
     report.scripts_created = script_report.created;
     report.scripts_updated = script_report.updated;
     report.errors.extend(script_report.errors);
 
     // 6. Restore relationships and tags (0.95 .. 1.0)
-    progress(0.95, RebuildProgress::ImportingTags);
+    progress(0.95, RebuildProgress::ImportingTags)?;
     super::tag::import_tags_from_file(conn, data_dir, project_id)?;
     super::tag::sync_tags_from_posts(conn, project_id)?;
-    post::rebuild_all_links(conn, data_dir, project_id)?;
+    let link_progress = on_progress.as_ref().map(|callback| {
+        let callback = Arc::clone(callback);
+        Box::new(move |current: usize, total: usize, name: &str| {
+            callback(
+                0.95 + current as f32 / total.max(1) as f32 * 0.01,
+                &RebuildProgress::PostItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            )
+        }) as post::ItemProgressFn
+    });
+    post::rebuild_all_links_with_progress(conn, data_dir, project_id, link_progress)?;
+    let media_link_progress = on_progress.as_ref().map(|callback| {
+        let callback = Arc::clone(callback);
+        Box::new(move |current: usize, total: usize, name: &str| {
+            callback(
+                0.96 + current as f32 / total.max(1) as f32 * 0.01,
+                &RebuildProgress::MediaItem {
+                    current,
+                    total,
+                    name: name.to_string(),
+                },
+            )
+        }) as media::ItemProgressFn
+    });
+    media::rebuild_media_links_with_progress(conn, data_dir, project_id, media_link_progress)?;
 
     if !report.errors.is_empty() {
         return Err(crate::engine::EngineError::Validation(format!(
@@ -290,11 +378,39 @@ fn rebuild_from_filesystem_inner(
         )));
     }
 
-    progress(0.98, RebuildProgress::RefreshingSemanticIndex);
-    crate::engine::embedding::EmbeddingService::production(conn, data_dir)
-        .index_unindexed(project_id)?;
+    progress(0.97, RebuildProgress::RebuildingThumbnails)?;
+    let thumbnail_report = media::regenerate_missing_thumbnails_with_progress(
+        conn,
+        data_dir,
+        project_id,
+        |current, total, name| {
+            on_progress.as_ref().is_none_or(|callback| {
+                callback(
+                    0.97 + current as f32 / total.max(1) as f32 * 0.02,
+                    &RebuildProgress::MediaItem {
+                        current,
+                        total,
+                        name: name.to_string(),
+                    },
+                )
+            })
+        },
+    )?;
+    report.thumbnails_generated = thumbnail_report.thumbnails_generated;
+    report.thumbnail_media_failed = thumbnail_report.media_failed;
 
-    progress(1.0, RebuildProgress::Complete);
+    progress(0.99, RebuildProgress::RefreshingSemanticIndex)?;
+    crate::engine::embedding::EmbeddingService::production(conn, data_dir)
+        .index_unindexed_with_progress(project_id, |current, total| {
+            on_progress.as_ref().is_none_or(|callback| {
+                callback(
+                    0.99 + current as f32 / total.max(1) as f32 * 0.01,
+                    &RebuildProgress::RefreshingSemanticIndex,
+                )
+            })
+        })?;
+
+    progress(1.0, RebuildProgress::Complete)?;
     Ok(report)
 }
 
@@ -443,6 +559,36 @@ mod tests {
         assert_eq!(report.scripts_created, 0);
         assert_eq!(report.scripts_updated, 0);
         assert!(report.errors.is_empty());
+    }
+
+    #[test]
+    fn cancellation_rolls_back_the_full_rebuild_savepoint() {
+        let (db, dir) = setup();
+        let post = crate::engine::post::create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Preserved",
+            Some("body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+
+        let result = rebuild_from_filesystem_with_progress(
+            db.conn(),
+            dir.path(),
+            "p1",
+            Some(Arc::new(|_, event| {
+                !matches!(event, RebuildProgress::ScanningPosts)
+            })),
+        );
+
+        assert!(matches!(result, Err(crate::engine::EngineError::Cancelled)));
+        assert!(qp::get_post_by_id(db.conn(), &post.id).is_ok());
     }
 
     #[test]

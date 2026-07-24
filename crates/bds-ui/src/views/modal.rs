@@ -64,7 +64,10 @@ pub enum ModalState {
         on_confirm: ConfirmAction,
     },
     SearchIndexRepair,
-    SearchIndexRebuilding,
+    SearchIndexRebuilding {
+        task_id: bds_core::engine::task::TaskId,
+        cancellation_requested: bool,
+    },
     FindReplace {
         query: String,
         replacement: String,
@@ -552,8 +555,11 @@ pub fn view(
             .into()
         }
 
-        ModalState::SearchIndexRebuilding => container(
-            column![
+        ModalState::SearchIndexRebuilding {
+            task_id,
+            cancellation_requested,
+        } => {
+            let mut content = column![
                 text(t(locale, "searchIndexRepair.rebuildingTitle"))
                     .size(16)
                     .shaping(Shaping::Advanced)
@@ -563,12 +569,31 @@ pub fn view(
                     .size(13)
                     .shaping(Shaping::Advanced)
                     .color(Color::from_rgb(0.80, 0.80, 0.85)),
-            ]
-            .padding(20),
-        )
-        .width(Length::Fixed(420.0))
-        .style(modal_box_style)
-        .into(),
+            ];
+            content = if cancellation_requested {
+                content.push(Space::with_height(16.0)).push(
+                    text(t(locale, "tasks.status.cancelling"))
+                        .size(13)
+                        .shaping(Shaping::Advanced)
+                        .color(Color::from_rgb(0.80, 0.80, 0.85)),
+                )
+            } else {
+                content.push(Space::with_height(16.0)).push(row![
+                    Space::with_width(Length::Fill),
+                    button(text(t(locale, "tasks.cancelTask")).size(13))
+                        .on_press(Message::CancelTask(
+                            crate::state::navigation::TaskSource::Local,
+                            task_id,
+                        ))
+                        .padding([6, 16])
+                        .style(cancel_button_style),
+                ])
+            };
+            container(content.padding(20))
+                .width(Length::Fixed(420.0))
+                .style(modal_box_style)
+                .into()
+        }
 
         ModalState::PostInsertLink {
             post_id: _post_id,

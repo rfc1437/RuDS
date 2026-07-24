@@ -107,13 +107,21 @@ impl PanelTab {
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
     pub id: u64,
+    pub source: TaskSource,
     pub label: String,
     pub group_id: Option<String>,
     pub group_name: Option<String>,
-    pub status: String,
+    pub status: bds_core::engine::task::TaskStatus,
     pub progress: Option<f32>,
     pub message: Option<String>,
+    pub cancellation_requested: bool,
     pub is_cancellable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSource {
+    Local,
+    Remote,
 }
 
 /// A single line of output shown in the panel.

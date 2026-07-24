@@ -17,6 +17,8 @@ pub struct TemplateRebuildReport {
     pub errors: Vec<String>,
 }
 
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) -> bool + Send>;
+
 /// Rebuild templates from the filesystem into the database.
 ///
 /// Walks the `templates/` directory for `*.liquid` files, parses each via
@@ -27,6 +29,15 @@ pub fn rebuild_templates_from_filesystem(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<TemplateRebuildReport> {
+    rebuild_templates_from_filesystem_with_progress(conn, data_dir, project_id, None)
+}
+
+pub fn rebuild_templates_from_filesystem_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<TemplateRebuildReport> {
     let mut report = TemplateRebuildReport::default();
     let templates_dir = data_dir.join("templates");
 
@@ -34,17 +45,23 @@ pub fn rebuild_templates_from_filesystem(
         return Ok(report);
     }
 
-    for entry in WalkDir::new(&templates_dir)
+    let files = WalkDir::new(&templates_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-    {
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("liquid"))
+        .collect::<Vec<_>>();
+
+    for (index, entry) in files.iter().enumerate() {
         let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str());
-        if ext != Some("liquid") {
-            continue;
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("?");
+        if let Some(ref callback) = on_item
+            && !callback(index + 1, files.len(), name)
+        {
+            return Err(EngineError::Cancelled);
         }
 
         match rebuild_single_template(conn, data_dir, project_id, path) {

@@ -23,7 +23,7 @@ use crate::components::webview::{self, WebViewConfig, WebViewController};
 use crate::i18n::{t, tw};
 use crate::platform::menu::{self, MenuAction, MenuRegistry};
 use crate::state::navigation::{
-    OutputEntry, PanelTab, SidebarView, TaskSnapshot, handle_activity_click,
+    OutputEntry, PanelTab, SidebarView, TaskSnapshot, TaskSource, handle_activity_click,
 };
 use crate::state::sidebar_filter::{CalendarMonth, CalendarYear, MediaFilter, PostFilter};
 use crate::state::tabs::{self, Tab, TabType};
@@ -177,8 +177,22 @@ pub enum Message {
     // Tasks
     TaskTick,
     DomainEventsTick,
-    CancelTask(TaskId),
+    CancelTask(TaskSource, TaskId),
+    RemoteTaskCancelled(Result<(), String>),
     ToggleTaskGroup(String),
+    TagDeleted {
+        task_id: TaskId,
+        tag_id: String,
+        result: Result<(), String>,
+    },
+    TagsMerged {
+        task_id: TaskId,
+        result: Result<(), String>,
+    },
+    TagSaved {
+        task_id: TaskId,
+        result: Result<(), String>,
+    },
 
     // macOS lifecycle
     FileOpenRequested(PathBuf),
@@ -244,6 +258,7 @@ pub enum Message {
     ApplyAiSuggestions(modal::AiEntityTarget, Vec<modal::AiSuggestionField>),
 
     OneShotAiFinished {
+        task_id: Option<TaskId>,
         entity_id: String,
         action: OneShotAiAction,
         result: Result<ai::OneShotResponse, String>,
@@ -254,19 +269,31 @@ pub enum Message {
     ReindexText,
     RegenerateCalendar,
     ValidateTranslations,
-    TranslationValidationLoaded(
-        Result<engine::validate_translations::TranslationValidationReport, String>,
-    ),
+    TranslationValidationLoaded {
+        task_id: TaskId,
+        result: Result<engine::validate_translations::TranslationValidationReport, String>,
+    },
     ValidateMedia,
     GenerateSite,
     ForceGenerateSite,
     RunMetadataDiff,
-    MetadataDiffLoaded(Result<engine::metadata_diff::DiffReport, String>),
+    MetadataDiffLoaded {
+        task_id: TaskId,
+        result: Result<engine::metadata_diff::DiffReport, String>,
+    },
     RepairMetadataDiffItem {
         index: usize,
         direction: engine::metadata_diff::RepairDirection,
     },
-    MetadataDiffItemRepaired(Result<(), String>),
+    MetadataDiffItemRepaired {
+        task_id: TaskId,
+        result: Result<(), String>,
+    },
+    ImportMetadataOrphan(usize),
+    MetadataOrphanImported {
+        task_id: TaskId,
+        result: Result<(), String>,
+    },
     RunSiteValidation,
     ApplySiteValidation,
     EngineTaskDone {
@@ -280,14 +307,37 @@ pub enum Message {
         task_id: TaskId,
         result: Result<engine::generation::GenerationReport, String>,
     },
+    SiteGenerationPrepared {
+        task_id: TaskId,
+        validation: Option<engine::validate_site::SiteValidationReport>,
+        force: bool,
+        result: Result<
+            (
+                Arc<engine::generation::PreparedSiteGeneration>,
+                HashMap<engine::generation::GenerationSection, usize>,
+            ),
+            String,
+        >,
+    },
     SiteGenerationIndexDone {
         group_id: String,
         task_id: TaskId,
         result: Result<engine::generation::GenerationReport, String>,
     },
-    SiteValidationLoaded(Result<engine::validate_site::SiteValidationReport, String>),
+    SiteGenerationCalendarDone {
+        group_id: String,
+        task_id: TaskId,
+        result: Result<(), String>,
+    },
+    SiteValidationLoaded {
+        task_id: TaskId,
+        result: Result<engine::validate_site::SiteValidationReport, String>,
+    },
     DuplicatesRefresh,
-    DuplicatesLoaded(Result<engine::embedding::DuplicateSearchResult, String>),
+    DuplicatesLoaded {
+        task_id: TaskId,
+        result: Result<engine::embedding::DuplicateSearchResult, String>,
+    },
     DuplicatesToggle(String, String),
     DuplicatesCheckAll,
     DuplicatesUncheckAll,
@@ -434,7 +484,7 @@ enum SiteGenerationKind {
     Validation,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct SiteGenerationWorkflow {
     kind: SiteGenerationKind,
     db_path: PathBuf,
@@ -442,6 +492,8 @@ struct SiteGenerationWorkflow {
     data_dir: PathBuf,
     group_name: String,
     render_task_ids: Vec<TaskId>,
+    calendar_needed: bool,
+    calendar_task_id: Option<TaskId>,
     index_task_id: Option<TaskId>,
     report: engine::generation::GenerationReport,
 }
@@ -987,6 +1039,7 @@ pub struct BdsApp {
     chat_events: std::sync::mpsc::Receiver<engine::chat::ChatEvent>,
     script_menu_actions: Arc<Mutex<Vec<MenuAction>>>,
     task_snapshots: Vec<TaskSnapshot>,
+    remote_task_snapshots: Vec<TaskSnapshot>,
     collapsed_task_groups: HashSet<String>,
     output_entries: Vec<OutputEntry>,
     search_index_rebuild_required: bool,
@@ -1198,6 +1251,7 @@ impl BdsApp {
             chat_events: engine::chat::subscribe_events(),
             script_menu_actions: Arc::new(Mutex::new(Vec::new())),
             task_snapshots: Vec::new(),
+            remote_task_snapshots: Vec::new(),
             collapsed_task_groups: HashSet::new(),
             output_entries: Vec::new(),
             search_index_rebuild_required,
@@ -1301,6 +1355,7 @@ impl BdsApp {
             chat_events: engine::chat::subscribe_events(),
             script_menu_actions: Arc::new(Mutex::new(Vec::new())),
             task_snapshots: Vec::new(),
+            remote_task_snapshots: Vec::new(),
             collapsed_task_groups: HashSet::new(),
             output_entries: Vec::new(),
             search_index_rebuild_required: false,
@@ -2429,8 +2484,13 @@ impl BdsApp {
                 let next = self.duplicates_state.page.saturating_add(1);
                 self.start_duplicate_search(next)
             }
-            Message::DuplicatesLoaded(result) => {
+            Message::DuplicatesLoaded { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
                 self.duplicates_state.is_loading = false;
+                if cancelled {
+                    return Task::none();
+                }
                 self.duplicates_state.has_run = true;
                 match result {
                     Ok(result) => {
@@ -2600,12 +2660,103 @@ impl BdsApp {
                 Task::batch(tasks)
             }
             Message::DomainEventsTick => self.process_domain_events(),
-            Message::CancelTask(task_id) => {
-                if self.cancel_site_generation_task(task_id) {
+            Message::CancelTask(TaskSource::Local, task_id) => {
+                if !self.cancel_site_generation_task(task_id) {
+                    self.task_manager.cancel(task_id);
+                    if let Some(modal::ModalState::SearchIndexRebuilding {
+                        task_id: rebuild_task_id,
+                        cancellation_requested,
+                    }) = self.active_modal.as_mut()
+                        && *rebuild_task_id == task_id
+                    {
+                        *cancellation_requested = true;
+                    }
+                    self.refresh_task_snapshots();
+                }
+                Task::none()
+            }
+            Message::CancelTask(TaskSource::Remote, task_id) => {
+                let Some(client) = self.remote_client.clone() else {
+                    return Task::none();
+                };
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            client
+                                .call("tasks", "cancel", vec![json!(task_id.to_string())])
+                                .map(|_| ())
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()))
+                    },
+                    Message::RemoteTaskCancelled,
+                )
+            }
+            Message::RemoteTaskCancelled(result) => {
+                if let Err(error) = result {
+                    self.notify(ToastLevel::Error, &error);
+                }
+                Task::none()
+            }
+            Message::TagDeleted {
+                task_id,
+                tag_id,
+                result,
+            } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
+                if cancelled {
                     return Task::none();
                 }
-                self.task_manager.cancel(task_id);
+                match result {
+                    Ok(()) => {
+                        self.reload_tags_state();
+                        if let Some(state) = self.tags_view_state.as_mut()
+                            && state.editing_tag.as_ref().map(|tag| tag.id.as_str())
+                                == Some(tag_id.as_str())
+                        {
+                            state.editing_tag = None;
+                        }
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
+                    }
+                    Err(error) => self.notify_operation_failed("modal.confirmDelete.delete", error),
+                }
+                Task::none()
+            }
+            Message::TagsMerged { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
                 self.refresh_task_snapshots();
+                if cancelled {
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        self.reload_tags_state();
+                        if let Some(state) = self.tags_view_state.as_mut() {
+                            state.selected_tags.clear();
+                            state.merge_target = None;
+                            state.editing_tag = None;
+                        }
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                    }
+                    Err(error) => self.notify_operation_failed("tags.merge", error),
+                }
+                Task::none()
+            }
+            Message::TagSaved { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
+                if cancelled {
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        self.reload_tags_state();
+                        self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
+                    }
+                    Err(error) => self.notify_operation_failed("common.save", error),
+                }
                 Task::none()
             }
             Message::ToggleTaskGroup(group_id) => {
@@ -2707,10 +2858,11 @@ impl BdsApp {
                 self.refresh_task_snapshots();
                 let import_task = Task::perform(
                     async move {
+                        let Some(worker) = task_manager.admit(task_id).await else {
+                            return Err("cancelled".to_string());
+                        };
                         tokio::task::spawn_blocking(move || {
-                            if !task_manager.wait_until_runnable(task_id) {
-                                return Err("cancelled".to_string());
-                            }
+                            let _worker = worker;
                             let db = Database::open(&db_path).map_err(|error| error.to_string())?;
                             let host =
                                 bds_core::scripting::CoreHost::new(db_path, &project_id, &data_dir)
@@ -2855,20 +3007,24 @@ impl BdsApp {
             | Message::ReindexText
             | Message::RegenerateCalendar
             | Message::ValidateTranslations
-            | Message::TranslationValidationLoaded(_)
+            | Message::TranslationValidationLoaded { .. }
             | Message::ValidateMedia
             | Message::GenerateSite
             | Message::ForceGenerateSite
             | Message::RunMetadataDiff
-            | Message::MetadataDiffLoaded(_)
+            | Message::MetadataDiffLoaded { .. }
             | Message::RepairMetadataDiffItem { .. }
-            | Message::MetadataDiffItemRepaired(_)
+            | Message::MetadataDiffItemRepaired { .. }
+            | Message::ImportMetadataOrphan(_)
+            | Message::MetadataOrphanImported { .. }
             | Message::RunSiteValidation
             | Message::ApplySiteValidation
             | Message::EngineTaskDone { .. }
+            | Message::SiteGenerationPrepared { .. }
             | Message::SiteGenerationSectionDone { .. }
+            | Message::SiteGenerationCalendarDone { .. }
             | Message::SiteGenerationIndexDone { .. }
-            | Message::SiteValidationLoaded(_)) => self.handle_engine_message(message),
+            | Message::SiteValidationLoaded { .. }) => self.handle_engine_message(message),
 
             // ── Git ──
             message @ (Message::GitRefresh
@@ -3154,6 +3310,8 @@ impl BdsApp {
                     client.close();
                 }
                 self.remote_projects.clear();
+                self.remote_task_snapshots.clear();
+                self.refresh_task_snapshots();
                 self.remote_project = None;
                 self.remote_display_name = None;
                 self.active_modal = None;
@@ -3237,10 +3395,17 @@ impl BdsApp {
                 self.apply_ai_suggestions(target, &fields)
             }
             Message::OneShotAiFinished {
+                task_id,
                 entity_id,
                 action,
                 result,
-            } => self.finish_one_shot_ai(&entity_id, action, result),
+            } => {
+                if let Some(task_id) = task_id {
+                    self.finish_result_task(task_id, &result);
+                    self.refresh_task_snapshots();
+                }
+                self.finish_one_shot_ai(&entity_id, action, result)
+            }
 
             // ── Editor view messages ──
             Message::PostEditor(msg) => self.handle_post_editor_msg(msg),
@@ -3350,7 +3515,7 @@ impl BdsApp {
     }
 
     fn start_duplicate_search(&mut self, page: usize) -> Task<Message> {
-        let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+        let Some(data_dir) = &self.data_dir else {
             return Task::none();
         };
         self.duplicates_state.enabled = engine::meta::read_project_json(data_dir)
@@ -3364,21 +3529,26 @@ impl BdsApp {
             return Task::none();
         }
         self.duplicates_state.is_loading = true;
-        let db_path = self.db_path.clone();
-        let data_dir = data_dir.clone();
-        let project_id = project.id.clone();
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                    engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
-                        .find_duplicates(&project_id, page)
-                        .map_err(|error| error.to_string())
-                })
-                .await
-                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+        let locale = self.ui_locale;
+        self.spawn_result_task(
+            "tabBar.findDuplicates",
+            move |db_path, project_id, data_dir, tm, tid| {
+                tm.report_progress(tid, Some(0.0), Some(t(locale, "duplicates.searching")));
+                if tm.is_cancelled(tid) {
+                    return Err("operation cancelled".into());
+                }
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                tm.report_progress(tid, Some(0.25), Some(t(locale, "duplicates.searching")));
+                let result = engine::embedding::EmbeddingService::production(db.conn(), &data_dir)
+                    .find_duplicates(&project_id, page)
+                    .map_err(|error| error.to_string())?;
+                if tm.is_cancelled(tid) {
+                    return Err("operation cancelled".into());
+                }
+                tm.report_progress(tid, Some(1.0), Some(t(locale, "duplicates.complete")));
+                Ok(result)
             },
-            Message::DuplicatesLoaded,
+            |task_id, result| Message::DuplicatesLoaded { task_id, result },
         )
     }
 
@@ -4039,11 +4209,34 @@ impl BdsApp {
                     ));
                 }
                 bds_server::protocol::ServerMessage::Tasks { tasks, .. } => {
-                    self.add_output(&tw(
-                        self.ui_locale,
-                        "remoteConnection.taskUpdate",
-                        &[("count", &tasks.len().to_string())],
-                    ));
+                    self.remote_task_snapshots = tasks
+                        .into_iter()
+                        .filter_map(|task| {
+                            let status = match task.status.as_str() {
+                                "pending" => TaskStatus::Pending,
+                                "running" => TaskStatus::Running,
+                                "completed" => TaskStatus::Completed,
+                                "cancelled" => TaskStatus::Cancelled,
+                                "failed" => TaskStatus::Failed(
+                                    task.message.clone().unwrap_or_else(|| "failed".into()),
+                                ),
+                                _ => return None,
+                            };
+                            Some(TaskSnapshot {
+                                id: task.id,
+                                source: TaskSource::Remote,
+                                label: task.label,
+                                group_id: task.group_id.map(|id| format!("remote:{id}")),
+                                group_name: task.group_name,
+                                status,
+                                progress: task.progress,
+                                message: task.message,
+                                cancellation_requested: task.cancellation_requested,
+                                is_cancellable: task.cancellable,
+                            })
+                        })
+                        .collect();
+                    self.refresh_task_snapshots();
                 }
                 bds_server::protocol::ServerMessage::Error { code, message, .. } => {
                     self.notify(ToastLevel::Error, &message);
@@ -4051,6 +4244,8 @@ impl BdsApp {
                         self.remote_client = None;
                         self.remote_project = None;
                         self.remote_projects.clear();
+                        self.remote_task_snapshots.clear();
+                        self.refresh_task_snapshots();
                         self.remote_display_name = None;
                         self.menu_registry
                             .set_enabled(MenuAction::DisconnectServer, false);
@@ -4502,10 +4697,14 @@ impl BdsApp {
                         let cache_dir = db_path.parent().map(PathBuf::from).ok_or_else(|| {
                             "private application directory unavailable".to_string()
                         })?;
-                        let job = engine::publishing::upload_site(
+                        let cancel_flag = task_manager
+                            .cancellation_flag(task_id)
+                            .ok_or_else(|| "task cancellation unavailable".to_string())?;
+                        let job = engine::publishing::upload_site_cancellable(
                             &data_dir,
                             &cache_dir,
                             &preferences,
+                            &cancel_flag,
                             |current, total, kind| {
                                 let target = match kind {
                                     engine::publishing::UploadTargetKind::Html => "html",
@@ -4523,6 +4722,7 @@ impl BdsApp {
                                         &[("target", target)],
                                     )),
                                 );
+                                !task_manager.is_cancelled(task_id)
                             },
                         )
                         .map_err(|error| error.to_string())?;
@@ -5399,61 +5599,80 @@ impl BdsApp {
                 Some(t(self.ui_locale, "engine.generateSiteNoProject"));
             return Task::none();
         };
-        let Some(project_id) = self
-            .active_project
-            .as_ref()
-            .map(|project| project.id.clone())
-        else {
+        if self.active_project.is_none() {
             self.site_validation_state.is_running = false;
             self.site_validation_state.error_message =
                 Some(t(self.ui_locale, "engine.generateSiteNoProject"));
             return Task::none();
-        };
-        let Some(data_dir) = self.data_dir.clone() else {
+        }
+        if self.data_dir.is_none() {
             self.site_validation_state.is_running = false;
             self.site_validation_state.error_message =
                 Some(t(self.ui_locale, "engine.previewDataDirUnavailable"));
             return Task::none();
-        };
+        }
 
         self.site_validation_state.is_running = true;
         self.site_validation_state.error_message = None;
-        let db_path = self.db_path.clone();
-
-        Task::perform(
-            async move {
+        let locale = self.ui_locale;
+        self.spawn_result_task(
+            "menu.item.validateSite",
+            move |db_path, project_id, data_dir, tm, tid| {
+                tm.report_progress(tid, Some(0.0), Some(t(locale, "siteValidation.running")));
                 let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                engine::validate_site::validate_site(db.conn(), &data_dir, &project_id)
-                    .map_err(|error| error.to_string())
+                let report = engine::validate_site::validate_site_with_progress(
+                    db.conn(),
+                    &data_dir,
+                    &project_id,
+                    |current, total| {
+                        tm.report_progress(
+                            tid,
+                            Some(current as f32 / total.max(1) as f32),
+                            Some(t(locale, "siteValidation.running")),
+                        );
+                        !tm.is_cancelled(tid)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                tm.report_progress(tid, Some(1.0), Some(t(locale, "siteValidation.complete")));
+                Ok(report)
             },
-            Message::SiteValidationLoaded,
+            |task_id, result| Message::SiteValidationLoaded { task_id, result },
         )
     }
 
     fn start_metadata_diff(&mut self) -> Task<Message> {
-        let (Some(project), Some(data_dir)) =
-            (self.active_project.as_ref(), self.data_dir.as_ref())
-        else {
+        if self.active_project.is_none() || self.data_dir.is_none() {
             self.metadata_diff_state.error_message =
                 Some(t(self.ui_locale, "engine.generateSiteNoProject"));
             return Task::none();
-        };
+        }
         self.metadata_diff_state.is_running = true;
         self.metadata_diff_state.error_message = None;
-        let db_path = self.db_path.clone();
-        let project_id = project.id.clone();
-        let data_dir = data_dir.clone();
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                    engine::metadata_diff::compute_metadata_diff(db.conn(), &data_dir, &project_id)
-                        .map_err(|error| error.to_string())
-                })
-                .await
-                .map_err(|error| error.to_string())?
+        let locale = self.ui_locale;
+        self.spawn_result_task(
+            "menu.item.metadataDiff",
+            move |db_path, project_id, data_dir, tm, tid| {
+                tm.report_progress(tid, Some(0.0), Some(t(locale, "metadataDiff.running")));
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let report = engine::metadata_diff::compute_metadata_diff_with_progress(
+                    db.conn(),
+                    &data_dir,
+                    &project_id,
+                    |current, total| {
+                        tm.report_progress(
+                            tid,
+                            Some(current as f32 / total.max(1) as f32),
+                            Some(t(locale, "metadataDiff.running")),
+                        );
+                        !tm.is_cancelled(tid)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                tm.report_progress(tid, Some(1.0), Some(t(locale, "metadataDiff.complete")));
+                Ok(report)
             },
-            Message::MetadataDiffLoaded,
+            |task_id, result| Message::MetadataDiffLoaded { task_id, result },
         )
     }
 
@@ -6113,10 +6332,11 @@ impl BdsApp {
         let message_request = request.clone();
         Task::perform(
             async move {
+                let Some(worker) = task_manager.admit(task_id).await else {
+                    return Err("cancelled".to_string());
+                };
                 tokio::task::spawn_blocking(move || {
-                    if !task_manager.wait_until_runnable(task_id) {
-                        return Err("cancelled".to_string());
-                    }
+                    let _worker = worker;
                     task_manager.report_progress(
                         task_id,
                         Some(0.0),
@@ -6268,10 +6488,11 @@ impl BdsApp {
         let task_manager = Arc::clone(&self.task_manager);
         Task::perform(
             async move {
+                let Some(worker) = task_manager.admit(task_id).await else {
+                    return Err("cancelled".to_string());
+                };
                 tokio::task::spawn_blocking(move || {
-                    if !task_manager.wait_until_runnable(task_id) {
-                        return Err("cancelled".to_string());
-                    }
+                    let _worker = worker;
                     let db = Database::open(&db_path).map_err(|error| error.to_string())?;
                     engine::gallery_import::enrich_imported_image(
                         db.conn(),
@@ -7501,54 +7722,50 @@ impl BdsApp {
     }
 
     fn delete_tag(&mut self, tag_id: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            return Task::none();
-        };
-        let Some(data_dir) = &self.data_dir else {
-            return Task::none();
-        };
-        let Some(project) = &self.active_project else {
-            return Task::none();
-        };
-        match engine::tag::delete_tag(db.conn(), data_dir, &project.id, tag_id) {
-            Ok(()) => {
-                self.reload_tags_state();
-                if let Some(state) = self.tags_view_state.as_mut()
-                    && state.editing_tag.as_ref().map(|tag| tag.id.as_str()) == Some(tag_id)
-                {
-                    state.editing_tag = None;
+        let tag_id = tag_id.to_string();
+        let message_tag_id = tag_id.clone();
+        let locale = self.ui_locale;
+        self.spawn_result_task(
+            "modal.confirmDelete.delete",
+            move |db_path, project_id, data_dir, tm, tid| {
+                tm.report_progress(
+                    tid,
+                    Some(0.0),
+                    Some(t(locale, "modal.confirmDelete.delete")),
+                );
+                if tm.is_cancelled(tid) {
+                    return Err("operation cancelled".into());
                 }
-                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.deleted"));
-            }
-            Err(e) => self.notify_operation_failed("modal.confirmDelete.delete", e),
-        }
-        Task::none()
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                engine::tag::delete_tag(db.conn(), &data_dir, &project_id, &tag_id)
+                    .map_err(|error| error.to_string())
+            },
+            move |task_id, result| Message::TagDeleted {
+                task_id,
+                tag_id: message_tag_id.clone(),
+                result,
+            },
+        )
     }
 
     fn merge_tags(&mut self, sources: &[String], target: &str) -> Task<Message> {
-        let Some(db) = &self.db else {
-            return Task::none();
-        };
-        let Some(data_dir) = &self.data_dir else {
-            return Task::none();
-        };
-        let Some(project) = &self.active_project else {
-            return Task::none();
-        };
-        let source_refs = sources.iter().map(String::as_str).collect::<Vec<_>>();
-        match engine::tag::merge_tags(db.conn(), data_dir, &project.id, &source_refs, target) {
-            Ok(()) => {
-                self.reload_tags_state();
-                if let Some(state) = self.tags_view_state.as_mut() {
-                    state.selected_tags.clear();
-                    state.merge_target = None;
-                    state.editing_tag = None;
+        let sources = sources.to_vec();
+        let target = target.to_string();
+        let locale = self.ui_locale;
+        self.spawn_result_task(
+            "tags.merge",
+            move |db_path, project_id, data_dir, tm, tid| {
+                tm.report_progress(tid, Some(0.0), Some(t(locale, "tags.merge")));
+                if tm.is_cancelled(tid) {
+                    return Err("operation cancelled".into());
                 }
-                self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-            }
-            Err(e) => self.notify_operation_failed("tags.merge", e),
-        }
-        Task::none()
+                let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                let source_refs = sources.iter().map(String::as_str).collect::<Vec<_>>();
+                engine::tag::merge_tags(db.conn(), &data_dir, &project_id, &source_refs, &target)
+                    .map_err(|error| error.to_string())
+            },
+            |task_id, result| Message::TagsMerged { task_id, result },
+        )
     }
 
     fn hydrate_settings_state(&self) -> SettingsViewState {
@@ -7819,39 +8036,42 @@ impl BdsApp {
                 }
             }
             TagsMsg::SaveTag => {
-                if let Some(editing) = state.editing_tag.clone()
-                    && let (Some(db), Some(data_dir)) = (&self.db, &self.data_dir)
-                {
-                    let rename_result = if editing.name != editing.original_name {
-                        engine::tag::rename_tag(
-                            db.conn(),
-                            data_dir,
-                            self.active_project
-                                .as_ref()
-                                .map(|project| project.id.as_str())
-                                .unwrap_or_default(),
-                            &editing.id,
-                            &editing.name,
-                        )
-                    } else {
-                        Ok(())
-                    };
-                    match rename_result.and_then(|_| {
-                        engine::tag::update_tag(
-                            db.conn(),
-                            data_dir,
-                            &editing.id,
-                            None,
-                            Some(&editing.color),
-                            Some(&editing.template_slug),
-                        )
-                    }) {
-                        Ok(()) => {
-                            self.reload_tags_state();
-                            self.notify(ToastLevel::Success, &t(self.ui_locale, "editor.saved"));
-                        }
-                        Err(e) => self.notify_operation_failed("common.save", e),
-                    }
+                if let Some(editing) = state.editing_tag.clone() {
+                    let locale = self.ui_locale;
+                    return self.spawn_result_task(
+                        "common.save",
+                        move |db_path, project_id, data_dir, tm, tid| {
+                            tm.report_progress(tid, Some(0.0), Some(t(locale, "common.save")));
+                            if tm.is_cancelled(tid) {
+                                return Err("operation cancelled".into());
+                            }
+                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                            if editing.name != editing.original_name {
+                                engine::tag::rename_tag(
+                                    db.conn(),
+                                    &data_dir,
+                                    &project_id,
+                                    &editing.id,
+                                    &editing.name,
+                                )
+                                .map_err(|error| error.to_string())?;
+                                tm.report_progress(tid, Some(0.5), Some(t(locale, "common.save")));
+                                if tm.is_cancelled(tid) {
+                                    return Err("operation cancelled".into());
+                                }
+                            }
+                            engine::tag::update_tag(
+                                db.conn(),
+                                &data_dir,
+                                &editing.id,
+                                None,
+                                Some(&editing.color),
+                                Some(&editing.template_slug),
+                            )
+                            .map_err(|error| error.to_string())
+                        },
+                        |task_id, result| Message::TagSaved { task_id, result },
+                    );
                 }
             }
             TagsMsg::DeleteTag(id) => {
@@ -8502,16 +8722,39 @@ impl BdsApp {
                 state.semantic_similarity_enabled = value;
             }
             SettingsMsg::RebuildPosts => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.rebuildPosts",
-                    |db_path, project_id, data_dir, _tm, _tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::post::rebuild_posts_from_filesystem(
+                        let progress = Arc::clone(&tm);
+                        let report = engine::post::rebuild_posts_from_filesystem_with_progress(
                             db.conn(),
                             &data_dir,
                             &project_id,
+                            Some(Box::new(move |current, total, name| {
+                                progress.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !progress.is_cancelled(tid)
+                            })),
                         )
                         .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(t(locale, "engine.progress.rebuildComplete")),
+                        );
                         Ok(format!(
                             "created={}, updated={}, translations={}",
                             report.posts_created,
@@ -8522,16 +8765,39 @@ impl BdsApp {
                 );
             }
             SettingsMsg::RebuildMedia => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.rebuildMedia",
-                    |db_path, project_id, data_dir, _tm, _tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::media::rebuild_media_from_filesystem(
+                        let progress = Arc::clone(&tm);
+                        let report = engine::media::rebuild_media_from_filesystem_with_progress(
                             db.conn(),
                             &data_dir,
                             &project_id,
+                            Some(Box::new(move |current, total, name| {
+                                progress.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !progress.is_cancelled(tid)
+                            })),
                         )
                         .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(t(locale, "engine.progress.rebuildComplete")),
+                        );
                         Ok(format!(
                             "created={}, updated={}, translations={}",
                             report.media_created,
@@ -8542,16 +8808,45 @@ impl BdsApp {
                 );
             }
             SettingsMsg::RebuildScripts => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.rebuildScripts",
-                    |db_path, project_id, data_dir, _tm, _tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        tm.report_progress(
+                            tid,
+                            Some(0.0),
+                            Some(t(locale, "settings.rebuildScripts")),
+                        );
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::script_rebuild::rebuild_scripts_from_filesystem(
-                            db.conn(),
-                            &data_dir,
-                            &project_id,
-                        )
-                        .map_err(|e| e.to_string())?;
+                        let progress = Arc::clone(&tm);
+                        let report =
+                            engine::script_rebuild::rebuild_scripts_from_filesystem_with_progress(
+                                db.conn(),
+                                &data_dir,
+                                &project_id,
+                                Some(Box::new(move |current, total, name| {
+                                    progress.report_progress(
+                                        tid,
+                                        Some(current as f32 / total.max(1) as f32),
+                                        Some(tw(
+                                            locale,
+                                            "engine.checkingItem",
+                                            &[
+                                                ("current", &current.to_string()),
+                                                ("total", &total.to_string()),
+                                                ("name", name),
+                                            ],
+                                        )),
+                                    );
+                                    !progress.is_cancelled(tid)
+                                })),
+                            )
+                            .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(t(locale, "engine.progress.rebuildComplete")),
+                        );
                         Ok(format!(
                             "created={}, updated={}, errors={}",
                             report.created,
@@ -8562,16 +8857,44 @@ impl BdsApp {
                 );
             }
             SettingsMsg::RebuildTemplates => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.rebuildTemplates",
-                    |db_path, project_id, data_dir, _tm, _tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        tm.report_progress(
+                            tid,
+                            Some(0.0),
+                            Some(t(locale, "settings.rebuildTemplates")),
+                        );
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let report = engine::template_rebuild::rebuild_templates_from_filesystem(
+                        let progress = Arc::clone(&tm);
+                        let report = engine::template_rebuild::rebuild_templates_from_filesystem_with_progress(
                             db.conn(),
                             &data_dir,
                             &project_id,
+                            Some(Box::new(move |current, total, name| {
+                                progress.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !progress.is_cancelled(tid)
+                            })),
                         )
                         .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(t(locale, "engine.progress.rebuildComplete")),
+                        );
                         Ok(format!(
                             "created={}, updated={}, errors={}",
                             report.created,
@@ -8582,17 +8905,72 @@ impl BdsApp {
                 );
             }
             SettingsMsg::RebuildLinks => {
+                let locale = self.ui_locale;
                 return self.spawn_engine_task(
                     "settings.rebuildLinks",
-                    |db_path, project_id, data_dir, _tm, _tid| {
+                    move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        let rebuilt = bds_core::engine::post::rebuild_all_links(
+                        tm.report_progress(
+                            tid,
+                            Some(0.0),
+                            Some(t(locale, "settings.rebuildPostLinks")),
+                        );
+                        let post_progress = Arc::clone(&tm);
+                        let post_links = bds_core::engine::post::rebuild_all_links_with_progress(
                             db.conn(),
                             &data_dir,
                             &project_id,
+                            Some(Box::new(move |current, total, name| {
+                                post_progress.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32 * 0.5),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !post_progress.is_cancelled(tid)
+                            })),
                         )
                         .map_err(|e| e.to_string())?;
-                        Ok(format!("rebuilt={rebuilt}"))
+                        tm.report_progress(
+                            tid,
+                            Some(0.5),
+                            Some(t(locale, "settings.rebuildMediaLinks")),
+                        );
+                        let media_progress = Arc::clone(&tm);
+                        let media_links =
+                            bds_core::engine::media::rebuild_media_links_with_progress(
+                                db.conn(),
+                                &data_dir,
+                                &project_id,
+                                Some(Box::new(move |current, total, name| {
+                                    media_progress.report_progress(
+                                        tid,
+                                        Some(0.5 + current as f32 / total.max(1) as f32 * 0.5),
+                                        Some(tw(
+                                            locale,
+                                            "engine.checkingItem",
+                                            &[
+                                                ("current", &current.to_string()),
+                                                ("total", &total.to_string()),
+                                                ("name", name),
+                                            ],
+                                        )),
+                                    );
+                                    !media_progress.is_cancelled(tid)
+                                })),
+                            )
+                            .map_err(|e| e.to_string())?;
+                        Ok(format!(
+                            "post_links={post_links}, media_links={}",
+                            media_links.links
+                        ))
                     },
                 );
             }
@@ -9551,6 +9929,61 @@ impl BdsApp {
                 .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
             },
             move |result| Message::OneShotAiFinished {
+                task_id: None,
+                entity_id: entity_id.clone(),
+                action: action.clone(),
+                result,
+            },
+        )
+    }
+
+    fn start_translation_ai(
+        &mut self,
+        entity_id: String,
+        action: OneShotAiAction,
+        request: ai::OneShotRequest,
+    ) -> Task<Message> {
+        let label = t(self.ui_locale, "editor.translate");
+        let task_id = self.task_manager.submit(&label);
+        self.refresh_task_snapshots();
+        let db_path = self.db_path.clone();
+        let offline_mode = self.offline_mode;
+        let locale = self.ui_locale;
+        let task_manager = Arc::clone(&self.task_manager);
+        Task::perform(
+            async move {
+                let Some(worker) = task_manager.admit(task_id).await else {
+                    return Err("cancelled".to_string());
+                };
+                tokio::task::spawn_blocking(move || {
+                    let _worker = worker;
+                    task_manager.report_progress(
+                        task_id,
+                        Some(0.1),
+                        Some(t(locale, "editor.translate")),
+                    );
+                    if task_manager.is_cancelled(task_id) {
+                        return Err("operation cancelled".to_string());
+                    }
+                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                    task_manager.report_progress(
+                        task_id,
+                        Some(0.5),
+                        Some(t(locale, "editor.translate")),
+                    );
+                    let response = ai::run_one_shot(db.conn(), offline_mode, &request)
+                        .map(|(response, _usage)| response)
+                        .map_err(|error| error.to_string())?;
+                    if task_manager.is_cancelled(task_id) {
+                        return Err("operation cancelled".to_string());
+                    }
+                    Ok(response)
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+            },
+            move |result| Message::OneShotAiFinished {
+                task_id: Some(task_id),
                 entity_id: entity_id.clone(),
                 action: action.clone(),
                 result,
@@ -9707,7 +10140,7 @@ impl BdsApp {
         if let Some(editor) = self.post_editors.get_mut(post_id) {
             editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
         }
-        self.start_one_shot_ai(
+        self.start_translation_ai(
             post_id.to_string(),
             OneShotAiAction::PostTranslation {
                 target_language: target_language.to_string(),
@@ -9853,7 +10286,7 @@ impl BdsApp {
         if let Some(editor) = self.media_editors.get_mut(media_id) {
             editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
         }
-        self.start_one_shot_ai(
+        self.start_translation_ai(
             media_id.to_string(),
             OneShotAiAction::MediaTranslation {
                 target_language: target_language.to_string(),
@@ -9884,6 +10317,9 @@ impl BdsApp {
 
         let response = match result {
             Ok(response) => response,
+            Err(error) if error == "operation cancelled" || error == "cancelled" => {
+                return Task::none();
+            }
             Err(error) => {
                 self.notify(ToastLevel::Error, &error);
                 return Task::none();
@@ -10188,7 +10624,7 @@ mod tests {
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
     use crate::state::ToastLevel;
-    use crate::state::navigation::SidebarView;
+    use crate::state::navigation::{SidebarView, TaskSource};
     use crate::state::sidebar_filter::{MediaFilter, PostFilter};
     use crate::state::tabs::{Tab, TabType};
     use crate::views::chat_view::ChatEditorState;
@@ -10207,7 +10643,7 @@ mod tests {
     use bds_core::engine::generation::GenerationReport;
     use bds_core::engine::task::{TaskStatus, TaskStatus::*};
     use bds_core::engine::{
-        ai, blogmark, chat, media, menu, meta, post, script, tag, template, wordpress_import,
+        self, ai, blogmark, chat, media, menu, meta, post, script, tag, template, wordpress_import,
     };
     use bds_core::i18n::UiLocale;
     use bds_core::model::{
@@ -10218,6 +10654,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::thread;
     use tempfile::TempDir;
 
@@ -10889,6 +11326,43 @@ mod tests {
         bds_core::engine::meta::write_project_json(tmp.path(), &metadata).unwrap();
     }
 
+    fn queue_prepared_generation_for_test(
+        app: &mut BdsApp,
+        validation: Option<bds_core::engine::validate_site::SiteValidationReport>,
+        force: bool,
+    ) {
+        let metadata =
+            bds_core::engine::meta::read_project_json(app.data_dir.as_ref().unwrap()).unwrap();
+        let prepared = Arc::new(
+            engine::generation::prepare_site_generation(
+                app.db.as_ref().unwrap().conn(),
+                app.data_dir.as_ref().unwrap(),
+                &app.active_project.as_ref().unwrap().id,
+                &metadata,
+                &[],
+            )
+            .unwrap(),
+        );
+        let sections = validation.as_ref().map_or_else(
+            || engine::generation::GenerationSection::ALL.to_vec(),
+            |report| engine::generation::sections_from_validation_report(report, &metadata),
+        );
+        let counts = sections
+            .into_iter()
+            .map(|section| {
+                (
+                    section,
+                    engine::generation::prepared_section_page_count(
+                        &prepared,
+                        validation.as_ref(),
+                        section,
+                    ),
+                )
+            })
+            .collect();
+        let _ = app.queue_prepared_site_generation(validation, force, prepared, counts);
+    }
+
     fn open_post_editor(app: &mut BdsApp, post: &bds_core::model::Post) {
         let tab = crate::state::tabs::Tab {
             id: post.id.clone(),
@@ -11192,7 +11666,7 @@ mod tests {
     }
 
     #[test]
-    fn search_index_rebuild_requires_confirmation_and_blocks_editing() {
+    fn search_index_rebuild_requires_confirmation_and_can_be_cancelled() {
         let (db, project, tmp) = setup();
         let mut app = make_app(db, project, &tmp);
         app.search_index_rebuild_required = true;
@@ -11214,9 +11688,26 @@ mod tests {
             modal::ConfirmAction::RebuildSearchIndex,
         ));
         assert!(app.search_index_rebuild_running);
+        let task_id = app
+            .search_index_rebuild_task_id
+            .expect("reindex task should be retained");
         assert!(matches!(
             app.active_modal,
-            Some(modal::ModalState::SearchIndexRebuilding)
+            Some(modal::ModalState::SearchIndexRebuilding {
+                task_id: modal_task_id,
+                cancellation_requested: false,
+            })
+                if modal_task_id == task_id
+        ));
+
+        let _ = app.update(Message::CancelTask(TaskSource::Local, task_id));
+        assert!(app.task_manager.is_cancelled(task_id));
+        assert!(matches!(
+            app.active_modal,
+            Some(modal::ModalState::SearchIndexRebuilding {
+                task_id: modal_task_id,
+                cancellation_requested: true,
+            }) if modal_task_id == task_id
         ));
     }
 
@@ -11226,7 +11717,7 @@ mod tests {
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
 
-        let _task = app.queue_site_generation(None);
+        queue_prepared_generation_for_test(&mut app, None, false);
         let snapshots = app.task_manager.snapshots();
 
         assert_eq!(
@@ -11276,7 +11767,7 @@ mod tests {
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
 
-        let _task = app.handle_engine_message(Message::ForceGenerateSite);
+        queue_prepared_generation_for_test(&mut app, None, true);
         let snapshots = app.task_manager.snapshots();
 
         assert_eq!(snapshots.len(), 5);
@@ -11297,7 +11788,7 @@ mod tests {
         let (db, project, tmp) = setup();
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
-        let _task = app.queue_site_generation(None);
+        queue_prepared_generation_for_test(&mut app, None, false);
         let group_id = app.task_manager.snapshots()[0].group_id.clone().unwrap();
         let render_ids = app.site_generation_workflows[&group_id]
             .render_task_ids
@@ -11323,7 +11814,7 @@ mod tests {
         let (db, project, tmp) = setup();
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
-        let _task = app.queue_site_generation(None);
+        queue_prepared_generation_for_test(&mut app, None, false);
         let snapshots = app.task_manager.snapshots();
         let group_id = snapshots[0].group_id.clone().unwrap();
         let first_id = snapshots[0].id;
@@ -11358,11 +11849,11 @@ mod tests {
         let (db, project, tmp) = setup();
         enable_generation(&tmp);
         let mut app = make_app(db, project, &tmp);
-        let _task = app.queue_site_generation(None);
+        queue_prepared_generation_for_test(&mut app, None, false);
         let snapshots = app.task_manager.snapshots();
         let group_id = snapshots[0].group_id.clone().unwrap();
 
-        let _task = app.update(Message::CancelTask(snapshots[0].id));
+        let _task = app.update(Message::CancelTask(TaskSource::Local, snapshots[0].id));
 
         let snapshots = app.task_manager.snapshots();
         assert!(
@@ -11389,7 +11880,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _task = app.queue_site_generation(Some(validation));
+        queue_prepared_generation_for_test(&mut app, Some(validation), false);
         let snapshots = app.task_manager.snapshots();
         assert_eq!(
             snapshots
@@ -11421,12 +11912,25 @@ mod tests {
                 result: Ok(GenerationReport::default()),
             });
         }
-        assert!(
-            app.task_manager
-                .snapshots()
-                .iter()
-                .any(|task| task.label == "Build Search Index")
+        let calendar_id = app.site_generation_workflows[&group_id]
+            .calendar_task_id
+            .expect("calendar phase should follow affected date rendering");
+        assert_eq!(
+            app.task_manager.status(calendar_id),
+            Some(TaskStatus::Running)
         );
+        let _ = app.handle_engine_message(Message::SiteGenerationCalendarDone {
+            group_id: group_id.clone(),
+            task_id: calendar_id,
+            result: Ok(()),
+        });
+        let index_id = app.site_generation_workflows[&group_id]
+            .index_task_id
+            .expect("search indexing should follow calendar regeneration");
+        assert!(matches!(
+            app.task_manager.status(index_id),
+            Some(TaskStatus::Running | TaskStatus::Pending)
+        ));
     }
 
     #[test]

@@ -12,6 +12,7 @@ impl BdsApp {
                         let on_progress: engine::rebuild::ProgressFn =
                             Arc::new(move |pct, event| {
                                 tm.report_progress(tid, Some(pct), Some(event.localized(locale)));
+                                !tm.is_cancelled(tid)
                             });
                         let report = engine::rebuild::rebuild_from_filesystem_with_progress(
                             db.conn(),
@@ -42,14 +43,28 @@ impl BdsApp {
                     "engine.calendarStarted",
                     move |db_path, project_id, data_dir, tm, tid| {
                         let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                        tm.report_progress(tid, Some(0.20), Some(t(locale, "engine.loadingPosts")));
-                        engine::calendar::regenerate_calendar(db.conn(), &data_dir, &project_id)
-                            .map_err(|e| e.to_string())?;
-                        tm.report_progress(
-                            tid,
-                            Some(0.90),
-                            Some(t(locale, "engine.writingCalendar")),
-                        );
+                        engine::calendar::regenerate_calendar_with_progress(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            |current, total, name| {
+                                tm.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !tm.is_cancelled(tid)
+                            },
+                        )
+                        .map_err(|e| e.to_string())?;
                         Ok("done".to_string())
                     },
                 )
@@ -59,24 +74,39 @@ impl BdsApp {
                     TabType::TranslationValidation,
                     "tabBar.translationValidation",
                 );
-                let (Some(project), Some(data_dir)) = (&self.active_project, &self.data_dir) else {
+                if self.active_project.is_none() || self.data_dir.is_none() {
                     return Task::none();
-                };
+                }
                 self.translation_validation_state.is_running = true;
                 self.translation_validation_state.error_message = None;
-                let db_path = self.db_path.clone();
-                let project_id = project.id.clone();
-                let data_dir = data_dir.clone();
-                Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            let db = Database::open(&db_path).map_err(|e| e.to_string())?;
-                            let meta = engine::meta::read_project_json(&data_dir)
-                                .map_err(|e| e.to_string())?;
-                            let main_lang = meta.main_language.as_deref().unwrap_or("en");
-                            let blog_langs = meta.blog_languages.clone();
-                            let on_item: engine::validate_translations::ItemProgressFn =
-                                Box::new(move |_current, _total, _name| {});
+                let locale = self.ui_locale;
+                self.spawn_result_task(
+                    "menu.item.validateTranslations",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+                        let meta = engine::meta::read_project_json(&data_dir)
+                            .map_err(|e| e.to_string())?;
+                        let main_lang = meta.main_language.as_deref().unwrap_or("en");
+                        let blog_langs = meta.blog_languages.clone();
+                        let progress_tm = Arc::clone(&tm);
+                        let on_item: engine::validate_translations::ItemProgressFn =
+                            Box::new(move |current, total, name| {
+                                progress_tm.report_progress(
+                                    tid,
+                                    Some(current as f32 / total.max(1) as f32),
+                                    Some(tw(
+                                        locale,
+                                        "engine.checkingItem",
+                                        &[
+                                            ("current", &current.to_string()),
+                                            ("total", &total.to_string()),
+                                            ("name", name),
+                                        ],
+                                    )),
+                                );
+                                !progress_tm.is_cancelled(tid)
+                            });
+                        let report =
                             engine::validate_translations::validate_translations_with_progress(
                                 db.conn(),
                                 &data_dir,
@@ -85,16 +115,31 @@ impl BdsApp {
                                 main_lang,
                                 Some(on_item),
                             )
-                            .map_err(|e| e.to_string())
-                        })
-                        .await
-                        .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
+                            .map_err(|e| e.to_string())?;
+                        tm.report_progress(
+                            tid,
+                            Some(1.0),
+                            Some(tw(
+                                locale,
+                                "engine.validateTranslationsComplete",
+                                &[
+                                    ("dbIssues", &report.db_issues.len().to_string()),
+                                    ("fsIssues", &report.fs_issues.len().to_string()),
+                                ],
+                            )),
+                        );
+                        Ok(report)
                     },
-                    Message::TranslationValidationLoaded,
+                    |task_id, result| Message::TranslationValidationLoaded { task_id, result },
                 )
             }
-            Message::TranslationValidationLoaded(result) => {
+            Message::TranslationValidationLoaded { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
                 self.translation_validation_state.is_running = false;
+                if cancelled {
+                    return Task::none();
+                }
                 match result {
                     Ok(report) => {
                         self.translation_validation_state.report = Some(report);
@@ -149,8 +194,13 @@ impl BdsApp {
                 self.open_singleton_tab(TabType::MetadataDiff, "tabBar.metadataDiff");
                 self.start_metadata_diff()
             }
-            Message::MetadataDiffLoaded(result) => {
+            Message::MetadataDiffLoaded { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
                 self.metadata_diff_state.is_running = false;
+                if cancelled {
+                    return Task::none();
+                }
                 match result {
                     Ok(report) => {
                         self.metadata_diff_state.report = Some(report);
@@ -170,41 +220,99 @@ impl BdsApp {
                 else {
                     return Task::none();
                 };
-                let (Some(project), Some(data_dir)) =
-                    (self.active_project.as_ref(), self.data_dir.as_ref())
-                else {
+                if self.active_project.is_none() || self.data_dir.is_none() {
                     return Task::none();
-                };
+                }
                 self.metadata_diff_state.is_repairing = true;
-                let db_path = self.db_path.clone();
-                let project_id = project.id.clone();
-                let data_dir = data_dir.clone();
-                Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                            engine::metadata_diff::repair_metadata_diff_item(
-                                db.conn(),
-                                &data_dir,
-                                &project_id,
-                                direction,
-                                &item,
-                            )
-                            .map_err(|error| error.to_string())
-                        })
-                        .await
-                        .map_err(|error| error.to_string())?
+                let locale = self.ui_locale;
+                self.spawn_result_task(
+                    "metadataDiff.repair",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        tm.report_progress(tid, Some(0.0), Some(t(locale, "metadataDiff.repair")));
+                        if tm.is_cancelled(tid) {
+                            return Err("operation cancelled".into());
+                        }
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        engine::metadata_diff::repair_metadata_diff_item(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            direction,
+                            &item,
+                        )
+                        .map_err(|error| error.to_string())
                     },
-                    Message::MetadataDiffItemRepaired,
+                    |task_id, result| Message::MetadataDiffItemRepaired { task_id, result },
                 )
             }
-            Message::MetadataDiffItemRepaired(result) => {
+            Message::MetadataDiffItemRepaired { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
                 self.metadata_diff_state.is_repairing = false;
+                if cancelled {
+                    return Task::none();
+                }
                 match result {
                     Ok(()) => {
                         self.notify(
                             ToastLevel::Success,
                             &t(self.ui_locale, "metadataDiff.repaired"),
+                        );
+                        self.start_metadata_diff()
+                    }
+                    Err(error) => {
+                        self.notify(ToastLevel::Error, &error);
+                        Task::none()
+                    }
+                }
+            }
+            Message::ImportMetadataOrphan(index) => {
+                let Some(orphan) = self
+                    .metadata_diff_state
+                    .report
+                    .as_ref()
+                    .and_then(|report| report.orphans.get(index))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                self.metadata_diff_state.is_repairing = true;
+                let locale = self.ui_locale;
+                self.spawn_result_task(
+                    "metadataDiff.importOrphan",
+                    move |db_path, project_id, data_dir, tm, tid| {
+                        tm.report_progress(
+                            tid,
+                            Some(0.0),
+                            Some(t(locale, "metadataDiff.importOrphan")),
+                        );
+                        if tm.is_cancelled(tid) {
+                            return Err("operation cancelled".into());
+                        }
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        engine::metadata_diff::import_orphan_file(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            &orphan,
+                        )
+                        .map_err(|error| error.to_string())
+                    },
+                    |task_id, result| Message::MetadataOrphanImported { task_id, result },
+                )
+            }
+            Message::MetadataOrphanImported { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
+                self.metadata_diff_state.is_repairing = false;
+                if cancelled {
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        self.notify(
+                            ToastLevel::Success,
+                            &t(self.ui_locale, "metadataDiff.orphanImported"),
                         );
                         self.start_metadata_diff()
                     }
@@ -223,15 +331,14 @@ impl BdsApp {
                 result,
             } => {
                 let search_rebuild_finished = self.search_index_rebuild_task_id == Some(task_id);
-                let cancelled = self.task_manager.status(task_id) == Some(TaskStatus::Cancelled);
-                let refresh_semantic_tags = !cancelled
+                let cancellation_requested = self.task_manager.is_cancelled(task_id);
+                let refresh_semantic_tags = !cancellation_requested
                     && result.is_ok()
                     && matches!(
                         operation,
                         "embeddings.indexing" | "menu.item.rebuildEmbeddingIndex"
                     );
                 match &result {
-                    _ if cancelled => {}
                     Ok(detail) => {
                         self.task_manager.complete(task_id);
                         if operation == "engine.rebuildStarted" {
@@ -258,12 +365,14 @@ impl BdsApp {
                     }
                     Err(err) => {
                         self.task_manager.fail(task_id, err.clone());
-                        let message = tw(
-                            self.ui_locale,
-                            "common.operationFailed",
-                            &[("operation", &label), ("error", err)],
-                        );
-                        self.notify(ToastLevel::Error, &message);
+                        if !cancellation_requested {
+                            let message = tw(
+                                self.ui_locale,
+                                "common.operationFailed",
+                                &[("operation", &label), ("error", err)],
+                            );
+                            self.notify(ToastLevel::Error, &message);
+                        }
                     }
                 }
                 if search_rebuild_finished {
@@ -293,12 +402,41 @@ impl BdsApp {
                 self.refresh_task_snapshots();
                 Task::batch([sidebar_task, semantic_task])
             }
+            Message::SiteGenerationPrepared {
+                task_id,
+                validation,
+                force,
+                result,
+            } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
+                if cancelled {
+                    if validation.is_some() {
+                        self.site_validation_state.is_applying = false;
+                    }
+                    return Task::none();
+                }
+                match result {
+                    Ok((prepared, counts)) => {
+                        self.queue_prepared_site_generation(validation, force, prepared, counts)
+                    }
+                    Err(error) => {
+                        if validation.is_some() {
+                            self.site_validation_state.is_applying = false;
+                            self.site_validation_state.error_message = Some(error.clone());
+                        }
+                        self.notify(ToastLevel::Error, &error);
+                        Task::none()
+                    }
+                }
+            }
             Message::SiteGenerationSectionDone {
                 group_id,
                 task_id,
                 result,
             } => {
-                if self.task_manager.status(task_id) == Some(TaskStatus::Cancelled) {
+                if self.task_manager.is_cancelled(task_id) {
+                    self.finish_result_task(task_id, &result);
                     self.refresh_task_snapshots();
                     return Task::none();
                 }
@@ -335,21 +473,54 @@ impl BdsApp {
                     }
                 }
 
-                let should_index =
+                let next_phase =
                     self.site_generation_workflows
                         .get(&group_id)
-                        .is_some_and(|workflow| {
-                            workflow.index_task_id.is_none()
+                        .and_then(|workflow| {
+                            (workflow.calendar_task_id.is_none()
+                                && workflow.index_task_id.is_none()
                                 && workflow.render_task_ids.iter().all(|task_id| {
                                     self.task_manager.status(*task_id)
                                         == Some(TaskStatus::Completed)
-                                })
+                                }))
+                            .then_some(workflow.calendar_needed)
                         });
                 self.refresh_task_snapshots();
-                if should_index {
-                    self.queue_site_search_index(&group_id)
-                } else {
-                    Task::none()
+                match next_phase {
+                    Some(true) => self.queue_site_calendar(&group_id),
+                    Some(false) => self.queue_site_search_index(&group_id),
+                    None => Task::none(),
+                }
+            }
+            Message::SiteGenerationCalendarDone {
+                group_id,
+                task_id,
+                result,
+            } => {
+                if self.task_manager.is_cancelled(task_id) {
+                    self.finish_result_task(task_id, &result);
+                    self.refresh_task_snapshots();
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        self.task_manager.complete(task_id);
+                        self.refresh_task_snapshots();
+                        self.queue_site_search_index(&group_id)
+                    }
+                    Err(error) => {
+                        self.task_manager.fail(task_id, error.clone());
+                        self.task_manager.cancel_group(&group_id);
+                        if let Some(workflow) = self.site_generation_workflows.remove(&group_id)
+                            && workflow.kind == SiteGenerationKind::Validation
+                        {
+                            self.site_validation_state.is_applying = false;
+                            self.site_validation_state.error_message = Some(error.clone());
+                        }
+                        self.notify(ToastLevel::Error, &error);
+                        self.refresh_task_snapshots();
+                        Task::none()
+                    }
                 }
             }
             Message::SiteGenerationIndexDone {
@@ -357,7 +528,8 @@ impl BdsApp {
                 task_id,
                 result,
             } => {
-                if self.task_manager.status(task_id) == Some(TaskStatus::Cancelled) {
+                if self.task_manager.is_cancelled(task_id) {
+                    self.finish_result_task(task_id, &result);
                     self.refresh_task_snapshots();
                     return Task::none();
                 }
@@ -415,8 +587,13 @@ impl BdsApp {
                     }
                 }
             }
-            Message::SiteValidationLoaded(result) => {
+            Message::SiteValidationLoaded { task_id, result } => {
+                let cancelled = self.finish_result_task(task_id, &result);
+                self.refresh_task_snapshots();
                 self.site_validation_state.is_running = false;
+                if cancelled {
+                    return Task::none();
+                }
                 self.site_validation_state.has_run = true;
                 match result {
                     Ok(report) => {

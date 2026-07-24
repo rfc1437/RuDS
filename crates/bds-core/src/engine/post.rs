@@ -716,7 +716,7 @@ pub fn rebuild_posts_from_filesystem(
 }
 
 /// Per-item progress callback: (current_item, total_items, item_description).
-pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) + Send>;
+pub type ItemProgressFn = Box<dyn Fn(usize, usize, &str) -> bool + Send>;
 
 /// Like `rebuild_posts_from_filesystem` but with optional per-item progress.
 pub fn rebuild_posts_from_filesystem_with_progress(
@@ -760,7 +760,9 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     for (i, path) in canonical_files.iter().enumerate() {
         if let Some(ref cb) = on_item {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-            cb(i + 1, total, name);
+            if !cb(i + 1, total, name) {
+                return Err(EngineError::Cancelled);
+            }
         }
         match rebuild_canonical_post(conn, data_dir, project_id, path) {
             Ok(created) => {
@@ -781,7 +783,9 @@ pub fn rebuild_posts_from_filesystem_with_progress(
     for (i, path) in translation_files.iter().enumerate() {
         if let Some(ref cb) = on_item {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-            cb(offset + i + 1, total, name);
+            if !cb(offset + i + 1, total, name) {
+                return Err(EngineError::Cancelled);
+            }
         }
         match rebuild_translation(conn, data_dir, project_id, path) {
             Ok(created) => {
@@ -817,10 +821,24 @@ pub fn rebuild_all_links(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<usize> {
+    rebuild_all_links_with_progress(conn, data_dir, project_id, None)
+}
+
+pub fn rebuild_all_links_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    on_item: Option<ItemProgressFn>,
+) -> EngineResult<usize> {
     let posts = qp::list_posts_by_project(conn, project_id)?;
     let mut link_count = 0;
 
-    for post in &posts {
+    for (index, post) in posts.iter().enumerate() {
+        if let Some(ref callback) = on_item
+            && !callback(index + 1, posts.len(), &post.title)
+        {
+            return Err(EngineError::Cancelled);
+        }
         // Get post content: from DB or filesystem
         let content = if let Some(ref content) = post.content {
             content.clone()

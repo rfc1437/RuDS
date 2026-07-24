@@ -6,8 +6,8 @@ use crate::db::DbConnection as Connection;
 use walkdir::WalkDir;
 
 use crate::db::queries;
-use crate::engine::EngineResult;
 use crate::engine::generation::has_published_snapshot;
+use crate::engine::{EngineError, EngineResult};
 use crate::model::Post;
 use crate::render::{build_canonical_post_path, build_site_route_manifest};
 
@@ -25,11 +25,27 @@ pub fn validate_site(
     data_dir: &Path,
     project_id: &str,
 ) -> EngineResult<SiteValidationReport> {
+    validate_site_with_progress(conn, data_dir, project_id, |_, _| true)
+}
+
+pub fn validate_site_with_progress(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    mut on_progress: impl FnMut(usize, usize) -> bool,
+) -> EngineResult<SiteValidationReport> {
+    const PHASES: usize = 4;
+    if !on_progress(0, PHASES) {
+        return Err(EngineError::Cancelled);
+    }
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
     let output_dir = generated_output_dir(data_dir);
     let published_posts = load_published_posts(conn, project_id)?;
     let route_manifest = build_site_route_manifest(data_dir, &metadata, &published_posts)
         .map_err(|error| crate::engine::EngineError::Parse(error.to_string()))?;
+    if !on_progress(1, PHASES) {
+        return Err(EngineError::Cancelled);
+    }
     crate::engine::generation::refresh_validation_sitemap(
         conn,
         &output_dir,
@@ -43,6 +59,9 @@ pub fn validate_site(
         .into_iter()
         .map(|page| page.relative_path)
         .collect::<HashSet<_>>();
+    if !on_progress(2, PHASES) {
+        return Err(EngineError::Cancelled);
+    }
 
     let mut actual = HashSet::new();
     let mut zero_byte = HashSet::new();
@@ -67,6 +86,9 @@ pub fn validate_site(
         .into_iter()
         .map(|file| (file.relative_path, file.updated_at))
         .collect::<HashMap<_, _>>();
+    if !on_progress(3, PHASES) {
+        return Err(EngineError::Cancelled);
+    }
     let mut stale_pages = stale_post_paths(
         data_dir,
         &output_dir,
@@ -82,6 +104,10 @@ pub fn validate_site(
     extra_pages.dedup();
     stale_pages.sort();
     stale_pages.dedup();
+
+    if !on_progress(PHASES, PHASES) {
+        return Err(EngineError::Cancelled);
+    }
 
     Ok(SiteValidationReport {
         missing_pages,

@@ -408,6 +408,8 @@ impl ProtocolError {
 }
 
 fn remote_task(snapshot: TaskSnapshot) -> RemoteTask {
+    let cancellable = matches!(snapshot.status, TaskStatus::Pending | TaskStatus::Running)
+        && !snapshot.cancellation_requested;
     let (status, failure) = match snapshot.status {
         TaskStatus::Pending => ("pending", None),
         TaskStatus::Running => ("running", None),
@@ -418,6 +420,10 @@ fn remote_task(snapshot: TaskSnapshot) -> RemoteTask {
     RemoteTask {
         id: snapshot.id,
         label: snapshot.label,
+        group_id: snapshot.group_id,
+        group_name: snapshot.group_name,
+        cancellation_requested: snapshot.cancellation_requested,
+        cancellable,
         status: status.to_owned(),
         progress: snapshot.progress,
         message: snapshot.message.or(failure),
@@ -610,7 +616,11 @@ mod tests {
         let fixture = Fixture::new();
         let mut session = fixture.session();
         let _ = session.pending();
-        let task = fixture.host.tasks().submit("Generate site");
+        let task =
+            fixture
+                .host
+                .tasks()
+                .submit_grouped("Generate site", "generation-1", "Generate Site");
         fixture
             .host
             .tasks()
@@ -618,7 +628,11 @@ mod tests {
         let update = session.pending();
         assert!(matches!(
             update.as_slice(),
-            [ServerMessage::Tasks { tasks, .. }] if tasks[0].progress == Some(0.5)
+            [ServerMessage::Tasks { tasks, .. }]
+                if tasks[0].progress == Some(0.5)
+                    && tasks[0].group_id.as_deref() == Some("generation-1")
+                    && tasks[0].group_name.as_deref() == Some("Generate Site")
+                    && tasks[0].cancellable
         ));
         assert!(
             session
