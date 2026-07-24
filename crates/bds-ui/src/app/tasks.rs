@@ -149,7 +149,6 @@ impl BdsApp {
         );
         let mut render_task_ids = Vec::new();
         let mut tasks = Vec::new();
-        let prepared_generation = Arc::new(std::sync::OnceLock::new());
 
         for section in sections {
             let label = t(self.ui_locale, generation_section_label_key(section));
@@ -174,7 +173,6 @@ impl BdsApp {
             let task_data_dir = data_dir.clone();
             let task_group_id = group_id.clone();
             let task_validation = validation.clone();
-            let task_prepared_generation = Arc::clone(&prepared_generation);
             let locale = self.ui_locale;
             tasks.push(Task::perform(
                 async move {
@@ -187,7 +185,6 @@ impl BdsApp {
                             task_id,
                             section,
                             task_validation,
-                            task_prepared_generation,
                             force,
                             locale,
                             page_work,
@@ -497,9 +494,6 @@ fn run_site_generation_section(
     task_id: TaskId,
     section: engine::generation::GenerationSection,
     validation: Option<engine::validate_site::SiteValidationReport>,
-    prepared_generation: Arc<
-        std::sync::OnceLock<Result<Arc<engine::generation::PreparedSiteGeneration>, String>>,
-    >,
     force: bool,
     locale: UiLocale,
     expected_pages: usize,
@@ -517,33 +511,26 @@ fn run_site_generation_section(
         )),
     );
     let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-    let prepared = prepared_generation
-        .get_or_init(|| {
-            let metadata =
-                engine::meta::read_project_json(&data_dir).map_err(|error| error.to_string())?;
-            let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
-                .map_err(|error| error.to_string())?;
-            let sources = posts
-                .into_iter()
-                .filter(engine::generation::has_published_snapshot)
-                .map(|post| engine::generation::load_published_post_source(&data_dir, post))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
-            engine::generation::prepare_site_generation(
-                db.conn(),
-                &data_dir,
-                &project_id,
-                &metadata,
-                &sources,
-            )
-            .map(Arc::new)
-            .map_err(|error| error.to_string())
-        })
-        .as_ref()
-        .map_err(Clone::clone)?;
+    let metadata = engine::meta::read_project_json(&data_dir).map_err(|error| error.to_string())?;
+    let posts = bds_core::db::queries::post::list_posts_by_project(db.conn(), &project_id)
+        .map_err(|error| error.to_string())?;
+    let sources = posts
+        .into_iter()
+        .filter(engine::generation::has_published_snapshot)
+        .map(|post| engine::generation::load_published_post_source(&data_dir, post))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let prepared = engine::generation::prepare_site_generation(
+        db.conn(),
+        &data_dir,
+        &project_id,
+        &metadata,
+        &sources,
+    )
+    .map_err(|error| error.to_string())?;
     let output_dir = data_dir.join("html");
     std::fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let render_manager = Arc::clone(&task_manager);
@@ -578,7 +565,7 @@ fn run_site_generation_section(
             db.conn(),
             &output_dir,
             &project_id,
-            prepared,
+            &prepared,
             &validation,
             section,
             on_page,
@@ -589,7 +576,7 @@ fn run_site_generation_section(
             db.conn(),
             &output_dir,
             &project_id,
-            prepared,
+            &prepared,
             section,
             force,
             &on_rendered,

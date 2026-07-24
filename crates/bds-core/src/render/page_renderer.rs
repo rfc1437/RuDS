@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use liquid::ParserBuilder;
 use liquid::partials::{EagerCompiler, InMemorySource};
-use liquid_core::model::ScalarCow;
+use liquid_core::model::{Object, ScalarCow, ValueCow};
 use liquid_core::parser::FilterArguments;
 use liquid_core::{
     Display_filter, Expression, Filter, FilterParameters, FilterReflection, FromFilterParameters,
@@ -60,6 +60,21 @@ impl LiquidRenderer {
         context: &T,
     ) -> Result<String, RenderError> {
         let globals = liquid::to_object(context)?;
+        Ok(template.0.render(&globals)?)
+    }
+
+    pub(crate) fn render_with_base<T: Serialize>(
+        &self,
+        template: &CompiledLiquidTemplate,
+        base: &Object,
+        context: &T,
+    ) -> Result<String, RenderError> {
+        let page = liquid::to_object(context)?;
+        let globals = base
+            .iter()
+            .chain(page.iter())
+            .map(|(key, value)| (key.to_string(), ValueCow::from(value)))
+            .collect::<HashMap<_, _>>();
         Ok(template.0.render(&globals)?)
     }
 }
@@ -261,15 +276,10 @@ impl Filter for MarkdownFilter {
             .and_then(|value| value.as_scalar())
             .map(|scalar| scalar.to_kstr().to_string())
             .unwrap_or_default();
-        let macro_context = MacroRenderContext {
-            roots: collect_macro_roots(runtime),
-            post_id: post_id.clone(),
-            host: Arc::clone(&self.host),
-        };
         let key = MarkdownCacheKey {
             content_hash: content_hash(markdown.as_bytes()),
             language,
-            post_id,
+            post_id: post_id.clone(),
         };
         let entry = {
             let mut cache = self.cache.lock().unwrap_or_else(|error| error.into_inner());
@@ -278,8 +288,17 @@ impl Filter for MarkdownFilter {
         Ok(Value::scalar(
             entry
                 .get_or_init(|| {
-                    let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
-                    let rendered = render_markdown_to_html(&expanded);
+                    let rendered = if markdown.contains("[[") {
+                        let macro_context = MacroRenderContext {
+                            roots: collect_macro_roots(runtime),
+                            post_id,
+                            host: Arc::clone(&self.host),
+                        };
+                        let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
+                        render_markdown_to_html(&expanded)
+                    } else {
+                        render_markdown_to_html(markdown.as_str())
+                    };
                     rewrite_rendered_html_urls(&rendered, &rewrite_context)
                 })
                 .clone(),

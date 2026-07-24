@@ -11210,14 +11210,21 @@ mod tests {
                 .iter()
                 .all(|task| task.group_name.as_deref() == Some("Render Site"))
         );
-        assert_eq!(
-            snapshots
+        let running = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .min(snapshots.len());
+        assert!(
+            snapshots[..running]
                 .iter()
-                .map(|task| task.status.clone())
-                .collect::<Vec<_>>(),
-            vec![Running, Running, Running, Pending, Pending]
+                .all(|task| task.status == Running)
         );
-        assert!(snapshots[..3].iter().all(|task| {
+        assert!(
+            snapshots[running..]
+                .iter()
+                .all(|task| task.status == Pending)
+        );
+        assert!(snapshots[..running].iter().all(|task| {
             task.progress.is_some()
                 && task
                     .message

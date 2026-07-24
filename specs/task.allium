@@ -54,7 +54,8 @@ surface TaskSurface {
 }
 
 config {
-    max_concurrent: Integer = 3
+    -- Runtime default: all online CPU workers, matching bDS2.
+    max_concurrent: Integer
     progress_throttle: Duration = 250.milliseconds
     finished_task_ttl: Duration = 1.hour
     recent_finished_limit: Integer = 10

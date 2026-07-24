@@ -337,7 +337,11 @@ impl TaskManager {
 
 impl Default for TaskManager {
     fn default() -> Self {
-        Self::new(3)
+        Self::new(
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1),
+        )
     }
 }
 
@@ -356,6 +360,19 @@ mod tests {
         let id = mgr.submit("build site");
         // Auto-started since capacity allows
         assert_eq!(mgr.status(id), Some(TaskStatus::Running));
+    }
+
+    #[test]
+    fn default_uses_every_online_worker_like_bds2() {
+        let mgr = TaskManager::default();
+        let expected = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1);
+        for index in 0..expected {
+            mgr.submit(&format!("task {index}"));
+        }
+
+        assert_eq!(mgr.running_count(), expected);
     }
 
     #[test]

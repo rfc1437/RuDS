@@ -481,6 +481,50 @@ fn section_generation_reports_its_urls_and_defers_pagefind() {
 }
 
 #[test]
+fn list_pages_receive_only_their_page_post_data_like_bds2() {
+    let (db, dir) = setup();
+    insert_template(
+        db.conn(),
+        &make_list_template("list", "POST_DATA={{ post_data_json_by_id | size }}"),
+    )
+    .unwrap();
+    let mut metadata = make_metadata();
+    metadata.max_posts_per_page = 1;
+    let posts = vec![
+        PublishedPostSource {
+            post: make_post("hello", 1_710_000_000_000),
+            body_markdown: "Hello".into(),
+        },
+        PublishedPostSource {
+            post: make_post("next", 1_710_086_400_000),
+            body_markdown: "Next".into(),
+        },
+    ];
+
+    render_site_section_with_progress(
+        db.conn(),
+        dir.path(),
+        "p1",
+        &metadata,
+        &posts,
+        GenerationSection::Core,
+        |_, _, _| {},
+        |_| {},
+        || false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("index.html")).unwrap(),
+        "POST_DATA=1"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("page/2/index.html")).unwrap(),
+        "POST_DATA=1"
+    );
+}
+
+#[test]
 fn section_generation_reports_while_html_is_rendered_before_files_are_written() {
     let (db, dir) = setup();
     let metadata = make_metadata();
