@@ -229,6 +229,12 @@ invariant CategoryArchiveTitleLanguage {
     -- category name.
 }
 
+invariant CategoryMenuTitleLanguage {
+    -- A category-archive menu item uses the title configured for its render
+    -- language at every nesting level. A missing title falls back to the menu
+    -- item's persisted label.
+}
+
 invariant SharedRenderPathForPreviewAndGeneration {
     -- Preview and generation produce identical HTML for the same input because
     -- both build assigns through this subsystem and render via the same Liquid

@@ -391,7 +391,12 @@ pub fn prepare_site_render_context(
         let linked_media_by_post_id =
             build_linked_media_by_post_id(&posts, &linked_media_by_source_post);
         let post_data_json_by_id = build_post_data_json_by_id(&posts, &linked_media_by_post_id);
-        let menu_items = build_menu_items(data_dir, &language, &main_language)?;
+        let menu_items = build_menu_items(
+            data_dir,
+            &language,
+            &main_language,
+            &category_settings,
+        )?;
         let canonical_post_path_by_slug =
             canonical_post_path_by_slug(&posts, &language, &main_language);
         let taxonomy = build_taxonomy_context(&posts, &tags);
@@ -619,7 +624,13 @@ pub fn build_preview_response(
 
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let language = language_from_path(&normalized, metadata);
-    let menu_items = build_menu_items(data_dir, &language, main_language(metadata))?;
+    let category_settings = queries_category_settings(data_dir)?;
+    let menu_items = build_menu_items(
+        data_dir,
+        &language,
+        main_language(metadata),
+        &category_settings,
+    )?;
     let html = render_not_found_route(&bundle, metadata, &language, &normalized, &menu_items)?;
     Ok(PreviewRenderResult {
         status_code: 404,
@@ -1314,22 +1325,37 @@ fn build_menu_items(
     data_dir: &Path,
     language: &str,
     main_language: &str,
+    category_settings: &HashMap<String, CategorySettings>,
 ) -> Result<Vec<Value>, Box<dyn Error + Send + Sync>> {
     let items = menu::read_menu(data_dir)?;
     Ok(items
         .iter()
-        .map(|item| menu_item_context(item, language, main_language))
+        .map(|item| menu_item_context(item, language, main_language, category_settings))
         .collect())
 }
 
-fn menu_item_context(item: &menu::MenuItem, language: &str, main_language: &str) -> Value {
+fn menu_item_context(
+    item: &menu::MenuItem,
+    language: &str,
+    main_language: &str,
+    category_settings: &HashMap<String, CategorySettings>,
+) -> Value {
     let children = item
         .children
         .iter()
-        .map(|child| menu_item_context(child, language, main_language))
+        .map(|child| menu_item_context(child, language, main_language, category_settings))
         .collect::<Vec<_>>();
+    let title = match item.kind {
+        MenuItemKind::CategoryArchive => item
+            .slug
+            .as_deref()
+            .and_then(|category| category_settings.get(category))
+            .and_then(|settings| settings.title_for(language, main_language))
+            .unwrap_or(item.label.as_str()),
+        _ => item.label.as_str(),
+    };
     json!({
-        "title": item.label,
+        "title": title,
         "href": menu_item_href(item, language, main_language),
         "has_children": !children.is_empty(),
         "children": children,
@@ -2202,15 +2228,34 @@ mod menu_tests {
         )
         .unwrap();
 
-        let rendered = build_menu_items(dir.path(), "en", "en").unwrap();
+        crate::engine::meta::write_category_meta_json(
+            dir.path(),
+            &HashMap::from([(
+                "Über Öl".into(),
+                CategorySettings {
+                    list_template_slug: None,
+                    post_template_slug: None,
+                    render_in_lists: true,
+                    show_title: true,
+                    title: Some("Oil".into()),
+                    titles: BTreeMap::from([("de".into(), "Öl".into())]),
+                },
+            )]),
+        )
+        .unwrap();
+
+        let category_settings = queries_category_settings(dir.path()).unwrap();
+        let rendered = build_menu_items(dir.path(), "en", "en", &category_settings).unwrap();
         assert_eq!(rendered[0]["href"], "/");
         assert_eq!(rendered[1]["href"], "/about/");
         assert_eq!(rendered[2]["children"][0]["href"], "/category/uber-ol/");
-        let translated = build_menu_items(dir.path(), "de", "en").unwrap();
+        assert_eq!(rendered[2]["children"][0]["title"], "Oil");
+        let translated = build_menu_items(dir.path(), "de", "en", &category_settings).unwrap();
         assert_eq!(translated[1]["href"], "/de/about/");
         assert_eq!(
             translated[2]["children"][0]["href"],
             "/de/category/uber-ol/"
         );
+        assert_eq!(translated[2]["children"][0]["title"], "Öl");
     }
 }
