@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use liquid::ParserBuilder;
 use liquid::partials::{EagerCompiler, InMemorySource};
@@ -18,12 +18,50 @@ use crate::i18n::translate_render;
 use crate::render::macros::{MacroRenderContext, expand_builtin_macros};
 use crate::render::render_markdown_to_html;
 use crate::scripting::{HostApi, UnavailableHost};
-use crate::util::slugify;
+use crate::util::{content_hash, slugify};
 
 #[derive(Debug, Error)]
 pub enum RenderError {
     #[error("liquid error: {0}")]
     Liquid(#[from] liquid::Error),
+}
+
+#[derive(Clone)]
+pub(crate) struct CompiledLiquidTemplate(Arc<liquid::Template>);
+
+#[derive(Clone)]
+pub(crate) struct LiquidRenderer {
+    parser: liquid::Parser,
+}
+
+impl LiquidRenderer {
+    pub(crate) fn new(
+        partials: &HashMap<String, String>,
+        host: Arc<dyn HostApi>,
+    ) -> Result<Self, RenderError> {
+        let mut compiled_partials: EagerCompiler<InMemorySource> = EagerCompiler::empty();
+        for (name, content) in partials {
+            compiled_partials.add(format!("{name}.liquid"), content.clone());
+        }
+        Ok(Self {
+            parser: liquid_parser_builder(host, Default::default())
+                .partials(compiled_partials)
+                .build()?,
+        })
+    }
+
+    pub(crate) fn compile(&self, source: &str) -> Result<CompiledLiquidTemplate, RenderError> {
+        Ok(CompiledLiquidTemplate(Arc::new(self.parser.parse(source)?)))
+    }
+
+    pub(crate) fn render<T: Serialize>(
+        &self,
+        template: &CompiledLiquidTemplate,
+        context: &T,
+    ) -> Result<String, RenderError> {
+        let globals = liquid::to_object(context)?;
+        Ok(template.0.render(&globals)?)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -51,21 +89,13 @@ pub(crate) fn render_liquid_template_with_host<T: Serialize>(
     context: &T,
     host: Arc<dyn HostApi>,
 ) -> Result<String, RenderError> {
-    let mut compiled_partials: EagerCompiler<InMemorySource> = EagerCompiler::empty();
-    for (name, content) in partials {
-        compiled_partials.add(format!("{name}.liquid"), content.clone());
-    }
-
-    let parser = liquid_parser_builder(host)
-        .partials(compiled_partials)
-        .build()?;
-    let template = parser.parse(template_source)?;
-    let globals = liquid::to_object(context)?;
-    Ok(template.render(&globals)?)
+    let renderer = LiquidRenderer::new(partials, host)?;
+    let template = renderer.compile(template_source)?;
+    renderer.render(&template, context)
 }
 
 pub(crate) fn validate_liquid_template_syntax(template_source: &str) -> Result<(), String> {
-    let parser = liquid_parser_builder(Arc::new(UnavailableHost))
+    let parser = liquid_parser_builder(Arc::new(UnavailableHost), Default::default())
         .build()
         .map_err(|error| error.to_string())?;
     parser
@@ -74,10 +104,15 @@ pub(crate) fn validate_liquid_template_syntax(template_source: &str) -> Result<(
         .map_err(|error| error.to_string())
 }
 
-fn liquid_parser_builder(host: Arc<dyn HostApi>) -> ParserBuilder {
+type MarkdownCache = Arc<Mutex<HashMap<MarkdownCacheKey, Arc<OnceLock<String>>>>>;
+
+fn liquid_parser_builder(host: Arc<dyn HostApi>, markdown_cache: MarkdownCache) -> ParserBuilder {
     ParserBuilder::with_stdlib()
         .filter(I18n)
-        .filter(Markdown { host })
+        .filter(Markdown {
+            host,
+            cache: markdown_cache,
+        })
         .filter(Slugify)
 }
 
@@ -162,6 +197,7 @@ struct MarkdownArgs {
 )]
 struct Markdown {
     host: Arc<dyn HostApi>,
+    cache: MarkdownCache,
 }
 
 impl ParseFilter for Markdown {
@@ -169,6 +205,7 @@ impl ParseFilter for Markdown {
         Ok(Box::new(MarkdownFilter {
             args: MarkdownArgs::from_args(args)?,
             host: Arc::clone(&self.host),
+            cache: Arc::clone(&self.cache),
         }))
     }
 
@@ -182,6 +219,7 @@ impl ParseFilter for Markdown {
 struct MarkdownFilter {
     args: MarkdownArgs,
     host: Arc<dyn HostApi>,
+    cache: MarkdownCache,
 }
 
 impl fmt::Debug for MarkdownFilter {
@@ -208,29 +246,52 @@ impl Filter for MarkdownFilter {
                 .map(value_to_string_map)
                 .unwrap_or_default(),
         };
+        let post_id = args
+            .post_id
+            .as_ref()
+            .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string()))
+            .or_else(|| {
+                runtime
+                    .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
+                    .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string()))
+            });
+        let language = args
+            .language
+            .as_ref()
+            .and_then(|value| value.as_scalar())
+            .map(|scalar| scalar.to_kstr().to_string())
+            .unwrap_or_default();
         let macro_context = MacroRenderContext {
             roots: collect_macro_roots(runtime),
-            post_id: args
-                .post_id
-                .as_ref()
-                .and_then(|value| value.as_scalar().map(|scalar| scalar.to_kstr().to_string()))
-                .or_else(|| {
-                    runtime
-                        .try_get(&[ScalarCow::new("post"), ScalarCow::new("id")])
-                        .and_then(|value| {
-                            value.as_scalar().map(|scalar| scalar.to_kstr().to_string())
-                        })
-                }),
+            post_id: post_id.clone(),
             host: Arc::clone(&self.host),
         };
-
-        let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
-        let rendered = render_markdown_to_html(&expanded);
-        Ok(Value::scalar(rewrite_rendered_html_urls(
-            &rendered,
-            &rewrite_context,
-        )))
+        let key = MarkdownCacheKey {
+            content_hash: content_hash(markdown.as_bytes()),
+            language,
+            post_id,
+        };
+        let entry = {
+            let mut cache = self.cache.lock().unwrap_or_else(|error| error.into_inner());
+            Arc::clone(cache.entry(key).or_default())
+        };
+        Ok(Value::scalar(
+            entry
+                .get_or_init(|| {
+                    let expanded = expand_builtin_macros(markdown.as_str(), &macro_context);
+                    let rendered = render_markdown_to_html(&expanded);
+                    rewrite_rendered_html_urls(&rendered, &rewrite_context)
+                })
+                .clone(),
+        ))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MarkdownCacheKey {
+    content_hash: String,
+    language: String,
+    post_id: Option<String>,
 }
 
 fn collect_macro_roots(runtime: &dyn Runtime) -> JsonMap<String, JsonValue> {

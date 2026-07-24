@@ -51,6 +51,32 @@ pub fn upsert_generated_file_hash(
     })
 }
 
+pub fn upsert_generated_file_hashes(
+    conn: &DbConnection,
+    hashes: &[GeneratedFileHash],
+) -> QueryResult<()> {
+    conn.with(|c| {
+        hashes.chunks(200).try_for_each(|chunk| {
+            diesel::insert_into(generated_file_hashes::table)
+                .values(chunk)
+                .on_conflict((
+                    generated_file_hashes::project_id,
+                    generated_file_hashes::relative_path,
+                ))
+                .do_update()
+                .set((
+                    generated_file_hashes::content_hash.eq(diesel::upsert::excluded(
+                        generated_file_hashes::content_hash,
+                    )),
+                    generated_file_hashes::updated_at
+                        .eq(diesel::upsert::excluded(generated_file_hashes::updated_at)),
+                ))
+                .execute(c)
+                .map(|_| ())
+        })
+    })
+}
+
 pub fn touch_generated_file_hashes(
     conn: &DbConnection,
     project_id: &str,
@@ -110,5 +136,37 @@ mod tests {
         let stored = get_generated_file_hash(db.conn(), "p1", "index.html").unwrap();
         assert_eq!(stored.content_hash, "def");
         assert_eq!(stored.updated_at, 99);
+    }
+
+    #[test]
+    fn batch_upsert_inserts_and_updates_hashes() {
+        let db = setup();
+        let mut hashes = vec![
+            GeneratedFileHash {
+                project_id: "p1".into(),
+                relative_path: "index.html".into(),
+                content_hash: "one".into(),
+                updated_at: 1,
+            },
+            GeneratedFileHash {
+                project_id: "p1".into(),
+                relative_path: "rss.xml".into(),
+                content_hash: "two".into(),
+                updated_at: 1,
+            },
+        ];
+        upsert_generated_file_hashes(db.conn(), &hashes).unwrap();
+        hashes[0].content_hash = "changed".into();
+        hashes[0].updated_at = 2;
+        upsert_generated_file_hashes(db.conn(), &hashes[..1]).unwrap();
+
+        let stored = list_generated_file_hashes(db.conn(), "p1").unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(
+            get_generated_file_hash(db.conn(), "p1", "index.html")
+                .unwrap()
+                .content_hash,
+            "changed"
+        );
     }
 }

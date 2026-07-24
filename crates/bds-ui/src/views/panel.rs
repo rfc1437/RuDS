@@ -112,33 +112,6 @@ fn close_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-#[cfg(test)]
-mod progress_tests {
-    use super::*;
-
-    #[test]
-    fn group_progress_includes_pending_tasks_as_zero_like_bds2() {
-        let complete = TaskSnapshot {
-            id: 1,
-            label: String::new(),
-            group_id: None,
-            group_name: None,
-            status: String::new(),
-            progress: Some(1.0),
-            message: None,
-            is_cancellable: false,
-        };
-        let pending = TaskSnapshot {
-            id: 2,
-            progress: None,
-            is_cancellable: true,
-            ..complete.clone()
-        };
-
-        assert_eq!(group_progress(&[&complete, &pending]), Some(0.5));
-    }
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "arguments are independent panel state slices"
@@ -458,4 +431,31 @@ fn post_link_button(locale: UiLocale, link: &ResolvedPostLink) -> Element<'stati
         .padding([4, 8])
         .style(tab_inactive)
         .into()
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn group_progress_includes_pending_tasks_as_zero_like_bds2() {
+        let complete = TaskSnapshot {
+            id: 1,
+            label: String::new(),
+            group_id: None,
+            group_name: None,
+            status: String::new(),
+            progress: Some(1.0),
+            message: None,
+            is_cancellable: false,
+        };
+        let pending = TaskSnapshot {
+            id: 2,
+            progress: None,
+            is_cancellable: true,
+            ..complete.clone()
+        };
+
+        assert_eq!(group_progress(&[&complete, &pending]), Some(0.5));
+    }
 }

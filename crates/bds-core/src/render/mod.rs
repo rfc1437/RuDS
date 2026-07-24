@@ -6,14 +6,15 @@ mod routes;
 mod site;
 mod template_lookup;
 
+pub(crate) use generation::GeneratedFileWriter;
 pub use generation::{
     CalendarArchiveData, GeneratedWriteOutcome, build_calendar_json, build_core_generation_paths,
     write_generated_bytes, write_generated_bytes_forced, write_generated_file,
     write_generated_file_forced, write_generated_file_verified,
 };
 pub use markdown::render_markdown_to_html;
+pub(crate) use page_renderer::validate_liquid_template_syntax;
 pub use page_renderer::{RenderError, render_liquid_template};
-pub(crate) use page_renderer::{render_liquid_template_with_host, validate_liquid_template_syntax};
 pub(crate) use routes::{PostLanguageVariant, blog_page_title, select_post_language_variant};
 pub use routes::{
     RenderedPage, build_canonical_post_path, render_starter_list_page,
@@ -21,9 +22,11 @@ pub use routes::{
     render_starter_single_post_page_with_media_map,
 };
 pub use site::{
-    PagefindDocument, PreviewRenderResult, SitePage, SiteRenderArtifacts, build_preview_response,
-    build_site_render_artifacts, build_site_route_manifest, build_site_section_render_artifacts,
+    PagefindDocument, PreviewRenderResult, SitePage, SiteRenderArtifacts, SiteRenderContext,
+    build_preview_response, build_site_render_artifacts, build_site_render_artifacts_from_context,
+    build_site_route_manifest, build_site_section_render_artifacts,
     build_targeted_site_section_render_artifacts, estimate_site_render_pages,
+    prepare_site_render_context,
 };
 pub use template_lookup::{
     RenderCategorySettings, RenderTemplateLookup, TemplateLookupError, resolve_post_template,

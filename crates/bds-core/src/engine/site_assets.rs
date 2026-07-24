@@ -1,10 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::db::DbConnection as Connection;
-
-use crate::engine::{EngineError, EngineResult};
-use crate::render::{GeneratedWriteOutcome, write_generated_bytes};
+use crate::engine::EngineResult;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BundledSiteAsset {
@@ -238,6 +235,10 @@ pub(crate) fn bundled_site_asset(relative_path: &str) -> Option<&'static [u8]> {
         .map(|asset| asset.bytes)
 }
 
+pub(crate) fn bundled_site_assets() -> &'static [BundledSiteAsset] {
+    BUNDLED_SITE_ASSETS
+}
+
 pub(crate) fn copy_bundled_site_assets(project_dir: &Path) -> EngineResult<()> {
     for asset in BUNDLED_SITE_ASSETS {
         let target = project_dir.join(asset.relative_path);
@@ -248,44 +249,6 @@ pub(crate) fn copy_bundled_site_assets(project_dir: &Path) -> EngineResult<()> {
             fs::create_dir_all(parent)?;
         }
         fs::write(target, asset.bytes)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn write_bundled_site_assets(
-    conn: &Connection,
-    output_dir: &Path,
-    project_id: &str,
-    report: &mut crate::engine::generation::GenerationReport,
-    force: bool,
-) -> EngineResult<()> {
-    for asset in BUNDLED_SITE_ASSETS {
-        let outcome = if force {
-            crate::render::write_generated_bytes_forced(
-                conn,
-                output_dir,
-                project_id,
-                asset.relative_path,
-                asset.bytes,
-            )
-        } else {
-            write_generated_bytes(
-                conn,
-                output_dir,
-                project_id,
-                asset.relative_path,
-                asset.bytes,
-            )
-        }
-        .map_err(|error| EngineError::Parse(error.to_string()))?;
-        match outcome {
-            GeneratedWriteOutcome::Written => {
-                report.written_paths.push(asset.relative_path.to_string())
-            }
-            GeneratedWriteOutcome::SkippedUnchanged => {
-                report.skipped_paths.push(asset.relative_path.to_string())
-            }
-        }
     }
     Ok(())
 }

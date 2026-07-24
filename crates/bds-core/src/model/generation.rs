@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 )]
 #[diesel(
     table_name = crate::db::schema::generated_file_hashes,
-    check_for_backend(diesel::sqlite::Sqlite)
+    check_for_backend(diesel::sqlite::Sqlite),
+    treat_none_as_default_value = false
 )]
 pub struct GeneratedFileHash {
     pub project_id: String,

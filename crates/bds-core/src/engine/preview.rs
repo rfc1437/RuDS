@@ -243,11 +243,19 @@ fn render_preview_response(
         let (content_type, xml) = match kind {
             PreviewFeedKind::Rss => (
                 "application/rss+xml; charset=utf-8",
-                crate::engine::generation::build_rss_xml(&metadata, &localized_posts, &language),
+                crate::engine::generation::build_rss_xml(
+                    &metadata,
+                    localized_posts.iter().map(|source| &source.post),
+                    &language,
+                ),
             ),
             PreviewFeedKind::Atom => (
                 "application/atom+xml; charset=utf-8",
-                crate::engine::generation::build_atom_xml(&metadata, &localized_posts, &language),
+                crate::engine::generation::build_atom_xml(
+                    &metadata,
+                    localized_posts.iter().map(|source| &source.post),
+                    &language,
+                ),
             ),
         };
         return Ok((StatusCode::OK, [(header::CONTENT_TYPE, content_type)], xml).into_response());

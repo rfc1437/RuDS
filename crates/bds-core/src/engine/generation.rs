@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::db::DbConnection as Connection;
 use chrono::{DateTime, TimeZone, Utc};
@@ -8,15 +9,13 @@ use pagefind::options::PagefindServiceConfig;
 use walkdir::WalkDir;
 
 use crate::db::queries;
-use crate::engine::site_assets::write_bundled_site_assets;
+use crate::engine::site_assets::bundled_site_assets;
 use crate::engine::validate_site::SiteValidationReport;
 use crate::engine::{EngineError, EngineResult};
 use crate::model::{CategorySettings, Post, ProjectMetadata};
 use crate::render::{
-    GeneratedWriteOutcome, PostLanguageVariant, build_calendar_json, build_canonical_post_path,
-    build_site_section_render_artifacts, build_targeted_site_section_render_artifacts,
-    select_post_language_variant, write_generated_bytes, write_generated_bytes_forced,
-    write_generated_file, write_generated_file_forced, write_generated_file_verified,
+    GeneratedFileWriter, GeneratedWriteOutcome, build_calendar_json, build_canonical_post_path,
+    build_site_render_artifacts_from_context, prepare_site_render_context, write_generated_file,
 };
 
 #[derive(Debug, Clone)]
@@ -55,6 +54,41 @@ pub struct GenerationReport {
     pub written_paths: Vec<String>,
     pub skipped_paths: Vec<String>,
     pub deleted_paths: Vec<String>,
+}
+
+pub struct PreparedSiteGeneration {
+    metadata: ProjectMetadata,
+    sources: Vec<PublishedPostSource>,
+    render: crate::render::SiteRenderContext,
+    generated_hashes: Arc<HashMap<String, String>>,
+}
+
+pub fn prepare_site_generation(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    sources: &[PublishedPostSource],
+) -> EngineResult<PreparedSiteGeneration> {
+    let input_posts = sources
+        .iter()
+        .map(|source| (source.post.clone(), source.body_markdown.clone()))
+        .collect::<Vec<_>>();
+    let render =
+        prepare_site_render_context(conn, data_dir, project_id, metadata, &input_posts, false)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let generated_hashes = Arc::new(
+        queries::generated_file_hash::list_generated_file_hashes(conn, project_id)?
+            .into_iter()
+            .map(|hash| (hash.relative_path, hash.content_hash))
+            .collect(),
+    );
+    Ok(PreparedSiteGeneration {
+        metadata: metadata.clone(),
+        sources: sources.to_vec(),
+        render,
+        generated_hashes,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,14 +185,15 @@ fn generate_starter_site_with_progress_mode(
     force: bool,
     mut on_page: impl FnMut(usize, usize, &str),
 ) -> EngineResult<GenerationReport> {
+    let data_dir = project_data_dir(output_dir);
+    let prepared = prepare_site_generation(conn, &data_dir, project_id, metadata, posts)?;
     let mut report = GenerationReport::default();
     for section in GenerationSection::ALL {
-        report.append(render_site_section_with_progress_mode(
+        report.append(render_prepared_site_section_with_progress(
             conn,
             output_dir,
             project_id,
-            metadata,
-            posts,
+            &prepared,
             section,
             force,
             &|_| {},
@@ -256,55 +291,78 @@ fn render_site_section_with_progress_mode(
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     let data_dir = project_data_dir(output_dir);
-    let input_posts = posts
-        .iter()
-        .map(|source| (source.post.clone(), source.body_markdown.clone()))
-        .collect::<Vec<_>>();
-    let artifacts = build_site_section_render_artifacts(
+    let prepared = prepare_site_generation(conn, &data_dir, project_id, metadata, posts)?;
+    render_prepared_site_section_with_progress(
         conn,
-        &data_dir,
+        output_dir,
         project_id,
-        metadata,
-        &input_posts,
+        &prepared,
         section,
+        force,
+        on_page_rendered,
+        &mut on_page,
+        &mut is_cancelled,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prepared section rendering keeps write mode and callbacks"
+)]
+pub fn render_prepared_site_section_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    prepared: &PreparedSiteGeneration,
+    section: GenerationSection,
+    force: bool,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
+    mut on_page: impl FnMut(usize, usize, &str),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    if is_cancelled() {
+        return Err(EngineError::Validation("cancelled".to_string()));
+    }
+    let artifacts = build_site_render_artifacts_from_context(
+        &prepared.render,
+        Some(section),
+        None,
         on_page_rendered,
     )
     .map_err(|error| EngineError::Parse(error.to_string()))?;
     let mut report = GenerationReport::default();
+    let mut writer = GeneratedFileWriter::with_existing(
+        conn,
+        output_dir,
+        project_id,
+        Arc::clone(&prepared.generated_hashes),
+        force,
+        false,
+    )
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
     let total_pages = artifacts.pages.len();
     for (index, page) in artifacts.pages.iter().enumerate() {
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        write_out(
-            conn,
-            output_dir,
-            project_id,
-            &page.relative_path,
-            &page.html,
-            &mut report,
-            force,
-            false,
-        )?;
+        write_out(&mut writer, &page.relative_path, &page.html, &mut report)?;
         on_page(index + 1, total_pages, &page.url_path);
     }
 
     if section == GenerationSection::Core {
         write_core_outputs(
-            conn,
-            output_dir,
-            project_id,
-            metadata,
-            &data_dir,
-            posts,
+            &mut writer,
+            prepared,
+            &project_data_dir(output_dir),
             &artifacts.route_manifest,
             None,
             &mut report,
             &mut is_cancelled,
-            force,
-            false,
         )?;
     }
+    writer
+        .finish()
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
     Ok(report)
 }
 
@@ -399,10 +457,36 @@ pub fn apply_validation_section_with_progress(
         return Err(EngineError::Validation("cancelled".to_string()));
     }
     let data_dir = project_data_dir(output_dir);
-    let input_posts = posts
-        .iter()
-        .map(|source| (source.post.clone(), source.body_markdown.clone()))
-        .collect::<Vec<_>>();
+    let prepared = prepare_site_generation(conn, &data_dir, project_id, metadata, posts)?;
+    apply_validation_prepared_section_with_progress(
+        conn,
+        output_dir,
+        project_id,
+        &prepared,
+        validation,
+        section,
+        &mut on_page,
+        &on_page_rendered,
+        &mut is_cancelled,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prepared targeted apply keeps validation and callbacks"
+)]
+pub fn apply_validation_prepared_section_with_progress(
+    conn: &Connection,
+    output_dir: &Path,
+    project_id: &str,
+    prepared: &PreparedSiteGeneration,
+    validation: &SiteValidationReport,
+    section: GenerationSection,
+    mut on_page: impl FnMut(usize, usize, &str),
+    on_page_rendered: &(dyn Fn(&str) + Sync),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> EngineResult<GenerationReport> {
+    let metadata = &prepared.metadata;
     let requested = validation
         .missing_pages
         .iter()
@@ -415,64 +499,46 @@ pub fn apply_validation_section_with_progress(
         .chain(validation.extra_pages.iter())
         .chain(validation.stale_pages.iter())
         .any(|path| classify_generated_path(path, metadata).is_none());
-    let artifacts = if fallback {
-        build_site_section_render_artifacts(
-            conn,
-            &data_dir,
-            project_id,
-            metadata,
-            &input_posts,
-            section,
-            &on_page_rendered,
-        )
-    } else {
-        build_targeted_site_section_render_artifacts(
-            conn,
-            &data_dir,
-            project_id,
-            metadata,
-            &input_posts,
-            section,
-            &requested,
-            &on_page_rendered,
-        )
-    }
+    let artifacts = build_site_render_artifacts_from_context(
+        &prepared.render,
+        Some(section),
+        (!fallback).then_some(&requested),
+        on_page_rendered,
+    )
     .map_err(|error| EngineError::Parse(error.to_string()))?;
     let mut report = GenerationReport::default();
+    let mut writer = GeneratedFileWriter::with_existing(
+        conn,
+        output_dir,
+        project_id,
+        Arc::clone(&prepared.generated_hashes),
+        false,
+        true,
+    )
+    .map_err(|error| EngineError::Parse(error.to_string()))?;
     let total_pages = artifacts.pages.len();
     for (index, page) in artifacts.pages.iter().enumerate() {
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        write_out(
-            conn,
-            output_dir,
-            project_id,
-            &page.relative_path,
-            &page.html,
-            &mut report,
-            false,
-            true,
-        )?;
+        write_out(&mut writer, &page.relative_path, &page.html, &mut report)?;
         on_page(index + 1, total_pages, &page.url_path);
     }
 
     if section == GenerationSection::Core {
         write_core_outputs(
-            conn,
-            output_dir,
-            project_id,
-            metadata,
-            &data_dir,
-            posts,
+            &mut writer,
+            prepared,
+            &project_data_dir(output_dir),
             &artifacts.route_manifest,
             (!fallback).then_some(&requested),
             &mut report,
             &mut is_cancelled,
-            false,
-            true,
         )?;
     }
+    writer
+        .finish()
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
 
     for path in &validation.extra_pages {
         if is_cancelled() {
@@ -510,26 +576,24 @@ fn refresh_route_timestamps(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "generation context is existing domain data"
-)]
 fn write_core_outputs(
-    conn: &Connection,
-    output_dir: &Path,
-    project_id: &str,
-    metadata: &ProjectMetadata,
+    writer: &mut GeneratedFileWriter<'_>,
+    prepared: &PreparedSiteGeneration,
     data_dir: &Path,
-    published_posts: &[PublishedPostSource],
     route_manifest: &[crate::render::SitePage],
     requested: Option<&HashSet<String>>,
     report: &mut GenerationReport,
     is_cancelled: &mut impl FnMut() -> bool,
-    force: bool,
-    verify_output: bool,
 ) -> EngineResult<()> {
+    let metadata = &prepared.metadata;
+    let published_posts = &prepared.sources;
     if requested.is_none() {
-        write_bundled_site_assets(conn, output_dir, project_id, report, force)?;
+        for asset in bundled_site_assets() {
+            let outcome = writer
+                .write_bytes(asset.relative_path, asset.bytes)
+                .map_err(|error| EngineError::Parse(error.to_string()))?;
+            record_write_outcome(report, asset.relative_path, outcome);
+        }
     }
     let mut outputs = vec![(
         "calendar.json".to_string(),
@@ -541,8 +605,6 @@ fn write_core_outputs(
         )?,
     )];
     for render_language in render_languages(metadata) {
-        let localized_posts =
-            localized_sources(conn, data_dir, published_posts, &render_language, metadata)?;
         let is_main = render_language == metadata.main_language.as_deref().unwrap_or("en");
         let prefix = if is_main {
             String::new()
@@ -550,28 +612,35 @@ fn write_core_outputs(
             format!("{render_language}/")
         };
         let mut feed_posts = if is_main {
-            published_posts.to_vec()
-        } else {
-            localized_posts
+            published_posts
                 .iter()
-                .filter(|source| {
-                    source
-                        .post
-                        .language
+                .map(|source| &source.post)
+                .collect::<Vec<_>>()
+        } else {
+            prepared
+                .render
+                .localized_posts(&render_language)
+                .filter(|post| {
+                    post.language
                         .as_deref()
                         .is_some_and(|language| language.eq_ignore_ascii_case(&render_language))
                 })
-                .cloned()
                 .collect::<Vec<_>>()
         };
-        sort_published_sources(&mut feed_posts);
+        feed_posts.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.published_at.cmp(&left.published_at))
+                .then_with(|| left.slug.cmp(&right.slug))
+        });
         outputs.push((
             format!("{prefix}rss.xml"),
-            build_rss_xml(metadata, &feed_posts, &render_language),
+            build_rss_xml(metadata, feed_posts.iter().copied(), &render_language),
         ));
         outputs.push((
             format!("{prefix}atom.xml"),
-            build_atom_xml(metadata, &feed_posts, &render_language),
+            build_atom_xml(metadata, feed_posts.iter().copied(), &render_language),
         ));
         if is_main {
             let category_settings = load_category_settings(data_dir);
@@ -595,50 +664,36 @@ fn write_core_outputs(
             return Err(EngineError::Validation("cancelled".to_string()));
         }
         if requested.is_none_or(|requested| requested.contains(&path)) {
-            write_out(
-                conn,
-                output_dir,
-                project_id,
-                &path,
-                &content,
-                report,
-                force,
-                verify_output,
-            )?;
+            write_out(writer, &path, &content, report)?;
         }
     }
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "generated output needs its render context, report, and write mode"
-)]
 fn write_out(
-    conn: &Connection,
-    output_dir: &Path,
-    project_id: &str,
+    writer: &mut GeneratedFileWriter<'_>,
     relative_path: &str,
     content: &str,
     report: &mut GenerationReport,
-    force: bool,
-    verify_output: bool,
 ) -> EngineResult<()> {
-    let outcome = if force {
-        write_generated_file_forced(conn, output_dir, project_id, relative_path, content)
-    } else if verify_output {
-        write_generated_file_verified(conn, output_dir, project_id, relative_path, content)
-    } else {
-        write_generated_file(conn, output_dir, project_id, relative_path, content)
-    }
-    .map_err(|error| EngineError::Parse(error.to_string()))?;
+    let outcome = writer
+        .write_str(relative_path, content)
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
+    record_write_outcome(report, relative_path, outcome);
+    Ok(())
+}
+
+fn record_write_outcome(
+    report: &mut GenerationReport,
+    relative_path: &str,
+    outcome: GeneratedWriteOutcome,
+) {
     match outcome {
         GeneratedWriteOutcome::Written => report.written_paths.push(relative_path.to_string()),
         GeneratedWriteOutcome::SkippedUnchanged => {
             report.skipped_paths.push(relative_path.to_string())
         }
     }
-    Ok(())
 }
 
 pub fn build_site_search_index(
@@ -803,6 +858,8 @@ fn build_site_search_index_with_progress_mode(
     });
     let total = outputs.len();
     let mut report = GenerationReport::default();
+    let mut writer = GeneratedFileWriter::new(conn, output_dir, project_id, force, false)
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
     let expected = outputs
         .iter()
         .map(|(relative, _)| relative.clone())
@@ -811,18 +868,15 @@ fn build_site_search_index_with_progress_mode(
         if is_cancelled() {
             return Err(EngineError::Validation("cancelled".to_string()));
         }
-        let outcome = if force {
-            write_generated_bytes_forced(conn, output_dir, project_id, &relative, &contents)
-        } else {
-            write_generated_bytes(conn, output_dir, project_id, &relative, &contents)
-        }
-        .map_err(|error| EngineError::Parse(error.to_string()))?;
-        match outcome {
-            GeneratedWriteOutcome::Written => report.written_paths.push(relative.clone()),
-            GeneratedWriteOutcome::SkippedUnchanged => report.skipped_paths.push(relative.clone()),
-        }
+        let outcome = writer
+            .write_bytes(&relative, &contents)
+            .map_err(|error| EngineError::Parse(error.to_string()))?;
+        record_write_outcome(&mut report, &relative, outcome);
         on_file(index + 1, total, &relative);
     }
+    writer
+        .finish()
+        .map_err(|error| EngineError::Parse(error.to_string()))?;
     for language in render_languages(metadata) {
         let prefix = if language == metadata.main_language.as_deref().unwrap_or("en") {
             "pagefind".to_string()
@@ -969,67 +1023,6 @@ fn render_languages(metadata: &ProjectMetadata) -> Vec<String> {
     languages
 }
 
-fn localized_sources(
-    conn: &Connection,
-    data_dir: &Path,
-    posts: &[PublishedPostSource],
-    language: &str,
-    metadata: &ProjectMetadata,
-) -> EngineResult<Vec<PublishedPostSource>> {
-    let main_language = metadata.main_language.as_deref().unwrap_or("en");
-    let mut localized = Vec::new();
-    for source in posts {
-        let translation = queries::post_translation::get_post_translation_by_post_and_language(
-            conn,
-            &source.post.id,
-            language,
-        )
-        .ok()
-        .filter(|translation| {
-            !translation.file_path.trim().is_empty()
-                && data_dir
-                    .join(translation.file_path.trim_start_matches('/'))
-                    .is_file()
-        });
-        match select_post_language_variant(
-            &source.post,
-            language,
-            main_language,
-            translation.is_some(),
-        ) {
-            Some(PostLanguageVariant::Base) => localized.push(source.clone()),
-            Some(PostLanguageVariant::Translation) => {
-                let Some(translation) = translation else {
-                    continue;
-                };
-                let raw = std::fs::read_to_string(
-                    data_dir.join(translation.file_path.trim_start_matches('/')),
-                )
-                .map_err(EngineError::Io)?;
-                let (_, body) = crate::util::frontmatter::read_translation_file(&raw)
-                    .map_err(EngineError::Parse)?;
-                let mut translated_post = source.post.clone();
-                translated_post.id = translation.id.clone();
-                translated_post.title = translation.title.clone();
-                translated_post.excerpt = translation.excerpt.clone();
-                translated_post.language = Some(translation.language.clone());
-                translated_post.status = translation.status.clone();
-                translated_post.file_path = translation.file_path.clone();
-                translated_post.updated_at = translation.updated_at;
-                translated_post.published_at =
-                    translation.published_at.or(source.post.published_at);
-                localized.push(PublishedPostSource {
-                    post: translated_post,
-                    body_markdown: body,
-                });
-            }
-            None => {}
-        }
-    }
-    sort_published_sources(&mut localized);
-    Ok(localized)
-}
-
 fn sort_published_sources(posts: &mut [PublishedPostSource]) {
     posts.sort_by(|left, right| {
         right
@@ -1093,9 +1086,9 @@ pub(crate) fn refresh_validation_sitemap(
     Ok(())
 }
 
-pub(crate) fn build_rss_xml(
+pub(crate) fn build_rss_xml<'a>(
     metadata: &ProjectMetadata,
-    posts: &[PublishedPostSource],
+    posts: impl IntoIterator<Item = &'a Post>,
     language: &str,
 ) -> String {
     let base_url = metadata
@@ -1109,20 +1102,20 @@ pub(crate) fn build_rss_xml(
         escape_xml(language)
     );
 
-    for source in posts {
-        let url = post_absolute_url(base_url, metadata, source, language);
+    for post in posts {
+        let url = post_absolute_url(base_url, metadata, post, language);
         xml.push_str(&format!(
             "<item><title>{}</title><link>{url}</link></item>",
-            escape_xml(&source.post.title)
+            escape_xml(&post.title)
         ));
     }
     xml.push_str("</channel></rss>");
     xml
 }
 
-pub(crate) fn build_atom_xml(
+pub(crate) fn build_atom_xml<'a>(
     metadata: &ProjectMetadata,
-    posts: &[PublishedPostSource],
+    posts: impl IntoIterator<Item = &'a Post>,
     language: &str,
 ) -> String {
     let base_url = metadata
@@ -1136,11 +1129,11 @@ pub(crate) fn build_atom_xml(
         escape_xml(language)
     );
 
-    for source in posts {
-        let url = post_absolute_url(base_url, metadata, source, language);
+    for post in posts {
+        let url = post_absolute_url(base_url, metadata, post, language);
         xml.push_str(&format!(
             "<entry><title>{}</title><id>{url}</id></entry>",
-            escape_xml(&source.post.title)
+            escape_xml(&post.title)
         ));
     }
     xml.push_str("</feed>");
@@ -1150,13 +1143,13 @@ pub(crate) fn build_atom_xml(
 fn post_absolute_url(
     base_url: &str,
     metadata: &ProjectMetadata,
-    source: &PublishedPostSource,
+    post: &Post,
     language: &str,
 ) -> String {
     format!(
         "{base_url}{}/",
         build_canonical_post_path(
-            &source.post,
+            post,
             language,
             metadata.main_language.as_deref().unwrap_or("en")
         )

@@ -56,6 +56,23 @@ pub fn list_post_media_by_media(
     })
 }
 
+pub fn list_post_media_by_project(
+    conn: &DbConnection,
+    project_id: &str,
+) -> QueryResult<Vec<PostMedia>> {
+    conn.with(|c| {
+        post_media::table
+            .filter(post_media::project_id.eq(project_id))
+            .order((
+                post_media::post_id.asc(),
+                post_media::sort_order.asc(),
+                post_media::media_id.asc(),
+            ))
+            .select(PostMedia::as_select())
+            .load(c)
+    })
+}
+
 pub fn update_sort_order(
     conn: &DbConnection,
     post_id: &str,
@@ -121,6 +138,20 @@ mod tests {
         let list = list_post_media_by_media(db.conn(), "m1").unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].post_id, "post1");
+    }
+
+    #[test]
+    fn list_by_project_preserves_post_order() {
+        let db = setup();
+        link_media(db.conn(), &make_pm("pm1", "m1", 1)).unwrap();
+        link_media(db.conn(), &make_pm("pm2", "m2", 0)).unwrap();
+        let list = list_post_media_by_project(db.conn(), "p1").unwrap();
+        assert_eq!(
+            list.iter()
+                .map(|link| link.media_id.as_str())
+                .collect::<Vec<_>>(),
+            ["m2", "m1"]
+        );
     }
 
     #[test]

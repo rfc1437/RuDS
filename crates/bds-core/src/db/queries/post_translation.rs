@@ -54,6 +54,22 @@ pub fn list_post_translations_by_post(
     })
 }
 
+pub fn list_post_translations_by_project(
+    conn: &DbConnection,
+    project_id: &str,
+) -> QueryResult<Vec<PostTranslation>> {
+    conn.with(|c| {
+        post_translations::table
+            .filter(post_translations::project_id.eq(project_id))
+            .order((
+                post_translations::translation_for,
+                post_translations::language,
+            ))
+            .select(PostTranslation::as_select())
+            .load(c)
+    })
+}
+
 pub fn update_post_translation(conn: &DbConnection, t: &PostTranslation) -> QueryResult<()> {
     if !t.status.is_valid_for_translation() {
         return Err(diesel::result::Error::SerializationError(
@@ -149,6 +165,15 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].language, "de");
         assert_eq!(list[1].language, "fr");
+    }
+
+    #[test]
+    fn list_by_project() {
+        let db = setup();
+        insert_post_translation(db.conn(), &make_translation("t1", "de")).unwrap();
+        insert_post_translation(db.conn(), &make_translation("t2", "fr")).unwrap();
+        let list = list_post_translations_by_project(db.conn(), "p1").unwrap();
+        assert_eq!(list.len(), 2);
     }
 
     #[test]

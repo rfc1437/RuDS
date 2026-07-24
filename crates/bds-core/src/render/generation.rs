@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::db::DbConnection as Connection;
 use chrono::{Datelike, Local, TimeZone};
@@ -14,6 +15,117 @@ use crate::util::{atomic_write_str, content_hash, file_hash, now_unix_ms};
 pub enum GeneratedWriteOutcome {
     Written,
     SkippedUnchanged,
+}
+
+pub(crate) struct GeneratedFileWriter<'a> {
+    conn: &'a Connection,
+    output_dir: &'a Path,
+    project_id: &'a str,
+    existing: Arc<HashMap<String, String>>,
+    pending: HashMap<String, GeneratedFileHash>,
+    force: bool,
+    verify_output: bool,
+}
+
+impl<'a> GeneratedFileWriter<'a> {
+    pub(crate) fn new(
+        conn: &'a Connection,
+        output_dir: &'a Path,
+        project_id: &'a str,
+        force: bool,
+        verify_output: bool,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let existing = Arc::new(
+            qhash::list_generated_file_hashes(conn, project_id)?
+                .into_iter()
+                .map(|hash| (hash.relative_path, hash.content_hash))
+                .collect(),
+        );
+        Self::with_existing(conn, output_dir, project_id, existing, force, verify_output)
+    }
+
+    pub(crate) fn with_existing(
+        conn: &'a Connection,
+        output_dir: &'a Path,
+        project_id: &'a str,
+        existing: Arc<HashMap<String, String>>,
+        force: bool,
+        verify_output: bool,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self {
+            conn,
+            output_dir,
+            project_id,
+            existing,
+            pending: HashMap::new(),
+            force,
+            verify_output,
+        })
+    }
+
+    pub(crate) fn write_str(
+        &mut self,
+        relative_path: &str,
+        content: &str,
+    ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+        self.write(relative_path, content.as_bytes(), |path| {
+            atomic_write_str(path, content)
+        })
+    }
+
+    pub(crate) fn write_bytes(
+        &mut self,
+        relative_path: &str,
+        content: &[u8],
+    ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+        self.write(relative_path, content, |path| {
+            crate::util::atomic_write(path, content)
+        })
+    }
+
+    fn write(
+        &mut self,
+        relative_path: &str,
+        content: &[u8],
+        write: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<GeneratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+        let hash = content_hash(content);
+        let target_path = self.output_dir.join(relative_path);
+        let existing_hash = self
+            .pending
+            .get(relative_path)
+            .map(|pending| &pending.content_hash)
+            .or_else(|| self.existing.get(relative_path));
+        if !self.force
+            && existing_hash == Some(&hash)
+            && target_path.exists()
+            && (!self.verify_output || file_hash(&target_path)? == hash)
+        {
+            return Ok(GeneratedWriteOutcome::SkippedUnchanged);
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write(&target_path)?;
+        self.pending.insert(
+            relative_path.to_string(),
+            GeneratedFileHash {
+                project_id: self.project_id.to_string(),
+                relative_path: relative_path.to_string(),
+                content_hash: hash,
+                updated_at: now_unix_ms(),
+            },
+        );
+        Ok(GeneratedWriteOutcome::Written)
+    }
+
+    pub(crate) fn finish(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        qhash::upsert_generated_file_hashes(
+            self.conn,
+            &self.pending.into_values().collect::<Vec<_>>(),
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

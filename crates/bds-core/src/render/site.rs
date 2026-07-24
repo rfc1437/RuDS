@@ -9,17 +9,17 @@ use chrono::{Datelike, Local, TimeZone, Utc};
 use rayon::prelude::*;
 use serde_json::{Value, json};
 
+use super::page_renderer::{CompiledLiquidTemplate, LiquidRenderer};
 use crate::db::queries;
 use crate::engine::generation::{GenerationSection, classify_generated_path};
 use crate::engine::menu::{self, MenuItemKind};
 use crate::model::{
-    CategorySettings, Media, Post, PostStatus, ProjectMetadata, ScriptKind, Tag, Template,
-    TemplateKind, TemplateStatus,
+    CategorySettings, Media, Post, PostLink, PostMedia, PostStatus, PostTranslation,
+    ProjectMetadata, ScriptKind, Tag, Template, TemplateKind, TemplateStatus,
 };
 use crate::render::{
     PostLanguageVariant, RenderCategorySettings, RenderTemplateLookup, blog_page_title,
-    build_canonical_post_path, render_liquid_template_with_host, resolve_post_template,
-    select_post_language_variant,
+    build_canonical_post_path, resolve_post_template, select_post_language_variant,
 };
 use crate::scripting::{CoreHost, HostApi, UnavailableHost};
 use crate::util::frontmatter::{read_script_file, read_template_file, read_translation_file};
@@ -59,7 +59,6 @@ pub struct PagefindDocument {
 #[derive(Debug, Clone, Default)]
 pub struct SiteRenderArtifacts {
     pub pages: Vec<SitePage>,
-    pub pagefind_documents: Vec<PagefindDocument>,
     pub route_manifest: Vec<SitePage>,
 }
 
@@ -72,14 +71,13 @@ pub struct PreviewRenderResult {
 #[derive(Clone)]
 struct TemplateBundle {
     post_templates: Vec<Template>,
-    template_source_by_slug: HashMap<String, String>,
-    list_template_sources: HashMap<String, String>,
-    default_list_template: String,
-    not_found_template: String,
-    partials: HashMap<String, String>,
+    post_template_by_slug: HashMap<String, CompiledLiquidTemplate>,
+    list_template_by_slug: HashMap<String, CompiledLiquidTemplate>,
+    default_list_template: CompiledLiquidTemplate,
+    not_found_template: CompiledLiquidTemplate,
     macro_templates: HashMap<String, String>,
     macro_scripts: HashMap<String, Value>,
-    host: Arc<dyn HostApi>,
+    renderer: LiquidRenderer,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +99,59 @@ struct RouteSpec {
     total_pages: usize,
     total_items: usize,
     items_per_page: usize,
+}
+
+struct TaxonomyContext {
+    categories: Vec<Value>,
+    tags: Vec<Value>,
+    tag_colors: HashMap<String, String>,
+    category_counts: HashMap<String, usize>,
+    tag_counts: HashMap<String, usize>,
+}
+
+#[derive(Default)]
+struct LinkContext {
+    outgoing_by_post: HashMap<String, Vec<Value>>,
+    incoming_by_post: HashMap<String, Vec<Value>>,
+    backlinks_by_post: HashMap<String, Vec<Value>>,
+}
+
+pub struct SiteRenderContext {
+    metadata: ProjectMetadata,
+    is_preview: bool,
+    main_language: String,
+    tags: Vec<Tag>,
+    category_settings: HashMap<String, CategorySettings>,
+    canonical_media_map: HashMap<String, String>,
+    project_media: Vec<Value>,
+    project_tags: Vec<Value>,
+    render_categories: HashMap<String, RenderCategorySettings>,
+    bundle: TemplateBundle,
+    languages: Vec<LanguageRenderContext>,
+}
+
+impl SiteRenderContext {
+    pub(crate) fn localized_posts<'a>(
+        &'a self,
+        language: &'a str,
+    ) -> impl Iterator<Item = &'a Post> {
+        self.languages
+            .iter()
+            .filter(move |context| context.language == language)
+            .flat_map(|context| context.posts.iter().map(|record| &record.post))
+    }
+}
+
+struct LanguageRenderContext {
+    language: String,
+    posts: Vec<RenderPostRecord>,
+    routes: Vec<RouteSpec>,
+    linked_media_by_post_id: HashMap<String, Vec<Value>>,
+    post_data_json_by_id: HashMap<String, Value>,
+    menu_items: Vec<Value>,
+    canonical_post_path_by_slug: HashMap<String, String>,
+    taxonomy: TaxonomyContext,
+    links: LinkContext,
 }
 
 pub fn build_site_render_artifacts(
@@ -204,6 +255,10 @@ pub fn build_site_section_render_artifacts(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "targeted rendering adds a path filter to the section context"
+)]
 pub fn build_targeted_site_section_render_artifacts(
     conn: &Connection,
     data_dir: &Path,
@@ -260,10 +315,47 @@ fn build_site_render_artifacts_with_mode(
     requested_paths: Option<&HashSet<String>>,
     on_page_rendered: &(dyn Fn(&str) + Sync),
 ) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
+    let context = prepare_site_render_context(
+        conn,
+        data_dir,
+        project_id,
+        metadata,
+        published_posts,
+        is_preview,
+    )?;
+    build_site_render_artifacts_from_context(&context, section, requested_paths, on_page_rendered)
+}
+
+pub fn prepare_site_render_context(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    metadata: &ProjectMetadata,
+    published_posts: &[(Post, String)],
+    is_preview: bool,
+) -> Result<SiteRenderContext, Box<dyn Error + Send + Sync>> {
     let bundle = load_template_bundle(conn, data_dir, project_id)?;
     let main_language = main_language(metadata).to_string();
     let languages = render_languages(metadata);
     let tags = queries::tag::list_tags_by_project(conn, project_id).unwrap_or_default();
+    let translations =
+        queries::post_translation::list_post_translations_by_project(conn, project_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|translation| {
+                (
+                    (
+                        translation.translation_for.clone(),
+                        translation.language.clone(),
+                    ),
+                    translation,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+    let post_media =
+        queries::post_media::list_post_media_by_project(conn, project_id).unwrap_or_default();
+    let post_links =
+        queries::post_link::list_links_by_project(conn, project_id).unwrap_or_default();
     let category_settings = queries_category_settings(data_dir)?;
     let media_items = queries::media::list_media_by_project(conn, project_id).unwrap_or_default();
     let media_by_id = media_items
@@ -273,34 +365,84 @@ fn build_site_render_artifacts_with_mode(
         .collect::<HashMap<_, _>>();
     let project_media = media_items.iter().map(media_context).collect::<Vec<_>>();
     let canonical_media_map = canonical_media_paths(&media_items);
+    let linked_media_by_source_post = build_linked_media_by_source_post(&post_media, &media_by_id);
     let project_tags = build_published_tag_counts(published_posts, &tags);
+    let render_categories = category_settings
+        .iter()
+        .map(|(name, settings)| {
+            (
+                name.clone(),
+                RenderCategorySettings {
+                    post_template_slug: settings.post_template_slug.clone(),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
-    let mut artifacts = SiteRenderArtifacts::default();
+    let mut language_contexts = Vec::with_capacity(languages.len());
     for language in languages {
-        let localized_posts = load_language_posts(
-            conn,
+        let posts = load_language_posts(
             data_dir,
             published_posts,
+            &translations,
             &language,
             &main_language,
             is_preview,
         )?;
-        let localized_list_posts = filter_posts_for_lists(&localized_posts, &category_settings);
-        let routes = build_language_routes(
-            &localized_list_posts,
-            metadata,
-            &language,
-            &tags,
-            &category_settings,
-        );
+        let list_posts = filter_posts_for_lists(&posts, &category_settings);
+        let routes =
+            build_language_routes(&list_posts, metadata, &language, &tags, &category_settings);
+        let linked_media_by_post_id =
+            build_linked_media_by_post_id(&posts, &linked_media_by_source_post);
+        let post_data_json_by_id = build_post_data_json_by_id(&posts, &linked_media_by_post_id);
+        let menu_items = build_menu_items(data_dir, &language, &main_language)?;
+        let canonical_post_path_by_slug =
+            canonical_post_path_by_slug(&posts, &language, &main_language);
+        let taxonomy = build_taxonomy_context(&posts, &tags);
+        let links = build_link_context(&posts, &post_links, &language, &main_language);
+        language_contexts.push(LanguageRenderContext {
+            language,
+            posts,
+            routes,
+            linked_media_by_post_id,
+            post_data_json_by_id,
+            menu_items,
+            canonical_post_path_by_slug,
+            taxonomy,
+            links,
+        });
+    }
+
+    Ok(SiteRenderContext {
+        metadata: metadata.clone(),
+        is_preview,
+        main_language,
+        tags,
+        category_settings,
+        canonical_media_map,
+        project_media,
+        project_tags,
+        render_categories,
+        bundle,
+        languages: language_contexts,
+    })
+}
+
+pub fn build_site_render_artifacts_from_context(
+    context: &SiteRenderContext,
+    section: Option<GenerationSection>,
+    requested_paths: Option<&HashSet<String>>,
+    on_page_rendered: &(dyn Fn(&str) + Sync),
+) -> Result<SiteRenderArtifacts, Box<dyn Error + Send + Sync>> {
+    let metadata = &context.metadata;
+    let main_language = &context.main_language;
+    let mut artifacts = SiteRenderArtifacts::default();
+    for language_context in &context.languages {
+        let language = &language_context.language;
+        let localized_posts = &language_context.posts;
+        let routes = &language_context.routes;
         let expanded_requested_paths = requested_paths.map(|requested| {
-            expand_requested_aggregate_paths(
-                requested,
-                &localized_posts,
-                &routes,
-                &language,
-                metadata,
-            )
+            expand_requested_aggregate_paths(requested, localized_posts, routes, language, metadata)
         });
         let requested_paths = expanded_requested_paths.as_ref();
         artifacts
@@ -311,11 +453,6 @@ fn build_site_render_artifacts_with_mode(
                 url_path: route.url_path.clone(),
                 html: String::new(),
             }));
-        let linked_media_by_post_id =
-            build_linked_media_by_post_id(conn, &localized_posts, &media_by_id);
-        let post_data_json_by_id =
-            build_post_data_json_by_id(&localized_posts, &linked_media_by_post_id);
-        let menu_items = build_menu_items(data_dir, &language, &main_language)?;
         let rendered_list_pages = routes
             .par_iter()
             .filter(|route| {
@@ -328,17 +465,17 @@ fn build_site_render_artifacts_with_mode(
                 render_list_route(
                     route,
                     metadata,
-                    &language,
-                    &localized_list_posts,
-                    &tags,
-                    &category_settings,
-                    &menu_items,
-                    &post_data_json_by_id,
-                    &canonical_media_map,
-                    &project_media,
-                    &project_tags,
-                    &bundle,
-                    is_preview,
+                    language,
+                    &context.category_settings,
+                    &language_context.menu_items,
+                    &language_context.canonical_post_path_by_slug,
+                    &language_context.taxonomy,
+                    &language_context.post_data_json_by_id,
+                    &context.canonical_media_map,
+                    &context.project_media,
+                    &context.project_tags,
+                    &context.bundle,
+                    context.is_preview,
                 )
                 .map(|html| {
                     on_page_rendered(&route.url_path);
@@ -352,15 +489,7 @@ fn build_site_render_artifacts_with_mode(
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        for page in rendered_list_pages {
-            artifacts.pagefind_documents.push(PagefindDocument {
-                language: page.language.clone(),
-                relative_path: page.relative_path.clone(),
-                url_path: page.url_path.clone(),
-                html: page.html.clone(),
-            });
-            artifacts.pages.push(page);
-        }
+        artifacts.pages.extend(rendered_list_pages);
 
         if section.is_none_or(|section| section == GenerationSection::Core) {
             let relative_path = if language == main_language {
@@ -370,8 +499,13 @@ fn build_site_render_artifacts_with_mode(
             };
             if requested_paths.is_none_or(|requested| requested.contains(&relative_path)) {
                 let url_path = format!("/{}", relative_path.trim_end_matches(".html"));
-                let html =
-                    render_not_found_route(&bundle, metadata, &language, &url_path, &menu_items)?;
+                let html = render_not_found_route(
+                    &context.bundle,
+                    metadata,
+                    language,
+                    &url_path,
+                    &language_context.menu_items,
+                )?;
                 on_page_rendered(&url_path);
                 artifacts.pages.push(SitePage {
                     language: language.clone(),
@@ -382,10 +516,9 @@ fn build_site_render_artifacts_with_mode(
             }
         }
 
-        let canonical_map =
-            canonical_post_path_by_slug(&localized_posts, &language, &main_language);
-        for record in &localized_posts {
-            let canonical_path = build_canonical_post_path(&record.post, &language, &main_language);
+        let mut single_routes = Vec::new();
+        for record in localized_posts {
+            let canonical_path = build_canonical_post_path(&record.post, language, main_language);
             let mut post_paths = vec![(canonical_path, GenerationSection::Single)];
             if record
                 .post
@@ -410,45 +543,47 @@ fn build_site_render_artifacts_with_mode(
                     url_path: url_path.clone(),
                     html: String::new(),
                 });
-                if section.is_some_and(|section| section != route_section)
-                    || requested_paths.is_some_and(|requested| !requested.contains(&relative_path))
+                if section.is_none_or(|section| section == route_section)
+                    && requested_paths.is_none_or(|requested| requested.contains(&relative_path))
                 {
-                    continue;
+                    single_routes.push((record, relative_path, url_path));
                 }
-                let html = render_post_route(
-                    conn,
-                    metadata,
-                    &language,
-                    &main_language,
-                    record,
-                    &localized_posts,
-                    &tags,
-                    &category_settings,
-                    &linked_media_by_post_id,
-                    &canonical_map,
-                    &menu_items,
-                    &post_data_json_by_id,
-                    &canonical_media_map,
-                    &project_media,
-                    &project_tags,
-                    &bundle,
-                    is_preview,
-                )?;
-                on_page_rendered(&url_path);
-                artifacts.pagefind_documents.push(PagefindDocument {
-                    language: language.clone(),
-                    relative_path: relative_path.clone(),
-                    url_path: url_path.clone(),
-                    html: html.clone(),
-                });
-                artifacts.pages.push(SitePage {
-                    language: language.clone(),
-                    relative_path,
-                    url_path,
-                    html,
-                });
             }
         }
+        let rendered_single_pages = single_routes
+            .par_iter()
+            .map(|(record, relative_path, url_path)| {
+                render_post_route(
+                    metadata,
+                    language,
+                    main_language,
+                    record,
+                    &context.tags,
+                    &context.render_categories,
+                    &language_context.linked_media_by_post_id,
+                    &language_context.links,
+                    &language_context.canonical_post_path_by_slug,
+                    &language_context.menu_items,
+                    &language_context.taxonomy,
+                    &language_context.post_data_json_by_id,
+                    &context.canonical_media_map,
+                    &context.project_media,
+                    &context.project_tags,
+                    &context.bundle,
+                    context.is_preview,
+                )
+                .map(|html| {
+                    on_page_rendered(url_path);
+                    SitePage {
+                        language: language.clone(),
+                        relative_path: relative_path.clone(),
+                        url_path: url_path.clone(),
+                        html,
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        artifacts.pages.extend(rendered_single_pages);
     }
 
     Ok(artifacts)
@@ -611,16 +746,27 @@ fn load_template_bundle(
             .insert("post".to_string(), STARTER_SINGLE_POST_TEMPLATE.to_string());
     }
 
+    let renderer = LiquidRenderer::new(&partials, host)?;
+    let post_template_by_slug = template_source_by_slug
+        .into_iter()
+        .map(|(slug, source)| Ok((slug, renderer.compile(&source)?)))
+        .collect::<Result<HashMap<_, _>, crate::render::RenderError>>()?;
+    let list_template_by_slug = list_template_sources
+        .into_iter()
+        .map(|(slug, source)| Ok((slug, renderer.compile(&source)?)))
+        .collect::<Result<HashMap<_, _>, crate::render::RenderError>>()?;
+    let default_list_template = renderer.compile(&default_list_template)?;
+    let not_found_template = renderer.compile(&not_found_template)?;
+
     Ok(TemplateBundle {
         post_templates,
-        template_source_by_slug,
-        list_template_sources,
+        post_template_by_slug,
+        list_template_by_slug,
         default_list_template,
         not_found_template,
-        partials,
         macro_templates,
         macro_scripts,
-        host,
+        renderer,
     })
 }
 
@@ -640,26 +786,27 @@ fn load_template_source(
 }
 
 fn load_language_posts(
-    conn: &Connection,
     data_dir: &Path,
     published_posts: &[(Post, String)],
+    translations: &HashMap<(String, String), PostTranslation>,
     language: &str,
     main_language: &str,
     is_preview: bool,
 ) -> Result<Vec<RenderPostRecord>, Box<dyn Error + Send + Sync>> {
     let mut posts = Vec::new();
     for (post, body) in published_posts {
-        let translation = queries::post_translation::get_post_translation_by_post_and_language(
-            conn, &post.id, language,
-        )
-        .ok()
-        .filter(|translation| {
-            (is_preview && translation.status == PostStatus::Draft && translation.content.is_some())
-                || (!translation.file_path.trim().is_empty()
-                    && data_dir
-                        .join(translation.file_path.trim_start_matches('/'))
-                        .is_file())
-        });
+        let translation = translations
+            .get(&(post.id.clone(), language.to_string()))
+            .cloned()
+            .filter(|translation| {
+                (is_preview
+                    && translation.status == PostStatus::Draft
+                    && translation.content.is_some())
+                    || (!translation.file_path.trim().is_empty()
+                        && data_dir
+                            .join(translation.file_path.trim_start_matches('/'))
+                            .is_file())
+            });
         match select_post_language_variant(post, language, main_language, translation.is_some()) {
             Some(PostLanguageVariant::Base) => posts.push(RenderPostRecord {
                 post: post.clone(),
@@ -993,10 +1140,10 @@ fn render_list_route(
     route: &RouteSpec,
     metadata: &ProjectMetadata,
     language: &str,
-    posts: &[RenderPostRecord],
-    tags: &[Tag],
     category_settings: &HashMap<String, CategorySettings>,
     menu_items: &[Value],
+    canonical_post_path_by_slug: &HashMap<String, String>,
+    taxonomy: &TaxonomyContext,
     post_data_json_by_id: &HashMap<String, Value>,
     canonical_media_path_by_source_path: &HashMap<String, String>,
     project_media: &[Value],
@@ -1005,12 +1152,10 @@ fn render_list_route(
     is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let main_language = main_language(metadata);
-    let canonical_map = canonical_post_path_by_slug(posts, language, main_language);
-    let taxonomy_counts = build_taxonomy_counts(posts, tags);
     let list_template = route
         .list_template_slug
         .as_deref()
-        .and_then(|slug| bundle.list_template_sources.get(slug))
+        .and_then(|slug| bundle.list_template_by_slug.get(slug))
         .unwrap_or(&bundle.default_list_template);
     let context = json!({
         "language": language,
@@ -1043,40 +1188,35 @@ fn render_list_route(
         "total_pages": route.total_pages,
         "total_items": route.total_items,
         "items_per_page": route.items_per_page,
-        "canonical_post_path_by_slug": canonical_map,
+        "canonical_post_path_by_slug": canonical_post_path_by_slug,
         "canonical_media_path_by_source_path": canonical_media_path_by_source_path,
         "post_data_json_by_id": post_data_json_by_id,
         "project": { "media": project_media },
         "Tags": project_tags,
-        "post_categories": taxonomy_counts.0,
-        "post_tags": taxonomy_counts.1,
-        "tag_color_by_name": taxonomy_counts.2,
+        "post_categories": taxonomy.categories,
+        "post_tags": taxonomy.tags,
+        "tag_color_by_name": taxonomy.tag_colors,
         "backlinks": Vec::<Value>::new(),
         "not_found_message": serde_json::Value::Null,
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template_with_host(
-        list_template,
-        &bundle.partials,
-        &context,
-        Arc::clone(&bundle.host),
-    )?)
+    Ok(bundle.renderer.render(list_template, &context)?)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_post_route(
-    conn: &Connection,
     metadata: &ProjectMetadata,
     language: &str,
     main_language: &str,
     record: &RenderPostRecord,
-    all_posts: &[RenderPostRecord],
     tags: &[Tag],
-    category_settings: &HashMap<String, CategorySettings>,
+    render_categories: &HashMap<String, RenderCategorySettings>,
     linked_media_by_post_id: &HashMap<String, Vec<Value>>,
+    links: &LinkContext,
     canonical_post_path_by_slug: &HashMap<String, String>,
     menu_items: &[Value],
+    taxonomy: &TaxonomyContext,
     post_data_json_by_id: &HashMap<String, Value>,
     canonical_media_path_by_source_path: &HashMap<String, String>,
     project_media: &[Value],
@@ -1084,56 +1224,39 @@ fn render_post_route(
     bundle: &TemplateBundle,
     is_preview: bool,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let render_categories = category_settings
-        .iter()
-        .map(|(name, settings)| {
-            (
-                name.clone(),
-                RenderCategorySettings {
-                    post_template_slug: settings.post_template_slug.clone(),
-                },
-            )
-        })
-        .collect::<HashMap<_, _>>();
     let resolved = resolve_post_template(RenderTemplateLookup {
         post: &record.post,
         templates: &bundle.post_templates,
         tags,
-        category_settings: &render_categories,
+        category_settings: render_categories,
     })
     .map_err(|error| format!("template lookup failed: {error:?}"))?;
-    let template_source = bundle
-        .template_source_by_slug
+    let template = bundle
+        .post_template_by_slug
         .get(&resolved.slug)
         .cloned()
-        .or_else(|| resolved.content.clone())
-        .unwrap_or_else(|| STARTER_SINGLE_POST_TEMPLATE.to_string());
+        .or_else(|| bundle.post_template_by_slug.get("post").cloned())
+        .ok_or("default post template was not compiled")?;
 
     let linked_media = linked_media_by_post_id
         .get(&record.post.id)
         .cloned()
         .unwrap_or_default();
-    let outgoing_links =
-        queries::post_link::list_links_by_source(conn, &record.source_post_id).unwrap_or_default();
-    let incoming_links =
-        queries::post_link::list_links_by_target(conn, &record.source_post_id).unwrap_or_default();
-    let post_by_id = all_posts
-        .iter()
-        .map(|item| (item.source_post_id.clone(), item))
-        .collect::<HashMap<_, _>>();
-    let outgoing_link_context = outgoing_links
-        .iter()
-        .map(|link| link_context(link, &post_by_id, language, main_language))
-        .collect::<Vec<_>>();
-    let incoming_link_context = incoming_links
-        .iter()
-        .map(|link| link_context(link, &post_by_id, language, main_language))
-        .collect::<Vec<_>>();
-    let backlinks = incoming_links
-        .iter()
-        .map(|link| backlink_context(link, &post_by_id, language, main_language))
-        .collect::<Vec<_>>();
-    let taxonomy_counts = build_taxonomy_counts(all_posts, tags);
+    let outgoing_link_context = links
+        .outgoing_by_post
+        .get(&record.source_post_id)
+        .cloned()
+        .unwrap_or_default();
+    let incoming_link_context = links
+        .incoming_by_post
+        .get(&record.source_post_id)
+        .cloned()
+        .unwrap_or_default();
+    let backlinks = links
+        .backlinks_by_post
+        .get(&record.source_post_id)
+        .cloned()
+        .unwrap_or_default();
 
     let context = json!({
         "language": language,
@@ -1151,9 +1274,9 @@ fn render_post_route(
         "calendar_initial_year": calendar_initial_parts(&record.post).0,
         "calendar_initial_month": calendar_initial_parts(&record.post).1,
         "post": post_context(&record.post, &record.body_markdown, linked_media, outgoing_link_context, incoming_link_context),
-        "post_categories": taxonomy_items_for_categories(&record.post.categories, all_posts),
-        "post_tags": taxonomy_items_for_tags(&record.post.tags, all_posts, tags),
-        "tag_color_by_name": taxonomy_counts.2,
+        "post_categories": taxonomy_items_for_categories(&record.post.categories, taxonomy),
+        "post_tags": taxonomy_items_for_tags(&record.post.tags, taxonomy, tags),
+        "tag_color_by_name": taxonomy.tag_colors,
         "backlinks": backlinks,
         "canonical_post_path_by_slug": canonical_post_path_by_slug,
         "canonical_media_path_by_source_path": canonical_media_path_by_source_path,
@@ -1176,12 +1299,7 @@ fn render_post_route(
         "not_found_back_label": serde_json::Value::Null,
     });
 
-    Ok(render_liquid_template_with_host(
-        &template_source,
-        &bundle.partials,
-        &context,
-        Arc::clone(&bundle.host),
-    )?)
+    Ok(bundle.renderer.render(&template, &context)?)
 }
 
 fn render_not_found_route(
@@ -1225,12 +1343,9 @@ fn render_not_found_route(
         "canonical_media_path_by_source_path": HashMap::<String, String>::new(),
         "post_data_json_by_id": HashMap::<String, Value>::new(),
     });
-    Ok(render_liquid_template_with_host(
-        &bundle.not_found_template,
-        &bundle.partials,
-        &context,
-        Arc::clone(&bundle.host),
-    )?)
+    Ok(bundle
+        .renderer
+        .render(&bundle.not_found_template, &context)?)
 }
 
 fn build_menu_items(
@@ -1442,22 +1557,38 @@ fn canonical_media_paths(media_items: &[Media]) -> HashMap<String, String> {
     map
 }
 
-fn build_linked_media_by_post_id(
-    conn: &Connection,
-    posts: &[RenderPostRecord],
+fn build_linked_media_by_source_post(
+    post_media: &[PostMedia],
     media_by_id: &HashMap<String, Media>,
 ) -> HashMap<String, Vec<Value>> {
     let mut result = HashMap::new();
-    for record in posts {
-        let media = queries::post_media::list_post_media_by_post(conn, &record.source_post_id)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|link| media_by_id.get(&link.media_id))
-            .map(media_context)
-            .collect();
-        result.insert(record.post.id.clone(), media);
+    for link in post_media {
+        if let Some(media) = media_by_id.get(&link.media_id) {
+            result
+                .entry(link.post_id.clone())
+                .or_insert_with(Vec::new)
+                .push(media_context(media));
+        }
     }
     result
+}
+
+fn build_linked_media_by_post_id(
+    posts: &[RenderPostRecord],
+    linked_media_by_source_post: &HashMap<String, Vec<Value>>,
+) -> HashMap<String, Vec<Value>> {
+    posts
+        .iter()
+        .map(|record| {
+            (
+                record.post.id.clone(),
+                linked_media_by_source_post
+                    .get(&record.source_post_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        })
+        .collect()
 }
 
 fn build_post_data_json_by_id(
@@ -1535,20 +1666,25 @@ fn build_published_tag_counts(posts: &[(Post, String)], tags: &[Tag]) -> Vec<Val
     items
 }
 
-fn build_taxonomy_counts(
-    posts: &[RenderPostRecord],
-    tags: &[Tag],
-) -> (Vec<Value>, Vec<Value>, HashMap<String, String>) {
+fn build_taxonomy_context(posts: &[RenderPostRecord], tags: &[Tag]) -> TaxonomyContext {
     let mut category_counts: HashMap<String, usize> = HashMap::new();
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
+    let mut category_counts_by_name: HashMap<String, usize> = HashMap::new();
+    let mut tag_counts_by_name: HashMap<String, usize> = HashMap::new();
     let mut tag_colors = HashMap::new();
 
     for record in posts {
         for category in &record.post.categories {
             *category_counts.entry(category.clone()).or_default() += 1;
+            *category_counts_by_name
+                .entry(category.to_lowercase())
+                .or_default() += 1;
         }
         for tag_name in &record.post.tags {
             *tag_counts.entry(tag_name.clone()).or_default() += 1;
+            *tag_counts_by_name
+                .entry(tag_name.to_lowercase())
+                .or_default() += 1;
         }
     }
 
@@ -1585,23 +1721,24 @@ fn build_taxonomy_counts(
         })
         .collect::<Vec<_>>();
 
-    (categories, tag_items, tag_colors)
+    TaxonomyContext {
+        categories,
+        tags: tag_items,
+        tag_colors,
+        category_counts: category_counts_by_name,
+        tag_counts: tag_counts_by_name,
+    }
 }
 
-fn taxonomy_items_for_categories(names: &[String], posts: &[RenderPostRecord]) -> Vec<Value> {
+fn taxonomy_items_for_categories(names: &[String], taxonomy: &TaxonomyContext) -> Vec<Value> {
     names
         .iter()
         .map(|name| {
-            let count = posts
-                .iter()
-                .filter(|record| {
-                    record
-                        .post
-                        .categories
-                        .iter()
-                        .any(|category| category.eq_ignore_ascii_case(name))
-                })
-                .count();
+            let count = taxonomy
+                .category_counts
+                .get(&name.to_lowercase())
+                .copied()
+                .unwrap_or_default();
             json!({
                 "name": name,
                 "slug": slugify(name),
@@ -1613,22 +1750,17 @@ fn taxonomy_items_for_categories(names: &[String], posts: &[RenderPostRecord]) -
 
 fn taxonomy_items_for_tags(
     names: &[String],
-    posts: &[RenderPostRecord],
+    taxonomy: &TaxonomyContext,
     tags: &[Tag],
 ) -> Vec<Value> {
     names
         .iter()
         .map(|name| {
-            let count = posts
-                .iter()
-                .filter(|record| {
-                    record
-                        .post
-                        .tags
-                        .iter()
-                        .any(|tag| tag.eq_ignore_ascii_case(name))
-                })
-                .count();
+            let count = taxonomy
+                .tag_counts
+                .get(&name.to_lowercase())
+                .copied()
+                .unwrap_or_default();
             let color = tags
                 .iter()
                 .find(|tag| tag.name.eq_ignore_ascii_case(name))
@@ -1687,6 +1819,37 @@ fn media_context(media: &Media) -> Value {
         "file_path": canonical_media_path(media),
         "created_at": media.created_at,
     })
+}
+
+fn build_link_context(
+    posts: &[RenderPostRecord],
+    links: &[PostLink],
+    language: &str,
+    main_language: &str,
+) -> LinkContext {
+    let post_by_id = posts
+        .iter()
+        .map(|record| (record.source_post_id.clone(), record))
+        .collect::<HashMap<_, _>>();
+    let mut context = LinkContext::default();
+    for link in links {
+        context
+            .outgoing_by_post
+            .entry(link.source_post_id.clone())
+            .or_default()
+            .push(link_context(link, &post_by_id, language, main_language));
+        context
+            .incoming_by_post
+            .entry(link.target_post_id.clone())
+            .or_default()
+            .push(link_context(link, &post_by_id, language, main_language));
+        context
+            .backlinks_by_post
+            .entry(link.target_post_id.clone())
+            .or_default()
+            .push(backlink_context(link, &post_by_id, language, main_language));
+    }
+    context
 }
 
 fn link_context(

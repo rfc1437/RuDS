@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use crate::db::DbConnection;
-use crate::db::schema::post_links;
+use crate::db::schema::{post_links, posts};
 use crate::model::PostLink;
 
 pub fn insert_post_link(conn: &DbConnection, link: &PostLink) -> QueryResult<()> {
@@ -55,6 +55,17 @@ pub fn list_links_by_target(
     })
 }
 
+pub fn list_links_by_project(conn: &DbConnection, project_id: &str) -> QueryResult<Vec<PostLink>> {
+    conn.with(|c| {
+        post_links::table
+            .inner_join(posts::table.on(posts::id.eq(post_links::source_post_id)))
+            .filter(posts::project_id.eq(project_id))
+            .order(post_links::created_at)
+            .select(PostLink::as_select())
+            .load(c)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +109,14 @@ mod tests {
         insert_post_link(db.conn(), &make_link("l2", "b", "c")).unwrap();
         let links = list_links_by_target(db.conn(), "c").unwrap();
         assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn list_by_project() {
+        let db = setup();
+        insert_post_link(db.conn(), &make_link("l1", "a", "b")).unwrap();
+        insert_post_link(db.conn(), &make_link("l2", "b", "c")).unwrap();
+        assert_eq!(list_links_by_project(db.conn(), "p1").unwrap().len(), 2);
     }
 
     #[test]
