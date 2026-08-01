@@ -48,6 +48,7 @@ struct TaskEntry {
     last_progress_report: Option<Instant>,
     worker_active: bool,
     worker_started: bool,
+    worker_exited: bool,
 }
 
 /// Manages concurrent tasks with a max concurrency limit and FIFO queue.
@@ -66,7 +67,7 @@ struct TaskState {
     worker_count: usize,
 }
 
-/// Capacity reservation held from asynchronous admission until the worker exits.
+/// Capacity reservation held until both the worker exits and its result is recorded.
 pub struct TaskWorker {
     manager: Arc<TaskManager>,
     task_id: TaskId,
@@ -126,6 +127,7 @@ impl TaskManager {
                 last_progress_report: None,
                 worker_active: false,
                 worker_started: false,
+                worker_exited: false,
             },
         );
         state.order.push_back(id);
@@ -149,6 +151,7 @@ impl TaskManager {
                 Some(TaskStatus::Running) => {
                     if let Some(task) = state.tasks.get_mut(&task_id) {
                         task.worker_started = true;
+                        task.worker_exited = false;
                     }
                     return true;
                 }
@@ -167,6 +170,7 @@ impl TaskManager {
                 match state.tasks.get_mut(&task_id) {
                     Some(task) if task.status == TaskStatus::Running => {
                         task.worker_started = true;
+                        task.worker_exited = false;
                         return Some(TaskWorker {
                             manager: Arc::clone(self),
                             task_id,
@@ -201,9 +205,10 @@ impl TaskManager {
                 entry.progress = Some(1.0);
                 entry.finished_at = Some(Instant::now());
             }
-            let released = entry.worker_active;
-            entry.worker_active = false;
-            entry.worker_started = false;
+            let released = entry.worker_active && !entry.worker_started;
+            if released {
+                entry.worker_active = false;
+            }
             released
         } else {
             false
@@ -227,9 +232,10 @@ impl TaskManager {
                 }
                 entry.finished_at = Some(Instant::now());
             }
-            let released = entry.worker_active;
-            entry.worker_active = false;
-            entry.worker_started = false;
+            let released = entry.worker_active && !entry.worker_started;
+            if released {
+                entry.worker_active = false;
+            }
             released
         } else {
             false
@@ -247,6 +253,7 @@ impl TaskManager {
         let mut released = false;
         if let Some(entry) = state.tasks.get_mut(&task_id)
             && matches!(entry.status, TaskStatus::Running | TaskStatus::Pending)
+            && !entry.worker_exited
         {
             entry.cancel_flag.store(true, Ordering::Release);
             if !entry.worker_started {
@@ -282,6 +289,9 @@ impl TaskManager {
         let mut released = 0;
         for id in group_ids {
             let entry = state.tasks.get_mut(&id).unwrap();
+            if entry.worker_exited {
+                continue;
+            }
             entry.cancel_flag.store(true, Ordering::Release);
             if !entry.worker_started {
                 if entry.worker_active {
@@ -473,15 +483,13 @@ impl TaskManager {
     fn worker_exited(&self, task_id: TaskId) {
         let mut state = self.state.lock().unwrap();
         let released = if let Some(task) = state.tasks.get_mut(&task_id) {
-            if task.cancel_flag.load(Ordering::Acquire) {
-                task.worker_started = false;
-                drop(state);
-                self.notify_changed();
-                return;
-            }
-            let released = task.worker_active;
-            task.worker_active = false;
             task.worker_started = false;
+            task.worker_exited = true;
+            let released = task.worker_active
+                && !matches!(task.status, TaskStatus::Pending | TaskStatus::Running);
+            if released {
+                task.worker_active = false;
+            }
             released
         } else {
             false
@@ -645,8 +653,9 @@ mod tests {
         let mgr = Arc::new(TaskManager::new(1));
         let id = mgr.submit("atomic update");
         let worker = mgr.admit(id).await.unwrap();
-        mgr.cancel(id);
         drop(worker);
+
+        assert!(!mgr.cancel(id));
 
         mgr.complete(id);
 
@@ -851,7 +860,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn panicking_worker_guard_releases_capacity() {
+    async fn panicking_worker_waits_for_terminal_failure_before_releasing_capacity() {
         let mgr = Arc::new(TaskManager::new(1));
         let panicking = mgr.submit("panicking");
         let queued = mgr.submit("queued");
@@ -862,6 +871,27 @@ mod tests {
             panic!("boom");
         }));
 
+        assert_eq!(mgr.status(queued), Some(TaskStatus::Pending));
+        mgr.fail(panicking, "background task panicked".into());
+        assert_eq!(
+            mgr.status(panicking),
+            Some(TaskStatus::Failed("background task panicked".into()))
+        );
+        assert_eq!(mgr.status(queued), Some(TaskStatus::Running));
+    }
+
+    #[tokio::test]
+    async fn terminal_result_holds_capacity_until_worker_exits() {
+        let mgr = Arc::new(TaskManager::new(1));
+        let running = mgr.submit("running");
+        let queued = mgr.submit("queued");
+        let worker = mgr.admit(running).await.unwrap();
+
+        mgr.complete(running);
+
+        assert_eq!(mgr.status(running), Some(TaskStatus::Completed));
+        assert_eq!(mgr.status(queued), Some(TaskStatus::Pending));
+        drop(worker);
         assert_eq!(mgr.status(queued), Some(TaskStatus::Running));
     }
 
