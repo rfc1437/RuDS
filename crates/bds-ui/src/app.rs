@@ -188,6 +188,12 @@ pub enum Message {
 
     // Tasks
     TaskTick,
+    PostAutoSaveFinished {
+        post_id: String,
+        active_language: String,
+        edit_revision: u64,
+        result: Result<Option<PersistedPostState>, String>,
+    },
     DomainEventsTick,
     CancelTask(TaskSource, TaskId),
     RemoteTaskCancelled(Result<(), String>),
@@ -527,7 +533,9 @@ struct ImageDropRequest {
     path: PathBuf,
 }
 
-enum PersistedPostState {
+#[derive(Debug, Clone)]
+#[doc(hidden)]
+pub enum PersistedPostState {
     Canonical(Box<Post>),
     Translation(Box<bds_core::model::PostTranslation>),
 }
@@ -1111,6 +1119,8 @@ pub struct BdsApp {
 
     // Editor states (keyed by entity id)
     post_editors: HashMap<String, PostEditorState>,
+    post_autosaves_in_flight: HashSet<String>,
+    post_persistence_lock: Arc<Mutex<()>>,
     media_editors: HashMap<String, MediaEditorState>,
     template_editors: HashMap<String, TemplateEditorState>,
     script_editors: HashMap<String, ScriptEditorState>,
@@ -1307,6 +1317,8 @@ impl BdsApp {
             embedded_style_preview: None,
             main_window_id: None,
             post_editors: HashMap::new(),
+            post_autosaves_in_flight: HashSet::new(),
+            post_persistence_lock: Arc::new(Mutex::new(())),
             media_editors: HashMap::new(),
             template_editors: HashMap::new(),
             script_editors: HashMap::new(),
@@ -1410,6 +1422,8 @@ impl BdsApp {
             embedded_style_preview: None,
             main_window_id: None,
             post_editors: HashMap::new(),
+            post_autosaves_in_flight: HashSet::new(),
+            post_persistence_lock: Arc::new(Mutex::new(())),
             media_editors: HashMap::new(),
             template_editors: HashMap::new(),
             script_editors: HashMap::new(),
@@ -2652,20 +2666,44 @@ impl BdsApp {
             | Message::EmbeddedStylePreviewReady(_)) => self.handle_preview_message(message),
 
             // ── Tasks ──
+            Message::PostAutoSaveFinished {
+                post_id,
+                active_language,
+                edit_revision,
+                result,
+            } => {
+                self.post_autosaves_in_flight.remove(&post_id);
+                match result {
+                    Ok(Some(persisted))
+                        if self
+                            .post_editors
+                            .get(&post_id)
+                            .is_some_and(|state| state.edit_revision() == edit_revision) =>
+                    {
+                        self.apply_persisted_post_state(&post_id, &active_language, persisted);
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notify_operation_failed("common.autoSave", error),
+                }
+                Task::none()
+            }
             Message::TaskTick => {
                 self.task_manager.evict_expired();
                 self.refresh_task_snapshots();
                 self.process_chat_events();
                 self.persist_due_chat_surface_state();
                 let _ = engine::embedding::EmbeddingService::flush_due();
-                if !self.search_index_rebuild_running {
-                    self.auto_save_due_post_editors();
-                }
+                let post_autosave = if self.search_index_rebuild_running {
+                    Task::none()
+                } else {
+                    self.auto_save_due_post_editors()
+                };
                 let actions = std::mem::take(&mut *self.script_menu_actions.lock().unwrap());
                 let mut tasks = actions
                     .into_iter()
                     .map(|action| self.dispatch_menu_action(action))
                     .collect::<Vec<_>>();
+                tasks.push(post_autosave);
                 #[cfg(target_os = "macos")]
                 if let Some(receiver) = &self.lifecycle_receiver {
                     tasks.push(
@@ -5630,24 +5668,62 @@ impl BdsApp {
         }
     }
 
-    fn auto_save_due_post_editors(&mut self) {
+    fn auto_save_due_post_editors(&mut self) -> Task<Message> {
+        let Some(data_dir) = self.data_dir.clone() else {
+            return Task::none();
+        };
         let now = bds_core::util::now_unix_ms();
-        let due_ids: Vec<String> = self
+        let due = self
             .post_editors
             .iter()
-            .filter(|&(_post_id, state)| {
+            .filter(|&(post_id, state)| {
                 state.is_dirty
                     && state.last_edit_at_ms > 0
                     && now - state.last_edit_at_ms >= POST_AUTO_SAVE_DELAY_MS
+                    && !self.post_autosaves_in_flight.contains(post_id)
             })
-            .map(|(post_id, _state)| post_id.clone())
-            .collect();
+            .map(|(post_id, state)| {
+                (
+                    post_id.clone(),
+                    state.active_language.clone(),
+                    state.edit_revision(),
+                    state.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
 
-        for post_id in due_ids {
-            if let Err(error) = self.persist_post_editor_state(&post_id) {
-                self.notify_operation_failed("common.autoSave", error);
-            }
+        let mut tasks = Vec::with_capacity(due.len());
+        for (post_id, active_language, edit_revision, state) in due {
+            self.post_autosaves_in_flight.insert(post_id.clone());
+            let db_path = self.db_path.clone();
+            let data_dir = data_dir.clone();
+            let persistence_lock = Arc::clone(&self.post_persistence_lock);
+            let result_post_id = post_id.clone();
+            let result_active_language = active_language.clone();
+            tasks.push(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let _guard = persistence_lock
+                            .lock()
+                            .map_err(|_| "post persistence lock poisoned".to_string())?;
+                        if state.edit_revision() != edit_revision {
+                            return Ok(None);
+                        }
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        persist_post_editor_state_impl(&db, &data_dir, &state).map(Some)
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(format!("autosave task panicked: {error}")))
+                },
+                move |result| Message::PostAutoSaveFinished {
+                    post_id: result_post_id.clone(),
+                    active_language: result_active_language.clone(),
+                    edit_revision,
+                    result,
+                },
+            ));
         }
+        Task::batch(tasks)
     }
 
     fn operation_failed_text(&self, operation_key: &str, error: impl std::fmt::Display) -> String {
@@ -7410,7 +7486,7 @@ impl BdsApp {
     fn apply_persisted_post_state(
         &mut self,
         post_id: &str,
-        state: &PostEditorState,
+        active_language: &str,
         persisted: PersistedPostState,
     ) {
         match persisted {
@@ -7418,7 +7494,7 @@ impl BdsApp {
                 if let Some(editor) = self.post_editors.get_mut(post_id) {
                     editor.is_dirty = false;
                     editor.last_edit_at_ms = 0;
-                    if let Some(draft) = editor.translation_drafts.get_mut(&state.active_language) {
+                    if let Some(draft) = editor.translation_drafts.get_mut(active_language) {
                         draft.title = translation.title.clone();
                         draft.excerpt = translation.excerpt.clone().unwrap_or_default();
                         draft.content = translation.content.clone().unwrap_or_default();
@@ -7474,8 +7550,13 @@ impl BdsApp {
             .as_ref()
             .ok_or_else(|| "project data directory unavailable".to_string())?;
 
+        let _guard = self
+            .post_persistence_lock
+            .lock()
+            .map_err(|_| "post persistence lock poisoned".to_string())?;
         let persisted = persist_post_editor_state_impl(db, data_dir, &state)?;
-        self.apply_persisted_post_state(post_id, &state, persisted);
+        drop(_guard);
+        self.apply_persisted_post_state(post_id, &state.active_language, persisted);
         Ok(())
     }
 
@@ -7490,8 +7571,13 @@ impl BdsApp {
             .as_ref()
             .ok_or_else(|| "database unavailable".to_string())?;
 
+        let _guard = self
+            .post_persistence_lock
+            .lock()
+            .map_err(|_| "post persistence lock poisoned".to_string())?;
         let persisted = persist_post_editor_preview_state_impl(db, &state)?;
-        self.apply_persisted_post_state(post_id, &state, persisted);
+        drop(_guard);
+        self.apply_persisted_post_state(post_id, &state.active_language, persisted);
         Ok(())
     }
 
@@ -13166,7 +13252,7 @@ mod tests {
     }
 
     #[test]
-    fn task_tick_autosaves_dirty_post_editor() {
+    fn task_tick_schedules_post_autosave_without_blocking() {
         let (db, project, tmp) = setup();
         ai::save_endpoint(
             db.conn(),
@@ -13219,15 +13305,16 @@ mod tests {
         });
         app.active_tab = Some(created.id.clone());
 
-        let _ = app.update(Message::TaskTick);
+        let _task = app.update(Message::TaskTick);
 
-        let saved = bds_core::db::queries::post::get_post_by_id(
+        let not_yet_saved = bds_core::db::queries::post::get_post_by_id(
             app.db.as_ref().unwrap().conn(),
             &created.id,
         )
         .unwrap();
-        assert_eq!(saved.title, "Autosaved");
-        assert!(!app.post_editors.get(&created.id).unwrap().is_dirty);
+        assert_eq!(not_yet_saved.title, "Original");
+        assert!(app.post_editors.get(&created.id).unwrap().is_dirty);
+        assert!(app.post_autosaves_in_flight.contains(&created.id));
         assert!(
             app.task_manager
                 .snapshots()

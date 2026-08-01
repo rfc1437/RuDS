@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use iced::widget::text::{Shaping, Wrapping};
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
@@ -70,6 +72,7 @@ pub struct PostEditorState {
     pub published_at: Option<i64>,
     pub is_dirty: bool,
     pub last_edit_at_ms: i64,
+    edit_revision: Arc<AtomicU64>,
     pub metadata_expanded: bool,
     pub excerpt_expanded: bool,
     pub editor_mode: String,
@@ -120,6 +123,7 @@ impl Clone for PostEditorState {
             published_at: self.published_at,
             is_dirty: self.is_dirty,
             last_edit_at_ms: self.last_edit_at_ms,
+            edit_revision: Arc::clone(&self.edit_revision),
             metadata_expanded: self.metadata_expanded,
             excerpt_expanded: self.excerpt_expanded,
             editor_mode: self.editor_mode.clone(),
@@ -188,6 +192,7 @@ impl PostEditorState {
             published_at: post.published_at,
             is_dirty: false,
             last_edit_at_ms: 0,
+            edit_revision: Arc::new(AtomicU64::new(0)),
             metadata_expanded: title.is_empty(),
             excerpt_expanded: false,
             editor_mode: normalize_editor_mode(default_mode),
@@ -212,6 +217,11 @@ impl PostEditorState {
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
         self.last_edit_at_ms = bds_core::util::now_unix_ms();
+        self.edit_revision.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn edit_revision(&self) -> u64 {
+        self.edit_revision.load(Ordering::Relaxed)
     }
 
     pub fn restore_view_state(&mut self, previous: &Self) {
