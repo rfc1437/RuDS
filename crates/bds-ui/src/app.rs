@@ -6897,14 +6897,15 @@ impl BdsApp {
     }
 
     fn insert_link_modal(&mut self, post_id: &str) -> Task<Message> {
-        let state = match self.post_editors.get(post_id) {
-            Some(s) => s.clone(),
+        let (title, insertion_point) = match self.post_editors.get(post_id) {
+            Some(state) => (state.title.clone(), state.insertion_point()),
             None => return Task::none(),
         };
 
         self.active_modal = Some(modal::ModalState::PostInsertLink {
             post_id: post_id.to_string(),
-            title: state.title,
+            title,
+            insertion_point,
             results: self.query_post_link_results(post_id, ""),
             search_query: String::new(),
             active_tab: modal::PostInsertLinkTab::Internal,
@@ -6915,14 +6916,15 @@ impl BdsApp {
     }
 
     fn insert_media_modal(&mut self, post_id: &str, link_only: bool) -> Task<Message> {
-        let state = match self.post_editors.get(post_id) {
-            Some(s) => s.clone(),
+        let (title, insertion_point) = match self.post_editors.get(post_id) {
+            Some(state) => (state.title.clone(), state.insertion_point()),
             None => return Task::none(),
         };
 
         self.active_modal = Some(modal::ModalState::InsertMedia {
             post_id: post_id.to_string(),
-            title: state.title,
+            title,
+            insertion_point,
             media_list: self.query_post_insert_media_results(""),
             search_query: String::new(),
             link_only,
@@ -7076,10 +7078,27 @@ impl BdsApp {
     }
 
     fn insert_markdown_into_post(&mut self, post_id: &str, markdown: &str) -> Task<Message> {
+        let insertion_point = match self.active_modal.as_ref() {
+            Some(modal::ModalState::PostInsertLink {
+                post_id: modal_post_id,
+                insertion_point,
+                ..
+            })
+            | Some(modal::ModalState::InsertMedia {
+                post_id: modal_post_id,
+                insertion_point,
+                ..
+            }) if modal_post_id == post_id => Some(*insertion_point),
+            _ => None,
+        };
         let Some(state) = self.post_editors.get_mut(post_id) else {
             return Task::none();
         };
-        state.insert_markdown_at_cursor(markdown);
+        if let Some(insertion_point) = insertion_point {
+            state.insert_markdown_at(markdown, insertion_point);
+        } else {
+            state.insert_markdown_at_cursor(markdown);
+        }
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == post_id) {
             tab.is_dirty = true;
         }
@@ -7228,6 +7247,7 @@ impl BdsApp {
         let Some(modal::ModalState::PostInsertLink {
             post_id,
             title,
+            insertion_point,
             search_query: current_query,
             active_tab: current_tab,
             external_url: current_url,
@@ -7246,6 +7266,7 @@ impl BdsApp {
         self.active_modal = Some(modal::ModalState::PostInsertLink {
             post_id: post_id.clone(),
             title,
+            insertion_point,
             results: self.query_post_link_results(&post_id, &next_query),
             search_query: next_query,
             active_tab: next_tab,
@@ -7258,6 +7279,7 @@ impl BdsApp {
         let Some(modal::ModalState::InsertMedia {
             post_id,
             title,
+            insertion_point,
             link_only,
             ..
         }) = self.active_modal.clone()
@@ -7268,6 +7290,7 @@ impl BdsApp {
         self.active_modal = Some(modal::ModalState::InsertMedia {
             post_id,
             title,
+            insertion_point,
             media_list: self.query_post_insert_media_results(&search_query),
             search_query,
             link_only,
@@ -13539,6 +13562,31 @@ mod tests {
                 .snapshots()
                 .iter()
                 .all(|task| task.group_name.as_deref() != Some("AI"))
+        );
+    }
+
+    #[test]
+    fn link_modal_inserts_at_the_cursor_saved_before_focus_changes() {
+        let (mut app, post_id, _tmp) = auto_translation_test_app(&[]);
+        app.post_editors
+            .get_mut(&post_id)
+            .unwrap()
+            .editor_buffer
+            .borrow_mut()
+            .set_cursor(0, 2);
+
+        let _ = app.insert_link_modal(&post_id);
+        app.post_editors
+            .get_mut(&post_id)
+            .unwrap()
+            .editor_buffer
+            .borrow_mut()
+            .set_cursor(0, 0);
+        let _ = app.insert_markdown_into_post(&post_id, "[Link](/target)");
+
+        assert_eq!(
+            app.post_editors.get(&post_id).unwrap().content,
+            "Bo[Link](/target)dy"
         );
     }
 

@@ -13,7 +13,7 @@ use bds_core::util::paths::thumbnail_path;
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::t;
-use crate::views::post_editor::PostEditorMsg;
+use crate::views::post_editor::{EditorInsertionPoint, PostEditorMsg};
 
 #[derive(Debug, Clone)]
 pub struct InsertLinkResult {
@@ -77,6 +77,7 @@ pub enum ModalState {
     PostInsertLink {
         post_id: String,
         title: String,
+        insertion_point: EditorInsertionPoint,
         results: Vec<InsertLinkResult>,
         search_query: String,
         active_tab: PostInsertLinkTab,
@@ -87,6 +88,7 @@ pub enum ModalState {
     InsertMedia {
         post_id: String,
         title: String,
+        insertion_point: EditorInsertionPoint,
         media_list: Vec<bds_core::model::Media>,
         search_query: String,
         link_only: bool,
@@ -598,6 +600,7 @@ pub fn view(
         ModalState::PostInsertLink {
             post_id: _post_id,
             title: _title,
+            insertion_point: _,
             results,
             search_query,
             active_tab,
@@ -820,6 +823,7 @@ pub fn view(
         ModalState::InsertMedia {
             post_id: _post_id,
             title: _title,
+            insertion_point: _,
             media_list,
             search_query,
             link_only: _,

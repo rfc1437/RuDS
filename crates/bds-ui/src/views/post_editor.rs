@@ -9,7 +9,7 @@ use iced::{Color, Element, Length, Theme};
 
 use bds_core::i18n::{self, UiLocale};
 use bds_core::model::{Post, PostStatus, PostTranslation};
-use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, highlighter};
+use bds_editor::{CodeEditor, EditorBuffer, EditorMessage, Selection, highlighter};
 
 use crate::app::Message;
 use crate::components::{inputs, popover};
@@ -50,6 +50,12 @@ pub struct LinkedMediaItem {
     pub file_path: String,
     pub is_image: bool,
     pub sort_order: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorInsertionPoint {
+    cursor: (usize, usize),
+    selection: Option<Selection>,
 }
 
 /// State for an open post editor.
@@ -269,8 +275,30 @@ impl PostEditorState {
     }
 
     pub fn insert_markdown_at_cursor(&mut self, markdown: &str) {
+        self.insert_markdown_at(markdown, self.insertion_point());
+    }
+
+    pub fn insertion_point(&self) -> EditorInsertionPoint {
+        let buffer = self.editor_buffer.borrow();
+        EditorInsertionPoint {
+            cursor: buffer.cursor(),
+            selection: buffer.selection().copied(),
+        }
+    }
+
+    pub fn insert_markdown_at(&mut self, markdown: &str, point: EditorInsertionPoint) {
         let new_content = {
             let mut buffer = self.editor_buffer.borrow_mut();
+            buffer.clear_selection();
+            buffer.set_cursor(point.cursor.0, point.cursor.1);
+            if let Some(selection) = point.selection {
+                buffer.set_selection(
+                    selection.anchor_line,
+                    selection.anchor_col,
+                    selection.head_line,
+                    selection.head_col,
+                );
+            }
             buffer.insert(markdown);
             buffer.text()
         };
