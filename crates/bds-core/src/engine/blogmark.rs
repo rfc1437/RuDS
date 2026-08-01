@@ -103,6 +103,20 @@ pub fn receive_deep_link_with_host(
     control: &ExecutionControl,
     host: Arc<dyn HostApi>,
 ) -> EngineResult<BlogmarkImportResult> {
+    receive_deep_link_with_host_and_created(conn, data_dir, project_id, raw, control, host, |_| {})
+}
+
+/// Import a blogmark while reporting the created draft before secondary
+/// embedding work completes.
+pub fn receive_deep_link_with_host_and_created(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    raw: &str,
+    control: &ExecutionControl,
+    host: Arc<dyn HostApi>,
+    on_created: impl FnOnce(&Post),
+) -> EngineResult<BlogmarkImportResult> {
     let mut candidate = parse_deep_link(raw)?;
     if let Some(target) = &candidate.project_id
         && target != project_id
@@ -134,7 +148,7 @@ pub fn receive_deep_link_with_host(
         }
     }
     let metadata = crate::engine::meta::read_project_json(data_dir)?;
-    let post = crate::engine::post::create_post(
+    let post = crate::engine::post::create_post_with_created_callback(
         conn,
         data_dir,
         project_id,
@@ -145,6 +159,7 @@ pub fn receive_deep_link_with_host(
         metadata.default_author.as_deref(),
         metadata.main_language.as_deref(),
         None,
+        on_created,
     )?;
     Ok(BlogmarkImportResult {
         post,

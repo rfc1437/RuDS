@@ -48,6 +48,38 @@ pub fn create_post(
     language: Option<&str>,
     template_slug: Option<&str>,
 ) -> EngineResult<Post> {
+    create_post_with_created_callback(
+        conn,
+        data_dir,
+        project_id,
+        title,
+        content,
+        tags,
+        categories,
+        author,
+        language,
+        template_slug,
+        |_| {},
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arguments are the user-supplied post fields"
+)]
+pub(crate) fn create_post_with_created_callback(
+    conn: &Connection,
+    data_dir: &Path,
+    project_id: &str,
+    title: &str,
+    content: Option<&str>,
+    tags: Vec<String>,
+    categories: Vec<String>,
+    author: Option<&str>,
+    language: Option<&str>,
+    template_slug: Option<&str>,
+    on_created: impl FnOnce(&Post),
+) -> EngineResult<Post> {
     let id = Uuid::new_v4().to_string();
     let slug_source = if title.is_empty() { "untitled" } else { title };
     let base_slug = slugify(slug_source);
@@ -93,6 +125,7 @@ pub fn create_post(
     fts_index_post(conn, data_dir, &post)?;
 
     emit_post(&post, NotificationAction::Created);
+    on_created(&post);
     crate::engine::embedding::sync_post_best_effort(conn, data_dir, &post);
 
     Ok(post)

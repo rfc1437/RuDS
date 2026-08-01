@@ -80,6 +80,12 @@ pub enum OneShotAiAction {
 }
 
 #[derive(Debug, Clone)]
+enum BlogmarkImportEvent {
+    DraftCreated(Post),
+    Finished(Result<engine::blogmark::BlogmarkImportResult, String>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     // Menu
     MenuEvent(muda::MenuId),
@@ -197,6 +203,10 @@ pub enum Message {
     // macOS lifecycle
     FileOpenRequested(PathBuf),
     UrlOpenRequested(String),
+    BlogmarkDraftCreated {
+        task_id: TaskId,
+        post: Post,
+    },
     BlogmarkImported {
         task_id: TaskId,
         result: Result<engine::blogmark::BlogmarkImportResult, String>,
@@ -2856,39 +2866,70 @@ impl BdsApp {
                     t(self.ui_locale, "dialog.selectFolder"),
                 );
                 self.refresh_task_snapshots();
-                let import_task = Task::perform(
-                    async move {
-                        let Some(worker) = task_manager.admit(task_id).await else {
-                            return Err("cancelled".to_string());
-                        };
-                        tokio::task::spawn_blocking(move || {
-                            let _worker = worker;
-                            let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                            let host =
-                                bds_core::scripting::CoreHost::new(db_path, &project_id, &data_dir)
-                                    .with_task(Arc::clone(&task_manager), task_id)
-                                    .with_offline_mode(offline_mode)
-                                    .with_app_handler(app_handler);
-                            let control = task_manager
-                                .cancellation_flag(task_id)
-                                .map(bds_core::scripting::ExecutionControl::from_cancelled)
-                                .unwrap_or_default();
-                            engine::blogmark::receive_deep_link_with_host(
-                                db.conn(),
-                                &data_dir,
-                                &project_id,
-                                &url,
-                                &control,
-                                Arc::new(host),
-                            )
-                            .map_err(|error| error.to_string())
-                        })
-                        .await
-                        .unwrap_or_else(|error| Err(format!("task panicked: {error}")))
-                    },
-                    move |result| Message::BlogmarkImported { task_id, result },
-                );
+                let (sender, receiver) = futures::channel::mpsc::unbounded();
+                tokio::spawn(async move {
+                    let Some(worker) = task_manager.admit(task_id).await else {
+                        let _ = sender.unbounded_send(BlogmarkImportEvent::Finished(Err(
+                            "cancelled".to_string(),
+                        )));
+                        return;
+                    };
+                    let created_sender = sender.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        let _worker = worker;
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        let host =
+                            bds_core::scripting::CoreHost::new(db_path, &project_id, &data_dir)
+                                .with_task(Arc::clone(&task_manager), task_id)
+                                .with_offline_mode(offline_mode)
+                                .with_app_handler(app_handler);
+                        let control = task_manager
+                            .cancellation_flag(task_id)
+                            .map(bds_core::scripting::ExecutionControl::from_cancelled)
+                            .unwrap_or_default();
+                        engine::blogmark::receive_deep_link_with_host_and_created(
+                            db.conn(),
+                            &data_dir,
+                            &project_id,
+                            &url,
+                            &control,
+                            Arc::new(host),
+                            move |post| {
+                                let _ = created_sender.unbounded_send(
+                                    BlogmarkImportEvent::DraftCreated(post.clone()),
+                                );
+                            },
+                        )
+                        .map_err(|error| error.to_string())
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(format!("task panicked: {error}")));
+                    let _ = sender.unbounded_send(BlogmarkImportEvent::Finished(result));
+                });
+                let import_task = Task::run(receiver, move |event| match event {
+                    BlogmarkImportEvent::DraftCreated(post) => {
+                        Message::BlogmarkDraftCreated { task_id, post }
+                    }
+                    BlogmarkImportEvent::Finished(result) => {
+                        Message::BlogmarkImported { task_id, result }
+                    }
+                });
                 Task::batch([project_restore_task, import_task])
+            }
+            Message::BlogmarkDraftCreated { task_id, post } => {
+                if self.task_manager.status(task_id) == Some(TaskStatus::Cancelled) {
+                    return Task::none();
+                }
+                self.sidebar_view = SidebarView::Posts;
+                self.sidebar_visible = true;
+                let tab = Tab {
+                    id: post.id,
+                    tab_type: TabType::Post,
+                    title: post.title,
+                    is_transient: false,
+                    is_dirty: false,
+                };
+                Task::batch([self.open_tab(tab), self.refresh_counts()])
             }
             Message::BlogmarkImported { task_id, result } => match result {
                 Ok(result) => {
@@ -2902,14 +2943,22 @@ impl BdsApp {
                     }
                     self.sidebar_view = SidebarView::Posts;
                     self.sidebar_visible = true;
-                    let tab = Tab {
-                        id: result.post.id.clone(),
-                        tab_type: TabType::Post,
-                        title: result.post.title.clone(),
-                        is_transient: false,
-                        is_dirty: false,
+                    let post_id = result.post.id.clone();
+                    let already_open = self
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id == post_id && tab.tab_type == TabType::Post);
+                    let open_editor = if already_open {
+                        Task::done(Message::LoadSemanticTagSuggestions(post_id))
+                    } else {
+                        self.open_tab(Tab {
+                            id: result.post.id,
+                            tab_type: TabType::Post,
+                            title: result.post.title,
+                            is_transient: false,
+                            is_dirty: false,
+                        })
                     };
-                    let open_editor = self.open_tab(tab);
                     self.notify(ToastLevel::Success, &t(self.ui_locale, "blogmark.imported"));
                     Task::batch([open_editor, self.refresh_counts()])
                 }
@@ -10810,6 +10859,60 @@ mod tests {
         assert!(remote_error_closes_connection("connection_lost"));
         assert!(!remote_error_closes_connection("sync_watcher_error"));
         assert!(!remote_error_closes_connection("engine_error"));
+    }
+
+    #[test]
+    fn created_blogmark_opens_its_editor_before_import_task_finishes() {
+        let (db, project, temp) = setup();
+        let created = post::create_post(
+            db.conn(),
+            temp.path(),
+            &project.id,
+            "Saved From Browser",
+            Some("[Saved From Browser](https://example.com/)"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        app.tabs.clear();
+        app.active_tab = None;
+        app.post_editors.clear();
+        let task_id = app.task_manager.submit("Importing blogmark");
+
+        let _ = app.update(Message::BlogmarkDraftCreated {
+            task_id,
+            post: created.clone(),
+        });
+
+        assert_eq!(app.active_tab.as_deref(), Some(created.id.as_str()));
+        assert!(app.post_editors.contains_key(&created.id));
+        assert_eq!(
+            app.task_manager.status(task_id),
+            Some(TaskStatus::Running),
+            "opening the editor must not wait for semantic indexing to finish"
+        );
+
+        let _ = app.update(Message::OpenTab(Tab {
+            id: "settings".to_string(),
+            tab_type: TabType::Settings,
+            title: "Settings".to_string(),
+            is_transient: false,
+            is_dirty: false,
+        }));
+        let _ = app.update(Message::BlogmarkImported {
+            task_id,
+            result: Ok(blogmark::BlogmarkImportResult {
+                post: created,
+                toasts: Vec::new(),
+                transform_errors: Vec::new(),
+            }),
+        });
+
+        assert_eq!(app.active_tab.as_deref(), Some("settings"));
     }
 
     #[test]

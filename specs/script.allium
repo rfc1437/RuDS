@@ -371,6 +371,12 @@ rule ExecuteTransform {
         -- after a deep link (e.g. when the link switched projects) preserves
         -- the newly opened editor tab as the active tab.
 
+    @guarantee BlogmarkEditorActivation
+        -- Once the transformed draft and its text-search entry exist, the shell
+        -- opens that draft in the post editor immediately. Post-created side
+        -- effects that may take longer, including lazy model loading and semantic
+        -- indexing, continue without delaying or replacing the opened editor.
+
     @guarantee TransformTrigger
         -- Transform scripts are triggered automatically by blogmark import.
         -- Each script receives the current post candidate plus a context with
