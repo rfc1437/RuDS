@@ -6,13 +6,17 @@ use bds_core::engine::git::{
 };
 use bds_core::i18n::UiLocale;
 use iced::widget::text::{Shaping, Wrapping};
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Alignment, Background, Color, Element, Font, Length};
 
 use crate::app::Message;
 use crate::components::inputs;
 use crate::i18n::{t, tw};
 use crate::state::tabs::{Tab, TabType};
+
+const GIT_FETCH_ICON: &str = "↻";
+const GIT_PULL_ICON: &str = "↓";
+const GIT_PUSH_ICON: &str = "↑";
 
 #[derive(Debug, Clone)]
 pub struct GitSnapshot {
@@ -174,20 +178,30 @@ pub fn sidebar_view(
     .spacing(2);
 
     let network_running = state.network_run.is_some();
-    let network_button = |key, message| {
-        let button = button(text(t(locale, key)).size(11))
-            .padding([4, 6])
-            .style(inputs::secondary_button);
-        if offline_mode || network_running {
-            button
-        } else {
-            button.on_press(message)
-        }
-    };
+    let network_button =
+        |key: &'static str, icon: &'static str, message: Message| -> Element<'static, Message> {
+            let mut control = button(text(icon).size(16).shaping(Shaping::Advanced))
+                .width(Length::Fixed(30.0))
+                .height(Length::Fixed(28.0))
+                .padding(0)
+                .style(inputs::secondary_button);
+            if !offline_mode && !network_running {
+                control = control.on_press(message);
+            }
+
+            tooltip(
+                control,
+                text(t(locale, key)).size(12),
+                tooltip::Position::Bottom,
+            )
+            .gap(4)
+            .style(inputs::tooltip_style)
+            .into()
+        };
     let actions = row![
-        network_button("git.fetch", Message::GitFetch),
-        network_button("git.pull", Message::GitPull),
-        network_button("git.push", Message::GitPush),
+        network_button("git.fetch", GIT_FETCH_ICON, Message::GitFetch),
+        network_button("git.pull", GIT_PULL_ICON, Message::GitPull),
+        network_button("git.push", GIT_PUSH_ICON, Message::GitPush),
     ]
     .spacing(4)
     .wrap();
@@ -597,6 +611,14 @@ mod tests {
         assert_eq!(
             sync_status_color(SyncStatus::RemoteOnly),
             Color::from_rgb8(0x75, 0xBE, 0xFF)
+        );
+    }
+
+    #[test]
+    fn network_actions_use_icons_instead_of_text_labels() {
+        assert_eq!(
+            [GIT_FETCH_ICON, GIT_PULL_ICON, GIT_PUSH_ICON],
+            ["↻", "↓", "↑"]
         );
     }
 }
