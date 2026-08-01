@@ -2,16 +2,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use serde_json::json;
-
 use crate::db::DbConnection as Connection;
 use crate::db::queries::{
     media as qm, media_translation as qmt, post as qp, post_media, post_translation,
 };
-use crate::engine::ai::{
-    self, MediaTranslationResult, OneShotOperation, OneShotRequest, OneShotResponse,
-    TranslationResult,
-};
+use crate::engine::ai::{self, MediaTranslationResult, OneShotResponse, TranslationResult};
 use crate::engine::{EngineError, EngineResult};
 use crate::i18n::{UiLocale, translate, translate_with};
 use crate::model::{Media, Post, PostStatus};
@@ -445,16 +440,12 @@ fn translate_post_ai(
     match ai::run_one_shot(
         conn,
         offline_mode,
-        &OneShotRequest {
-            operation: OneShotOperation::TranslatePost {
-                target_language: language.to_string(),
-            },
-            content: json!({
-                "title": post.title,
-                "excerpt": post.excerpt,
-                "content": post.content,
-            }),
-        },
+        &ai::post_translation_request(
+            &post.title,
+            post.excerpt.as_deref(),
+            post.content.as_deref().unwrap_or_default(),
+            language,
+        ),
     )? {
         (OneShotResponse::Translation(result), _usage) => Ok(result),
         _ => Err(EngineError::Parse(
@@ -472,16 +463,12 @@ fn translate_media_ai(
     match ai::run_one_shot(
         conn,
         offline_mode,
-        &OneShotRequest {
-            operation: OneShotOperation::TranslateMedia {
-                target_language: language.to_string(),
-            },
-            content: json!({
-                "title": media.title,
-                "alt": media.alt,
-                "caption": media.caption,
-            }),
-        },
+        &ai::media_translation_request(
+            media.title.as_deref(),
+            media.alt.as_deref(),
+            media.caption.as_deref(),
+            language,
+        ),
     )? {
         (OneShotResponse::MediaTranslation(result), _usage) => Ok(result),
         _ => Err(EngineError::Parse(

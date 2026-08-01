@@ -10367,16 +10367,12 @@ impl BdsApp {
             }
         }
 
-        let request = ai::OneShotRequest {
-            operation: ai::OneShotOperation::TranslatePost {
-                target_language: target_language.to_string(),
-            },
-            content: json!({
-                "title": state.title,
-                "excerpt": state.excerpt,
-                "content": state.content,
-            }),
-        };
+        let request = ai::post_translation_request(
+            &state.title,
+            Some(&state.excerpt),
+            &state.content,
+            target_language,
+        );
         if let Some(editor) = self.post_editors.get_mut(post_id) {
             editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
         }
@@ -10513,16 +10509,12 @@ impl BdsApp {
         {
             editor.language = state.canonical_language.clone();
         }
-        let request = ai::OneShotRequest {
-            operation: ai::OneShotOperation::TranslateMedia {
-                target_language: target_language.to_string(),
-            },
-            content: json!({
-                "title": state.title,
-                "alt": state.alt,
-                "caption": state.caption,
-            }),
-        };
+        let request = ai::media_translation_request(
+            Some(&state.title),
+            Some(&state.alt),
+            Some(&state.caption),
+            target_language,
+        );
         if let Some(editor) = self.media_editors.get_mut(media_id) {
             editor.ai_activity = Some(t(self.ui_locale, "editor.translate"));
         }

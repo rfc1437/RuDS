@@ -121,6 +121,42 @@ pub struct OneShotRequest {
     pub content: Value,
 }
 
+pub fn post_translation_request(
+    title: &str,
+    excerpt: Option<&str>,
+    content: &str,
+    target_language: &str,
+) -> OneShotRequest {
+    OneShotRequest {
+        operation: OneShotOperation::TranslatePost {
+            target_language: target_language.to_string(),
+        },
+        content: json!({
+            "title": title,
+            "excerpt": excerpt.unwrap_or_default(),
+            "content": content,
+        }),
+    }
+}
+
+pub fn media_translation_request(
+    title: Option<&str>,
+    alt: Option<&str>,
+    caption: Option<&str>,
+    target_language: &str,
+) -> OneShotRequest {
+    OneShotRequest {
+        operation: OneShotOperation::TranslateMedia {
+            target_language: target_language.to_string(),
+        },
+        content: json!({
+            "title": title.unwrap_or_default(),
+            "alt": alt.unwrap_or_default(),
+            "caption": caption.unwrap_or_default(),
+        }),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaxonomySuggestion {
     pub tags: Vec<String>,
@@ -1474,6 +1510,33 @@ mod tests {
                 excerpt: "Kurzfassung".to_string(),
                 content: "Inhalt".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn translation_requests_normalize_missing_fields() {
+        let post = post_translation_request("Hello", None, "Body", "de");
+        assert_eq!(
+            post.operation,
+            OneShotOperation::TranslatePost {
+                target_language: "de".to_string()
+            }
+        );
+        assert_eq!(
+            post.content,
+            json!({"title": "Hello", "excerpt": "", "content": "Body"})
+        );
+
+        let media = media_translation_request(None, None, None, "fr");
+        assert_eq!(
+            media.operation,
+            OneShotOperation::TranslateMedia {
+                target_language: "fr".to_string()
+            }
+        );
+        assert_eq!(
+            media.content,
+            json!({"title": "", "alt": "", "caption": ""})
         );
     }
 

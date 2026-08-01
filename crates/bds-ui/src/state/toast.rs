@@ -1,8 +1,7 @@
 /// Toast notification state.
 ///
-/// Toasts are ephemeral, auto-dismissing messages shown at the top of
-/// the workspace.  Each toast has a severity level, a message, and a
-/// monotonically increasing id used for targeted dismissal.
+/// Toasts are messages shown at the top of the workspace. Errors remain until
+/// dismissed; other levels expire automatically.
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TOAST_ID: AtomicU64 = AtomicU64::new(1);
@@ -45,6 +44,9 @@ impl Toast {
 
     /// Whether this toast has exceeded its display duration.
     pub fn is_expired(&self) -> bool {
+        if self.level == ToastLevel::Error {
+            return false;
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -68,5 +70,12 @@ mod tests {
     fn fresh_toast_not_expired() {
         let t = Toast::new(ToastLevel::Info, "test".into());
         assert!(!t.is_expired());
+    }
+
+    #[test]
+    fn error_toast_never_expires_automatically() {
+        let mut toast = Toast::new(ToastLevel::Error, "important".into());
+        toast.created_at = 0;
+        assert!(!toast.is_expired());
     }
 }
