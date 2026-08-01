@@ -4589,7 +4589,13 @@ impl BdsApp {
                 Task::none()
             }
             MenuAction::EditPreferences => {
+                self.sidebar_view = SidebarView::Settings;
+                self.sidebar_visible = true;
                 self.open_singleton_tab(TabType::Settings, "common.settings");
+                if self.settings_state.is_none() {
+                    self.settings_state = Some(self.hydrate_settings_state());
+                }
+                self.sync_menu_state();
                 Task::none()
             }
             // View
@@ -10745,6 +10751,26 @@ mod tests {
                 ..
             }) if error.contains("refused") && error != "refused"
         ));
+    }
+
+    #[test]
+    fn preferences_menu_opens_the_hydrated_settings_workspace() {
+        let (db, project, temp) = setup();
+        let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        app.sidebar_view = SidebarView::Posts;
+        app.sidebar_visible = false;
+
+        let _ = app.dispatch_menu_action(MenuAction::EditPreferences);
+
+        assert_eq!(app.sidebar_view, SidebarView::Settings);
+        assert!(app.sidebar_visible);
+        assert_eq!(app.active_tab_type(), Some(TabType::Settings));
+        assert_eq!(
+            app.settings_state
+                .as_ref()
+                .map(|state| state.project_name.as_str()),
+            Some("Test Project")
+        );
     }
 
     #[test]

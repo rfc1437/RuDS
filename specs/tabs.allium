@@ -12,11 +12,20 @@ surface TabControlSurface {
     facing _: TabOperator
 
     provides:
+        PreferencesRequested()
         OpenTabRequested(type, id, intent)
         OpenTabInBackgroundRequested(type, id, intent)
         CloseTabRequested(tab)
         PinTabRequested(tab)
         ClearTabsRequested()
+}
+
+rule OpenPreferences {
+    when: PreferencesRequested()
+    ensures: OpenTabRequested(type: settings, id: settings, intent: pin)
+    ensures: SettingsEditorHydrated()
+    ensures: SettingsSidebarSelected()
+    ensures: SidebarShown()
 }
 
 surface TabRuntimeSurface {
