@@ -2954,24 +2954,7 @@ impl BdsApp {
                     );
                     return Task::none();
                 }
-                self.offline_mode = mode;
-                let models = self.chat_model_options();
-                let selected = self.db.as_ref().and_then(|db| {
-                    ai::load_ai_settings(db.conn(), mode)
-                        .ok()
-                        .map(|settings| settings.active().endpoint.model.clone())
-                        .filter(|model| !model.trim().is_empty())
-                });
-                for (id, state) in &mut self.chat_editors {
-                    state.model_options = models.clone();
-                    if let Some(model) = selected.as_ref() {
-                        state.conversation.model = Some(model.clone());
-                        if let Some(db) = &self.db {
-                            let _ = engine::chat::set_conversation_model(db.conn(), id, model);
-                        }
-                    }
-                }
-                self.sync_menu_state();
+                self.apply_offline_mode(mode);
                 Task::none()
             }
             Message::SetUiLocale(locale) => {
@@ -4179,6 +4162,27 @@ impl BdsApp {
         self.persist_project_ui_state();
     }
 
+    fn apply_offline_mode(&mut self, mode: bool) {
+        self.offline_mode = mode;
+        let models = self.chat_model_options();
+        let selected = self.db.as_ref().and_then(|db| {
+            ai::load_ai_settings(db.conn(), mode)
+                .ok()
+                .map(|settings| settings.active().endpoint.model.clone())
+                .filter(|model| !model.trim().is_empty())
+        });
+        for (id, state) in &mut self.chat_editors {
+            state.model_options = models.clone();
+            if let Some(model) = selected.as_ref() {
+                state.conversation.model = Some(model.clone());
+                if let Some(db) = &self.db {
+                    let _ = engine::chat::set_conversation_model(db.conn(), id, model);
+                }
+            }
+        }
+        self.sync_menu_state();
+    }
+
     fn apply_ui_locale(&mut self, locale: UiLocale) {
         self.ui_locale = locale;
         self.locale_dropdown_open = false;
@@ -4294,21 +4298,21 @@ impl BdsApp {
                 {
                     self.apply_ui_locale(normalize_language(&language));
                 }
-                if self
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.tab_type == TabType::Settings)
+                if key == engine::settings::AIRPLANE_MODE_KEY
+                    && let Some(db) = &self.db
+                    && let Ok(mode) = engine::settings::airplane_mode(db.conn())
                 {
-                    let active_section = self
-                        .settings_state
-                        .as_ref()
-                        .and_then(|state| state.active_section.clone());
-                    let mut state = self.hydrate_settings_state();
-                    if let Some(section) = active_section {
-                        state.focus_section(section);
-                    }
-                    self.settings_state = Some(state);
+                    self.apply_offline_mode(mode);
                 }
+                let active_section = self
+                    .settings_state
+                    .as_ref()
+                    .and_then(|state| state.active_section.clone());
+                let mut state = self.hydrate_settings_state();
+                if let Some(section) = active_section {
+                    state.focus_section(section);
+                }
+                self.settings_state = Some(state);
                 false
             }
             DomainEvent::EntityChanged {
@@ -12474,33 +12478,33 @@ mod tests {
     }
 
     #[test]
-    fn settings_change_rehydrates_ai_configuration() {
+    fn settings_change_rehydrates_configuration_without_opening_settings() {
         let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
         bds_core::engine::settings::set(
-            db.conn(),
+            app.db.as_ref().unwrap().conn(),
             "ai.endpoint.online.url",
             "http://127.0.0.1:9000/v1",
         )
         .unwrap();
         bds_core::engine::settings::set(
-            db.conn(),
+            app.db.as_ref().unwrap().conn(),
             "ai.endpoint.online.model",
             "mlx-community--gemma-4-12B-8bit",
         )
         .unwrap();
-        bds_core::engine::settings::set(db.conn(), "ai.endpoint.online.api_key_configured", "true")
-            .unwrap();
-        let mut app = make_app(db, project, &tmp);
-        app.tabs.push(Tab {
-            id: "settings".to_string(),
-            tab_type: TabType::Settings,
-            title: "Settings".to_string(),
-            is_transient: false,
-            is_dirty: false,
-        });
-        let mut settings_state = SettingsViewState::default();
-        settings_state.focus_section(SettingsSection::AI);
-        app.settings_state = Some(settings_state);
+        bds_core::engine::settings::set(
+            app.db.as_ref().unwrap().conn(),
+            "ai.endpoint.online.api_key_configured",
+            "true",
+        )
+        .unwrap();
+        app.settings_state
+            .as_mut()
+            .unwrap()
+            .focus_section(SettingsSection::AI);
+
+        assert!(app.tabs.iter().all(|tab| tab.tab_type != TabType::Settings));
 
         app.handle_domain_event(DomainEvent::SettingsChanged {
             project_id: None,
@@ -12515,6 +12519,22 @@ mod tests {
         );
         assert!(state.online_ai.api_key_configured);
         assert_eq!(state.active_section, Some(SettingsSection::AI));
+    }
+
+    #[test]
+    fn airplane_setting_change_updates_runtime_mode_without_opening_settings() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        assert!(app.offline_mode);
+
+        bds_core::engine::settings::set_airplane_mode(app.db.as_ref().unwrap().conn(), false)
+            .unwrap();
+        app.handle_domain_event(DomainEvent::SettingsChanged {
+            project_id: None,
+            key: bds_core::engine::settings::AIRPLANE_MODE_KEY.to_string(),
+        });
+
+        assert!(!app.offline_mode);
     }
 
     #[test]

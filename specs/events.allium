@@ -49,7 +49,10 @@ rule ClientSynchronization {
     when: ClientSubscribed()
     -- Every shell subscribes on mount. Each subscriber receives events in
     -- publish order and refreshes only the affected project; deleted entities
-    -- close their open tabs. A refresh never writes the mutation again.
+    -- close their open tabs. Global and active-project setting changes refresh
+    -- every cached setting consumer even when the Settings surface is closed;
+    -- separately cached runtime controls such as airplane mode update too. A
+    -- refresh never writes the mutation again.
     ensures: ClientRefreshOnEvent()
 }
 
