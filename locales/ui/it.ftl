@@ -406,6 +406,7 @@ sidebar-filter-categories = Categorie
 sidebar-filter-calendar = Archivio
 sidebar-filter-noResults = Nessun risultato
 editor-saved = Salvato.
+editor-published = Articolo pubblicato
 editor-title = Titolo
 editor-titlePlaceholder = Inserisci titolo...
 editor-slug = Slug

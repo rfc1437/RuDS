@@ -391,6 +391,7 @@ sidebar-filter-categories = Categories
 sidebar-filter-calendar = Archive
 sidebar-filter-noResults = No matching items
 editor-saved = Saved.
+editor-published = Post published
 editor-title = Title
 editor-titlePlaceholder = Enter title...
 editor-slug = Slug

@@ -12381,6 +12381,7 @@ mod tests {
         std::fs::create_dir_all(old_path.parent().unwrap()).unwrap();
         std::fs::write(&old_path, "old file").unwrap();
         let mut app = make_app(db, project, &tmp);
+        app.ui_locale = UiLocale::De;
         open_post_editor(&mut app, &created);
 
         let _ = app.publish_post_editor(&created.id);
@@ -12395,6 +12396,10 @@ mod tests {
         assert!(!old_path.exists());
         assert!(tmp.path().join(&published.file_path).is_file());
         assert_eq!(app.post_editors[&created.id].status, PostStatus::Published);
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.message.as_str()),
+            Some("Beitrag veröffentlicht")
+        );
     }
 
     #[test]
