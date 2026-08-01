@@ -180,7 +180,7 @@ value LinkContext {
 -- ============================================================================
 
 value ArchiveContext {
-    kind: category | tag | date
+    kind: core | category | tag | date
     name: String?           -- Heading label: for categories the configured descriptive title (falls back to the category key), for tags the raw tag name
     month: Integer?
     year: Integer?

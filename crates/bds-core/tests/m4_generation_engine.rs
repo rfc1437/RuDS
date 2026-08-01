@@ -546,6 +546,32 @@ fn list_pages_receive_only_their_page_post_data_like_bds2() {
 }
 
 #[test]
+fn full_generation_uses_the_project_description_for_every_home_page_title() {
+    let (db, dir) = setup();
+    let mut metadata = make_metadata();
+    metadata.description = Some("My Wonderful Blog".into());
+    metadata.blog_languages = vec!["en".into(), "de".into()];
+    let posts = vec![PublishedPostSource {
+        post: make_post("hello", 1_710_000_000_000),
+        body_markdown: "Hello".into(),
+    }];
+
+    generate_starter_site(db.conn(), dir.path(), "p1", &metadata, &posts, "en").unwrap();
+
+    for path in ["index.html", "de/index.html"] {
+        let html = std::fs::read_to_string(dir.path().join(path)).unwrap();
+        assert!(
+            html.contains("<title>My Wonderful Blog</title>"),
+            "unexpected document title in {path}: {html}"
+        );
+        assert!(
+            html.contains("<h1 class=\"archive-heading\">My Wonderful Blog</h1>"),
+            "missing homepage title in {path}: {html}"
+        );
+    }
+}
+
+#[test]
 fn section_generation_reports_while_html_is_rendered_before_files_are_written() {
     let (db, dir) = setup();
     let metadata = make_metadata();

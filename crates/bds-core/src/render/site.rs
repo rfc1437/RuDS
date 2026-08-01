@@ -917,7 +917,7 @@ fn build_language_routes(
         per_page,
         language_root_prefix(language, metadata),
         page_title.clone(),
-        None,
+        Some(json!({"kind": "core"})),
         None,
     ));
 
