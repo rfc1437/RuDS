@@ -679,7 +679,10 @@ fn route_kind<'a>(
     }
 }
 
-fn is_ai_enabled(settings_state: Option<&SettingsViewState>, offline_mode: bool) -> bool {
+pub(crate) fn is_ai_enabled(
+    settings_state: Option<&SettingsViewState>,
+    offline_mode: bool,
+) -> bool {
     let Some(state) = settings_state else {
         return false;
     };

@@ -229,9 +229,9 @@ pub fn translate_missing_for_post(
     Ok(report)
 }
 
-/// Translate one language from the current missing-language set. This is the
-/// reactive editor path: already-created or unconfigured translations are a
-/// silent no-op, and generated translations remain drafts.
+/// Translate one language from the configured target set. This is the reactive
+/// editor path: generated translations remain drafts, and a retry after the
+/// post translation was saved resumes any still-missing media translations.
 pub fn translate_missing_language_for_post(
     conn: &Connection,
     data_dir: &Path,
@@ -241,9 +241,41 @@ pub fn translate_missing_language_for_post(
     offline_mode: bool,
     is_cancelled: impl Fn() -> bool,
 ) -> EngineResult<FillMissingTranslationsReport> {
+    translate_missing_language_for_post_with(
+        conn,
+        data_dir,
+        post_id,
+        configured_languages,
+        language,
+        &mut |post, language| translate_post_ai(conn, offline_mode, post, language),
+        &mut |media, language| translate_media_ai(conn, offline_mode, media, language),
+        is_cancelled,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "testable translation orchestration dependencies"
+)]
+fn translate_missing_language_for_post_with(
+    conn: &Connection,
+    data_dir: &Path,
+    post_id: &str,
+    configured_languages: &[String],
+    language: &str,
+    post_translator: &mut dyn FnMut(&Post, &str) -> EngineResult<TranslationResult>,
+    media_translator: &mut dyn FnMut(&Media, &str) -> EngineResult<MediaTranslationResult>,
+    is_cancelled: impl Fn() -> bool,
+) -> EngineResult<FillMissingTranslationsReport> {
     let post = qp::get_post_by_id(conn, post_id)?;
-    let targets = missing_languages(conn, &post, configured_languages)?;
-    if !targets.iter().any(|target| target == language) {
+    let language = normalize_language(language);
+    let source = normalize_language(post.language.as_deref().unwrap_or("en"));
+    if post.do_not_translate
+        || language == source
+        || !configured_languages
+            .iter()
+            .any(|configured| normalize_language(configured) == language)
+    {
         return Ok(FillMissingTranslationsReport {
             nothing_to_do: true,
             ..Default::default()
@@ -252,21 +284,36 @@ pub fn translate_missing_language_for_post(
     if is_cancelled() {
         return Err(EngineError::Validation("cancelled".to_string()));
     }
+    let translation_exists =
+        post_translation::get_post_translation_by_post_and_language(conn, &post.id, &language)
+            .is_ok();
     let mut report = FillMissingTranslationsReport::default();
-    merge_reactive_translation_result(
-        &mut report,
-        &post,
-        language,
+    let result = if translation_exists {
+        translate_missing_media(conn, data_dir, &post, &language, media_translator)
+    } else {
         translate_one_post(
             conn,
             data_dir,
             &post,
-            language,
+            &language,
             false,
-            &mut |post, language| translate_post_ai(conn, offline_mode, post, language),
-            &mut |media, language| translate_media_ai(conn, offline_mode, media, language),
-        ),
-    );
+            post_translator,
+            media_translator,
+        )
+    };
+    match result {
+        Ok(media_count) => {
+            report.translated_posts += usize::from(!translation_exists);
+            report.translated_media += media_count;
+            report.nothing_to_do = translation_exists && media_count == 0;
+        }
+        Err(error) => {
+            report.failed_count += 1;
+            report
+                .errors
+                .push(format!("{} ({language}): {error}", post.title));
+        }
+    }
     Ok(report)
 }
 
@@ -309,6 +356,25 @@ fn translate_one_post(
     let mut input = post.clone();
     input.content = Some(body);
     let translated = post_translator(&input, language)?;
+    for (field, source, translated_value) in [
+        ("title", post.title.as_str(), translated.title.as_str()),
+        (
+            "excerpt",
+            post.excerpt.as_deref().unwrap_or(""),
+            translated.excerpt.as_str(),
+        ),
+        (
+            "content",
+            input.content.as_deref().unwrap_or(""),
+            translated.content.as_str(),
+        ),
+    ] {
+        if !source.trim().is_empty() && translated_value.trim().is_empty() {
+            return Err(EngineError::Validation(format!(
+                "post translation returned empty {field}"
+            )));
+        }
+    }
     let translation = crate::engine::post::upsert_automatic_translation(
         conn,
         data_dir,
@@ -322,6 +388,16 @@ fn translate_one_post(
         crate::engine::post::publish_post_translation(conn, data_dir, &translation.id)?;
     }
 
+    translate_missing_media(conn, data_dir, post, language, media_translator)
+}
+
+fn translate_missing_media(
+    conn: &Connection,
+    data_dir: &Path,
+    post: &Post,
+    language: &str,
+    media_translator: &mut dyn FnMut(&Media, &str) -> EngineResult<MediaTranslationResult>,
+) -> EngineResult<usize> {
     let mut translated_media = 0;
     for link in post_media::list_post_media_by_post(conn, &post.id)? {
         let media = qm::get_media_by_id(conn, &link.media_id)?;
@@ -428,8 +504,10 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::fts::ensure_fts_tables;
+    use crate::db::queries::media::{insert_media, make_test_media};
     use crate::db::queries::project::{insert_project, make_test_project};
     use crate::engine::post::{create_post, publish_post, upsert_translation};
+    use crate::model::PostMedia;
     use tempfile::TempDir;
 
     #[test]
@@ -512,6 +590,100 @@ mod tests {
     }
 
     #[test]
+    fn blank_ai_translation_is_rejected_without_creating_a_record() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        let dir = TempDir::new().unwrap();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Hello",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let result = translate_one_post(
+            db.conn(),
+            dir.path(),
+            &post,
+            "de",
+            false,
+            &mut |_post, _language| {
+                Ok(TranslationResult {
+                    title: String::new(),
+                    excerpt: String::new(),
+                    content: String::new(),
+                })
+            },
+            &mut |_media, _language| unreachable!(),
+        );
+
+        assert!(result.is_err_and(|error| error.to_string().contains("empty")));
+        assert!(
+            post_translation::get_post_translation_by_post_and_language(db.conn(), &post.id, "de")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn automatic_translation_notifies_open_post_consumers() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        let dir = TempDir::new().unwrap();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Hello",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        let events = crate::engine::domain_events::subscribe();
+
+        let translated_media = translate_one_post(
+            db.conn(),
+            dir.path(),
+            &post,
+            "de",
+            false,
+            &mut |_post, _language| {
+                Ok(TranslationResult {
+                    title: "Hallo".into(),
+                    excerpt: "".into(),
+                    content: "Inhalt".into(),
+                })
+            },
+            &mut |_media, _language| unreachable!(),
+        )
+        .unwrap();
+
+        assert_eq!(translated_media, 0);
+        assert!(events.drain().iter().any(|event| matches!(
+            event,
+            crate::model::DomainEvent::EntityChanged {
+                project_id,
+                entity: crate::model::DomainEntity::Post,
+                entity_id,
+                action: crate::model::NotificationAction::Updated,
+            } if project_id == "p1" && entity_id == &post.id
+        )));
+    }
+
+    #[test]
     fn reactive_language_translation_is_a_no_op_when_translation_exists() {
         let db = Database::open_in_memory().unwrap();
         db.migrate().unwrap();
@@ -555,6 +727,83 @@ mod tests {
 
         assert!(report.nothing_to_do);
         assert_eq!(report.translated_posts, 0);
+    }
+
+    #[test]
+    fn reactive_retry_resumes_missing_media_after_post_translation_was_saved() {
+        let db = Database::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        ensure_fts_tables(db.conn()).unwrap();
+        insert_project(db.conn(), &make_test_project("p1", "blog")).unwrap();
+        let dir = TempDir::new().unwrap();
+        let post = create_post(
+            db.conn(),
+            dir.path(),
+            "p1",
+            "Hello",
+            Some("Body"),
+            vec![],
+            vec![],
+            None,
+            Some("en"),
+            None,
+        )
+        .unwrap();
+        upsert_translation(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            "de",
+            "Hallo",
+            None,
+            Some("Inhalt"),
+        )
+        .unwrap();
+        let mut media = make_test_media("media-1", "p1");
+        media.language = Some("en".to_string());
+        media.file_path = "media/media-1.jpg".to_string();
+        media.sidecar_path = "media/media-1.jpg.meta".to_string();
+        insert_media(db.conn(), &media).unwrap();
+        post_media::link_media(
+            db.conn(),
+            &PostMedia {
+                id: "link-1".to_string(),
+                project_id: "p1".to_string(),
+                post_id: post.id.clone(),
+                media_id: media.id.clone(),
+                sort_order: 0,
+                created_at: 1,
+            },
+        )
+        .unwrap();
+
+        let mut media_attempts = 0;
+        let report = translate_missing_language_for_post_with(
+            db.conn(),
+            dir.path(),
+            &post.id,
+            &["en".to_string(), "de".to_string()],
+            "de",
+            &mut |_, _| panic!("the existing post translation must not be regenerated"),
+            &mut |_, _| {
+                media_attempts += 1;
+                Ok(MediaTranslationResult {
+                    title: "Foto".to_string(),
+                    alt: "Bild".to_string(),
+                    caption: "Beschreibung".to_string(),
+                })
+            },
+            || false,
+        )
+        .unwrap();
+
+        assert_eq!(media_attempts, 1);
+        assert_eq!(report.translated_posts, 0);
+        assert_eq!(report.translated_media, 1);
+        assert!(!report.nothing_to_do);
+        assert!(
+            qmt::get_media_translation_by_media_and_language(db.conn(), &media.id, "de").is_ok()
+        );
     }
 
     #[test]

@@ -27,6 +27,13 @@ surface AiEngine {
         -- The active endpoint's response, parsed into per-field suggestions
 }
 
+surface AutoTranslationRuntime {
+    facing _: AiRuntime
+
+    provides: PostAutoTranslateAttemptFailed(post_id, language, reason)
+    provides: PostAutoTranslateRetryFailed(post_id, language, reason)
+}
+
 -- ─── AI operation gating ────────────────────────────────────
 --
 -- All AI operations route through the active endpoint for the current
@@ -128,6 +135,18 @@ rule AutoTranslationChain {
         -- Sequential within a language, parallel across languages;
         -- progress visible in the Tasks panel. A save with no missing
         -- languages enqueues nothing (empty set).
+}
+
+rule RetryFailedAutoTranslationOnce {
+    when: PostAutoTranslateAttemptFailed(post_id, language, reason)
+    ensures: ToastShown(message_key: "engine.autoTranslationRetrying")
+    ensures: PostAutoTranslateRetried(post_id, language, maximum_attempts: 2)
+}
+
+rule ReportFailedAutoTranslationRetry {
+    when: PostAutoTranslateRetryFailed(post_id, language, reason)
+    ensures: BackgroundTaskFailed(post_id, language, reason)
+    ensures: ToastShown(level: "error", reason: reason)
 }
 
 rule MediaMetadataTranslationCascade {

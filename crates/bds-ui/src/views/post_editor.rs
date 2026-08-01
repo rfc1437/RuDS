@@ -227,6 +227,37 @@ impl PostEditorState {
         self.switch_language(&previous.active_language);
     }
 
+    pub fn merge_clean_translations(&mut self, translations: &[PostTranslation]) {
+        for translation in translations {
+            let language = &translation.language;
+            let dirty = if self.active_language == *language {
+                self.is_dirty
+            } else {
+                self.translation_drafts
+                    .get(language)
+                    .is_some_and(|draft| draft.is_dirty)
+            };
+            if dirty {
+                continue;
+            }
+            let draft = TranslationDraft {
+                title: translation.title.clone(),
+                excerpt: translation.excerpt.clone().unwrap_or_default(),
+                content: translation.content.clone().unwrap_or_default(),
+                status: translation.status.clone(),
+                is_dirty: false,
+            };
+            if self.active_language == *language {
+                self.title.clone_from(&draft.title);
+                self.excerpt.clone_from(&draft.excerpt);
+                self.content.clone_from(&draft.content);
+                self.editor_buffer = RefCell::new(EditorBuffer::new(&draft.content));
+                self.is_dirty = false;
+            }
+            self.translation_drafts.insert(language.clone(), draft);
+        }
+    }
+
     pub fn insert_markdown_at_cursor(&mut self, markdown: &str) {
         let new_content = {
             let mut buffer = self.editor_buffer.borrow_mut();
@@ -1442,5 +1473,36 @@ mod tests {
     fn content_actions_are_only_visible_in_markdown_mode() {
         assert!(content_actions_visible("markdown"));
         assert!(!content_actions_visible("preview"));
+    }
+
+    #[test]
+    fn translation_refresh_preserves_new_canonical_edits() {
+        let mut state = sample_state();
+        state.content = "Unsaved follow-up".to_string();
+        state.mark_dirty();
+        let translation = PostTranslation {
+            id: "translation-1".into(),
+            project_id: "project-1".into(),
+            translation_for: "post-1".into(),
+            language: "de".into(),
+            title: "Beispiel".into(),
+            excerpt: None,
+            content: Some("Hallo Welt".into()),
+            status: PostStatus::Draft,
+            file_path: String::new(),
+            checksum: None,
+            created_at: 2,
+            updated_at: 2,
+            published_at: None,
+        };
+
+        state.merge_clean_translations(&[translation]);
+
+        assert_eq!(state.content, "Unsaved follow-up");
+        assert!(state.is_dirty);
+        assert_eq!(
+            state.translation_drafts["de"].content,
+            "Hallo Welt".to_string()
+        );
     }
 }

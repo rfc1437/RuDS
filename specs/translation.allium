@@ -222,6 +222,12 @@ surface AutoTranslationControlSurface {
         FillMissingTranslationsRequested(project)
 }
 
+surface AutoTranslationRuntime {
+    facing _: TranslationOperator
+
+    provides: AutoTranslatePostCompleted(post, language)
+}
+
 invariant AutoTranslationGatedByEndpoint {
     -- No automatic translation runs unless an endpoint is resolvable for the
     -- current mode. Airplane mode needs url+model; online additionally needs an
@@ -281,7 +287,14 @@ rule AutoTranslatePost {
 
     @guidance
         -- An empty body yields a no_content_to_translate error and no
-        -- translation is created.
+        -- translation is created. A response that leaves any non-empty source
+        -- field empty is also an error and is never persisted.
+}
+
+rule RefreshCompletedAutomaticTranslation {
+    when: AutoTranslatePostCompleted(post, language)
+    ensures: OpenPostEditorTranslationsRefreshed(post, language)
+    ensures: UnsavedPostEditorContentPreserved(post)
 }
 
 rule AutoTranslateMediaCascade {

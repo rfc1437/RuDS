@@ -582,9 +582,16 @@ pub(crate) fn upsert_automatic_translation(
     excerpt: Option<&str>,
     content: Option<&str>,
 ) -> EngineResult<PostTranslation> {
-    upsert_translation_with_mode(
+    let translation = upsert_translation_with_mode(
         conn, data_dir, post_id, language, title, excerpt, content, false,
-    )
+    )?;
+    domain_events::entity_changed(
+        &translation.project_id,
+        DomainEntity::Post,
+        post_id,
+        NotificationAction::Updated,
+    );
+    Ok(translation)
 }
 
 #[expect(

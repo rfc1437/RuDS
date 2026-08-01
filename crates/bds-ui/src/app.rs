@@ -86,6 +86,12 @@ enum BlogmarkImportEvent {
 }
 
 #[derive(Debug, Clone)]
+enum AutoTranslationTaskEvent {
+    Retrying,
+    Finished(Result<String, String>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     // Menu
     MenuEvent(muda::MenuId),
@@ -186,6 +192,9 @@ pub enum Message {
     CancelTask(TaskSource, TaskId),
     RemoteTaskCancelled(Result<(), String>),
     ToggleTaskGroup(String),
+    AutoTranslationRetrying {
+        task_id: TaskId,
+    },
     TagDeleted {
         task_id: TaskId,
         tag_id: String,
@@ -2775,6 +2784,16 @@ impl BdsApp {
                 }
                 Task::none()
             }
+            Message::AutoTranslationRetrying { task_id } => {
+                if self.task_manager.status(task_id) == Some(TaskStatus::Running) {
+                    let message = t(self.ui_locale, "engine.autoTranslationRetrying");
+                    self.task_manager
+                        .report_progress(task_id, None, Some(message.clone()));
+                    self.refresh_task_snapshots();
+                    self.notify(ToastLevel::Warning, &message);
+                }
+                Task::none()
+            }
 
             // ── macOS lifecycle ──
             Message::FileOpenRequested(path) => {
@@ -4490,6 +4509,15 @@ impl BdsApp {
             DomainEntity::Tag | DomainEntity::Project | DomainEntity::Setting => false,
         };
         if dirty {
+            if entity == DomainEntity::Post
+                && let Some(db) = &self.db
+                && let Ok(post) = bds_core::db::queries::post::get_post_by_id(db.conn(), entity_id)
+            {
+                let translations = self.post_translations_for_editor(&post);
+                if let Some(editor) = self.post_editors.get_mut(entity_id) {
+                    editor.merge_clean_translations(&translations);
+                }
+            }
             return;
         }
         match entity {
@@ -6675,38 +6703,98 @@ impl BdsApp {
         if targets.is_empty() {
             return Task::none();
         }
-        if engine::ai::active_endpoint(db.conn(), self.offline_mode).is_err() {
+        if !workspace::is_ai_enabled(self.settings_state.as_ref(), self.offline_mode) {
             return Task::none();
         }
         let post_id = post_id.to_string();
         let offline_mode = self.offline_mode;
-        let locale = self.ui_locale;
         Task::batch(targets.into_iter().map(|language| {
-            let post_id = post_id.clone();
-            let configured = configured.clone();
-            self.spawn_grouped_engine_task(
-                "engine.autoTranslationStarted",
-                "AI",
-                move |db_path, _project_id, data_dir, task_manager, task_id| {
-                    let db = Database::open(&db_path).map_err(|error| error.to_string())?;
-                    let report = engine::auto_translation::translate_missing_language_for_post(
-                        db.conn(),
-                        &data_dir,
-                        &post_id,
-                        &configured,
-                        &language,
-                        offline_mode,
-                        move || task_manager.is_cancelled(task_id),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    Ok(tw(
-                        locale,
-                        "engine.autoTranslationComplete",
-                        &[("count", &report.translated_posts.to_string())],
-                    ))
-                },
+            self.spawn_auto_translation_task(
+                post_id.clone(),
+                configured.clone(),
+                language,
+                offline_mode,
             )
         }))
+    }
+
+    fn spawn_auto_translation_task(
+        &mut self,
+        post_id: String,
+        configured_languages: Vec<String>,
+        language: String,
+        offline_mode: bool,
+    ) -> Task<Message> {
+        let (Some(project_id), Some(data_dir)) = (
+            self.active_project
+                .as_ref()
+                .map(|project| project.id.clone()),
+            self.data_dir.clone(),
+        ) else {
+            return Task::none();
+        };
+        let db_path = self.db_path.clone();
+        let locale = self.ui_locale;
+        let label = t(locale, "engine.autoTranslationStarted");
+        self.add_output(&label);
+        let task_id = self
+            .task_manager
+            .submit_grouped(&label, &format!("{project_id}:AI"), "AI");
+        self.refresh_task_snapshots();
+        let task_manager = Arc::clone(&self.task_manager);
+        let label_for_message = label.clone();
+        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        let producer = Task::perform(
+            async move {
+                let Some(worker) = task_manager.admit(task_id).await else {
+                    let _ = sender.unbounded_send(AutoTranslationTaskEvent::Finished(Err(
+                        "cancelled".to_string(),
+                    )));
+                    return;
+                };
+                let retry_sender = sender.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let _worker = worker;
+                    let attempt = || {
+                        let db = Database::open(&db_path).map_err(|error| error.to_string())?;
+                        let cancellation = Arc::clone(&task_manager);
+                        let report = engine::auto_translation::translate_missing_language_for_post(
+                            db.conn(),
+                            &data_dir,
+                            &post_id,
+                            &configured_languages,
+                            &language,
+                            offline_mode,
+                            move || cancellation.is_cancelled(task_id),
+                        )
+                        .map_err(|error| error.to_string())?;
+                        auto_translation_task_result(locale, report)
+                    };
+                    retry_once(attempt, |_error| {
+                        if task_manager.is_cancelled(task_id) {
+                            false
+                        } else {
+                            let _ = retry_sender.unbounded_send(AutoTranslationTaskEvent::Retrying);
+                            true
+                        }
+                    })
+                })
+                .await
+                .unwrap_or_else(|error| Err(format!("task panicked: {error}")));
+                let _ = sender.unbounded_send(AutoTranslationTaskEvent::Finished(result));
+            },
+            |_| Message::TaskTick,
+        );
+        let consumer = Task::run(receiver, move |event| match event {
+            AutoTranslationTaskEvent::Retrying => Message::AutoTranslationRetrying { task_id },
+            AutoTranslationTaskEvent::Finished(result) => Message::EngineTaskDone {
+                task_id,
+                operation: "engine.autoTranslationStarted",
+                label: label_for_message.clone(),
+                result,
+            },
+        });
+        Task::batch([producer, consumer])
     }
 
     fn ensure_post_editor_tag(&mut self, post_id: &str, name: &str) -> Task<Message> {
@@ -9316,6 +9404,36 @@ impl BdsApp {
         }
     }
 
+    fn post_translations_for_editor(&self, post: &Post) -> Vec<PostTranslation> {
+        let Some(db) = &self.db else {
+            return Vec::new();
+        };
+        let mut translations =
+            bds_core::db::queries::post_translation::list_post_translations_by_post(
+                db.conn(),
+                &post.id,
+            )
+            .unwrap_or_default();
+        if let Some(data_dir) = &self.data_dir {
+            for translation in &mut translations {
+                if translation.content.is_none() {
+                    let path = data_dir.join(bds_core::util::paths::translation_file_path(
+                        post.created_at,
+                        &post.slug,
+                        &translation.language,
+                    ));
+                    if let Ok(raw) = std::fs::read_to_string(path)
+                        && let Ok((_frontmatter, body)) =
+                            bds_core::util::frontmatter::read_translation_file(&raw)
+                    {
+                        translation.content = Some(body);
+                    }
+                }
+            }
+        }
+        translations
+    }
+
     /// Load editor state when a tab is opened for an entity.
     fn load_editor_for_tab(&mut self, tab: &Tab) {
         let Some(ref db) = self.db else { return };
@@ -9340,31 +9458,8 @@ impl BdsApp {
                                     post.content = Some(body);
                                 }
                             }
-                            // Load translations for translation flags bar
-                            let mut translations = bds_core::db::queries::post_translation::list_post_translations_by_post(
-                                db.conn(), &post.id,
-                            ).unwrap_or_default();
-                            // Published translations don't store body in DB — read from file
-                            if let Some(ref data_dir) = self.data_dir {
-                                for tr in &mut translations {
-                                    if tr.content.is_none() {
-                                        let rel = bds_core::util::paths::translation_file_path(
-                                            post.created_at,
-                                            &post.slug,
-                                            &tr.language,
-                                        );
-                                        let path = data_dir.join(&rel);
-                                        if let Ok(raw) = std::fs::read_to_string(&path)
-                                            && let Ok((_fm, body)) =
-                                                bds_core::util::frontmatter::read_translation_file(
-                                                    &raw,
-                                                )
-                                        {
-                                            tr.content = Some(body);
-                                        }
-                                    }
-                                }
-                            }
+                            // Load translations for translation flags bar.
+                            let translations = self.post_translations_for_editor(&post);
                             let (outlinks, backlinks) = self.load_post_links(&post.id);
                             let linked_media =
                                 self.load_post_media_items(&post.id, post.content.as_deref());
@@ -10619,6 +10714,34 @@ fn content_sample(content: &str, max_len: usize) -> String {
     content.chars().take(max_len).collect()
 }
 
+fn auto_translation_task_result(
+    locale: UiLocale,
+    report: engine::auto_translation::FillMissingTranslationsReport,
+) -> Result<String, String> {
+    if report.failed_count > 0 {
+        return Err(if report.errors.is_empty() {
+            t(locale, "engine.autoTranslationFailed")
+        } else {
+            report.errors.join("; ")
+        });
+    }
+    Ok(tw(
+        locale,
+        "engine.autoTranslationComplete",
+        &[("count", &report.translated_posts.to_string())],
+    ))
+}
+
+fn retry_once<T>(
+    mut attempt: impl FnMut() -> Result<T, String>,
+    mut should_retry: impl FnMut(&str) -> bool,
+) -> Result<T, String> {
+    match attempt() {
+        Err(error) if should_retry(&error) => attempt(),
+        result => result,
+    }
+}
+
 fn dropped_image_target(active_tab: Option<&str>, tabs: &[Tab], path: &Path) -> Option<String> {
     if !engine::media::is_supported_image_path(path) {
         return None;
@@ -10673,12 +10796,13 @@ fn remote_error_closes_connection(code: &str) -> bool {
 mod tests {
     use super::{
         BdsApp, Message, POST_AUTO_SAVE_DELAY_MS, PersistedMediaState, PersistedPostState,
-        PostStatus, SettingsMsg, SiteGenerationKind, active_post_tab_id, dropped_image_target,
-        flush_embeddings_and_exit, localize_chat_error, month_abbreviation,
-        persist_media_editor_state_impl, persist_post_editor_preview_state_impl,
-        persist_post_editor_state_impl, remote_error_closes_connection,
-        save_editor_settings_state_impl, save_script_editor_state_impl,
-        save_template_editor_state_impl, should_start_embedded_preview_creation,
+        PostStatus, SettingsMsg, SiteGenerationKind, active_post_tab_id,
+        auto_translation_task_result, dropped_image_target, flush_embeddings_and_exit,
+        localize_chat_error, month_abbreviation, persist_media_editor_state_impl,
+        persist_post_editor_preview_state_impl, persist_post_editor_state_impl,
+        remote_error_closes_connection, retry_once, save_editor_settings_state_impl,
+        save_script_editor_state_impl, save_template_editor_state_impl,
+        should_start_embedded_preview_creation,
     };
     use crate::i18n::t;
     use crate::platform::menu::MenuAction;
@@ -13190,6 +13314,86 @@ mod tests {
                 .filter(|task| task.group_name.as_deref() == Some("AI"))
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    fn failed_auto_translation_report_becomes_a_task_error() {
+        let report = engine::auto_translation::FillMissingTranslationsReport {
+            failed_count: 1,
+            errors: vec!["Original (de): provider unavailable".to_string()],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            auto_translation_task_result(UiLocale::En, report),
+            Err("Original (de): provider unavailable".to_string())
+        );
+    }
+
+    #[test]
+    fn auto_translation_retries_one_failure_once() {
+        let mut attempts = 0;
+        let mut retry_errors = Vec::new();
+
+        let result = retry_once(
+            || {
+                attempts += 1;
+                (attempts == 2)
+                    .then_some("translated")
+                    .ok_or_else(|| "first request failed".to_string())
+            },
+            |error| {
+                retry_errors.push(error.to_string());
+                true
+            },
+        );
+
+        assert_eq!(result, Ok("translated"));
+        assert_eq!(attempts, 2);
+        assert_eq!(retry_errors, vec!["first request failed"]);
+    }
+
+    #[test]
+    fn auto_translation_retry_is_visible_as_a_warning_toast() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let task_id = app.task_manager.submit("translation");
+
+        let _ = app.update(Message::AutoTranslationRetrying { task_id });
+
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.message.as_str()),
+            Some("AI failed, retrying…")
+        );
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.level),
+            Some(ToastLevel::Warning)
+        );
+    }
+
+    #[test]
+    fn failed_auto_translation_retry_is_visible_as_an_error_toast() {
+        let (db, project, tmp) = setup();
+        let mut app = make_app(db, project, &tmp);
+        let label = t(UiLocale::En, "engine.autoTranslationStarted");
+        let task_id = app.task_manager.submit(&label);
+
+        let _ = app.update(Message::EngineTaskDone {
+            task_id,
+            operation: "engine.autoTranslationStarted",
+            label,
+            result: Err("Original (de): provider unavailable".to_string()),
+        });
+
+        assert_eq!(
+            app.toasts.last().map(|toast| toast.level),
+            Some(ToastLevel::Error)
+        );
+        assert!(
+            app.toasts
+                .last()
+                .is_some_and(|toast| toast.message.contains("provider unavailable"))
         );
     }
 
