@@ -1275,6 +1275,7 @@ pub fn view(
                             row![
                                 text(format!("{} {}", language.flag_emoji, language.name))
                                     .size(13)
+                                    .shaping(Shaping::Advanced)
                                     .color(Color::WHITE),
                                 Space::with_width(Length::Fill),
                                 text(status)

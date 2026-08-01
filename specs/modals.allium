@@ -126,6 +126,7 @@ value LanguagePickerModal {
     -- Shown for Translate Post and Translate Media Metadata actions.
     -- Lists all configured blogLanguages except source language.
     -- Each row: flag emoji, language name, status badge if translation exists.
+    -- Flag emoji use fallback-capable text shaping and never render as missing-glyph icons.
     --   Existing translations show "(draft)" or "(published)" badge.
     -- Click selects target language and initiates translation flow.
     -- Cancel closes without action.

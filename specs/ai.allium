@@ -366,6 +366,8 @@ invariant EndpointModelPersistence {
     -- restart. Model dropdowns (settings and chat) are populated from
     -- the persisted list; it is only overwritten by the next
     -- successful RefreshEndpointModels for the same kind.
+    -- Editor AI actions derive availability from this persisted state during
+    -- initial workspace hydration; opening Settings first is never required.
 }
 
 rule TestEndpointModels {

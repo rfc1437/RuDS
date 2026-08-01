@@ -6063,7 +6063,7 @@ impl BdsApp {
         self.import_editors.clear();
         self.chat_editors.clear();
         self.tags_view_state = None;
-        self.settings_state = None;
+        self.settings_state = Some(self.hydrate_settings_state());
         self.style_view_state = None;
         self.dashboard_state = None;
         self.site_validation_state = SiteValidationState::default();
@@ -10759,6 +10759,7 @@ mod tests {
         let mut app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
         app.sidebar_view = SidebarView::Posts;
         app.sidebar_visible = false;
+        app.settings_state = None;
 
         let _ = app.dispatch_menu_action(MenuAction::EditPreferences);
 
@@ -10771,6 +10772,33 @@ mod tests {
                 .map(|state| state.project_name.as_str()),
             Some("Test Project")
         );
+    }
+
+    #[test]
+    fn fresh_workspace_hydrates_saved_ai_configuration_for_quick_actions() {
+        let (db, project, temp) = setup();
+        ai::save_endpoint(
+            db.conn(),
+            &ai::AiEndpointConfig {
+                kind: ai::AiEndpointKind::Airplane,
+                url: "http://localhost:11434/v1".to_string(),
+                model: "llama3.2".to_string(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+
+        let app = BdsApp::new_for_tests(db, project, temp.path().to_path_buf());
+        let settings = app
+            .settings_state
+            .as_ref()
+            .expect("fresh workspace must load persisted AI configuration");
+
+        assert_eq!(
+            settings.airplane_ai.endpoint_url,
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(settings.airplane_ai.chat_model, "llama3.2");
     }
 
     #[test]
