@@ -1,6 +1,6 @@
 use iced::widget::text::Shaping;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
+use iced::widget::{Space, button, column, container, progress_bar, row, scrollable, text};
+use iced::{Alignment, Background, Border, Color, Element, Font, Length, Theme};
 
 use bds_core::engine::git::GitCommit;
 use bds_core::engine::task::TaskStatus;
@@ -14,7 +14,11 @@ use crate::state::tabs::{Tab, TabType};
 use crate::views::post_editor::ResolvedPostLink;
 use std::collections::HashSet;
 
-fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Message> {
+fn task_row(
+    snapshot: &TaskSnapshot,
+    locale: UiLocale,
+    is_group_child: bool,
+) -> Element<'static, Message> {
     let status = match &snapshot.status {
         TaskStatus::Pending => t(locale, "tasks.statusPending"),
         TaskStatus::Running if snapshot.cancellation_requested => {
@@ -25,32 +29,132 @@ fn task_row(snapshot: &TaskSnapshot, locale: UiLocale) -> Element<'static, Messa
         TaskStatus::Failed(error) => tw(locale, "tasks.statusFailed", &[("error", error)]),
         TaskStatus::Cancelled => t(locale, "tasks.statusCancelled"),
     };
-    let progress = snapshot
-        .progress
-        .map(|value| format!(" ({:.0}%)", value * 100.0))
-        .unwrap_or_default();
-    let phase = snapshot
+
+    let header = row![
+        text(snapshot.label.clone())
+            .size(11)
+            .shaping(Shaping::Advanced)
+            .font(Font {
+                weight: iced::font::Weight::Semibold,
+                ..Font::DEFAULT
+            }),
+        Space::with_width(Length::Fill),
+        text(status)
+            .size(10)
+            .shaping(Shaping::Advanced)
+            .color(task_status_color(&snapshot.status)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let mut rows: Vec<Element<'static, Message>> = vec![header.into()];
+    if let Some(message) = snapshot
         .message
         .as_deref()
-        .map(|message| format!(" — {message}"))
-        .unwrap_or_default();
-    let label = text(format!(
-        "{} — {}{}{}",
-        snapshot.label, status, progress, phase
-    ))
-    .size(11)
-    .shaping(Shaping::Advanced)
-    .color(Color::from_rgb(0.70, 0.70, 0.75));
-    let mut content = row![label].align_y(Alignment::Center).spacing(8);
-    if snapshot.is_cancellable {
-        content = content.push(Space::with_width(Length::Fill)).push(
-            button(text(t(locale, "tasks.cancelTask")).size(11))
-                .on_press(Message::CancelTask(snapshot.source, snapshot.id))
-                .padding([3, 8])
-                .style(inputs::secondary_button),
+        .filter(|message| !message.is_empty())
+    {
+        rows.push(
+            text(message.to_string())
+                .size(11)
+                .shaping(Shaping::Advanced)
+                .color(Color::from_rgb8(0x9D, 0xA5, 0xB4))
+                .into(),
         );
     }
-    content.into()
+    if let Some(progress) = snapshot.progress {
+        rows.push(
+            row![
+                progress_bar(0.0..=1.0, progress.clamp(0.0, 1.0))
+                    .height(Length::Fixed(6.0))
+                    .style(task_progress_style),
+                text(format!("{:.0}%", progress * 100.0))
+                    .size(10)
+                    .color(Color::from_rgb8(0x9D, 0xA5, 0xB4)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        );
+    }
+    if snapshot.is_cancellable {
+        rows.push(
+            row![
+                Space::with_width(Length::Fill),
+                button(text(t(locale, "tasks.cancelTask")).size(10))
+                    .on_press(Message::CancelTask(snapshot.source, snapshot.id))
+                    .padding([3, 8])
+                    .style(inputs::secondary_button),
+            ]
+            .into(),
+        );
+    }
+
+    let card: Element<'static, Message> = container(
+        iced::widget::Column::with_children(rows)
+            .spacing(6)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding(8)
+    .style(task_entry_style)
+    .into();
+
+    if is_group_child {
+        row![Space::with_width(Length::Fixed(16.0)), card]
+            .width(Length::Fill)
+            .into()
+    } else {
+        card
+    }
+}
+
+fn task_status_color(status: &TaskStatus) -> Color {
+    match status {
+        TaskStatus::Running => Color::from_rgb8(0x73, 0xC9, 0x91),
+        TaskStatus::Pending => Color::from_rgb8(0xCC, 0xA7, 0x00),
+        TaskStatus::Failed(_) => Color::from_rgb8(0xF4, 0x87, 0x71),
+        TaskStatus::Completed | TaskStatus::Cancelled => Color::from_rgb8(0x9D, 0xA5, 0xB4),
+    }
+}
+
+fn task_entry_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x25, 0x25, 0x26))),
+        border: Border {
+            color: Color::from_rgb8(0x3C, 0x3C, 0x3C),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn task_progress_style(_theme: &Theme) -> progress_bar::Style {
+    progress_bar::Style {
+        background: Background::Color(Color::from_rgb8(0x3C, 0x3C, 0x3C)),
+        bar: Background::Color(Color::from_rgb8(0x0E, 0x63, 0x9C)),
+        border: Border {
+            radius: 3.0.into(),
+            ..Border::default()
+        },
+    }
+}
+
+fn task_group_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Hovered | button::Status::Pressed => Color::from_rgb8(0x2D, 0x2D, 0x30),
+        _ => Color::from_rgb8(0x25, 0x25, 0x26),
+    };
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: Color::from_rgb8(0xCC, 0xCC, 0xCC),
+        border: Border {
+            color: Color::from_rgb8(0x3C, 0x3C, 0x3C),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..button::Style::default()
+    }
 }
 
 fn group_progress(members: &[&TaskSnapshot]) -> Option<f32> {
@@ -64,6 +168,28 @@ fn group_progress(members: &[&TaskSnapshot]) -> Option<f32> {
             .sum::<f32>()
             / members.len() as f32
     })
+}
+
+fn task_group_meta(members: &[&TaskSnapshot], locale: UiLocale) -> String {
+    let mut parts = vec![format!(
+        "{:.0}%",
+        group_progress(members).unwrap_or_default() * 100.0
+    )];
+    let running = members
+        .iter()
+        .filter(|member| matches!(member.status, TaskStatus::Running))
+        .count();
+    let pending = members
+        .iter()
+        .filter(|member| matches!(member.status, TaskStatus::Pending))
+        .count();
+    if running > 0 {
+        parts.push(format!("{running} {}", t(locale, "tasks.statusRunning")));
+    }
+    if pending > 0 {
+        parts.push(format!("{pending} {}", t(locale, "tasks.statusPending")));
+    }
+    parts.join(" · ")
 }
 
 /// Panel background style.
@@ -232,7 +358,7 @@ pub fn view(
                 let mut items: Vec<Element<'static, Message>> = Vec::new();
                 for snapshot in &visible {
                     let Some(group_id) = snapshot.group_id.as_ref() else {
-                        items.push(task_row(snapshot, locale));
+                        items.push(task_row(snapshot, locale, false));
                         continue;
                     };
                     if !rendered_groups.insert(group_id.clone()) {
@@ -243,27 +369,37 @@ pub fn view(
                         .copied()
                         .filter(|member| member.group_id.as_ref() == Some(group_id))
                         .collect::<Vec<_>>();
-                    let progress = group_progress(&members)
-                        .map(|progress| format!(" ({:.0}%)", progress * 100.0));
                     let collapsed = collapsed_task_groups.contains(group_id);
                     let group_name = snapshot.group_name.as_deref().unwrap_or(group_id);
                     items.push(
                         button(
                             row![
                                 text(if collapsed { "\u{25b8}" } else { "\u{25be}" }).size(11),
-                                text(format!("{}{}", group_name, progress.unwrap_or_default()))
+                                text(format!("{} ({})", group_name, members.len()))
                                     .size(11)
+                                    .font(Font {
+                                        weight: iced::font::Weight::Semibold,
+                                        ..Font::DEFAULT
+                                    }),
+                                text(task_group_meta(&members, locale))
+                                    .size(10)
+                                    .color(Color::from_rgb8(0x9D, 0xA5, 0xB4)),
                             ]
-                            .spacing(6),
+                            .spacing(8)
+                            .align_y(Alignment::Center),
                         )
                         .on_press(Message::ToggleTaskGroup(group_id.clone()))
                         .width(Length::Fill)
-                        .padding([3, 6])
-                        .style(inputs::disclosure_button)
+                        .padding(8)
+                        .style(task_group_button_style)
                         .into(),
                     );
                     if !collapsed {
-                        items.extend(members.into_iter().map(|member| task_row(member, locale)));
+                        items.extend(
+                            members
+                                .into_iter()
+                                .map(|member| task_row(member, locale, true)),
+                        );
                     }
                 }
                 scrollable(
@@ -468,5 +604,64 @@ mod progress_tests {
         };
 
         assert_eq!(group_progress(&[&complete, &pending]), Some(0.5));
+    }
+
+    #[test]
+    fn task_group_header_matches_bds2_progress_and_status_summary() {
+        let complete = TaskSnapshot {
+            id: 1,
+            source: crate::state::navigation::TaskSource::Local,
+            label: "Complete".into(),
+            group_id: Some("group".into()),
+            group_name: Some("Build".into()),
+            status: TaskStatus::Completed,
+            progress: Some(1.0),
+            message: None,
+            cancellation_requested: false,
+            is_cancellable: false,
+        };
+        let running = TaskSnapshot {
+            id: 2,
+            label: "Running".into(),
+            status: TaskStatus::Running,
+            progress: Some(0.25),
+            is_cancellable: true,
+            ..complete.clone()
+        };
+        let pending = TaskSnapshot {
+            id: 3,
+            label: "Pending".into(),
+            status: TaskStatus::Pending,
+            progress: None,
+            is_cancellable: true,
+            ..complete.clone()
+        };
+
+        assert_eq!(
+            task_group_meta(&[&complete, &running, &pending], UiLocale::En),
+            "42% · 1 Running · 1 Pending"
+        );
+    }
+
+    #[test]
+    fn task_cards_use_bds2_surface_and_status_palette() {
+        let style = task_entry_style(&Theme::Dark);
+        assert_eq!(
+            style.background,
+            Some(Background::Color(Color::from_rgb8(0x25, 0x25, 0x26)))
+        );
+        assert_eq!(style.border.color, Color::from_rgb8(0x3C, 0x3C, 0x3C));
+        assert_eq!(style.border.width, 1.0);
+        let group_style = task_group_button_style(&Theme::Dark, button::Status::Active);
+        assert_eq!(group_style.background, style.background);
+        assert_eq!(group_style.border, style.border);
+        assert_eq!(
+            task_status_color(&TaskStatus::Running),
+            Color::from_rgb8(0x73, 0xC9, 0x91)
+        );
+        assert_eq!(
+            task_status_color(&TaskStatus::Pending),
+            Color::from_rgb8(0xCC, 0xA7, 0x00)
+        );
     }
 }
